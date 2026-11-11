@@ -159,7 +159,8 @@ Adjust the layout when implementation shows a better boundary, and record substa
 - `hearst` is a test VM, not production. Even so, discovery stays read-only, and never run privileged or destructive commands there (`kldload`, `zpool create`, network changes) without asking first.
 - Lab notes that affect your work:
   - `merrick` and `hearst` both run on the Proxmox host `swearengen`, which has planned downtime coming (CPU replacement). Commit and push to GitHub often; don't leave work only on disk.
-  - `hearst` may not expose VT-x yet (its Proxmox CPU type is unconfirmed). If `vmm` won't load or `dmesg` shows no VT-x/EPT, report it as a lab configuration issue, not a Skep bug, and don't try to fix it from inside the VM.
+  - `hearst` exposes VT-x with EPT and UG (Proxmox CPU type `host`, confirmed 2026-11-11). It is small (2 cores, 2 GB RAM) and UFS-root. A file-backed test pool named `skeptest` may exist; it is the only pool you may touch.
+  - You have passwordless `sudo` on `hearst`. Read-only checks and loading/unloading `vmm` are fine. Ask first before anything persistent or destructive: `loader.conf`, `rc.conf`, network changes, package installs, `zpool create/destroy`, or any disk other than the `skeptest` file. Never touch hearst's root filesystem or boot configuration. A Proxmox snapshot exists for recovery, but don't rely on it.
   - DNS goes through Pi-hole with aggressive blocklists. If `go get`, `npm install`, or another download fails with a name-resolution error, stop and tell Andy rather than working around it.
 - Lab hostnames and private IPs are fine in committed files. Keys, passwords, and tokens are still never committed.
 - Tools: Go, Node.js LTS, npm, Git, Make. Docker only for optional dev dependencies, never as a stand-in for FreeBSD testing.
