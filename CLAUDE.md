@@ -153,10 +153,14 @@ Adjust the layout when implementation shows a better boundary, and record substa
 
 ## Development environment
 
-- Dev machine: **`dority`** (10.79.20.140, Debian 13, Linux). Claude Code runs here; all builds, unit tests, and cross-compiles happen here.
+- Dev machine: **`merrick`** (10.79.20.200, Debian 13 VM on swearengen). Claude Code runs here; all builds, unit tests, and cross-compiles happen here.
 - FreeBSD integration target: **`hearst`** (10.79.20.170, FreeBSD 15.1-RELEASE VM). Native runtime validation happens only here.
-- To validate on FreeBSD: cross-compile on `dority`, copy the binary to `hearst` over SSH (`scp`), and run it there with `ssh hearst ...`. Capture the real output in your report. If `hearst` is unreachable, say so and mark the work "pending FreeBSD validation". Never fake the result.
+- To validate on FreeBSD: cross-compile on `merrick`, copy the binary to `hearst` over SSH (`scp`), and run it there with `ssh hearst ...`. Capture the real output in your report. If `hearst` is unreachable, say so and mark the work "pending FreeBSD validation". Never fake the result.
 - `hearst` is a test VM, not production. Even so, discovery stays read-only, and never run privileged or destructive commands there (`kldload`, `zpool create`, network changes) without asking first.
+- Lab notes that affect your work:
+  - `merrick` and `hearst` both run on the Proxmox host `swearengen`, which has planned downtime coming (CPU replacement). Commit and push to GitHub often; don't leave work only on disk.
+  - `hearst` may not expose VT-x yet (its Proxmox CPU type is unconfirmed). If `vmm` won't load or `dmesg` shows no VT-x/EPT, report it as a lab configuration issue, not a Skep bug, and don't try to fix it from inside the VM.
+  - DNS goes through Pi-hole with aggressive blocklists. If `go get`, `npm install`, or another download fails with a name-resolution error, stop and tell Andy rather than working around it.
 - Lab hostnames and private IPs are fine in committed files. Keys, passwords, and tokens are still never committed.
 - Tools: Go, Node.js LTS, npm, Git, Make. Docker only for optional dev dependencies, never as a stand-in for FreeBSD testing.
 - CI (GitHub Actions): `go test`, `go vet`, Linux build, `GOOS=freebsd GOARCH=amd64` cross-compile, frontend build, static analysis, dependency checks. FreeBSD runtime tests run on real FreeBSD.
