@@ -1,7 +1,9 @@
 # ADR 0004: Privilege boundary between skep-api and skep-agent
 
-- Status: **Proposed, awaiting review.** No code implements this yet.
-- Date: 2026-11-11
+- Status: Accepted
+- Date: 2026-11-11 (proposed and accepted)
+- Revisit: before 1.0, decide whether to split a minimal root helper out of
+  the agent (see Decision 2).
 
 ## Summary
 
@@ -18,8 +20,9 @@ exists:
 The boundary is the socket. Only typed operations cross it. There is no
 operation that takes a command, a shell string, or an arbitrary path.
 
-Seven decisions need your answer. They are listed under
-[Decisions for review](#decisions-for-review), each with a recommendation.
+The seven decisions that were put to review, and their outcomes, are under
+[Decisions](#decisions). What is implemented so far is under
+[Implementation status](#implementation-status).
 
 ## Context
 
@@ -57,7 +60,7 @@ What the boundary is meant to hold against:
 What it is not meant to hold against: an attacker who already has root on
 the host, and a compromised agent. Both own the node by definition.
 
-## Proposal
+## Decision
 
 ### Processes
 
@@ -106,10 +109,13 @@ unprivileged client of the same socket; it is not designed here.
   makes no compatibility promise to third parties.
 - The agent limits request size, concurrency, and time per request.
 
-Peer credentials are read with `LOCAL_PEERCRED` on FreeBSD and
-`SO_PEERCRED` on Linux, both through `golang.org/x/sys/unix`. I have not yet
-run this on FreeBSD from Go. It is the first thing to prove on `hearst`, and
-the design depends on it.
+Peer credentials are read with `LOCAL_PEERCRED` (`struct xucred`) on
+FreeBSD and `SO_PEERCRED` on Linux, both through `golang.org/x/sys/unix`.
+This was proven on FreeBSD 15.1-RELEASE-p6 before the ADR was accepted: a
+root server allowed UIDs 0 and 1001 and denied 65534, and a `0660` socket
+in a `0750` directory refused `connect(2)` from a user outside its group.
+The code is `internal/peercred`; the probe and its recorded output are in
+`tests/integration/peercred`.
 
 ### What may cross the boundary
 
@@ -137,6 +143,14 @@ Rules for every operation:
    allow-listed there. That configuration is not editable through the API.
 5. **Commands are built from typed values**, with `exec.Command` and
    explicit argument lists, as discovery already does.
+6. **Privileged OS calls live in one package behind an interface.** Every
+   call that needs root goes through a single internal package (working
+   name `internal/hostops`), created with the first privileged operation.
+   The rest of the agent depends on its interface, not on the calls. This
+   keeps the root-only code small and reviewable, and it is the seam along
+   which a minimal root helper can be split out later without redesign
+   (Decision 2). Read-only discovery needs no privileges and stays in
+   `internal/hardware`.
 
 ### What a compromised API can and cannot do
 
@@ -153,8 +167,8 @@ the agent's configured set, cut the protected management interface, or
 erase the agent's record of what was done.
 
 That is a real reduction, from "root on the host" to "control of
-Skep-managed resources", but it is not immunity. Decision 4 covers whether
-to go further.
+Skep-managed resources", but it is not immunity. Decision 4 records when
+this is tightened.
 
 ### Identity and audit across the boundary
 
@@ -162,11 +176,22 @@ Every request to the agent carries metadata set by the API: the actor's
 user ID and name, the request ID, the source address, and the idempotency
 key if any.
 
-- The agent records this with each task. It labels the actor as *asserted
-  by the API*, because the agent cannot verify it.
+- **The actor is mandatory.** The agent rejects any operation that arrives
+  without one, and the schema enforces it: `actor_id` and `actor_name` are
+  `NOT NULL` and non-empty in both `tasks` and the agent's `audit_log`.
+  Work the agent starts itself uses the actor `system`.
+- The agent records the actor with each task and in its audit log. It is
+  the actor *as asserted by the API*; the agent cannot verify it.
 - The agent does not make authorization decisions from it. RBAC lives in
   the API.
-- The agent also records the *verified* peer: the UID read from the socket.
+- The agent also records the *verified* peer: the UID read from the socket
+  (`audit_log.peer_uid`, also mandatory).
+- **Multi-node is the trigger for signed tokens.** Trusting an asserted
+  identity is acceptable while the only caller is a local process that the
+  kernel has identified. As soon as an agent accepts requests that
+  originate on another node, the asserted identity is replaced by a signed,
+  short-lived token that the agent verifies. That work is part of the
+  clustering milestone and must be done before a remote caller exists.
 
 Audit is written on both sides. The API records authentication events and
 authorization decisions, including denials that never reach the agent. The
@@ -193,9 +218,10 @@ would need a group-writable directory for the journal files and would let a
 compromised API rewrite desired state directly, bypassing every check in
 the agent.
 
-**Consequence for existing work:** migration `0001` puts `users`, `roles`,
-and `audit_log` in the same file as node state. Under this proposal they
-move to a separate migration set for `api.db`. See Decision 1.
+The two schemas are separate migration sets, `migrations/sqlite/agent` and
+`migrations/sqlite/api`, each with its own version history. A unit test
+(`TestDatabasesDoNotOverlap`) fails if an identity table appears in the
+agent's schema or a node-state table appears in both.
 
 ### Tasks
 
@@ -238,28 +264,30 @@ agent gets no network listener until that exists.
 3. Add authentication and TLS to `skep-api`.
 4. Only then add the first state-changing operation.
 
-Steps 1 and 2 change no behaviour visible to an API client.
+Steps 1 and 2 change no behaviour visible to an API client. Steps 1 to 3
+are Milestone 4, "API split, authentication, and TLS". It comes before the
+first frontend, which needs a login, and no VM work happens before it.
 
 ## Alternatives considered
 
 **A. One process, as root (what 0.1.0 does).** Simplest. Rejected: it puts
 network parsing and root in the same address space.
 
-**B. Unprivileged API and root agent (this proposal).**
+**B. Unprivileged API and root agent (chosen).**
 
 **C. Three processes: unprivileged API, unprivileged agent, and a minimal
 root helper.** The smallest possible root code. Not recommended now: almost
 everything the agent does needs root, so the helper would duplicate the
 agent's operation set behind a second protocol. The typed operation layer
 in B is the same seam, so C remains possible later for specific operations
-without redesign.
+without redesign. To be revisited before 1.0.
 
 **D. An unprivileged agent using delegated rights**, such as `zfs allow`
 for storage and devfs rules for the vmm devices. Attractive, but partial:
 bridge, tap, and jail management still need root, so the agent would need a
 root path anyway. Better treated as hardening once each delegation is
-proven on FreeBSD 15.1. I have not verified how far unprivileged bhyve goes
-on 15.1 and am not assuming it.
+proven on FreeBSD 15.1. How far unprivileged bhyve goes on 15.1 has not
+been verified and is not assumed.
 
 **E. Unprivileged API calling `sudo` or `doas` with an allow-list of
 commands.** Rejected. It makes command lines the interface, which is
@@ -272,41 +300,47 @@ versioning story and uses gob. HTTP and JSON over the socket need nothing
 outside the standard library, reuse the middleware and tests that already
 exist, and can be exercised with `curl --unix-socket`.
 
-## Decisions for review
+## Decisions
 
-1. **Split the database in two, and restructure migration `0001` now?**
-   Recommended: yes. Nothing is deployed and PR 1 is not merged, so the
-   migration can be split into `migrations/sqlite/agent` and
-   `migrations/sqlite/api` without breaking the "never edit an applied
-   migration" rule for anyone.
-2. **Agent as root, or go straight to a smaller root helper (C)?**
-   Recommended: root agent now. Revisit per operation once the operation
-   set is known.
-3. **HTTP and JSON over a Unix socket, or something else (F)?**
-   Recommended: HTTP and JSON.
-4. **Should the agent trust the API's asserted identity?** Recommended:
-   yes for now, with the confinement rules above as the limit on damage.
-   The stronger option is for the agent to verify a signed, short-lived
-   token per request, so that a compromised API cannot invent actors. That
-   moves key management and part of authorization into the root process,
-   and I would rather add it deliberately later than half-build it now.
-5. **Audit on both sides, as described?** Recommended: yes. The
-   alternative is a single log in the API, which a compromised API could
-   rewrite.
-6. **Dev mode: two processes, or one combined process?** Recommended: two,
-   started together by `make run-dev`, with the socket under `.skep-dev/`.
-   A combined mode would be more convenient, but it would mean the boundary
-   is never exercised in daily development.
-7. **Service account name.** Recommended: user and group `skep`.
+Accepted on 2026-11-11 with these outcomes.
 
-One related point that is not part of this ADR but that you should decide:
-**no milestone currently contains authentication.** Milestone 2 is
-persistence, tasks, and audit; the first state-changing endpoint arrives
-with Milestone 5. I recommend steps 1 to 3 of the migration above land
-between Milestones 2 and 5, and that the milestone list in `CLAUDE.md` say
-so.
+1. **Two databases.** Accepted. `agent.db` and `api.db` are separate, and
+   migration `0001` was split before the first release, while nothing was
+   deployed.
+2. **Root agent, for now.** Accepted, with a condition: all privileged OS
+   calls stay in one internal package behind an interface, so a minimal
+   root helper (alternative C) can be split out later. **Revisit before
+   1.0.**
+3. **HTTP and JSON over a Unix socket.** Accepted.
+4. **Trust the API's asserted identity, for now.** Accepted, with
+   conditions: the actor field is mandatory, it is recorded in the agent's
+   audit log, and multi-node operation is the trigger for moving to signed
+   tokens that the agent verifies.
+5. **Audit on both sides.** Accepted.
+6. **Two processes in dev mode.** Accepted.
+7. **Service account `skep`.** Accepted, for both the user and the group.
 
-## Consequences if accepted
+Authentication had no milestone when this was proposed. Milestone 4, "API
+split, authentication, and TLS", was added to `CLAUDE.md` as part of
+accepting this ADR.
+
+## Implementation status
+
+| Part | State |
+|---|---|
+| Separate agent and API schemas, mandatory actor, `peer_uid` in the agent's audit log | Done (0.1.0) |
+| Agent database at `<data_dir>/agent/agent.db`, private directory | Done (0.1.0) |
+| Peer credential reading (`internal/peercred`) | Done and validated on FreeBSD; not yet used by the agent |
+| `skep-api` binary, agent Unix socket, `/internal/v1` | Milestone 4 |
+| `skep` account, rc.d services, socket under `/var/run/skep` | Milestone 4 |
+| Authentication, sessions, RBAC, TLS | Milestone 4 |
+| Privileged operations package (`internal/hostops`) and host confinement configuration | With the first privileged operation |
+| Signed per-request tokens | Clustering milestone, before any remote caller |
+
+Until Milestone 4 lands, the agent still serves the read-only API itself on
+loopback, as described in `docs/security/overview.md`.
+
+## Consequences
 
 - Two rc.d services, two configuration files, and one service account to
   create at install time.
@@ -317,14 +351,22 @@ so.
 - Milestone 2's task engine and operation audit are built in the agent,
   against `agent.db`. User, role, and session storage are built in the API,
   against `api.db`.
-- `docs/security/overview.md` and `docs/architecture/overview.md` are
-  updated when this is accepted, not before.
+- Two audit logs have to be read together to reconstruct an incident. The
+  request ID is recorded in both and links them.
 
-## To verify on FreeBSD before building on this
+## FreeBSD validation
 
-All pending FreeBSD validation:
+Validated on FreeBSD 15.1-RELEASE-p6:
 
-- Reading peer credentials from a Unix socket in Go on FreeBSD 15.1.
-- Socket and directory permissions behaving as described under
-  `/var/run`, including after a reboot clears it.
+- Reading peer credentials from a Unix socket in Go, as an unprivileged
+  user and as root.
+- A UID allow-list enforced from those credentials.
+- Filesystem permissions on the socket and its directory refusing a user
+  outside the group.
+
+Pending FreeBSD validation:
+
+- The same checks with a dedicated `skep` account and group, which does
+  not exist on the lab VM yet.
+- A socket under `/var/run`, including after a reboot clears it.
 - Running `skep-api` under rc.d as the `skep` user.

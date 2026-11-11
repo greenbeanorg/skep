@@ -51,28 +51,51 @@ configuration file are rejected.
 `internal_error` with a request ID. The cause is written to the log only.
 The health endpoint reports that the database is unreachable, not why.
 
-**Local state permissions.** The data directory is created `0700` and the
-database file `0600`.
+**Local state permissions.** The directory holding the agent database is
+created `0700` and the database file `0600`.
+
+**Separate databases.** Node state (`agent.db`) and identity data (`api.db`)
+are separate databases with separate schemas, so the future unprivileged API
+process never needs to open the agent's state. Only `agent.db` is opened in
+0.1.0.
 
 **Schema-level rules.** `users.password_hash` only accepts Argon2id hashes in
-PHC format, so a plaintext password cannot be stored by mistake. The
-`audit_log` table rejects updates and deletes. No user accounts exist in
-0.1.0 and nothing writes to the audit log yet.
+PHC format, so a plaintext password cannot be stored by mistake. Both
+`audit_log` tables reject updates and deletes. In the agent's schema, tasks
+and audit entries cannot be stored without an actor, and audit entries
+cannot be stored without the caller's UID. No user accounts exist in 0.1.0
+and nothing writes to either audit log yet.
 
 **HTTP hardening.** Read, write, and idle timeouts and a header size limit
 are set. Responses carry `X-Content-Type-Options: nosniff`,
 `Cache-Control: no-store`, and a deny-all `Content-Security-Policy`.
 
-## Open items to settle before state-changing endpoints
+## The privilege boundary
 
-- **Privilege separation.** The agent currently needs no privileges, and was
-  validated on FreeBSD as an unprivileged user. Managing bhyve, ZFS, and
-  networking will need privileges. The boundary between an unprivileged API
-  process and a privileged host agent has to be designed and reviewed before
-  the first state-changing operation is built.
-- **Authentication and TLS** for the API, and mutual TLS between nodes.
-- **Audit log retention.** The log is strictly append-only today. Retention
-  and archiving need a design that does not weaken that guarantee.
+[ADR 0004](../decisions/0004-privilege-boundary.md) is accepted. It splits
+the system into an unprivileged `skep-api`, which is the only network
+listener, and a root `skep-agent` that accepts typed operations over a Unix
+socket and checks the caller's UID from the kernel.
+
+0.1.0 implements the parts of that decision that concern stored data (the
+database split, the mandatory actor) and the peer-credential code, which
+was validated on FreeBSD. It does **not** yet implement the split itself.
+Until Milestone 4, the agent still serves the read-only API on loopback
+without authentication, exactly as described at the top of this document.
+
+## Open items
+
+- **Authentication, sessions, RBAC, and TLS** for the API: Milestone 4. No
+  state-changing endpoint is added before it.
+- **Host confinement configuration** for the agent (which pools,
+  interfaces, and devices Skep may touch): designed with the first
+  privileged operation.
+- **Root helper.** Whether to split a minimal root helper out of the agent
+  is revisited before 1.0.
+- **Signed per-request tokens** replace the API-asserted identity before
+  any agent accepts requests from another node.
+- **Audit log retention.** Both logs are strictly append-only today.
+  Retention and archiving need a design that does not weaken that.
 - **Secrets storage.** Nothing secret is stored yet. Secret encryption is
   required before anything is.
 

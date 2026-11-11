@@ -172,13 +172,14 @@ Adjust the layout when implementation shows a better boundary, and record substa
 1. **Foundation:** module, config, logging, agent, health, system and hardware discovery, API base, unit tests.
 2. **Persistence:** SQLite, migrations, node identity, task engine and history, audit framework.
 3. **Native FreeBSD integration:** bhyve, vmm, ZFS, and QEMU detection; ZFS pool inventory; rc.d service; native integration tests.
-4. **First frontend:** original dashboard with Dashboard, Cluster, Nodes, VMs, Containers, Storage, Networking, HA, Backups, Monitoring, Users and Permissions, and Settings sections.
-5. **First working VM:** schema, bhyve adapter, disks, lifecycle, status, console. Only enable features verified on the target release.
-6. **Storage and containers:** ZFS management, jails, snapshots, clones, resource monitoring.
-7. **Clustering:** finish the Raft vs Corosync evaluation first.
-8. **HA and backup:** safe fencing, recovery, DR.
-9. **Installer:** ZFS-root and UFS-root profiles.
-10. **Production readiness:** security review, upgrades, hardware qualification, performance, release engineering.
+4. **API split, authentication, and TLS:** `skep-api` as an unprivileged process, the agent behind a Unix socket with peer-credential checks, the `skep` service account, authentication, sessions, RBAC, and TLS (ADR 0004). The frontend needs a login, and no VM work happens before this milestone.
+5. **First frontend:** original dashboard with Dashboard, Cluster, Nodes, VMs, Containers, Storage, Networking, HA, Backups, Monitoring, Users and Permissions, and Settings sections.
+6. **First working VM:** schema, bhyve adapter, disks, lifecycle, status, console. Only enable features verified on the target release.
+7. **Storage and containers:** ZFS management, jails, snapshots, clones, resource monitoring.
+8. **Clustering:** finish the Raft vs Corosync evaluation first.
+9. **HA and backup:** safe fencing, recovery, DR.
+10. **Installer:** ZFS-root and UFS-root profiles.
+11. **Production readiness:** security review, upgrades, hardware qualification, performance, release engineering.
 
 Don't build speculative features just because they appear in a later milestone.
 

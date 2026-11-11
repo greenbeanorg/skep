@@ -45,8 +45,10 @@ resolves the node ID, and wires the layers together.
   about the API or the database.
 
 Because the HTTP layer depends only on `api.Backend`, moving the API into a
-separate `skep-api` process later means writing a new `Backend` that calls
-agents over the network. The handlers do not change.
+separate `skep-api` process means writing a new `Backend` that calls the
+agent over its Unix socket. The handlers do not change. That split is
+decided in [ADR 0004](../decisions/0004-privilege-boundary.md) and is
+Milestone 4; until then the agent serves the read-only API itself.
 
 ## Host discovery
 
@@ -85,20 +87,36 @@ share one pass.
 
 ## Persistence
 
-SQLite holds local node state, using the pure-Go `modernc.org/sqlite` driver
+SQLite holds local state, using the pure-Go `modernc.org/sqlite` driver
 ([ADR 0001](../decisions/0001-go-toolchain-and-sqlite-driver.md)). It is not
 the cluster database.
 
-- Migrations are plain SQL files in `migrations/sqlite/`, named
-  `NNNN_name.sql`, embedded in the binary, and applied at startup, each in
-  its own transaction. Applied versions and their SHA-256 checksums are
-  recorded in `schema_migrations`.
+There are two databases, each owned by one process and closed to the other
+([ADR 0004](../decisions/0004-privilege-boundary.md)):
+
+| Database | Owner | Migrations | Holds |
+|---|---|---|---|
+| `<data_dir>/agent/agent.db` | `skep-agent` | `migrations/sqlite/agent` | Node identity, VMs, disks, networks, containers, storage, interfaces, tasks, task events, operation audit |
+| `<data_dir>/api/api.db` | `skep-api` | `migrations/sqlite/api` | Users, roles, access audit |
+
+In 0.1.0 only the agent database is opened. `skep-api` does not exist yet;
+its schema is defined and tested so that the split is in place from the
+first release.
+
+- Migrations are plain SQL files named `NNNN_name.sql`, embedded in the
+  binary, and applied at startup, each in its own transaction. Applied
+  versions and their SHA-256 checksums are recorded in `schema_migrations`.
+  The two sets are versioned independently.
 - The runner refuses to start when an applied migration was edited
   afterwards, or when the database is newer than the binary.
-- The database directory is created with mode `0700` and the file with mode
-  `0600`.
+- The directory holding a database is created with mode `0700` and the file
+  with mode `0600`. The data directory above it is created `0755`, because
+  the two processes share it and run as different users.
 - The node ID is a random UUID generated on first start and stored in the
   `nodes` table (`is_local = 1`). It does not change when the hostname does.
+- Tasks and operation audit entries carry a mandatory actor, as asserted by
+  the API, and the audit log also records the kernel-verified UID of the
+  caller.
 
 ### Desired and observed state
 
@@ -106,7 +124,7 @@ Desired state and observed state never share a column. In every table,
 `desired_*` columns and configuration columns hold what an administrator
 asked for; `observed_*` columns hold what the agent last saw, with
 `observed_at` recording when. History is kept separately in `task_events`
-and the append-only `audit_log`.
+and the append-only `audit_log` tables.
 
 In 0.1.0 only `schema_migrations` and the local row in `nodes` are written.
 The other tables define the schema that later milestones build on. Expect
@@ -143,12 +161,14 @@ imported, both as an unprivileged user and as root.
 | `zpool list` with no pools | Validated |
 | `zpool list` with one healthy pool, including sizes and percentages | Validated (`skeptest`, unprivileged and root) |
 | Discovery leaves the pool untouched | Validated (`zpool list` before and after) |
-| Database directory `0700`, file `0600` | Validated (unprivileged and root) |
+| Database directory `0700`, file `0600`, shared data directory `0755` | Validated (unprivileged and root) |
+| Unix socket peer credentials (`LOCAL_PEERCRED`), UID allow-list, socket file permissions | Validated (see `tests/integration/peercred`) |
 | A degraded or faulted pool; a pool reporting `-` for fragmentation | **Pending FreeBSD validation** (parser tested against a synthetic fixture) |
 | ZFS `unavailable` when `zfs.ko` is not loaded | **Pending FreeBSD validation** (needs the pool exported and zfs unloaded) |
 | QEMU detection and version parsing | **Pending FreeBSD validation** (QEMU is not installed on the lab VM) |
 | Core count on a host with SMT | **Pending FreeBSD validation** (the lab VM has no SMT) |
 | Running under rc.d as a service | **Pending FreeBSD validation** (no rc.d script yet) |
+| Agent socket with a dedicated `skep` account, under `/var/run` | **Pending FreeBSD validation** (Milestone 4) |
 | ZFS-root host | **Pending FreeBSD validation** (the lab VM is UFS-root) |
 | arm64 | Not a target yet |
 

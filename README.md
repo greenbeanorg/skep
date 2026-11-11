@@ -22,7 +22,7 @@ database schema. It cannot create or manage anything yet.
 | `skep-agent` | Starts, discovers the host, serves the API, shuts down cleanly |
 | Host discovery | Read-only: CPU, memory, OS, bhyve, QEMU, ZFS (FreeBSD native, Linux dev mode) |
 | API | `GET /api/v1/health`, `GET /api/v1/system`, `GET /api/v1/nodes/{id}/hardware` |
-| Database | SQLite with versioned migrations and a stable node ID |
+| Database | SQLite with versioned migrations and a stable node ID; separate schemas for the agent and the future API |
 | Not yet | VM or jail management, storage or network changes, authentication, TLS, UI, CLI, clustering |
 
 ## Platforms
@@ -114,7 +114,7 @@ file, environment variables, command-line flags.
 | Listen address | `api.listen_address` | `SKEP_LISTEN` | `-listen` | `127.0.0.1:8765` |
 | Allow non-loopback bind | `api.allow_insecure_remote` | | | `false` |
 | State directory | `data_dir` | `SKEP_DATA_DIR` | `-data-dir` | `/var/db/skep` / `./.skep-dev` |
-| Database file | `database.path` | | | `<data_dir>/skep.db` |
+| Agent database file | `database.path` | | | `<data_dir>/agent/agent.db` |
 | Log level | `log.level` | `SKEP_LOG_LEVEL` | `-log-level` | `info` / `debug` |
 | Log format | `log.format` | `SKEP_LOG_FORMAT` | `-log-format` | `json` / `text` |
 | Command timeout | `discovery.command_timeout` | | | `5s` |
@@ -143,7 +143,9 @@ internal/hardware/     read-only host discovery (FreeBSD native, Linux dev)
 internal/database/     SQLite access, migration runner, node identity
 internal/config/       typed configuration
 internal/logging/      log/slog setup
-migrations/sqlite/     versioned SQL migrations (embedded in the binary)
+internal/peercred/     Unix socket peer credentials (for the agent socket; not used yet)
+migrations/sqlite/     versioned SQL migrations, one set per database (agent, api)
+tests/integration/     manual probes that run on a real FreeBSD host
 pkg/models/            public API data types
 pkg/version/           build metadata
 api/openapi.yaml       API description
@@ -158,7 +160,7 @@ docs/                  architecture, security, and decision records
   [0001 Go toolchain and SQLite driver](docs/decisions/0001-go-toolchain-and-sqlite-driver.md),
   [0002 Discovery abstraction](docs/decisions/0002-discovery-abstraction.md),
   [0003 Read-only discovery](docs/decisions/0003-read-only-discovery.md),
-  [0004 Privilege boundary (proposed)](docs/decisions/0004-privilege-boundary.md)
+  [0004 Privilege boundary](docs/decisions/0004-privilege-boundary.md)
 
 ## Trademarks
 
