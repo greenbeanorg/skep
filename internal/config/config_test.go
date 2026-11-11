@@ -43,7 +43,7 @@ func TestLoadProductionDefaults(t *testing.T) {
 	if cfg.DataDir != DefaultDataDir {
 		t.Errorf("data dir = %q", cfg.DataDir)
 	}
-	if cfg.Database.Path != filepath.Join(DefaultDataDir, DatabaseFileName) {
+	if cfg.Database.Path != filepath.Join(DefaultDataDir, "agent", "agent.db") {
 		t.Errorf("database path = %q", cfg.Database.Path)
 	}
 	if cfg.Log.Level != "info" || cfg.Log.Format != "json" {
@@ -101,7 +101,7 @@ func TestPrecedenceFileEnvOverrides(t *testing.T) {
 	if cfg.API.ReadTimeout.Std() != 3*time.Second || cfg.Discovery.CacheTTL.Std() != time.Minute {
 		t.Errorf("durations not parsed: %+v", cfg)
 	}
-	if cfg.Database.Path != filepath.Join("/from/file", DatabaseFileName) {
+	if cfg.Database.Path != filepath.Join("/from/file", "agent", "agent.db") {
 		t.Errorf("database path = %q", cfg.Database.Path)
 	}
 }

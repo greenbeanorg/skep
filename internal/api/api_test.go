@@ -153,11 +153,11 @@ func TestNodeHardwareErrors(t *testing.T) {
 func TestInternalErrorsAreNotLeaked(t *testing.T) {
 	var logs bytes.Buffer
 	b := newBackend()
-	b.systemErr = errors.New("open /var/db/skep/skep.db: permission denied")
+	b.systemErr = errors.New("open /var/db/skep/agent/agent.db: permission denied")
 
 	rec := do(t, b, http.MethodGet, "/api/v1/system", &logs)
 	body := wantError(t, rec, http.StatusInternalServerError, CodeInternal)
-	if strings.Contains(body.Message, "skep.db") {
+	if strings.Contains(body.Message, "agent.db") {
 		t.Errorf("internal error text leaked to the client: %q", body.Message)
 	}
 	if !strings.Contains(logs.String(), "permission denied") {

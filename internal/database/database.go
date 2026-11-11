@@ -9,7 +9,9 @@ package database
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
+	"io/fs"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -21,10 +23,14 @@ import (
 
 // Open opens (creating if necessary) the SQLite database at path.
 //
-// The parent directory is created with mode 0700 and the database file with
-// mode 0600: it will hold password hashes and audit data. Foreign keys are
-// enforced, the journal runs in WAL mode, and writers wait up to five
-// seconds for a lock.
+// The directory that holds the file is created with mode 0700 and the file
+// with mode 0600, so only the owning process can read it. Directories above
+// it are created with mode 0755: the data directory is shared by the agent
+// and the API, which run as different users and each keep a private
+// subdirectory. Existing directories and files are left as they are.
+//
+// Foreign keys are enforced, the journal runs in WAL mode, and writers wait
+// up to five seconds for a lock.
 func Open(ctx context.Context, path string) (*sql.DB, error) {
 	if path == "" {
 		return nil, fmt.Errorf("database: path must not be empty")
@@ -33,7 +39,11 @@ func Open(ctx context.Context, path string) (*sql.DB, error) {
 	if err != nil {
 		return nil, fmt.Errorf("database: resolve %s: %w", path, err)
 	}
-	if err := os.MkdirAll(filepath.Dir(abs), 0o700); err != nil {
+	dir := filepath.Dir(abs)
+	if err := os.MkdirAll(filepath.Dir(dir), 0o755); err != nil {
+		return nil, fmt.Errorf("database: create directory: %w", err)
+	}
+	if err := os.Mkdir(dir, 0o700); err != nil && !errors.Is(err, fs.ErrExist) {
 		return nil, fmt.Errorf("database: create directory: %w", err)
 	}
 	// Create the file ourselves so its permissions never depend on umask

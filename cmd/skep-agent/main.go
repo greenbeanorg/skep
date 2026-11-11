@@ -98,7 +98,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	}
 	defer db.Close()
 
-	applied, err := database.Migrate(ctx, db, migrations.SQLite())
+	applied, err := database.Migrate(ctx, db, migrations.Agent())
 	if err != nil {
 		return err
 	}

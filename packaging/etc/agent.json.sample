@@ -13,7 +13,7 @@
     "format": "json"
   },
   "database": {
-    "path": "/var/db/skep/skep.db"
+    "path": "/var/db/skep/agent/agent.db"
   },
   "discovery": {
     "command_timeout": "5s",

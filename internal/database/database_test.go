@@ -6,8 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
 	"strings"
+	"syscall"
 	"testing"
 	"testing/fstest"
 
@@ -16,7 +16,7 @@ import (
 
 func openTestDB(t *testing.T) *sql.DB {
 	t.Helper()
-	db, err := Open(context.Background(), filepath.Join(t.TempDir(), "state", "skep.db"))
+	db, err := Open(context.Background(), filepath.Join(t.TempDir(), "state", "agent.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -24,13 +24,45 @@ func openTestDB(t *testing.T) *sql.DB {
 	return db
 }
 
+// migratedDB returns a database with the agent schema applied.
 func migratedDB(t *testing.T) *sql.DB {
 	t.Helper()
 	db := openTestDB(t)
-	if _, err := Migrate(context.Background(), db, migrations.SQLite()); err != nil {
+	if _, err := Migrate(context.Background(), db, migrations.Agent()); err != nil {
 		t.Fatal(err)
 	}
 	return db
+}
+
+// migratedAPIDB returns a database with the API schema applied.
+func migratedAPIDB(t *testing.T) *sql.DB {
+	t.Helper()
+	db := openTestDB(t)
+	if _, err := Migrate(context.Background(), db, migrations.API()); err != nil {
+		t.Fatal(err)
+	}
+	return db
+}
+
+func tableNames(t *testing.T, db *sql.DB) []string {
+	t.Helper()
+	rows, err := db.Query(`SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var names []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			t.Fatal(err)
+		}
+		names = append(names, name)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	return names
 }
 
 func mustExec(t *testing.T, db *sql.DB, query string, args ...any) {
@@ -41,81 +73,124 @@ func mustExec(t *testing.T, db *sql.DB, query string, args ...any) {
 }
 
 func TestOpenCreatesPrivateFiles(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), "state")
-	path := filepath.Join(dir, "skep.db")
+	// Layout used in production: <data dir>/agent/agent.db.
+	dataDir := filepath.Join(t.TempDir(), "data")
+	dir := filepath.Join(dataDir, "agent")
+	path := filepath.Join(dir, "agent.db")
 	db, err := Open(context.Background(), path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer db.Close()
 
-	for p, want := range map[string]os.FileMode{dir: 0o700, path: 0o600} {
+	mode := func(p string) os.FileMode {
+		t.Helper()
 		fi, err := os.Stat(p)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got := fi.Mode().Perm(); got != want {
-			t.Errorf("%s has mode %o, want %o", p, got, want)
-		}
+		return fi.Mode().Perm()
+	}
+	// The directory holding the database and the file itself are private.
+	if got := mode(dir); got != 0o700 {
+		t.Errorf("%s has mode %o, want 700", dir, got)
+	}
+	if got := mode(path); got != 0o600 {
+		t.Errorf("%s has mode %o, want 600", path, got)
+	}
+	// The data directory above it is shared by the agent and the API, which
+	// run as different users, so it must not be created owner-only.
+	umask := syscall.Umask(0)
+	syscall.Umask(umask)
+	if got, want := mode(dataDir), os.FileMode(0o755&^umask); got != want {
+		t.Errorf("%s has mode %o, want %o", dataDir, got, want)
+	}
+
+	// An existing directory is left as it is.
+	if err := os.Chmod(dir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	db2, err := Open(context.Background(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db2.Close()
+	if got := mode(dir); got != 0o750 {
+		t.Errorf("Open changed an existing directory to mode %o", got)
 	}
 
 	var fk int
 	if err := db.QueryRow(`PRAGMA foreign_keys`).Scan(&fk); err != nil || fk != 1 {
 		t.Errorf("foreign_keys = %d, %v; want 1", fk, err)
 	}
-	var mode string
-	if err := db.QueryRow(`PRAGMA journal_mode`).Scan(&mode); err != nil || mode != "wal" {
-		t.Errorf("journal_mode = %q, %v; want wal", mode, err)
+	var journal string
+	if err := db.QueryRow(`PRAGMA journal_mode`).Scan(&journal); err != nil || journal != "wal" {
+		t.Errorf("journal_mode = %q, %v; want wal", journal, err)
 	}
 	if _, err := Open(context.Background(), ""); err == nil {
 		t.Error("an empty path must be rejected")
 	}
 }
 
-func TestMigrateCreatesSchema(t *testing.T) {
+func TestMigrateCreatesAgentSchema(t *testing.T) {
 	ctx := context.Background()
 	db := openTestDB(t)
 
-	applied, err := Migrate(ctx, db, migrations.SQLite())
+	applied, err := Migrate(ctx, db, migrations.Agent())
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(applied) == 0 || applied[0].Version != 1 || applied[0].Name != "initial_schema" {
 		t.Fatalf("applied = %+v", applied)
 	}
-
-	rows, err := db.Query(`SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer rows.Close()
-	var got []string
-	for rows.Next() {
-		var name string
-		if err := rows.Scan(&name); err != nil {
-			t.Fatal(err)
-		}
-		got = append(got, name)
-	}
-	sort.Strings(got)
+	got := tableNames(t, db)
 	want := []string{
-		"audit_log", "containers", "network_interfaces", "nodes", "roles",
-		"schema_migrations", "storage_pools", "storage_volumes", "system_config",
-		"task_events", "tasks", "users", "virtual_machines", "vm_disks", "vm_networks",
+		"audit_log", "containers", "network_interfaces", "nodes", "schema_migrations",
+		"storage_pools", "storage_volumes", "system_config", "task_events", "tasks",
+		"virtual_machines", "vm_disks", "vm_networks",
 	}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Errorf("tables = %v\nwant     %v", got, want)
 	}
-
 	if v, err := SchemaVersion(ctx, db); err != nil || v != len(applied) {
 		t.Errorf("SchemaVersion = %d, %v; want %d", v, err, len(applied))
+	}
+}
+
+func TestMigrateCreatesAPISchema(t *testing.T) {
+	got := tableNames(t, migratedAPIDB(t))
+	want := []string{"audit_log", "roles", "schema_migrations", "users"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("tables = %v\nwant     %v", got, want)
+	}
+}
+
+// TestDatabasesDoNotOverlap guards the privilege boundary in ADR 0004: the
+// agent's database holds no identity data and the API's database holds no
+// node state. Each side keeps its own audit log.
+func TestDatabasesDoNotOverlap(t *testing.T) {
+	agent := tableNames(t, migratedDB(t))
+	api := tableNames(t, migratedAPIDB(t))
+	shared := map[string]bool{"schema_migrations": true, "audit_log": true}
+
+	inAPI := map[string]bool{}
+	for _, name := range api {
+		inAPI[name] = true
+	}
+	for _, name := range agent {
+		if inAPI[name] && !shared[name] {
+			t.Errorf("table %q exists in both agent.db and api.db", name)
+		}
+		if name == "users" || name == "roles" || name == "sessions" {
+			t.Errorf("identity table %q must not be in agent.db", name)
+		}
 	}
 }
 
 func TestMigrateIsIdempotent(t *testing.T) {
 	ctx := context.Background()
 	db := migratedDB(t)
-	again, err := Migrate(ctx, db, migrations.SQLite())
+	again, err := Migrate(ctx, db, migrations.Agent())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -203,35 +278,36 @@ func TestLoadMigrationsValidation(t *testing.T) {
 	}
 }
 
-// TestSchemaConstraints spot-checks the rules the schema must enforce.
-func TestSchemaConstraints(t *testing.T) {
+func wantConstraintError(t *testing.T, db *sql.DB, what, query string, args ...any) {
+	t.Helper()
+	if _, err := db.Exec(query, args...); err == nil {
+		t.Errorf("%s: statement succeeded, want a constraint error", what)
+	}
+}
+
+// TestAgentSchemaConstraints spot-checks the rules agent.db must enforce.
+func TestAgentSchemaConstraints(t *testing.T) {
 	db := migratedDB(t)
 	mustExec(t, db, `INSERT INTO nodes (id, name, is_local) VALUES ('n1', 'node1', 1)`)
 
-	mustFail := func(what, query string, args ...any) {
-		t.Helper()
-		if _, err := db.Exec(query, args...); err == nil {
-			t.Errorf("%s: statement succeeded, want a constraint error", what)
-		}
-	}
-
-	mustFail("second local node", `INSERT INTO nodes (id, name, is_local) VALUES ('n2', 'node2', 1)`)
-	mustFail("invalid task status", `INSERT INTO tasks (id, type, status) VALUES ('t0', 'x', 'done')`)
-	mustFail("vm on unknown node",
+	wantConstraintError(t, db, "second local node", `INSERT INTO nodes (id, name, is_local) VALUES ('n2', 'node2', 1)`)
+	wantConstraintError(t, db, "vm on unknown node",
 		`INSERT INTO virtual_machines (id, node_id, name, engine, cpu_count, memory_bytes) VALUES ('v0', 'nope', 'vm0', 'bhyve', 1, 1024)`)
-	mustFail("unknown hypervisor engine",
+	wantConstraintError(t, db, "unknown hypervisor engine",
 		`INSERT INTO virtual_machines (id, node_id, name, engine, cpu_count, memory_bytes) VALUES ('v0', 'n1', 'vm0', 'kvm', 1, 1024)`)
-	mustFail("invalid json", `INSERT INTO tasks (id, type, payload) VALUES ('t0', 'x', '{not json')`)
 
-	mustExec(t, db, `INSERT INTO roles (id, name) VALUES ('r1', 'admin')`)
-	mustFail("plaintext password",
-		`INSERT INTO users (id, username, password_hash, role_id) VALUES ('u0', 'root', 'hunter2', 'r1')`)
-	mustExec(t, db,
-		`INSERT INTO users (id, username, password_hash, role_id) VALUES ('u1', 'andy', '$argon2id$v=19$m=65536,t=3,p=4$c2FsdA$aGFzaA', 'r1')`)
-
+	// Tasks: every documented status is accepted, and the asserted actor is
+	// mandatory.
 	for _, status := range []string{"pending", "running", "succeeded", "failed", "cancelled", "interrupted"} {
-		mustExec(t, db, `INSERT INTO tasks (id, type, status) VALUES (?, 'x', ?)`, "task-"+status, status)
+		mustExec(t, db, `INSERT INTO tasks (id, type, status, actor_id, actor_name) VALUES (?, 'x', ?, 'u1', 'andy')`, "task-"+status, status)
 	}
+	wantConstraintError(t, db, "invalid task status",
+		`INSERT INTO tasks (id, type, status, actor_id, actor_name) VALUES ('t0', 'x', 'done', 'u1', 'andy')`)
+	wantConstraintError(t, db, "invalid json",
+		`INSERT INTO tasks (id, type, payload, actor_id, actor_name) VALUES ('t0', 'x', '{not json', 'u1', 'andy')`)
+	wantConstraintError(t, db, "task without actor", `INSERT INTO tasks (id, type) VALUES ('t0', 'x')`)
+	wantConstraintError(t, db, "task with empty actor",
+		`INSERT INTO tasks (id, type, actor_id, actor_name) VALUES ('t0', 'x', '', '')`)
 
 	// Desired and observed VM state are independent columns.
 	mustExec(t, db,
@@ -253,22 +329,49 @@ func TestSchemaConstraints(t *testing.T) {
 		t.Errorf("%d disk/network rows left after VM delete (err %v)", n, err)
 	}
 
-	// The audit log is append-only.
-	mustExec(t, db, `INSERT INTO audit_log (actor_name, action, outcome) VALUES ('system', 'agent.start', 'success')`)
-	mustFail("audit update", `UPDATE audit_log SET action = 'edited'`)
-	mustFail("audit delete", `DELETE FROM audit_log`)
+	// The operation audit needs both the asserted actor and the verified
+	// peer UID, and is append-only.
+	mustExec(t, db,
+		`INSERT INTO audit_log (actor_id, actor_name, peer_uid, action, outcome) VALUES ('u1', 'andy', 1001, 'vm.start', 'success')`)
+	wantConstraintError(t, db, "audit without actor",
+		`INSERT INTO audit_log (peer_uid, action, outcome) VALUES (1001, 'vm.start', 'success')`)
+	wantConstraintError(t, db, "audit with empty actor",
+		`INSERT INTO audit_log (actor_id, actor_name, peer_uid, action, outcome) VALUES ('', '', 1001, 'vm.start', 'success')`)
+	wantConstraintError(t, db, "audit without peer uid",
+		`INSERT INTO audit_log (actor_id, actor_name, action, outcome) VALUES ('u1', 'andy', 'vm.start', 'success')`)
+	wantConstraintError(t, db, "audit update", `UPDATE audit_log SET action = 'edited'`)
+	wantConstraintError(t, db, "audit delete", `DELETE FROM audit_log`)
+}
+
+// TestAPISchemaConstraints spot-checks the rules api.db must enforce.
+func TestAPISchemaConstraints(t *testing.T) {
+	db := migratedAPIDB(t)
+
+	mustExec(t, db, `INSERT INTO roles (id, name) VALUES ('r1', 'admin')`)
+	wantConstraintError(t, db, "plaintext password",
+		`INSERT INTO users (id, username, password_hash, role_id) VALUES ('u0', 'root', 'hunter2', 'r1')`)
+	wantConstraintError(t, db, "user with unknown role",
+		`INSERT INTO users (id, username, password_hash, role_id) VALUES ('u0', 'root', '$argon2id$v=19$m=65536,t=3,p=4$c2FsdA$aGFzaA', 'nope')`)
+	mustExec(t, db,
+		`INSERT INTO users (id, username, password_hash, role_id) VALUES ('u1', 'andy', '$argon2id$v=19$m=65536,t=3,p=4$c2FsdA$aGFzaA', 'r1')`)
+	wantConstraintError(t, db, "deleting a role that is in use", `DELETE FROM roles WHERE id = 'r1'`)
+
+	// A failed login for an unknown name has no actor ID.
+	mustExec(t, db, `INSERT INTO audit_log (actor_name, action, outcome) VALUES ('mallory', 'auth.login', 'denied')`)
+	wantConstraintError(t, db, "audit update", `UPDATE audit_log SET action = 'edited'`)
+	wantConstraintError(t, db, "audit delete", `DELETE FROM audit_log`)
 }
 
 func TestEnsureLocalNodeIsStable(t *testing.T) {
 	ctx := context.Background()
-	path := filepath.Join(t.TempDir(), "skep.db")
+	path := filepath.Join(t.TempDir(), "agent.db")
 
 	open := func() *sql.DB {
 		db, err := Open(ctx, path)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := Migrate(ctx, db, migrations.SQLite()); err != nil {
+		if _, err := Migrate(ctx, db, migrations.Agent()); err != nil {
 			t.Fatal(err)
 		}
 		return db

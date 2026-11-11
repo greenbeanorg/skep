@@ -181,7 +181,7 @@ func TestHealth(t *testing.T) {
 
 	bad := newTestService(t, Options{
 		Discoverer: &fakeDiscoverer{},
-		Database:   fakePinger{err: errors.New("disk I/O error at /var/db/skep/skep.db")},
+		Database:   fakePinger{err: errors.New("disk I/O error at /var/db/skep/agent/agent.db")},
 	}).Health(ctx)
 	if bad.Status != models.HealthDegraded || bad.Checks["database"].Status != models.HealthDegraded {
 		t.Errorf("health = %+v", bad)

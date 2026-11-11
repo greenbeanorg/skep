@@ -26,8 +26,10 @@ const (
 	DefaultDataDir = "/var/db/skep"
 	// DefaultDevDataDir is the state directory in dev mode.
 	DefaultDevDataDir = ".skep-dev"
-	// DatabaseFileName is the SQLite file created inside the data directory.
-	DatabaseFileName = "skep.db"
+	// AgentDatabasePath is the agent's SQLite file, relative to the data
+	// directory. The agent's state lives in its own subdirectory because
+	// skep-api will keep a separate database next to it (ADR 0004).
+	AgentDatabasePath = "agent/agent.db"
 )
 
 // Environment variable names.
@@ -100,7 +102,8 @@ type LogConfig struct {
 
 // DatabaseConfig configures the local SQLite database.
 type DatabaseConfig struct {
-	// Path is the SQLite file. It defaults to skep.db in the data directory.
+	// Path is the agent's SQLite file. It defaults to agent/agent.db in
+	// the data directory.
 	Path string `json:"path"`
 }
 
@@ -269,7 +272,7 @@ func (c *Config) applyDefaults() {
 	c.Log.Level = strings.ToLower(c.Log.Level)
 	c.Log.Format = strings.ToLower(c.Log.Format)
 	if c.Database.Path == "" {
-		c.Database.Path = filepath.Join(c.DataDir, DatabaseFileName)
+		c.Database.Path = filepath.Join(c.DataDir, filepath.FromSlash(AgentDatabasePath))
 	}
 	if c.Discovery.CommandTimeout == 0 {
 		c.Discovery.CommandTimeout = Duration(5 * time.Second)
