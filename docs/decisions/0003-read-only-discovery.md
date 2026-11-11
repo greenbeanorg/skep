@@ -46,8 +46,8 @@ loaded yet.
   instead of guessing.
 - Discovery is safe to run on any host at any time, including one that is
   not meant to become a Skep node, and safe to run unprivileged. It was
-  validated on FreeBSD 15.1 as an unprivileged user, with `kldstat` showing
-  vmm unloaded before and after.
+  validated on FreeBSD 15.1 as an unprivileged user and as root, with
+  `kldstat` and `zpool list` showing the same state before and after.
 - When operations that load modules or create resources are added, they go
   through the task engine with authentication and audit logging. They do not
   go into the discovery package.

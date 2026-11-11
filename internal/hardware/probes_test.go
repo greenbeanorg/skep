@@ -13,7 +13,7 @@ import (
 )
 
 func TestParseZpoolList(t *testing.T) {
-	pools, err := parseZpoolList([]byte(mustRead(t, "testdata/freebsd/zpool-list.txt")))
+	pools, err := parseZpoolList([]byte(mustRead(t, "testdata/freebsd/zpool-list-synthetic.txt")))
 	if err != nil {
 		t.Fatal(err)
 	}

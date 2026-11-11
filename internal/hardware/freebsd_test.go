@@ -85,6 +85,49 @@ func TestFreeBSDDiscoverHearst(t *testing.T) {
 	}
 }
 
+// TestFreeBSDDiscoverHearstVMMLoaded replays a second real capture from the
+// lab VM, taken with vmm loaded and the file-backed pool skeptest imported.
+func TestFreeBSDDiscoverHearstVMMLoaded(t *testing.T) {
+	run := &fakeRunner{outputs: map[string]string{
+		zpoolListCmd: mustRead(t, "testdata/freebsd/zpool-list-hearst.txt"),
+	}}
+	d := &freebsdDiscoverer{
+		sysctl: loadSysctlFixture(t, "testdata/freebsd/sysctl-15.1-hearst-vmm.txt"),
+		// As observed on hearst: /dev/vmmctl exists, /dev/vmm does not
+		// (no VM is running).
+		exists: fakeExists("/boot/kernel/vmm.ko", "/boot/kernel/zfs.ko", "/usr/sbin/bhyve", "/dev/vmmctl"),
+		find:   fakeFinder(map[string]string{"zpool": "/sbin/zpool"}),
+		run:    run,
+		now:    fixedNow,
+	}
+	hw, err := d.Discover(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	b := hw.Hypervisors.Bhyve
+	if b.Status != models.StatusAvailable || !b.VMMLoaded || !b.VMMLoadable ||
+		b.VMMDevice != "/dev/vmmctl" || b.BinaryPath != "/usr/sbin/bhyve" {
+		t.Errorf("bhyve = %+v", b)
+	}
+	z := hw.Storage.ZFS
+	if z.Status != models.StatusAvailable || len(z.Pools) != 1 || z.PoolsError != "" {
+		t.Fatalf("zfs = %+v", z)
+	}
+	p := z.Pools[0]
+	if p.Name != "skeptest" || p.SizeBytes != 2013265920 || p.AllocatedBytes != 122880 ||
+		p.FreeBytes != 2013143040 || p.Health != "ONLINE" {
+		t.Errorf("pool = %+v", p)
+	}
+	if p.FragmentationPercent == nil || *p.FragmentationPercent != 1 ||
+		p.CapacityPercent == nil || *p.CapacityPercent != 0 {
+		t.Errorf("pool percentages = %v %v", p.FragmentationPercent, p.CapacityPercent)
+	}
+	if len(hw.Warnings) != 0 {
+		t.Errorf("unexpected warnings: %v", hw.Warnings)
+	}
+}
+
 // TestFreeBSDDiscoverFullHost models a host with vmm loaded, pools imported,
 // and QEMU installed. The vmm sysctl, zpool, and QEMU values are synthetic.
 func TestFreeBSDDiscoverFullHost(t *testing.T) {
@@ -94,7 +137,7 @@ func TestFreeBSDDiscoverFullHost(t *testing.T) {
 	sysctl.values["hw.ncpu"] = "12"
 
 	run := &fakeRunner{outputs: map[string]string{
-		zpoolListCmd: mustRead(t, "testdata/freebsd/zpool-list.txt"),
+		zpoolListCmd: mustRead(t, "testdata/freebsd/zpool-list-synthetic.txt"),
 		"/usr/local/bin/qemu-system-x86_64 --version": mustRead(t, "testdata/qemu/system-version.txt"),
 		"/usr/local/bin/qemu-img --version":           mustRead(t, "testdata/qemu/img-version.txt"),
 	}}

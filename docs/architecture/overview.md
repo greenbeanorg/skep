@@ -122,28 +122,34 @@ text in dev mode.
 
 ## FreeBSD validation status
 
-Validated means it ran on FreeBSD 15.1-RELEASE-p6 (amd64, `hearst`) and the
-output was checked. Everything else is **pending FreeBSD validation**, even
-though it cross-compiles and passes unit tests on Linux.
+Validated means it ran on FreeBSD 15.1-RELEASE-p6 (amd64, UFS-root, `hearst`)
+and the output was checked. Everything else is **pending FreeBSD validation**,
+even though it cross-compiles and passes unit tests on Linux.
+
+Last validation run: 2026-11-11, in two host states. First with vmm not
+loaded and no pools; then with vmm loaded and the file-backed pool `skeptest`
+imported, both as an unprivileged user and as root.
 
 | Item | Status |
 |---|---|
-| Agent starts, migrates the database, serves all three endpoints, stops on SIGTERM | Validated (unprivileged user) |
+| Agent starts, migrates the database, serves all three endpoints, stops on SIGTERM | Validated (unprivileged and root) |
 | Hostname, OS name, version, release, kernel, architecture | Validated |
 | CPU model, core and thread counts | Validated (2 vCPU VM, no SMT) |
 | Total and available memory | Validated |
-| bhyve reported unavailable when vmm is not loaded and `vmm.ko` is present | Validated |
-| Discovery does not load vmm | Validated (`kldstat` before and after) |
+| bhyve `unavailable` when vmm is not loaded and `vmm.ko` is present | Validated |
+| bhyve `available` when vmm is loaded; `/dev/vmmctl` detected | Validated (unprivileged and root) |
+| Discovery does not load or unload kernel modules | Validated (`kldstat` before and after, both states) |
 | ZFS module detection and version | Validated |
 | `zpool list` with no pools | Validated |
-| Database directory `0700`, file `0600` | Validated |
-| bhyve reported available when vmm is loaded; `/dev/vmmctl` detection | **Pending FreeBSD validation** |
-| `zpool list` parsing with real pools | **Pending FreeBSD validation** (parser tested against a synthetic fixture) |
-| ZFS reported unavailable when `zfs.ko` is not loaded | **Pending FreeBSD validation** |
+| `zpool list` with one healthy pool, including sizes and percentages | Validated (`skeptest`, unprivileged and root) |
+| Discovery leaves the pool untouched | Validated (`zpool list` before and after) |
+| Database directory `0700`, file `0600` | Validated (unprivileged and root) |
+| A degraded or faulted pool; a pool reporting `-` for fragmentation | **Pending FreeBSD validation** (parser tested against a synthetic fixture) |
+| ZFS `unavailable` when `zfs.ko` is not loaded | **Pending FreeBSD validation** (needs the pool exported and zfs unloaded) |
 | QEMU detection and version parsing | **Pending FreeBSD validation** (QEMU is not installed on the lab VM) |
-| Core count on a host with SMT | **Pending FreeBSD validation** |
-| Running as root, and under rc.d | **Pending FreeBSD validation** (no rc.d script yet) |
-| UFS-root versus ZFS-root hosts | UFS-root validated; ZFS-root **pending FreeBSD validation** |
+| Core count on a host with SMT | **Pending FreeBSD validation** (the lab VM has no SMT) |
+| Running under rc.d as a service | **Pending FreeBSD validation** (no rc.d script yet) |
+| ZFS-root host | **Pending FreeBSD validation** (the lab VM is UFS-root) |
 | arm64 | Not a target yet |
 
 ## Known limitations
