@@ -153,7 +153,7 @@ Adjust the layout when implementation shows a better boundary, and record substa
 
 ## Development environment
 
-- Dev machine: **`merrick`** (10.79.20.200, Debian 13 VM on swearengen). Claude Code runs here; all builds, unit tests, and cross-compiles happen here.
+- Dev machine: **`merrick`** (10.79.20.80, Debian 13 VM on swearengen). Claude Code runs here; all builds, unit tests, and cross-compiles happen here.
 - FreeBSD integration target: **`hearst`** (10.79.20.170, FreeBSD 15.1-RELEASE VM). Native runtime validation happens only here.
 - To validate on FreeBSD: cross-compile on `merrick`, copy the binary to `hearst` over SSH (`scp`), and run it there with `ssh hearst ...`. Capture the real output in your report. If `hearst` is unreachable, say so and mark the work "pending FreeBSD validation". Never fake the result.
 - `hearst` is a test VM, not production. Even so, discovery stays read-only, and never run privileged or destructive commands there (`kldload`, `zpool create`, network changes) without asking first.
