@@ -1,0 +1,465 @@
+openapi: 3.0.3
+info:
+  title: Skep API
+  version: 0.1.0
+  description: |
+    REST API of Skep, a virtualization and infrastructure management platform
+    built on the FreeBSD® operating system.
+
+    **0.1.0 (Foundation)** is read-only and is served by `skep-agent`.
+
+    **This release has no authentication and no TLS.** The agent binds to
+    `127.0.0.1` by default and refuses any other address unless
+    `api.allow_insecure_remote` is set. Do not expose it to a network.
+
+    Every error response uses the `ErrorResponse` envelope. Every response
+    carries an `X-Request-ID` header; a well-formed ID sent by the client is
+    echoed back.
+servers:
+  - url: http://127.0.0.1:8765/api/v1
+    description: Local agent (default listen address)
+tags:
+  - name: system
+    description: Health and identity of the local node
+  - name: nodes
+    description: Node inventory
+paths:
+  /health:
+    get:
+      tags: [system]
+      operationId: getHealth
+      summary: Agent health
+      description: Reports whether the agent and its local database are working.
+      responses:
+        "200":
+          description: Every check passed.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Health"
+        "503":
+          description: At least one check failed. The body is still a Health document.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Health"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+  /system:
+    get:
+      tags: [system]
+      operationId: getSystem
+      summary: Local node description
+      description: |
+        Identity of the local node, its operating system, the Skep build, and
+        a capability summary. The `node_id` is generated on first start and
+        never changes afterwards.
+      responses:
+        "200":
+          description: The system document.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/System"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /nodes/{id}/hardware:
+    get:
+      tags: [nodes]
+      operationId: getNodeHardware
+      summary: Hardware and capabilities of a node
+      description: |
+        Result of read-only host discovery. Only the local node exists in
+        0.1.0; use the `node_id` from `/system`. Results are cached briefly
+        (`discovery.cache_ttl`, 10 seconds by default).
+
+        A probe that fails does not fail the request: the capability is
+        reported as `unknown` or `unavailable` with a reason, and missing
+        facts are listed in `warnings`.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Stable node ID.
+          schema:
+            type: string
+            pattern: "^[A-Za-z0-9._-]{1,64}$"
+      responses:
+        "200":
+          description: The hardware document.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Hardware"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+components:
+  headers:
+    RequestID:
+      description: ID that correlates the response with the server logs.
+      schema:
+        type: string
+  responses:
+    InvalidRequest:
+      description: The request is malformed (`invalid_request`).
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    NotFound:
+      description: The resource or endpoint does not exist (`not_found`).
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            error:
+              code: not_found
+              message: the requested resource does not exist
+              request_id: bffe76d4cd48e82bd841254b
+    MethodNotAllowed:
+      description: Only GET and HEAD are supported (`method_not_allowed`).
+      headers:
+        Allow:
+          schema:
+            type: string
+            example: GET, HEAD
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    InternalError:
+      description: Unexpected server error (`internal_error`). Details are in the server log only.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    Unavailable:
+      description: The request was cancelled or timed out (`service_unavailable`).
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+  schemas:
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              description: Stable, machine-readable error code.
+              enum:
+                - invalid_request
+                - not_found
+                - method_not_allowed
+                - internal_error
+                - service_unavailable
+            message:
+              type: string
+              description: Human-readable description.
+            request_id:
+              type: string
+            details:
+              type: object
+              additionalProperties: true
+              description: Optional structured context.
+    Capability:
+      type: object
+      required: [status, reason]
+      properties:
+        status:
+          type: string
+          enum: [available, unavailable, unknown]
+          description: |
+            `available` was verified usable, `unavailable` was verified not
+            usable, `unknown` could not be determined.
+        reason:
+          type: string
+          description: Why the capability has this status.
+    Health:
+      type: object
+      required: [status, version, uptime_seconds, checks]
+      properties:
+        status:
+          type: string
+          enum: [ok, degraded]
+        version:
+          type: string
+        uptime_seconds:
+          type: integer
+          format: int64
+        checks:
+          type: object
+          additionalProperties:
+            type: object
+            required: [status]
+            properties:
+              status:
+                type: string
+                enum: [ok, degraded]
+              error:
+                type: string
+    BuildInfo:
+      type: object
+      required: [version, commit, build_date, go_version, os, arch]
+      properties:
+        version: { type: string }
+        commit: { type: string }
+        build_date: { type: string }
+        go_version: { type: string }
+        os: { type: string }
+        arch: { type: string }
+    OSInfo:
+      type: object
+      required: [name, version, release, kernel]
+      properties:
+        name:
+          type: string
+          example: FreeBSD
+        version:
+          type: string
+          example: "15.1"
+        release:
+          type: string
+          example: 15.1-RELEASE-p6
+        kernel:
+          type: string
+    Platform:
+      type: string
+      enum: [freebsd, linux-dev, unsupported]
+      description: |
+        `freebsd` is the only production platform. `linux-dev` is a
+        development host and never a production host.
+    System:
+      type: object
+      required:
+        - node_id
+        - hostname
+        - platform
+        - production_host
+        - dev_mode
+        - os
+        - architecture
+        - skep
+        - capabilities
+        - started_at
+        - uptime_seconds
+      properties:
+        node_id:
+          type: string
+          description: Stable ID of the local node.
+        hostname: { type: string }
+        platform:
+          $ref: "#/components/schemas/Platform"
+        production_host:
+          type: boolean
+          description: True only on native FreeBSD outside dev mode.
+        dev_mode: { type: boolean }
+        os:
+          $ref: "#/components/schemas/OSInfo"
+        architecture: { type: string }
+        skep:
+          $ref: "#/components/schemas/BuildInfo"
+        capabilities:
+          type: object
+          required: [bhyve, qemu, zfs]
+          properties:
+            bhyve:
+              $ref: "#/components/schemas/Capability"
+            qemu:
+              $ref: "#/components/schemas/Capability"
+            zfs:
+              $ref: "#/components/schemas/Capability"
+        started_at:
+          type: string
+          format: date-time
+        uptime_seconds:
+          type: integer
+          format: int64
+    Hardware:
+      type: object
+      required:
+        - node_id
+        - platform
+        - host
+        - cpu
+        - memory
+        - hypervisors
+        - storage
+        - warnings
+        - collected_at
+      properties:
+        node_id: { type: string }
+        platform:
+          $ref: "#/components/schemas/Platform"
+        host:
+          type: object
+          required: [hostname, os, architecture]
+          properties:
+            hostname: { type: string }
+            os:
+              $ref: "#/components/schemas/OSInfo"
+            architecture: { type: string }
+        cpu:
+          type: object
+          required: [model, cores, threads]
+          properties:
+            model: { type: string }
+            cores:
+              type: integer
+              description: Physical cores.
+            threads:
+              type: integer
+              description: Logical CPUs.
+        memory:
+          type: object
+          required: [total_bytes, available_bytes]
+          properties:
+            total_bytes:
+              type: integer
+              format: int64
+            available_bytes:
+              type: integer
+              format: int64
+              description: |
+                On FreeBSD, the free, inactive, and laundry page queues. On
+                Linux, MemAvailable.
+        hypervisors:
+          type: object
+          required: [bhyve, qemu]
+          properties:
+            bhyve:
+              $ref: "#/components/schemas/Bhyve"
+            qemu:
+              $ref: "#/components/schemas/QEMU"
+        storage:
+          type: object
+          required: [zfs]
+          properties:
+            zfs:
+              $ref: "#/components/schemas/ZFS"
+        warnings:
+          type: array
+          description: Facts that could not be discovered.
+          items: { type: string }
+        collected_at:
+          type: string
+          format: date-time
+    Bhyve:
+      allOf:
+        - $ref: "#/components/schemas/Capability"
+        - type: object
+          required: [vmm_loaded, vmm_loadable]
+          properties:
+            vmm_loaded:
+              type: boolean
+              description: The vmm kernel module is loaded.
+            vmm_loadable:
+              type: boolean
+              description: vmm.ko is present. Discovery never loads it.
+            vmm_device:
+              type: string
+              description: The vmm device node that was found, if any.
+            binary_path:
+              type: string
+    QEMU:
+      allOf:
+        - $ref: "#/components/schemas/Capability"
+        - type: object
+          required: [binaries]
+          properties:
+            acceleration:
+              type: string
+              enum: [tcg]
+              description: |
+                Present when QEMU is available. Always `tcg`: there is no KVM
+                on FreeBSD.
+            binaries:
+              type: array
+              items:
+                type: object
+                required: [name, path]
+                properties:
+                  name: { type: string }
+                  path: { type: string }
+                  version: { type: string }
+                  error:
+                    type: string
+                    description: Why the version could not be read.
+    ZFS:
+      allOf:
+        - $ref: "#/components/schemas/Capability"
+        - type: object
+          required: [module_loaded, pools]
+          properties:
+            module_loaded: { type: boolean }
+            module_version: { type: string }
+            zpool_path: { type: string }
+            pools:
+              type: array
+              description: |
+                Imported pools. Only queried when the kernel module is
+                already loaded.
+              items:
+                $ref: "#/components/schemas/ZFSPool"
+            pools_error:
+              type: string
+              description: Why the pool list could not be read.
+    ZFSPool:
+      type: object
+      required:
+        - name
+        - size_bytes
+        - allocated_bytes
+        - free_bytes
+        - fragmentation_percent
+        - capacity_percent
+        - health
+      properties:
+        name: { type: string }
+        size_bytes:
+          type: integer
+          format: int64
+        allocated_bytes:
+          type: integer
+          format: int64
+        free_bytes:
+          type: integer
+          format: int64
+        fragmentation_percent:
+          type: integer
+          nullable: true
+        capacity_percent:
+          type: integer
+          nullable: true
+        health:
+          type: string
+          example: ONLINE

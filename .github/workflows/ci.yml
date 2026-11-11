@@ -1,0 +1,67 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  go:
+    name: Test, vet, build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Verify dependencies
+        run: |
+          go mod download
+          go mod verify
+          go mod tidy -diff
+
+      - name: Check formatting
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "These files need gofmt:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: Vet (Linux)
+        run: go vet ./...
+
+      - name: Vet (FreeBSD amd64)
+        run: GOOS=freebsd GOARCH=amd64 go vet ./...
+
+      - name: Test
+        run: go test -race -count=1 ./...
+
+      - name: Build (Linux, development only)
+        run: make build
+
+      # Cross-compilation proves the FreeBSD build compiles. It does not
+      # prove runtime behaviour; that is validated on a real FreeBSD host.
+      - name: Cross-compile (FreeBSD amd64)
+        run: make build-freebsd
+
+      - name: Static analysis
+        run: |
+          # Install a native binary first: "GOOS=freebsd go run" would build
+          # staticcheck itself for FreeBSD and fail to execute it here.
+          go install honnef.co/go/tools/cmd/staticcheck@latest
+          staticcheck ./...
+          GOOS=freebsd GOARCH=amd64 staticcheck ./...
+
+      - name: Vulnerability check
+        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
