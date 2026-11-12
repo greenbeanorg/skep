@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/greenbeanorg/skep/internal/httpkit"
 	"github.com/greenbeanorg/skep/pkg/models"
 )
 
@@ -124,8 +125,8 @@ func wantError(t *testing.T, rec *httptest.ResponseRecorder, status int, code st
 	if body.Message == "" {
 		t.Error("error message is empty")
 	}
-	if body.RequestID == "" || body.RequestID != rec.Header().Get(RequestIDHeader) {
-		t.Errorf("request_id %q does not match the %s header %q", body.RequestID, RequestIDHeader, rec.Header().Get(RequestIDHeader))
+	if body.RequestID == "" || body.RequestID != rec.Header().Get(httpkit.RequestIDHeader) {
+		t.Errorf("request_id %q does not match the %s header %q", body.RequestID, httpkit.RequestIDHeader, rec.Header().Get(httpkit.RequestIDHeader))
 	}
 	return body
 }
@@ -174,11 +175,11 @@ func TestNodeHardware(t *testing.T) {
 
 func TestNodeHardwareErrors(t *testing.T) {
 	wantError(t, do(t, newBackend(), http.MethodGet, "/api/v1/nodes/other/hardware", nil),
-		http.StatusNotFound, CodeNotFound)
+		http.StatusNotFound, httpkit.CodeNotFound)
 	wantError(t, do(t, newBackend(), http.MethodGet, "/api/v1/nodes/bad%20id/hardware", nil),
-		http.StatusBadRequest, CodeInvalidRequest)
+		http.StatusBadRequest, httpkit.CodeInvalidRequest)
 	wantError(t, do(t, newBackend(), http.MethodGet, "/api/v1/nodes/"+strings.Repeat("a", 65)+"/hardware", nil),
-		http.StatusBadRequest, CodeInvalidRequest)
+		http.StatusBadRequest, httpkit.CodeInvalidRequest)
 }
 
 func TestInternalErrorsAreNotLeaked(t *testing.T) {
@@ -187,7 +188,7 @@ func TestInternalErrorsAreNotLeaked(t *testing.T) {
 	b.systemErr = errors.New("open /var/db/skep/agent/agent.db: permission denied")
 
 	rec := do(t, b, http.MethodGet, "/api/v1/system", &logs)
-	body := wantError(t, rec, http.StatusInternalServerError, CodeInternal)
+	body := wantError(t, rec, http.StatusInternalServerError, httpkit.CodeInternal)
 	if strings.Contains(body.Message, "agent.db") {
 		t.Errorf("internal error text leaked to the client: %q", body.Message)
 	}
@@ -200,14 +201,14 @@ func TestCancelledRequestIs503(t *testing.T) {
 	b := newBackend()
 	b.hwErr = fmt.Errorf("agent: host discovery: %w", context.DeadlineExceeded)
 	wantError(t, do(t, b, http.MethodGet, "/api/v1/nodes/node-1/hardware", nil),
-		http.StatusServiceUnavailable, CodeUnavailable)
+		http.StatusServiceUnavailable, httpkit.CodeUnavailable)
 }
 
 func TestPanicBecomesErrorEnvelope(t *testing.T) {
 	var logs bytes.Buffer
 	b := newBackend()
 	b.panicMsg = "boom"
-	wantError(t, do(t, b, http.MethodGet, "/api/v1/system", &logs), http.StatusInternalServerError, CodeInternal)
+	wantError(t, do(t, b, http.MethodGet, "/api/v1/system", &logs), http.StatusInternalServerError, httpkit.CodeInternal)
 	if !strings.Contains(logs.String(), "boom") {
 		t.Error("the panic must be logged")
 	}
@@ -215,12 +216,12 @@ func TestPanicBecomesErrorEnvelope(t *testing.T) {
 
 func TestUnknownPathsAndMethods(t *testing.T) {
 	for _, path := range []string{"/", "/api/v1", "/api/v1/nope", "/api/v2/health", "/api/v1/nodes/node-1"} {
-		wantError(t, do(t, newBackend(), http.MethodGet, path, nil), http.StatusNotFound, CodeNotFound)
+		wantError(t, do(t, newBackend(), http.MethodGet, path, nil), http.StatusNotFound, httpkit.CodeNotFound)
 	}
 	for _, method := range []string{http.MethodPost, http.MethodPut, http.MethodDelete, http.MethodPatch} {
 		for _, path := range []string{"/api/v1/health", "/api/v1/system", "/api/v1/nodes/node-1/hardware"} {
 			rec := do(t, newBackend(), method, path, nil)
-			wantError(t, rec, http.StatusMethodNotAllowed, CodeMethodNotAllowed)
+			wantError(t, rec, http.StatusMethodNotAllowed, httpkit.CodeMethodNotAllowed)
 			if allow := rec.Header().Get("Allow"); allow != "GET, HEAD" {
 				t.Errorf("%s %s: Allow = %q", method, path, allow)
 			}
@@ -241,24 +242,24 @@ func TestRequestIDAndSecurityHeaders(t *testing.T) {
 	send := func(id string) http.Header {
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
 		if id != "" {
-			req.Header.Set(RequestIDHeader, id)
+			req.Header.Set(httpkit.RequestIDHeader, id)
 		}
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, req)
 		return rec.Header()
 	}
 
-	if got := send("client-id_1.2").Get(RequestIDHeader); got != "client-id_1.2" {
+	if got := send("client-id_1.2").Get(httpkit.RequestIDHeader); got != "client-id_1.2" {
 		t.Errorf("a well-formed client request ID must be kept, got %q", got)
 	}
 	for _, bad := range []string{"has space", "new\nline", strings.Repeat("x", 65)} {
-		if got := send(bad).Get(RequestIDHeader); got == bad || got == "" {
+		if got := send(bad).Get(httpkit.RequestIDHeader); got == bad || got == "" {
 			t.Errorf("malformed request ID %q must be replaced, got %q", bad, got)
 		}
 	}
 	hdr := send("")
-	if len(hdr.Get(RequestIDHeader)) != 24 {
-		t.Errorf("generated request ID = %q", hdr.Get(RequestIDHeader))
+	if len(hdr.Get(httpkit.RequestIDHeader)) != 24 {
+		t.Errorf("generated request ID = %q", hdr.Get(httpkit.RequestIDHeader))
 	}
 	if hdr.Get("X-Content-Type-Options") != "nosniff" || hdr.Get("Cache-Control") != "no-store" {
 		t.Errorf("security headers missing: %v", hdr)
@@ -304,13 +305,13 @@ func TestTasksList(t *testing.T) {
 func TestTasksListErrors(t *testing.T) {
 	for _, q := range []string{"limit=abc", "limit=0", "limit=-5"} {
 		wantError(t, do(t, newBackend(), http.MethodGet, "/api/v1/tasks?"+q, nil),
-			http.StatusBadRequest, CodeInvalidRequest)
+			http.StatusBadRequest, httpkit.CodeInvalidRequest)
 	}
 	// Validation errors from the service keep their message.
 	b := newBackend()
 	b.tasksErr = models.Invalid("unknown task status done")
 	body := wantError(t, do(t, b, http.MethodGet, "/api/v1/tasks?status=done", nil),
-		http.StatusBadRequest, CodeInvalidRequest)
+		http.StatusBadRequest, httpkit.CodeInvalidRequest)
 	if body.Message != "unknown task status done" {
 		t.Errorf("message = %q", body.Message)
 	}
@@ -325,8 +326,8 @@ func TestTaskDetail(t *testing.T) {
 	if got.ID != "task-1" || got.Error == nil || got.Error.Code != "timeout" || len(got.Events) != 1 {
 		t.Errorf("task = %+v", got)
 	}
-	wantError(t, do(t, newBackend(), http.MethodGet, "/api/v1/tasks/other", nil), http.StatusNotFound, CodeNotFound)
-	wantError(t, do(t, newBackend(), http.MethodGet, "/api/v1/tasks/bad%20id", nil), http.StatusBadRequest, CodeInvalidRequest)
+	wantError(t, do(t, newBackend(), http.MethodGet, "/api/v1/tasks/other", nil), http.StatusNotFound, httpkit.CodeNotFound)
+	wantError(t, do(t, newBackend(), http.MethodGet, "/api/v1/tasks/bad%20id", nil), http.StatusBadRequest, httpkit.CodeInvalidRequest)
 }
 
 // TestTasksAreReadOnly guards the Milestone 2 rule: nothing can be
@@ -334,10 +335,10 @@ func TestTaskDetail(t *testing.T) {
 func TestTasksAreReadOnly(t *testing.T) {
 	for _, method := range []string{http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete} {
 		for _, path := range []string{"/api/v1/tasks", "/api/v1/tasks/task-1"} {
-			wantError(t, do(t, newBackend(), method, path, nil), http.StatusMethodNotAllowed, CodeMethodNotAllowed)
+			wantError(t, do(t, newBackend(), method, path, nil), http.StatusMethodNotAllowed, httpkit.CodeMethodNotAllowed)
 		}
 	}
-	wantError(t, do(t, newBackend(), http.MethodPost, "/api/v1/tasks/task-1/cancel", nil), http.StatusNotFound, CodeNotFound)
+	wantError(t, do(t, newBackend(), http.MethodPost, "/api/v1/tasks/task-1/cancel", nil), http.StatusNotFound, httpkit.CodeNotFound)
 }
 
 // TestDomainErrorMapping checks the HTTP status of each stable error code,
@@ -365,7 +366,7 @@ func TestDomainErrorMapping(t *testing.T) {
 	// An unknown code is not trusted: it becomes a generic internal error.
 	b := newBackend()
 	b.tasksErr = &models.Error{Code: "something_new", Message: "internal detail"}
-	body := wantError(t, do(t, b, http.MethodGet, "/api/v1/tasks", nil), http.StatusInternalServerError, CodeInternal)
+	body := wantError(t, do(t, b, http.MethodGet, "/api/v1/tasks", nil), http.StatusInternalServerError, httpkit.CodeInternal)
 	if strings.Contains(body.Message, "internal detail") {
 		t.Errorf("message leaked: %q", body.Message)
 	}

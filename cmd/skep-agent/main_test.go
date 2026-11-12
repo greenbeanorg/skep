@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -13,6 +14,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/greenbeanorg/skep/internal/agentclient"
+	"github.com/greenbeanorg/skep/internal/agentproto"
 	"github.com/greenbeanorg/skep/pkg/models"
 	"github.com/greenbeanorg/skep/pkg/version"
 )
@@ -185,6 +188,22 @@ func TestRunServesAPI(t *testing.T) {
 
 	base, stop = boot()
 	defer stop()
+	// The same node answers on the internal API socket, for a caller with
+	// an actor.
+	client, err := agentclient.New(agentclient.Options{SocketPath: filepath.Join(dir, "run", "agent.sock")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	viaSocket, err := client.System(agentproto.WithCaller(context.Background(),
+		agentproto.Caller{ActorID: "test", ActorName: "test"}))
+	if err != nil || viaSocket.NodeID != sys.NodeID {
+		t.Errorf("system over the socket = %+v, %v", viaSocket, err)
+	}
+	if info, err := os.Stat(filepath.Join(dir, "run", "agent.sock")); err != nil || info.Mode().Perm() != 0o600 {
+		t.Errorf("dev socket: %v, %v; want mode 0600", info, err)
+	}
+
 	var again models.System
 	get(base+"/api/v1/system", http.StatusOK, &again)
 	if again.NodeID != sys.NodeID {

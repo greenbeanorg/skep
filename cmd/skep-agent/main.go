@@ -9,21 +9,26 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"net"
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"runtime"
 	"syscall"
 
 	"github.com/greenbeanorg/skep/internal/agent"
+	"github.com/greenbeanorg/skep/internal/agentproto"
 	"github.com/greenbeanorg/skep/internal/api"
 	"github.com/greenbeanorg/skep/internal/audit"
 	"github.com/greenbeanorg/skep/internal/config"
 	"github.com/greenbeanorg/skep/internal/database"
 	"github.com/greenbeanorg/skep/internal/hardware"
+	"github.com/greenbeanorg/skep/internal/internalapi"
 	"github.com/greenbeanorg/skep/internal/logging"
+	"github.com/greenbeanorg/skep/internal/sysaccount"
 	"github.com/greenbeanorg/skep/internal/tasks"
 	"github.com/greenbeanorg/skep/migrations"
 	"github.com/greenbeanorg/skep/pkg/models"
@@ -47,22 +52,23 @@ func main() {
 
 // run is the whole program; main only maps its error to an exit code.
 func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
-	fs := flag.NewFlagSet("skep-agent", flag.ContinueOnError)
-	fs.SetOutput(stderr)
+	flags := flag.NewFlagSet("skep-agent", flag.ContinueOnError)
+	flags.SetOutput(stderr)
 	var (
-		configPath  = fs.String("config", "", "path to the JSON configuration file (default "+config.DefaultConfigPath+" if it exists)")
-		dev         = fs.Bool("dev", false, "development mode: local data directory, text logs, debug level")
-		listen      = fs.String("listen", "", "API listen address (default "+config.DefaultListenAddress+")")
-		dataDir     = fs.String("data-dir", "", "state directory")
-		logLevel    = fs.String("log-level", "", "debug, info, warn, or error")
-		logFormat   = fs.String("log-format", "", "json or text")
-		showVersion = fs.Bool("version", false, "print the version and exit")
+		configPath  = flags.String("config", "", "path to the JSON configuration file (default "+config.DefaultConfigPath+" if it exists)")
+		dev         = flags.Bool("dev", false, "development mode: local data directory, text logs, debug level")
+		listen      = flags.String("listen", "", "API listen address (default "+config.DefaultListenAddress+")")
+		socketPath  = flags.String("socket", "", "Unix socket of the internal API (default "+config.DefaultSocketPath+")")
+		dataDir     = flags.String("data-dir", "", "state directory")
+		logLevel    = flags.String("log-level", "", "debug, info, warn, or error")
+		logFormat   = flags.String("log-format", "", "json or text")
+		showVersion = flags.Bool("version", false, "print the version and exit")
 	)
-	if err := fs.Parse(args); err != nil {
+	if err := flags.Parse(args); err != nil {
 		return err
 	}
-	if fs.NArg() > 0 {
-		return fmt.Errorf("unexpected argument %q", fs.Arg(0))
+	if flags.NArg() > 0 {
+		return fmt.Errorf("unexpected argument %q", flags.Arg(0))
 	}
 	if *showVersion {
 		fmt.Fprintln(stdout, "skep-agent", version.Get())
@@ -74,12 +80,13 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 
 	overrides := config.Overrides{
 		ListenAddress: *listen,
+		SocketPath:    *socketPath,
 		DataDir:       *dataDir,
 		LogLevel:      *logLevel,
 		LogFormat:     *logFormat,
 	}
 	// Only an explicit -dev overrides the file and environment.
-	fs.Visit(func(f *flag.Flag) {
+	flags.Visit(func(f *flag.Flag) {
 		if f.Name == "dev" {
 			overrides.DevMode = dev
 		}
@@ -176,7 +183,23 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	}
 	submitTestTasks(ctx, engine, log)
 
-	serveErr := serve(ctx, cfg, api.NewHandler(svc, log), log)
+	// The internal API on the Unix socket is how skep-api reaches the
+	// agent. The public API on loopback TCP is still served next to it
+	// until skep-api takes it over.
+	//
+	// Until then a socket that cannot be created is not fatal: under the
+	// Milestone 3 rc.d service the agent still runs as skep and cannot
+	// write to the root-owned run directory.
+	socket, err := listenSocket(cfg, log)
+	if err != nil {
+		log.Warn("the internal API is not available", "error", err)
+		socket = nil
+	}
+	internal := internalapi.NewHandler(svc, internalapi.Options{
+		RequestTimeout: cfg.Socket.RequestTimeout.Std(),
+		Logger:         log,
+	})
+	serveErr := serve(ctx, cfg, api.NewHandler(svc, log), socket, internal, log)
 
 	// Stop the engine after the listener: running tasks are told to stop
 	// and are recorded as interrupted.
@@ -191,9 +214,51 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	return serveErr
 }
 
-// serve runs the HTTP server until ctx is cancelled, then shuts it down
-// gracefully.
-func serve(ctx context.Context, cfg config.Config, handler http.Handler, log *slog.Logger) error {
+// listenSocket creates the agent socket with the configured group and
+// peer allow-list.
+func listenSocket(cfg config.Config, log *slog.Logger) (*internalapi.Listener, error) {
+	uids, err := sysaccount.UIDs(cfg.Socket.AllowedUsers)
+	if err != nil {
+		return nil, fmt.Errorf("socket.allowed_users: %w", err)
+	}
+	gid, mode := -1, fs.FileMode(0o600)
+	if cfg.Socket.Group != "" {
+		g, err := sysaccount.GID(cfg.Socket.Group)
+		if err != nil {
+			return nil, fmt.Errorf("socket.group: %w", err)
+		}
+		gid, mode = int(g), 0o660
+	}
+	if cfg.DevMode {
+		// In production the rc.d script creates the run directory as
+		// root:skep 0750. In dev mode it lives in the data directory.
+		if err := os.MkdirAll(filepath.Dir(cfg.Socket.Path), 0o700); err != nil {
+			return nil, fmt.Errorf("create the socket directory: %w", err)
+		}
+	}
+	ln, err := internalapi.Listen(internalapi.ListenOptions{
+		Path:           cfg.Socket.Path,
+		Mode:           mode,
+		GID:            gid,
+		AllowedUIDs:    uids,
+		MaxConnections: cfg.Socket.MaxConnections,
+		Logger:         log,
+	})
+	if err != nil {
+		return nil, err
+	}
+	log.Info("internal API listening", "socket", cfg.Socket.Path, "base_path", agentproto.Prefix,
+		"mode", fmt.Sprintf("%04o", mode), "group", cfg.Socket.Group, "allowed_uids", uids)
+	return ln, nil
+}
+
+// serve runs the public API on loopback TCP and the internal API on the
+// agent socket until ctx is cancelled or one of them fails, then shuts
+// both down gracefully.
+func serve(ctx context.Context, cfg config.Config, public http.Handler, socket *internalapi.Listener, internal http.Handler, log *slog.Logger) error {
+	if socket != nil {
+		defer socket.Close()
+	}
 	ln, err := net.Listen("tcp", cfg.API.ListenAddress)
 	if err != nil {
 		return fmt.Errorf("listen on %s: %w", cfg.API.ListenAddress, err)
@@ -204,7 +269,7 @@ func serve(ctx context.Context, cfg config.Config, handler http.Handler, log *sl
 	}
 
 	srv := &http.Server{
-		Handler:           handler,
+		Handler:           public,
 		ReadHeaderTimeout: cfg.API.ReadTimeout.Std(),
 		ReadTimeout:       cfg.API.ReadTimeout.Std(),
 		WriteTimeout:      cfg.API.WriteTimeout.Std(),
@@ -212,21 +277,30 @@ func serve(ctx context.Context, cfg config.Config, handler http.Handler, log *sl
 		MaxHeaderBytes:    64 << 10,
 		ErrorLog:          slog.NewLogLogger(log.Handler(), slog.LevelWarn),
 	}
+	internalSrv := internalapi.NewServer(internal, cfg.Socket.RequestTimeout.Std(), log)
 
-	errc := make(chan error, 1)
+	errc := make(chan error, 2)
 	go func() { errc <- srv.Serve(ln) }()
+	if socket != nil {
+		go func() { errc <- internalSrv.Serve(socket) }()
+	}
 	log.Info("API listening", "address", ln.Addr().String(), "base_path", api.Prefix, "authentication", "none")
 
+	var serveErr error
 	select {
 	case err := <-errc:
-		return fmt.Errorf("http server: %w", err)
+		serveErr = fmt.Errorf("http server: %w", err)
 	case <-ctx.Done():
 	}
 
 	log.Info("shutting down")
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.API.ShutdownTimeout.Std())
 	defer cancel()
-	if err := srv.Shutdown(shutdownCtx); err != nil {
+	err = errors.Join(srv.Shutdown(shutdownCtx), internalSrv.Shutdown(shutdownCtx))
+	if serveErr != nil {
+		return serveErr
+	}
+	if err != nil {
 		return fmt.Errorf("http server shutdown: %w", err)
 	}
 	return nil

@@ -3,6 +3,8 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -208,7 +210,66 @@ func TestSampleConfigMatchesDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if sample != defaults {
+	if !reflect.DeepEqual(sample, defaults) {
 		t.Errorf("sample config differs from the defaults:\nsample   %+v\ndefaults %+v", sample, defaults)
+	}
+}
+
+func TestSocketDefaults(t *testing.T) {
+	prod, err := Load(LoadOptions{LookupEnv: noEnv, DefaultPath: noDefault})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if prod.Socket.Path != DefaultSocketPath || prod.Socket.Group != "skep" ||
+		!reflect.DeepEqual(prod.Socket.AllowedUsers, []string{"root", "skep"}) {
+		t.Errorf("production socket = %+v", prod.Socket)
+	}
+	if prod.Socket.RequestTimeout.Std() != 30*time.Second || prod.Socket.MaxConnections != 64 {
+		t.Errorf("production socket limits = %+v", prod.Socket)
+	}
+
+	dev := true
+	cfg, err := Load(LoadOptions{LookupEnv: noEnv, DefaultPath: noDefault, Overrides: Overrides{DevMode: &dev, DataDir: "/tmp/skep-dev"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Socket.Path != "/tmp/skep-dev/run/agent.sock" || cfg.Socket.Group != "" {
+		t.Errorf("dev socket = %+v", cfg.Socket)
+	}
+	// In dev mode only the developer's own UID may connect.
+	if !reflect.DeepEqual(cfg.Socket.AllowedUsers, []string{strconv.Itoa(os.Geteuid())}) {
+		t.Errorf("dev allow-list = %v", cfg.Socket.AllowedUsers)
+	}
+}
+
+func TestSocketOverridesAndErrors(t *testing.T) {
+	cfg, err := Load(LoadOptions{
+		DefaultPath: noDefault,
+		LookupEnv:   envMap(map[string]string{EnvSocket: "/tmp/env.sock"}),
+	})
+	if err != nil || cfg.Socket.Path != "/tmp/env.sock" {
+		t.Errorf("env: %+v, %v", cfg.Socket, err)
+	}
+	cfg, err = Load(LoadOptions{
+		DefaultPath: noDefault,
+		LookupEnv:   envMap(map[string]string{EnvSocket: "/tmp/env.sock"}),
+		Overrides:   Overrides{SocketPath: "/tmp/flag.sock"},
+	})
+	if err != nil || cfg.Socket.Path != "/tmp/flag.sock" {
+		t.Errorf("flag: %+v, %v", cfg.Socket, err)
+	}
+
+	for name, tt := range map[string]struct{ body, want string }{
+		"empty allow-list": {`{"socket":{"allowed_users":[]}}`, "allowed_users must not be empty"},
+		"bad user":         {`{"socket":{"allowed_users":["a b"]}}`, "not a user name"},
+		"bad group":        {`{"socket":{"group":"a/b"}}`, "socket.group"},
+		"long path":        {`{"socket":{"path":"/tmp/` + strings.Repeat("x", 90) + `"}}`, "longer than"},
+		"too many conns":   {`{"socket":{"max_connections":5000}}`, "max_connections"},
+		"bad timeout":      {`{"socket":{"request_timeout":"-1s"}}`, "must be positive"},
+	} {
+		_, err := Load(LoadOptions{Path: writeFile(t, tt.body), LookupEnv: noEnv})
+		if err == nil || !strings.Contains(err.Error(), tt.want) {
+			t.Errorf("%s: error = %v, want it to contain %q", name, err, tt.want)
+		}
 	}
 }

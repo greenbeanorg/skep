@@ -11,6 +11,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -26,6 +27,14 @@ const (
 	DefaultDataDir = "/var/db/skep"
 	// DefaultDevDataDir is the state directory in dev mode.
 	DefaultDevDataDir = ".skep-dev"
+	// DefaultSocketPath is the agent's Unix socket in production.
+	DefaultSocketPath = "/var/run/skep/agent.sock"
+	// DevSocketPath is the agent's socket in dev mode, relative to the
+	// data directory.
+	DevSocketPath = "run/agent.sock"
+	// DefaultSocketGroup owns the socket in production; its members may
+	// open it.
+	DefaultSocketGroup = "skep"
 	// AgentDatabasePath is the agent's SQLite file, relative to the data
 	// directory. The agent's state lives in its own subdirectory because
 	// skep-api will keep a separate database next to it (ADR 0004).
@@ -37,6 +46,7 @@ const (
 	EnvConfig    = "SKEP_CONFIG"
 	EnvDev       = "SKEP_DEV"
 	EnvListen    = "SKEP_LISTEN"
+	EnvSocket    = "SKEP_SOCKET"
 	EnvDataDir   = "SKEP_DATA_DIR"
 	EnvLogLevel  = "SKEP_LOG_LEVEL"
 	EnvLogFormat = "SKEP_LOG_FORMAT"
@@ -75,6 +85,7 @@ type Config struct {
 	DevMode   bool            `json:"dev_mode"`
 	DataDir   string          `json:"data_dir"`
 	API       APIConfig       `json:"api"`
+	Socket    SocketConfig    `json:"socket"`
 	Log       LogConfig       `json:"log"`
 	Database  DatabaseConfig  `json:"database"`
 	Discovery DiscoveryConfig `json:"discovery"`
@@ -100,6 +111,25 @@ type APIConfig struct {
 	ReadTimeout         Duration `json:"read_timeout"`
 	WriteTimeout        Duration `json:"write_timeout"`
 	ShutdownTimeout     Duration `json:"shutdown_timeout"`
+}
+
+// SocketConfig configures the Unix socket of the internal API, the only
+// way skep-api reaches the agent (ADR 0004).
+type SocketConfig struct {
+	// Path is the socket file.
+	Path string `json:"path"`
+	// Group owns the socket, which gets mode 0660. Empty leaves the
+	// group alone and uses mode 0600; that is the dev mode default.
+	Group string `json:"group"`
+	// AllowedUsers lists who may connect, by user name or numeric UID.
+	// The agent checks the kernel-reported peer of every connection
+	// against it. Production default: root and skep. Dev mode default:
+	// the user the agent runs as.
+	AllowedUsers []string `json:"allowed_users"`
+	// RequestTimeout bounds one request.
+	RequestTimeout Duration `json:"request_timeout"`
+	// MaxConnections bounds the open connections.
+	MaxConnections int `json:"max_connections"`
 }
 
 // LogConfig configures structured logging.
@@ -129,6 +159,7 @@ type DiscoveryConfig struct {
 type Overrides struct {
 	DevMode       *bool
 	ListenAddress string
+	SocketPath    string
 	DataDir       string
 	LogLevel      string
 	LogFormat     string
@@ -214,6 +245,9 @@ func applyEnv(lookup func(string) (string, bool), cfg *Config) error {
 	if v := get(EnvListen); v != "" {
 		cfg.API.ListenAddress = v
 	}
+	if v := get(EnvSocket); v != "" {
+		cfg.Socket.Path = v
+	}
 	if v := get(EnvDataDir); v != "" {
 		cfg.DataDir = v
 	}
@@ -232,6 +266,9 @@ func applyOverrides(o Overrides, cfg *Config) {
 	}
 	if o.ListenAddress != "" {
 		cfg.API.ListenAddress = o.ListenAddress
+	}
+	if o.SocketPath != "" {
+		cfg.Socket.Path = o.SocketPath
 	}
 	if o.DataDir != "" {
 		cfg.DataDir = o.DataDir
@@ -264,6 +301,29 @@ func (c *Config) applyDefaults() {
 	}
 	if c.API.ShutdownTimeout == 0 {
 		c.API.ShutdownTimeout = Duration(10 * time.Second)
+	}
+	if c.Socket.Path == "" {
+		if c.DevMode {
+			c.Socket.Path = filepath.Join(c.DataDir, filepath.FromSlash(DevSocketPath))
+		} else {
+			c.Socket.Path = DefaultSocketPath
+		}
+	}
+	if c.Socket.Group == "" && !c.DevMode {
+		c.Socket.Group = DefaultSocketGroup
+	}
+	if c.Socket.AllowedUsers == nil {
+		if c.DevMode {
+			c.Socket.AllowedUsers = []string{strconv.Itoa(os.Geteuid())}
+		} else {
+			c.Socket.AllowedUsers = []string{"root", DefaultSocketGroup}
+		}
+	}
+	if c.Socket.RequestTimeout == 0 {
+		c.Socket.RequestTimeout = Duration(30 * time.Second)
+	}
+	if c.Socket.MaxConnections == 0 {
+		c.Socket.MaxConnections = 64
 	}
 	if c.Log.Level == "" {
 		if c.DevMode {
@@ -328,12 +388,32 @@ func (c Config) Validate() error {
 		"api.read_timeout":          c.API.ReadTimeout,
 		"api.write_timeout":         c.API.WriteTimeout,
 		"api.shutdown_timeout":      c.API.ShutdownTimeout,
+		"socket.request_timeout":    c.Socket.RequestTimeout,
 		"discovery.command_timeout": c.Discovery.CommandTimeout,
 		"discovery.cache_ttl":       c.Discovery.CacheTTL,
 	} {
 		if d <= 0 {
 			add("%s must be positive", name)
 		}
+	}
+	if c.Socket.Path == "" {
+		add("socket.path must not be empty")
+	} else if len(c.Socket.Path) > MaxSocketPath {
+		add("socket.path %q is longer than %d bytes", c.Socket.Path, MaxSocketPath)
+	}
+	if len(c.Socket.AllowedUsers) == 0 {
+		add("socket.allowed_users must not be empty: nobody could connect")
+	}
+	for _, u := range c.Socket.AllowedUsers {
+		if !accountRE.MatchString(u) {
+			add("socket.allowed_users: %q is not a user name or UID", u)
+		}
+	}
+	if c.Socket.Group != "" && !accountRE.MatchString(c.Socket.Group) {
+		add("socket.group %q is not a group name or GID", c.Socket.Group)
+	}
+	if c.Socket.MaxConnections < 1 || c.Socket.MaxConnections > 1024 {
+		add("socket.max_connections must be between 1 and 1024")
 	}
 	if c.Tasks.Workers < 1 || c.Tasks.Workers > 64 {
 		add("tasks.workers must be between 1 and 64")
@@ -346,6 +426,13 @@ func (c Config) Validate() error {
 	}
 	return fmt.Errorf("config: invalid configuration: %w", errors.Join(errs...))
 }
+
+// MaxSocketPath is the longest socket path accepted: sun_path holds 104
+// bytes on FreeBSD, and the agent needs room for a temporary suffix.
+const MaxSocketPath = 88
+
+// accountRE is the accepted shape of a user or group name, or a numeric ID.
+var accountRE = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_.-]{0,31}$`)
 
 func validateListen(addr string, allowRemote bool) error {
 	host, port, err := net.SplitHostPort(addr)

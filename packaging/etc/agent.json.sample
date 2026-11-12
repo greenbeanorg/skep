@@ -8,6 +8,13 @@
     "write_timeout": "30s",
     "shutdown_timeout": "10s"
   },
+  "socket": {
+    "path": "/var/run/skep/agent.sock",
+    "group": "skep",
+    "allowed_users": ["root", "skep"],
+    "request_timeout": "30s",
+    "max_connections": 64
+  },
   "log": {
     "level": "info",
     "format": "json"

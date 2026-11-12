@@ -250,6 +250,8 @@ const (
 	CodeNotCancellable      = "not_cancellable"
 	CodeQueueFull           = "queue_full"
 	CodeShuttingDown        = "shutting_down"
+	// CodeAgentUnavailable means skep-api could not reach the host agent.
+	CodeAgentUnavailable = "agent_unavailable"
 )
 
 // Invalid returns an invalid_request Error with the given message.

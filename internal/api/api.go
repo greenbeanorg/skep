@@ -8,12 +8,12 @@ package api
 
 import (
 	"context"
-	"errors"
 	"log/slog"
 	"net/http"
 	"regexp"
 	"strconv"
 
+	"github.com/greenbeanorg/skep/internal/httpkit"
 	"github.com/greenbeanorg/skep/pkg/models"
 )
 
@@ -30,7 +30,7 @@ type Backend interface {
 }
 
 // nodeIDRE is the accepted shape of a resource ID in a URL.
-var nodeIDRE = regexp.MustCompile(`^[A-Za-z0-9._-]{1,64}$`)
+var nodeIDRE = regexp.MustCompile(httpkit.IDPattern)
 
 type handler struct {
 	backend Backend
@@ -46,36 +46,19 @@ func NewHandler(backend Backend, log *slog.Logger) http.Handler {
 	h := &handler{backend: backend, log: log}
 
 	mux := http.NewServeMux()
-	mux.Handle(Prefix+"/health", readOnly(h.health))
-	mux.Handle(Prefix+"/system", readOnly(h.system))
-	mux.Handle(Prefix+"/nodes/{id}/hardware", readOnly(h.nodeHardware))
-	mux.Handle(Prefix+"/tasks", readOnly(h.tasks))
-	mux.Handle(Prefix+"/tasks/{id}", readOnly(h.task))
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		writeError(w, r, http.StatusNotFound, CodeNotFound, "no such endpoint: "+r.URL.Path)
-	})
+	mux.Handle(Prefix+"/health", httpkit.ReadOnly(h.health))
+	mux.Handle(Prefix+"/system", httpkit.ReadOnly(h.system))
+	mux.Handle(Prefix+"/nodes/{id}/hardware", httpkit.ReadOnly(h.nodeHardware))
+	mux.Handle(Prefix+"/tasks", httpkit.ReadOnly(h.tasks))
+	mux.Handle(Prefix+"/tasks/{id}", httpkit.ReadOnly(h.task))
+	mux.HandleFunc("/", httpkit.NotFound)
 
 	var root http.Handler = mux
-	root = withRecovery(log, root)
-	root = withAccessLog(log, root)
-	root = withSecurityHeaders(root)
-	root = withRequestID(root)
+	root = httpkit.WithRecovery(log, root)
+	root = httpkit.WithAccessLog(log, root)
+	root = httpkit.WithSecurityHeaders(root)
+	root = httpkit.WithRequestID(root)
 	return root
-}
-
-// readOnly allows GET and HEAD and answers anything else with a JSON 405.
-// Routing by path and checking the method here, instead of using method
-// patterns in the mux, keeps 405 responses in the standard error envelope.
-func readOnly(next http.HandlerFunc) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet && r.Method != http.MethodHead {
-			w.Header().Set("Allow", "GET, HEAD")
-			writeError(w, r, http.StatusMethodNotAllowed, CodeMethodNotAllowed,
-				"method "+r.Method+" is not allowed on this endpoint")
-			return
-		}
-		next(w, r)
-	})
 }
 
 func (h *handler) health(w http.ResponseWriter, r *http.Request) {
@@ -84,30 +67,30 @@ func (h *handler) health(w http.ResponseWriter, r *http.Request) {
 	if health.Status != models.HealthOK {
 		status = http.StatusServiceUnavailable
 	}
-	writeJSON(w, r, status, health)
+	httpkit.WriteJSON(w, r, status, health)
 }
 
 func (h *handler) system(w http.ResponseWriter, r *http.Request) {
 	sys, err := h.backend.System(r.Context())
 	if err != nil {
-		h.fail(w, r, err)
+		httpkit.Fail(h.log, w, r, err)
 		return
 	}
-	writeJSON(w, r, http.StatusOK, sys)
+	httpkit.WriteJSON(w, r, http.StatusOK, sys)
 }
 
 func (h *handler) nodeHardware(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if !nodeIDRE.MatchString(id) {
-		writeError(w, r, http.StatusBadRequest, CodeInvalidRequest, "invalid node ID")
+		httpkit.WriteError(w, r, http.StatusBadRequest, httpkit.CodeInvalidRequest, "invalid node ID")
 		return
 	}
 	hw, err := h.backend.Hardware(r.Context(), id)
 	if err != nil {
-		h.fail(w, r, err)
+		httpkit.Fail(h.log, w, r, err)
 		return
 	}
-	writeJSON(w, r, http.StatusOK, hw)
+	httpkit.WriteJSON(w, r, http.StatusOK, hw)
 }
 
 // tasks lists tasks, newest first. Tasks are read-only over the API in this
@@ -122,62 +105,29 @@ func (h *handler) tasks(w http.ResponseWriter, r *http.Request) {
 	if raw := q.Get("limit"); raw != "" {
 		n, err := strconv.Atoi(raw)
 		if err != nil || n < 1 {
-			writeError(w, r, http.StatusBadRequest, CodeInvalidRequest, "limit must be a positive integer")
+			httpkit.WriteError(w, r, http.StatusBadRequest, httpkit.CodeInvalidRequest, "limit must be a positive integer")
 			return
 		}
 		opts.Limit = n
 	}
 	list, err := h.backend.Tasks(r.Context(), opts)
 	if err != nil {
-		h.fail(w, r, err)
+		httpkit.Fail(h.log, w, r, err)
 		return
 	}
-	writeJSON(w, r, http.StatusOK, list)
+	httpkit.WriteJSON(w, r, http.StatusOK, list)
 }
 
 func (h *handler) task(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if !nodeIDRE.MatchString(id) {
-		writeError(w, r, http.StatusBadRequest, CodeInvalidRequest, "invalid task ID")
+		httpkit.WriteError(w, r, http.StatusBadRequest, httpkit.CodeInvalidRequest, "invalid task ID")
 		return
 	}
 	detail, err := h.backend.Task(r.Context(), id)
 	if err != nil {
-		h.fail(w, r, err)
+		httpkit.Fail(h.log, w, r, err)
 		return
 	}
-	writeJSON(w, r, http.StatusOK, detail)
-}
-
-// statusForCode maps the stable error codes of models.Error to HTTP
-// statuses. A code that is not listed is treated as an internal error.
-var statusForCode = map[string]int{
-	models.CodeInvalidRequest:      http.StatusBadRequest,
-	models.CodeResourceBusy:        http.StatusConflict,
-	models.CodeIdempotencyConflict: http.StatusConflict,
-	models.CodeNotCancellable:      http.StatusConflict,
-	models.CodeQueueFull:           http.StatusServiceUnavailable,
-	models.CodeShuttingDown:        http.StatusServiceUnavailable,
-}
-
-// fail maps a service error to an error response. Internal error text is
-// logged and never sent to the client.
-func (h *handler) fail(w http.ResponseWriter, r *http.Request, err error) {
-	var me *models.Error
-	if errors.As(err, &me) {
-		if status, ok := statusForCode[me.Code]; ok {
-			writeErrorDetails(w, r, status, me.Code, me.Message, me.Details)
-			return
-		}
-	}
-	switch {
-	case errors.Is(err, models.ErrNotFound):
-		writeError(w, r, http.StatusNotFound, CodeNotFound, "the requested resource does not exist")
-	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
-		writeError(w, r, http.StatusServiceUnavailable, CodeUnavailable, "the request was cancelled or timed out")
-	default:
-		h.log.ErrorContext(r.Context(), "api: request failed",
-			"error", err, "path", r.URL.Path, "request_id", requestID(r.Context()))
-		writeError(w, r, http.StatusInternalServerError, CodeInternal, "internal server error")
-	}
+	httpkit.WriteJSON(w, r, http.StatusOK, detail)
 }
