@@ -12,10 +12,10 @@ host discovery, a task engine with history and an operation audit log, a
 small read-only API, and the local database schema. It cannot create or
 manage anything yet.
 
-> **Security notice:** the API has **no authentication and no TLS yet**;
-> both arrive with the remaining steps of Milestone 4. Until then
-> `skep-api` binds to loopback and refuses any other address, and every
-> endpoint is read-only. Do not forward the port to a network. See
+> **Security notice:** the API has **no authentication yet**; it arrives
+> with the remaining steps of Milestone 4. Until then `skep-api` binds to
+> loopback and refuses any other address, and every endpoint is read-only.
+> Do not forward the port to a network. See
 > [docs/security/overview.md](docs/security/overview.md).
 
 ## What works today
@@ -23,13 +23,14 @@ manage anything yet.
 | Area | State |
 |---|---|
 | `skep-agent` | Runs as root with no network listener; discovers the host, runs tasks, and serves the internal API on a Unix socket to `skep-api` only |
-| `skep-api` | Runs unprivileged, serves the public API on loopback, and reaches the host only through the agent socket |
+| `skep-api` | Runs unprivileged, serves the public API on loopback over TLS 1.3, and reaches the host only through the agent socket |
+| TLS | Self-signed certificate generated at first start and renewed with the same key, or an operator-supplied certificate reloaded on change and on `SIGHUP`; no plaintext listener |
 | Host discovery | Read-only: CPU, memory, OS, bhyve, QEMU, ZFS (FreeBSD native, Linux dev mode) |
 | API | `GET /api/v1/health`, `/system`, `/nodes/{id}/hardware`, `/tasks`, `/tasks/{id}`; all read-only |
 | Task engine | Persistent tasks with states, events, idempotency keys, cancellation, and an audit trail; nothing is resumed after a restart |
 | FreeBSD services | rc.d scripts for both processes, supervised, started at boot |
 | Database | SQLite with versioned migrations and a stable node ID; separate databases for the agent and the API |
-| Not yet | VM or jail management, storage or network changes, authentication, TLS, UI, CLI, clustering |
+| Not yet | VM or jail management, storage or network changes, authentication, UI, CLI, clustering |
 
 ## Platforms
 
@@ -71,20 +72,26 @@ make run-dev
 This builds and starts both processes with `-dev`, as you: state goes to
 `./.skep-dev/`, logs are human-readable text at debug level, the agent
 listens on the Unix socket `.skep-dev/run/agent.sock` (which only your own
-UID may open), and the API listens on `127.0.0.1:8443`. There is no
-combined binary and no flag that turns a security control off. Then, in
-another terminal:
+UID may open), and the API listens on `127.0.0.1:8443` with a self-signed
+certificate it generates in `.skep-dev/api/tls/`. There is no combined
+binary and no flag that turns a security control off. Then, in another
+terminal:
 
 ```sh
-curl -s http://127.0.0.1:8443/api/v1/health
-curl -s http://127.0.0.1:8443/api/v1/system
+# Trust exactly the certificate this skep-api generated.
+CA=.skep-dev/api/tls/cert.pem
+curl -s --cacert $CA https://127.0.0.1:8443/api/v1/health
+curl -s --cacert $CA https://127.0.0.1:8443/api/v1/system
 
 # The hardware endpoint takes the node_id reported by /system.
-ID=$(curl -s http://127.0.0.1:8443/api/v1/system | sed -E 's/.*"node_id":"([^"]+)".*/\1/')
-curl -s http://127.0.0.1:8443/api/v1/nodes/$ID/hardware
+ID=$(curl -s --cacert $CA https://127.0.0.1:8443/api/v1/system | sed -E 's/.*"node_id":"([^"]+)".*/\1/')
+curl -s --cacert $CA https://127.0.0.1:8443/api/v1/nodes/$ID/hardware
 
 # The agent refreshes its inventory at start, as a task.
-curl -s 'http://127.0.0.1:8443/api/v1/tasks?limit=5'
+curl -s --cacert $CA 'https://127.0.0.1:8443/api/v1/tasks?limit=5'
+
+# The public key pin of the certificate, to compare out of band.
+bin/skep-api tls fingerprint -dev
 ```
 
 Stop both with Ctrl-C. `make clean` removes `bin/` and `.skep-dev/`.
@@ -155,11 +162,32 @@ file, environment variables, command-line flags.
 | Agent socket | `agent_socket` | `SKEP_SOCKET` | `-agent-socket` | `/var/run/skep/agent.sock` / `<data_dir>/run/agent.sock` |
 | State directory | `data_dir` | `SKEP_DATA_DIR` | `-data-dir` | `/var/db/skep` / `./.skep-dev` |
 | Timeouts | `read_timeout`, `write_timeout`, `shutdown_timeout` | | | `15s`, `1m`, `10s` |
+| API database file | `database.path` | | | `<data_dir>/api/api.db` |
+| Operator certificate | `tls.cert_file`, `tls.key_file` | | | empty: generate a self-signed certificate in `<data_dir>/api/tls/` |
 | Log level | `log.level` | `SKEP_LOG_LEVEL` | `-log-level` | `info` / `debug` |
 | Log format | `log.format` | `SKEP_LOG_FORMAT` | `-log-format` | `json` / `text` |
 
 Complete examples with every key at its production default are in
 [packaging/etc](packaging/etc). Unknown keys in a file are rejected.
+
+### TLS
+
+`skep-api` speaks TLS 1.3 only and has no plaintext listener.
+
+- **Without configuration** it generates an ECDSA P-256 key and a
+  self-signed certificate (397 days; names: the hostname, `localhost`, and
+  the host's addresses at that moment) at first start. It renews the
+  certificate 30 days before expiry **with the same key**, without a
+  restart, so a client that pinned the key keeps working.
+- `skep-api tls fingerprint` prints the SHA-256 of the public key, the
+  value to pin or compare. `skep-api tls regenerate` is the only way to get
+  a new key; it also picks up a changed hostname or address. Both are run
+  on the host, as root or as the service account.
+- **With `tls.cert_file` and `tls.key_file`** it serves that pair, reloads
+  it when the files change or on `SIGHUP`, refuses a pair that does not
+  match (the old one stays in use), and never writes to the files. It warns
+  from 30 days before expiry. `Strict-Transport-Security` is sent only in
+  this mode.
 
 ## API
 
@@ -181,6 +209,8 @@ internal/internalapi/  the agent's internal API: socket listener, peer check, ha
 internal/agentclient/  skep-api's client for the agent socket
 internal/agentproto/   what both sides share about the internal API (actor headers)
 internal/httpkit/      error envelope, request IDs, access log, recovery
+internal/apitls/       skep-api's certificate: generation, renewal, reload
+internal/privdrop/     giving up root in skep-api's local commands
 internal/hardware/     read-only host discovery (FreeBSD native, Linux dev)
 internal/database/     SQLite access, migration runner, node identity
 internal/config/       typed configuration

@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/greenbeanorg/skep/internal/agentproto"
 	"github.com/greenbeanorg/skep/internal/httpkit"
@@ -96,7 +97,7 @@ func do(t *testing.T, b Backend, method, path string, logBuf *bytes.Buffer) *htt
 	if logBuf == nil {
 		logBuf = &bytes.Buffer{}
 	}
-	h := NewHandler(b, slog.New(slog.NewJSONHandler(logBuf, nil)))
+	h := NewHandler(Options{Backend: b, Logger: slog.New(slog.NewJSONHandler(logBuf, nil))})
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(method, path, nil))
 	return rec
@@ -240,7 +241,7 @@ func TestHeadHasNoBody(t *testing.T) {
 }
 
 func TestRequestIDAndSecurityHeaders(t *testing.T) {
-	h := NewHandler(newBackend(), slog.New(slog.NewJSONHandler(&bytes.Buffer{}, nil)))
+	h := NewHandler(Options{Backend: newBackend(), Logger: slog.New(slog.NewJSONHandler(&bytes.Buffer{}, nil))})
 
 	send := func(id string) http.Header {
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
@@ -380,7 +381,7 @@ func TestDomainErrorMapping(t *testing.T) {
 // anything else.
 func TestBackendCallsCarryACaller(t *testing.T) {
 	b := newBackend()
-	h := NewHandler(b, slog.New(slog.NewJSONHandler(&bytes.Buffer{}, nil)))
+	h := NewHandler(Options{Backend: b, Logger: slog.New(slog.NewJSONHandler(&bytes.Buffer{}, nil))})
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/system", nil)
 	req.RemoteAddr = "[::ffff:192.0.2.7]:51234"
 	req.Header.Set(httpkit.RequestIDHeader, "req-7")
@@ -400,4 +401,38 @@ func TestAgentUnavailableIs503(t *testing.T) {
 	b := newBackend()
 	b.systemErr = fmt.Errorf("wrapped: %w", &models.Error{Code: models.CodeAgentUnavailable, Message: "the host agent is not reachable"})
 	wantError(t, do(t, b, http.MethodGet, "/api/v1/system", nil), http.StatusServiceUnavailable, models.CodeAgentUnavailable)
+}
+
+// TestHSTSOnlyWithOperatorCertificate: a browser that has stored the header
+// cannot click through a certificate warning, so it must never be sent
+// with the self-signed certificate.
+func TestHSTSOnlyWithOperatorCertificate(t *testing.T) {
+	expiry := time.Date(2027, 12, 14, 0, 0, 0, 0, time.UTC)
+	for source, want := range map[string]string{"self-signed": "", "operator": "max-age=63072000"} {
+		info := models.TLSInfo{Source: source, NotAfter: expiry, PublicKeySHA256: "sha256:abc"}
+		h := NewHandler(Options{
+			Backend: newBackend(),
+			Logger:  slog.New(slog.NewJSONHandler(&bytes.Buffer{}, nil)),
+			TLS:     func() models.TLSInfo { return info },
+		})
+		for _, path := range []string{"/api/v1/system", "/api/v1/health", "/nope"} {
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+			if got := rec.Header().Get("Strict-Transport-Security"); got != want {
+				t.Errorf("%s certificate, %s: Strict-Transport-Security = %q, want %q", source, path, got, want)
+			}
+		}
+		// The system document reports the certificate, including its expiry.
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/system", nil))
+		sys := decode[models.System](t, rec)
+		if sys.API == nil || sys.API.TLS != info {
+			t.Errorf("%s: system.api = %+v", source, sys.API)
+		}
+	}
+	// Without TLS information (not served over TLS) neither appears.
+	rec := do(t, newBackend(), http.MethodGet, "/api/v1/system", nil)
+	if rec.Header().Get("Strict-Transport-Security") != "" || decode[models.System](t, rec).API != nil {
+		t.Error("TLS details reported without TLS")
+	}
 }

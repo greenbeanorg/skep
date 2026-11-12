@@ -182,6 +182,28 @@ type System struct {
 	Capabilities   CapabilitySummary `json:"capabilities"`
 	StartedAt      time.Time         `json:"started_at"`
 	UptimeSeconds  int64             `json:"uptime_seconds"`
+	// API describes the API server that answered. The agent leaves it
+	// out; skep-api fills it in.
+	API *APIInfo `json:"api,omitempty"`
+}
+
+// APIInfo describes the skep-api process that served a request.
+type APIInfo struct {
+	TLS TLSInfo `json:"tls"`
+}
+
+// TLSInfo describes the certificate skep-api serves. Nothing in it is
+// secret: a client sees the same in the handshake.
+type TLSInfo struct {
+	// Source is "self-signed" (generated and renewed by skep-api) or
+	// "operator" (supplied in the configuration; Skep never renews it).
+	Source string `json:"source"`
+	// NotAfter is when the certificate expires.
+	NotAfter time.Time `json:"not_after"`
+	// PublicKeySHA256 is the SHA-256 of the certificate's
+	// SubjectPublicKeyInfo, as "sha256:<hex>". Clients pin this value; it
+	// does not change when the certificate is renewed.
+	PublicKeySHA256 string `json:"public_key_sha256"`
 }
 
 // Health statuses.

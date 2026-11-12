@@ -34,18 +34,32 @@ type Backend interface {
 // nodeIDRE is the accepted shape of a resource ID in a URL.
 var nodeIDRE = regexp.MustCompile(httpkit.IDPattern)
 
+// Options configures the public API handler.
+type Options struct {
+	// Backend is the service layer, in skep-api the agent client.
+	Backend Backend
+	// Logger defaults to slog.Default().
+	Logger *slog.Logger
+	// TLS describes the certificate in use. It is reported in the system
+	// document, and decides whether Strict-Transport-Security is sent.
+	// Nil when the handler is not served over TLS (tests).
+	TLS func() models.TLSInfo
+}
+
 type handler struct {
 	backend Backend
 	log     *slog.Logger
+	tls     func() models.TLSInfo
 }
 
 // NewHandler returns the API as an http.Handler, wrapped in the request ID,
 // access log, panic recovery, and security header middleware.
-func NewHandler(backend Backend, log *slog.Logger) http.Handler {
+func NewHandler(opts Options) http.Handler {
+	log := opts.Logger
 	if log == nil {
 		log = slog.Default()
 	}
-	h := &handler{backend: backend, log: log}
+	h := &handler{backend: opts.Backend, log: log, tls: opts.TLS}
 
 	mux := http.NewServeMux()
 	mux.Handle(Prefix+"/health", httpkit.ReadOnly(h.health))
@@ -59,10 +73,33 @@ func NewHandler(backend Backend, log *slog.Logger) http.Handler {
 	root = withCaller(root)
 	root = httpkit.WithRecovery(log, root)
 	root = httpkit.WithAccessLog(log, root)
+	root = h.withHSTS(root)
 	root = httpkit.WithSecurityHeaders(root)
 	root = httpkit.WithRequestID(root)
 	return root
 }
+
+// hstsValue is two years, without includeSubDomains: Skep does not know
+// what else lives under the host's domain.
+const hstsValue = "max-age=63072000"
+
+// withHSTS sends Strict-Transport-Security only while an operator-supplied
+// certificate is in use. With the self-signed certificate it must not be
+// sent: a browser that has stored the header refuses to let the user click
+// through a certificate warning, which would lock people out of a fresh
+// install (ADR 0006 decision 6).
+func (h *handler) withHSTS(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if h.tls != nil && h.tls().Source == TLSSourceOperator {
+			w.Header().Set("Strict-Transport-Security", hstsValue)
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// TLSSourceOperator is the TLSInfo.Source of an operator-supplied
+// certificate.
+const TLSSourceOperator = "operator"
 
 // AnonymousActor is the actor of every request until the API has
 // authentication. The API is loopback-only and read-only while it is used.
@@ -106,6 +143,9 @@ func (h *handler) system(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		httpkit.Fail(h.log, w, r, err)
 		return
+	}
+	if h.tls != nil {
+		sys.API = &models.APIInfo{TLS: h.tls()}
 	}
 	httpkit.WriteJSON(w, r, http.StatusOK, sys)
 }

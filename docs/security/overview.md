@@ -7,9 +7,9 @@ states plainly what is and is not protected.
 
 Milestone 4 is in progress
 ([ADR 0006](../decisions/0006-api-split-authentication-tls.md)). The split
-into two processes is done; authentication, authorization, and TLS are
-not. Until they are, Skep's standing requirements (TLS everywhere,
-Argon2id, RBAC) are not met and it must not be deployed as if they were.
+into two processes and TLS are done; authentication and authorization are
+not. Until they are, Skep's standing requirements (Argon2id, RBAC) are not
+met and it must not be deployed as if they were.
 
 What limits the exposure until then:
 
@@ -94,6 +94,39 @@ handler errors are logged and replaced by a generic message on the task.
 **HTTP hardening.** Read, write, and idle timeouts and a header size limit
 are set. Responses carry `X-Content-Type-Options: nosniff`,
 `Cache-Control: no-store`, and a deny-all `Content-Security-Policy`.
+
+## TLS
+
+- **TLS 1.3 only, and nothing else.** There is no plaintext listener, not
+  even for a redirect, and no setting that adds one.
+- **Generated certificate.** Without configuration, `skep-api` generates
+  an ECDSA P-256 key and a self-signed certificate at first start, as the
+  service account, in `/var/db/skep/api/tls` (`0700`; key file `0600`). The
+  agent never sees the key.
+- **The key is a plaintext file.** An unattended service must read its key
+  at boot, so there is no other form. "No plaintext secrets" is met for
+  stored credentials, which are hashes; a TLS server key cannot be hashed.
+- **Renewal keeps the key.** The certificate is renewed 30 days before
+  expiry with the same key and swapped in without a restart. Each renewal
+  is written to the access audit log with the old and new fingerprints.
+- **A new key only on request.** `skep-api tls regenerate`, run on the
+  host, is the only thing that creates a new key. It is audited with the
+  actor `local:<uid>` and both key fingerprints. If the generated files are
+  damaged, `skep-api` refuses to start instead of replacing the key.
+- **Pinning.** The value to pin is the SHA-256 of the public key
+  (`skep-api tls fingerprint`, also in the system document). It survives
+  renewals.
+- **Operator certificates** are read, reloaded on change and on `SIGHUP`,
+  checked to match their key, and never written. A bad pair is logged and
+  the previous one stays in use.
+- **HSTS** is sent only with an operator certificate. With the self-signed
+  one it would stop users from clicking through the browser warning of a
+  fresh install.
+- **Local commands drop root.** `skep-api tls ...` started as root changes
+  to the owner of `/var/db/skep/api` before it opens anything.
+
+Certificate verification by `skepctl` (trust on first use, pinned key)
+arrives with `skepctl`, which does not exist yet.
 
 ## The privilege boundary
 

@@ -87,6 +87,27 @@ Configuration files are optional. When present they are read from
 samples are in `packaging/etc/`. `api.json` must be readable by the `skep`
 account (`root:skep`, `0640`).
 
+## TLS certificate
+
+`skep-api` serves TLS 1.3 only. At its first start it generates a key and a
+self-signed certificate in `/var/db/skep/api/tls` and renews the
+certificate by itself, keeping the key. To see the public key pin, or to
+replace the key:
+
+```sh
+skep-api tls fingerprint
+skep-api tls regenerate     # new key; every client that pinned the old one must confirm it
+```
+
+Run them as root (they change to the service account first) or as `skep`.
+`skep-api tls regenerate` does not need a restart: the running server
+picks the new pair up within a minute, or at once with
+`pkill -HUP -F /var/run/skep/api.pid`.
+
+To use your own certificate, set `tls.cert_file` and `tls.key_file` in
+`/usr/local/etc/skep/api.json`. The files must be readable by `skep`. After
+replacing them, the server reloads them within a minute or on `SIGHUP`.
+
 ## rc.conf variables
 
 `skep_agent`:

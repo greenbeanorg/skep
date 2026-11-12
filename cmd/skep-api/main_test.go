@@ -3,6 +3,9 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"io"
@@ -13,8 +16,11 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
+
+	_ "modernc.org/sqlite"
 
 	"github.com/greenbeanorg/skep/internal/agentproto"
 	"github.com/greenbeanorg/skep/internal/internalapi"
@@ -24,7 +30,10 @@ import (
 
 // testEnv is an unprivileged environment with captured output.
 func testEnv(stdout, stderr io.Writer) env {
-	return env{stdout: stdout, stderr: stderr, euid: 1002}
+	return env{
+		stdin: strings.NewReader(""), stdout: stdout, stderr: stderr, uid: 1002, euid: 1002,
+		drop: func(uint32, uint32) error { return errors.New("the test environment is not root") },
+	}
 }
 
 func TestRunVersion(t *testing.T) {
@@ -142,7 +151,7 @@ func startAgent(t *testing.T, socket string, agent *fakeAgent) (stop func()) {
 }
 
 // startAPI runs skep-api on an ephemeral loopback port and returns its
-// base URL.
+// base URL. Use client to talk to it.
 func startAPI(t *testing.T, args ...string) (base string) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -173,7 +182,7 @@ func startAPI(t *testing.T, args ...string) (base string) {
 		default:
 		}
 		if m := addrRE.FindStringSubmatch(logs.String()); m != nil {
-			return "http://" + m[1]
+			return "https://" + m[1]
 		}
 		if time.Now().After(deadline) {
 			t.Fatalf("skep-api did not start listening:\n%s", logs.String())
@@ -182,9 +191,26 @@ func startAPI(t *testing.T, args ...string) (base string) {
 	}
 }
 
-func get(t *testing.T, url string, wantStatus int, into any) {
+// client returns an HTTP client that trusts exactly the certificate
+// skep-api generated in dataDir, as a careful administrator would.
+func client(t *testing.T, dataDir string) *http.Client {
 	t.Helper()
-	resp, err := http.Get(url)
+	pemBytes, err := os.ReadFile(filepath.Join(dataDir, "api", "tls", "cert.pem"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(pemBytes) {
+		t.Fatal("the generated certificate is not PEM")
+	}
+	c := &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{RootCAs: pool}}, Timeout: 10 * time.Second}
+	t.Cleanup(c.CloseIdleConnections)
+	return c
+}
+
+func get(t *testing.T, c *http.Client, url string, wantStatus int, into any) *http.Response {
+	t.Helper()
+	resp, err := c.Get(url)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -195,6 +221,7 @@ func get(t *testing.T, url string, wantStatus int, into any) {
 	if err := json.NewDecoder(resp.Body).Decode(into); err != nil {
 		t.Fatalf("GET %s: invalid JSON: %v", url, err)
 	}
+	return resp
 }
 
 // TestRunServesAPIThroughTheSocket runs the real skep-api against an agent
@@ -209,28 +236,30 @@ func TestRunServesAPIThroughTheSocket(t *testing.T) {
 	socket := filepath.Join(dir, "agent.sock")
 
 	// The API starts first: the start order must not matter.
-	base := startAPI(t, "-dev", "-data-dir", filepath.Join(dir, "data"), "-agent-socket", socket)
+	dataDir := filepath.Join(dir, "data")
+	base := startAPI(t, "-dev", "-data-dir", dataDir, "-agent-socket", socket)
+	c := client(t, dataDir)
 
 	var health models.Health
-	get(t, base+"/api/v1/health", http.StatusServiceUnavailable, &health)
+	get(t, c, base+"/api/v1/health", http.StatusServiceUnavailable, &health)
 	if health.Status != models.HealthDegraded || health.Checks["agent"].Status != models.HealthDegraded {
 		t.Errorf("health without an agent = %+v", health)
 	}
 	var apiErr models.ErrorResponse
-	get(t, base+"/api/v1/system", http.StatusServiceUnavailable, &apiErr)
+	get(t, c, base+"/api/v1/system", http.StatusServiceUnavailable, &apiErr)
 	if apiErr.Error.Code != models.CodeAgentUnavailable {
 		t.Errorf("system without an agent = %+v", apiErr)
 	}
 
 	agent := &fakeAgent{}
 	stopAgent := startAgent(t, socket, agent)
-	get(t, base+"/api/v1/health", http.StatusOK, &health)
+	get(t, c, base+"/api/v1/health", http.StatusOK, &health)
 	if health.Status != models.HealthOK || health.Checks["agent"].Status != models.HealthOK ||
 		health.Checks["database"].Status != models.HealthOK {
 		t.Errorf("health = %+v", health)
 	}
 	var sys models.System
-	get(t, base+"/api/v1/system", http.StatusOK, &sys)
+	get(t, c, base+"/api/v1/system", http.StatusOK, &sys)
 	if sys.NodeID != "node-1" || sys.Hostname != "hearst" {
 		t.Errorf("system = %+v", sys)
 	}
@@ -238,23 +267,231 @@ func TestRunServesAPIThroughTheSocket(t *testing.T) {
 		t.Errorf("the agent saw caller %+v", c)
 	}
 	var hw models.Hardware
-	get(t, base+"/api/v1/nodes/node-1/hardware", http.StatusOK, &hw)
+	get(t, c, base+"/api/v1/nodes/node-1/hardware", http.StatusOK, &hw)
 	var list models.TaskList
-	get(t, base+"/api/v1/tasks", http.StatusOK, &list)
+	get(t, c, base+"/api/v1/tasks", http.StatusOK, &list)
 	var detail models.TaskDetail
-	get(t, base+"/api/v1/tasks/task-1", http.StatusOK, &detail)
+	get(t, c, base+"/api/v1/tasks/task-1", http.StatusOK, &detail)
 	if hw.NodeID != "node-1" || len(list.Items) != 1 || detail.ID != "task-1" {
 		t.Errorf("hardware %+v, tasks %+v, task %+v", hw, list, detail)
 	}
-	get(t, base+"/api/v1/tasks/unknown", http.StatusNotFound, &apiErr)
-	get(t, base+"/api/v1/nodes/unknown/hardware", http.StatusNotFound, &apiErr)
+	get(t, c, base+"/api/v1/tasks/unknown", http.StatusNotFound, &apiErr)
+	get(t, c, base+"/api/v1/nodes/unknown/hardware", http.StatusNotFound, &apiErr)
 	if apiErr.Error.Code != "not_found" {
 		t.Errorf("error = %+v", apiErr)
 	}
 
 	// The agent goes away and comes back; the API does neither.
 	stopAgent()
-	get(t, base+"/api/v1/system", http.StatusServiceUnavailable, &apiErr)
+	get(t, c, base+"/api/v1/system", http.StatusServiceUnavailable, &apiErr)
 	defer startAgent(t, socket, agent)()
-	get(t, base+"/api/v1/system", http.StatusOK, &sys)
+	get(t, c, base+"/api/v1/system", http.StatusOK, &sys)
+}
+
+// TestRunTLS checks the listener itself: TLS 1.3 only, no plaintext, the
+// generated certificate with private files, no HSTS for a self-signed
+// certificate, and the certificate reported in the system document.
+func TestRunTLS(t *testing.T) {
+	dir, err := os.MkdirTemp("", "skep-api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	socket := filepath.Join(dir, "agent.sock")
+	defer startAgent(t, socket, &fakeAgent{})()
+	dataDir := filepath.Join(dir, "data")
+	base := startAPI(t, "-dev", "-data-dir", dataDir, "-agent-socket", socket)
+	addr := strings.TrimPrefix(base, "https://")
+
+	for path, want := range map[string]os.FileMode{
+		filepath.Join(dataDir, "api"):                   0o700,
+		filepath.Join(dataDir, "api", "api.db"):         0o600,
+		filepath.Join(dataDir, "api", "tls"):            0o700,
+		filepath.Join(dataDir, "api", "tls", "key.pem"): 0o600,
+	} {
+		info, err := os.Stat(path)
+		if err != nil || info.Mode().Perm() != want {
+			t.Errorf("%s: %v, %v; want mode %04o", path, info, err, want)
+		}
+	}
+
+	// Plain HTTP gets no API response.
+	resp, err := http.Get("http://" + addr + "/api/v1/health")
+	if err == nil {
+		resp.Body.Close()
+		if resp.StatusCode == http.StatusOK {
+			t.Error("the API answered over plain HTTP")
+		}
+	}
+	// TLS 1.2 is refused.
+	if conn, err := tls.Dial("tcp", addr, &tls.Config{InsecureSkipVerify: true, MaxVersion: tls.VersionTLS12}); err == nil {
+		conn.Close()
+		t.Error("a TLS 1.2 handshake succeeded")
+	}
+	conn, err := tls.Dial("tcp", addr, &tls.Config{InsecureSkipVerify: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := conn.ConnectionState()
+	conn.Close()
+	if state.Version != tls.VersionTLS13 {
+		t.Errorf("negotiated TLS version %x", state.Version)
+	}
+
+	c := client(t, dataDir)
+	var sys models.System
+	resp = get(t, c, base+"/api/v1/system", http.StatusOK, &sys)
+	if hsts := resp.Header.Get("Strict-Transport-Security"); hsts != "" {
+		t.Errorf("Strict-Transport-Security = %q with a self-signed certificate", hsts)
+	}
+	leaf := state.PeerCertificates[0]
+	if sys.API == nil || sys.API.TLS.Source != "self-signed" || !sys.API.TLS.NotAfter.Equal(leaf.NotAfter) ||
+		!strings.HasPrefix(sys.API.TLS.PublicKeySHA256, "sha256:") {
+		t.Errorf("system.api = %+v", sys.API)
+	}
+
+	// "tls fingerprint" prints the same pin, without a running server
+	// being involved.
+	var out bytes.Buffer
+	if err := run(context.Background(), []string{"tls", "fingerprint", "-dev", "-data-dir", dataDir}, testEnv(&out, io.Discard)); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), sys.API.TLS.PublicKeySHA256) || !strings.Contains(out.String(), "self-signed") {
+		t.Errorf("tls fingerprint printed:\n%s\nwant the pin %s", out.String(), sys.API.TLS.PublicKeySHA256)
+	}
+
+	// "tls regenerate" makes a new key; SIGHUP makes the running server
+	// serve it at once; the change is in the access audit log.
+	out.Reset()
+	e := testEnv(&out, io.Discard)
+	e.uid = 4242
+	if err := run(context.Background(), []string{"tls", "regenerate", "-dev", "-data-dir", dataDir}, e); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "old public key: "+sys.API.TLS.PublicKeySHA256) {
+		t.Errorf("tls regenerate printed:\n%s", out.String())
+	}
+	if err := syscall.Kill(os.Getpid(), syscall.SIGHUP); err != nil {
+		t.Fatal(err)
+	}
+	var after models.System
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		get(t, client(t, dataDir), base+"/api/v1/system", http.StatusOK, &after)
+		if after.API.TLS.PublicKeySHA256 != sys.API.TLS.PublicKeySHA256 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the running server did not pick up the regenerated key after SIGHUP")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if !strings.Contains(out.String(), after.API.TLS.PublicKeySHA256) {
+		t.Errorf("the server's new pin %s is not the one regenerate printed:\n%s", after.API.TLS.PublicKeySHA256, out.String())
+	}
+
+	db, err := sql.Open("sqlite", "file:"+filepath.Join(dataDir, "api", "api.db")+"?mode=ro")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var actor, details string
+	if err := db.QueryRow(`SELECT actor_name, details FROM audit_log WHERE action = 'tls.key.regenerate'`).Scan(&actor, &details); err != nil {
+		t.Fatal(err)
+	}
+	if actor != "local:4242" || !strings.Contains(details, sys.API.TLS.PublicKeySHA256) || !strings.Contains(details, after.API.TLS.PublicKeySHA256) {
+		t.Errorf("audit entry: actor %q, details %s", actor, details)
+	}
+}
+
+func TestTLSCommandErrors(t *testing.T) {
+	dataDir := t.TempDir()
+	for name, args := range map[string][]string{
+		"no command":            {"tls"},
+		"unknown command":       {"tls", "rotate"},
+		"stray argument":        {"tls", "fingerprint", "-dev", "-data-dir", dataDir, "extra"},
+		"nothing generated yet": {"tls", "fingerprint", "-dev", "-data-dir", dataDir},
+	} {
+		if err := run(context.Background(), args, testEnv(io.Discard, io.Discard)); err == nil {
+			t.Errorf("%s: succeeded", name)
+		}
+	}
+}
+
+// TestLocalCommandsDropRoot: a local command started as root gives up root
+// for the owner of the API's state directory before it opens anything.
+func TestLocalCommandsDropRoot(t *testing.T) {
+	dataDir := t.TempDir()
+
+	// The state directory does not exist: nothing to drop to, so stop.
+	e := testEnv(io.Discard, io.Discard)
+	e.euid = 0
+	dropped := false
+	e.drop = func(uint32, uint32) error { dropped = true; return nil }
+	err := run(context.Background(), []string{"tls", "regenerate", "-dev", "-data-dir", dataDir}, e)
+	if err == nil || !strings.Contains(err.Error(), "does not exist yet") || dropped {
+		t.Errorf("missing state directory: %v (dropped=%v)", err, dropped)
+	}
+	if entries, _ := os.ReadDir(dataDir); len(entries) != 0 {
+		t.Errorf("a root command created files before dropping privileges: %v", entries)
+	}
+
+	// The state directory exists and belongs to this user: the command
+	// drops to exactly that owner, then works.
+	if err := os.Mkdir(filepath.Join(dataDir, "api"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	var gotUID, gotGID uint32
+	e.drop = func(uid, gid uint32) error { gotUID, gotGID, dropped = uid, gid, true; return nil }
+	if err := run(context.Background(), []string{"tls", "regenerate", "-dev", "-data-dir", dataDir}, e); err != nil {
+		t.Fatal(err)
+	}
+	if !dropped || gotUID != uint32(os.Getuid()) || gotGID != uint32(os.Getgid()) {
+		t.Errorf("dropped=%v to %d:%d, want the directory owner %d:%d", dropped, gotUID, gotGID, os.Getuid(), os.Getgid())
+	}
+
+	// If root cannot be given up, nothing is opened.
+	other := t.TempDir()
+	os.Mkdir(filepath.Join(other, "api"), 0o700)
+	e.drop = func(uint32, uint32) error { return errors.New("setuid failed") }
+	err = run(context.Background(), []string{"tls", "regenerate", "-dev", "-data-dir", other}, e)
+	if err == nil || !strings.Contains(err.Error(), "cannot give up root") {
+		t.Errorf("failed drop: %v", err)
+	}
+	if entries, _ := os.ReadDir(filepath.Join(other, "api")); len(entries) != 0 {
+		t.Errorf("files were created as root: %v", entries)
+	}
+}
+
+// TestOperatorCertificateIsServedWithHSTS runs the server with an
+// operator-supplied pair.
+func TestOperatorCertificateIsServedWithHSTS(t *testing.T) {
+	dir := t.TempDir()
+	// Use a generated pair as the "operator's" files.
+	gen := filepath.Join(dir, "gen")
+	if err := run(context.Background(), []string{"tls", "regenerate", "-dev", "-data-dir", gen}, testEnv(io.Discard, io.Discard)); err != nil {
+		t.Fatal(err)
+	}
+	certFile, keyFile := filepath.Join(gen, "api", "tls", "cert.pem"), filepath.Join(gen, "api", "tls", "key.pem")
+	cfgFile := filepath.Join(dir, "api.json")
+	cfg, _ := json.Marshal(map[string]any{"tls": map[string]string{"cert_file": certFile, "key_file": keyFile}})
+	if err := os.WriteFile(cfgFile, cfg, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	dataDir := filepath.Join(dir, "data")
+	base := startAPI(t, "-dev", "-config", cfgFile, "-data-dir", dataDir, "-agent-socket", filepath.Join(dir, "absent.sock"))
+
+	var health models.Health
+	resp := get(t, client(t, gen), base+"/api/v1/health", http.StatusServiceUnavailable, &health)
+	if hsts := resp.Header.Get("Strict-Transport-Security"); !strings.HasPrefix(hsts, "max-age=") {
+		t.Errorf("Strict-Transport-Security = %q with an operator certificate", hsts)
+	}
+	if _, err := os.Stat(filepath.Join(dataDir, "api", "tls")); err == nil {
+		t.Error("a certificate was generated although one is configured")
+	}
+	// Skep never replaces operator files.
+	err := run(context.Background(), []string{"tls", "regenerate", "-dev", "-config", cfgFile, "-data-dir", dataDir}, testEnv(io.Discard, io.Discard))
+	if err == nil || !strings.Contains(err.Error(), "operator-supplied") {
+		t.Errorf("tls regenerate with an operator certificate: %v", err)
+	}
 }

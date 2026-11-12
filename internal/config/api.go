@@ -43,7 +43,32 @@ type API struct {
 	WriteTimeout    Duration  `json:"write_timeout"`
 	ShutdownTimeout Duration  `json:"shutdown_timeout"`
 	Log             LogConfig `json:"log"`
+	// Database is api.db: users, roles, sessions, and the access audit
+	// log. It defaults to api/api.db in the data directory.
+	Database DatabaseConfig `json:"database"`
+	TLS      TLSConfig      `json:"tls"`
 }
+
+// TLSConfig selects the certificate skep-api serves. The API is TLS 1.3
+// only; there is no plaintext listener and no setting that adds one.
+type TLSConfig struct {
+	// CertFile and KeyFile name an operator-supplied certificate (PEM,
+	// leaf first) and its key. Set both or neither. When they are empty,
+	// skep-api generates a self-signed certificate in api/tls in the data
+	// directory and renews it by itself.
+	CertFile string `json:"cert_file"`
+	KeyFile  string `json:"key_file"`
+}
+
+// APIStateDir is skep-api's private directory, relative to the data
+// directory. It holds api.db and the generated TLS key.
+const APIStateDir = "api"
+
+// StateDir returns skep-api's private state directory.
+func (c API) StateDir() string { return filepath.Join(c.DataDir, APIStateDir) }
+
+// TLSDir returns the directory of the generated key and certificate.
+func (c API) TLSDir() string { return filepath.Join(c.StateDir(), "tls") }
 
 // APIOverrides are skep-api's command line values. Zero values mean "not
 // set".
@@ -161,6 +186,9 @@ func (c *API) applyDefaults() {
 		c.ShutdownTimeout = Duration(10 * time.Second)
 	}
 	c.Log.applyDefaults(c.DevMode)
+	if c.Database.Path == "" {
+		c.Database.Path = filepath.Join(c.StateDir(), "api.db")
+	}
 }
 
 // Validate reports every problem in the configuration as one error.
@@ -177,6 +205,17 @@ func (c API) Validate() error {
 	}
 	if err := c.validateListen(); err != nil {
 		errs = append(errs, err)
+	}
+	if c.Database.Path == "" {
+		add("database.path must not be empty")
+	}
+	if (c.TLS.CertFile == "") != (c.TLS.KeyFile == "") {
+		add("tls.cert_file and tls.key_file must be set together")
+	}
+	for name, f := range map[string]string{"tls.cert_file": c.TLS.CertFile, "tls.key_file": c.TLS.KeyFile} {
+		if f != "" && !filepath.IsAbs(f) {
+			add("%s %q must be an absolute path", name, f)
+		}
 	}
 	errs = append(errs, c.Log.validate()...)
 	for name, d := range map[string]Duration{

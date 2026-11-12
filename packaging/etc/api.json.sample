@@ -9,5 +9,12 @@
   "log": {
     "level": "info",
     "format": "json"
+  },
+  "database": {
+    "path": "/var/db/skep/api/api.db"
+  },
+  "tls": {
+    "cert_file": "",
+    "key_file": ""
   }
 }
