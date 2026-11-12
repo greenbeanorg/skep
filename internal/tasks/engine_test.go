@@ -85,8 +85,11 @@ func newFixture(t *testing.T, db *sql.DB, workers, queue int) *fixture {
 	// block waits until released, or returns ctx.Err() when cancelled.
 	block := func(ctx context.Context, task tasks.Task, r tasks.Reporter) (any, error) {
 		f.runs.Add(1)
-		f.started <- task.ID
 		r.Progress("waiting", map[string]string{"step": "1"})
+		// Signal only after the progress event is stored: a test that has
+		// seen "started" may then rely on the handler having nothing left
+		// to write until it is released or cancelled.
+		f.started <- task.ID
 		select {
 		case <-f.release:
 			return map[string]string{"done": "yes"}, nil
