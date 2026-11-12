@@ -90,11 +90,17 @@ func (fakeBackend) CancelTask(context.Context, string) (models.Task, error) {
 // stack is a real skep-api identity stack and handler over TLS 1.3.
 type stack struct {
 	db       *sql.DB
+	authn    *auth.Authenticator
 	srv      *httptest.Server
 	requests atomic.Int32
 }
 
-func newStack(t *testing.T) *stack {
+func newStack(t *testing.T) *stack { return newStackWith(t, nil) }
+
+// newStackWith serves *cert if it is not nil, as with an operator-supplied
+// certificate (the test can replace it: a renewal); otherwise httptest's
+// self-signed one.
+func newStackWith(t *testing.T, cert **tls.Certificate) *stack {
 	t.Helper()
 	ctx := context.Background()
 	db, err := database.Open(ctx, filepath.Join(t.TempDir(), "api.db"))
@@ -131,19 +137,39 @@ func newStack(t *testing.T) *stack {
 	h := api.NewHandler(api.Options{
 		Backend: fakeBackend{}, Auth: authn, Users: users, Audit: access, AuditLog: access, Logger: quiet,
 	})
-	s := &stack{db: db}
+	s := &stack{db: db, authn: authn}
 	s.srv = httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		s.requests.Add(1)
 		h.ServeHTTP(w, r)
 	}))
-	s.srv.TLS = &tls.Config{MinVersion: tls.VersionTLS13}
-	s.srv.StartTLS()
+	if cert == nil {
+		s.srv.TLS = &tls.Config{MinVersion: tls.VersionTLS13}
+		s.srv.StartTLS()
+	} else {
+		// Not StartTLS: its own certificate would be served to a client
+		// that sends no SNI, as one connecting to an IP address does.
+		s.srv.Listener = tls.NewListener(s.srv.Listener, &tls.Config{
+			MinVersion:     tls.VersionTLS13,
+			GetCertificate: func(*tls.ClientHelloInfo) (*tls.Certificate, error) { return *cert, nil },
+		})
+		s.srv.Start()
+		s.srv.URL = strings.Replace(s.srv.URL, "http://", "https://", 1)
+	}
 	t.Cleanup(s.srv.Close)
 	return s
 }
 
 func (s *stack) server() string { return s.srv.URL }
-func (s *stack) pin() string    { return client.PublicKeyPin(s.srv.Certificate()) }
+func (s *stack) pin() string {
+	if c := s.srv.Certificate(); c != nil {
+		return client.PublicKeyPin(c)
+	}
+	cert, err := client.FetchCertificate(context.Background(), s.server())
+	if err != nil {
+		panic(err)
+	}
+	return client.PublicKeyPin(cert)
+}
 
 func (s *stack) count(t *testing.T, query string, args ...any) int {
 	t.Helper()
@@ -225,7 +251,7 @@ func TestLoginTrustOnFirstUseAndReadCommands(t *testing.T) {
 
 	// The pin and the token are stored, 0600, in a 0700 directory.
 	store := ctlstate.New(stateDir)
-	pin, ok, err := store.Pin(s.server())
+	pin, ok, err := store.Trust(s.server())
 	if err != nil || !ok || pin.PublicKeySHA256 != s.pin() {
 		t.Fatalf("pin = %+v, %v, %v", pin, ok, err)
 	}
@@ -299,7 +325,7 @@ func TestLoginTrustOnFirstUseAndReadCommands(t *testing.T) {
 	if _, ok, _ := store.Session(s.server()); ok {
 		t.Error("the token is still stored after logout")
 	}
-	if _, ok, _ := store.Pin(s.server()); !ok {
+	if _, ok, _ := store.Trust(s.server()); !ok {
 		t.Error("logout forgot the pinned key")
 	}
 	if _, _, err = skepctl(stateDir, nil, "", "system"); err == nil || !strings.Contains(err.Error(), "not logged in") {
@@ -333,7 +359,7 @@ func TestFirstContactRefusals(t *testing.T) {
 	if _, _, err := skepctl(stateDir, &terminal{passwords: []string{testPassword}}, "", append(base, "--trust-key", other)...); err == nil || !strings.Contains(err.Error(), "nothing was trusted") {
 		t.Errorf("wrong --trust-key: %v", err)
 	}
-	if _, ok, _ := ctlstate.New(stateDir).Pin(s.server()); ok {
+	if _, ok, _ := ctlstate.New(stateDir).Trust(s.server()); ok {
 		t.Fatal("a refused key was pinned")
 	}
 	if n := s.requests.Load(); n != 0 {
@@ -359,7 +385,7 @@ func TestChangedKeyIsRefused(t *testing.T) {
 
 	// Pretend the server's key changed: pin another one.
 	old := "sha256:" + strings.Repeat("ab", 32)
-	if err := store.SetPin(s.server(), ctlstate.Pin{PublicKeySHA256: old}); err != nil {
+	if err := store.SetTrust(s.server(), ctlstate.Trust{PublicKeySHA256: old}); err != nil {
 		t.Fatal(err)
 	}
 	before := s.requests.Load()
@@ -391,7 +417,7 @@ func TestChangedKeyIsRefused(t *testing.T) {
 	if err != nil || !strings.Contains(errOut, "old: "+old) {
 		t.Fatalf("accepting the new key: %v\n%s", err, errOut)
 	}
-	if p, _, _ := store.Pin(s.server()); p.PublicKeySHA256 != s.pin() {
+	if p, _, _ := store.Trust(s.server()); p.PublicKeySHA256 != s.pin() {
 		t.Error("the pin was not replaced")
 	}
 	// The previous session was ended on the server, not left behind.
@@ -442,7 +468,7 @@ func TestLoginFailures(t *testing.T) {
 	if _, ok, _ := ctlstate.New(stateDir).Session(s.server()); ok {
 		t.Error("a failed login stored a session")
 	}
-	if _, ok, _ := ctlstate.New(stateDir).Pin(s.server()); !ok {
+	if _, ok, _ := ctlstate.New(stateDir).Trust(s.server()); !ok {
 		t.Error("the confirmed key was not kept after a failed password")
 	}
 	// No terminal for the password.

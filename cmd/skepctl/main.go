@@ -65,8 +65,10 @@ type env struct {
 const usage = `usage: skepctl <command> [flags]
 
 Session:
-  login     --server HOST[:PORT] --username NAME [--password-stdin] [--trust-key PIN]
-            log in; on first contact, confirm the server's public key
+  login     --server HOST[:PORT] --username NAME [--password-stdin]
+            [--trust-key PIN] [--ca-file FILE | --system-roots]
+            log in; on first contact, confirm the server's public key, or, for an
+            operator-supplied certificate, verify it against a CA file or the system roots
   logout    [--server HOST[:PORT]]
             end the session on the server and forget its token
 

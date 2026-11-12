@@ -9,11 +9,14 @@ an administrator's workstation.
 It follows [ADR 0006](../decisions/0006-api-split-authentication-tls.md):
 a bearer session whose token is kept in a `0600` file (decision 3), and
 trust on first use that pins the SHA-256 of the server's public key
-(decision 6). There is no flag that skips the key check.
+(decision 6). When the server has an operator-supplied certificate,
+`skepctl` instead verifies the certificate chain and host name, like any
+TLS client (see [below](#operator-supplied-certificates)). There is no
+flag that skips both.
 
-Validated on FreeBSD 15.1-RELEASE as an ordinary user, with the API on
-loopback; see [tests/integration/skepctl](../../tests/integration/skepctl/README.md)
-for what was run and what is still pending.
+Validated on FreeBSD 15.1-RELEASE: as an ordinary user with the API on
+loopback, and against the `skep_api` rc.d service from another host; see
+[tests/integration/skepctl](../../tests/integration/skepctl/README.md).
 
 ## Commands
 
@@ -94,13 +97,47 @@ skepctl login --server 10.79.20.170 --username andy --trust-key sha256:91aa…
 
 There is no interactive "accept anyway" for a changed key.
 
+## Operator-supplied certificates
+
+Pinning is for `skep-api`'s self-signed certificate, which is renewed
+with the same key. An operator-supplied certificate (`tls.cert_file` and
+`tls.key_file`) is usually renewed with a **new** key, and a pin would
+lock every client out at each renewal. For such a server, tell `skepctl`
+what to verify the certificate against:
+
+```sh
+skepctl login --server mgmt.example.org --username andy --ca-file /etc/ssl/operator-ca.pem
+skepctl login --server mgmt.example.org --username andy --system-roots
+```
+
+- The chain is verified against the CA certificates in the file, or
+  against the system's roots, and the server's name (or IP address) must
+  be in the certificate. TLS 1.3 only, as always.
+- Nothing is asked: the CA decides. The setting is checked with a TLS
+  handshake before it is stored, so a CA that does not verify the server
+  changes nothing and no password is asked for.
+- Renewals, including with a new key, need no action as long as the new
+  certificate is issued by the same CA.
+- A pin is optional in this mode: `--trust-key PIN` together with
+  `--ca-file` or `--system-roots` checks both. With a pin, a renewal with
+  a new key needs a new login, as in pin mode.
+- The CA file is read again on every run, so replacing it takes effect at
+  once. If the CA changes, log in again with the new `--ca-file`.
+- To go back to pinning, log in with `--trust-key PIN` alone.
+
+Choosing the mode is up to the user, never the server: `skepctl` does not
+switch modes by itself, and a server cannot ask for it.
+
 ## Sessions
 
 - `login` asks the server for a bearer session (`"session": "bearer"`).
   The server sets no cookie for it and accepts its token only in an
   `Authorization: Bearer` header.
 - The token is stored in the state directory; see below. A new login to the
-  same server ends the previous session on the server before replacing it.
+  same server ends the previous session on the server before replacing it:
+  only the session whose token `skepctl` stored. The user's other sessions
+  (a browser, `skepctl` on another machine) are not touched, and neither
+  are they by `logout`.
 - `logout` ends the session on the server and then deletes the token. If
   the server cannot be reached, the token is kept so the logout can be
   retried; a session the server already ended is simply forgotten.
@@ -119,7 +156,7 @@ There is no interactive "accept anyway" for a changed key.
 | File | Holds | Mode |
 |---|---|---|
 | (directory) | | `0700` |
-| `pins.json` | The trusted public key of each server, and when it was trusted | `0600` |
+| `pins.json` | How each server is trusted: its pinned public key, or chain verification with a CA file (or the system roots) and an optional pin; and when | `0600` |
 | `sessions.json` | The bearer token, username, and expiry for each server; the server of the last login | `0600` |
 
 Files are replaced atomically (temporary file, `fsync`, rename). `skepctl`

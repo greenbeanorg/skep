@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"os"
 	"regexp"
 	"strings"
 	"time"
@@ -93,34 +94,80 @@ func hostPort(server string) (string, error) {
 	return strings.TrimPrefix(norm, "https://"), nil
 }
 
-// tlsConfig returns the client TLS configuration for a server whose key is
-// pinned. The connection is accepted if and only if the server's leaf
-// certificate carries the pinned public key.
+// tlsConfig returns the client TLS configuration. There are two modes, and
+// there is no configuration in which neither check runs:
 //
-// The certificate chain and host name are not checked against the system
-// roots: skep-api's certificate is self-signed by default, and the pin is
-// a stronger check than either, because it names the exact key. That is
-// why InsecureSkipVerify is set; VerifyConnection runs regardless of it
-// and refuses every connection whose key does not match. There is no
-// configuration in which neither check runs.
-func tlsConfig(pin string) (*tls.Config, error) {
-	if !ValidPin(pin) {
+//   - Pin only (verifyChain false), for skep-api's self-signed certificate.
+//     The connection is accepted if and only if the leaf certificate
+//     carries the pinned public key. The chain and host name are not
+//     checked: the certificate is self-signed, and the pin names the exact
+//     key, which is the stronger check. That is why InsecureSkipVerify is
+//     set; VerifyConnection runs regardless of it and refuses every
+//     connection whose key does not match.
+//   - Chain (verifyChain true), for an operator-supplied certificate. The
+//     chain is verified against roots (the system roots when nil) and the
+//     host name against the certificate, as any TLS client does, so a
+//     renewal with a new key keeps working. A pin is optional here; if one
+//     is given, it is checked in addition.
+func tlsConfig(host, pin string, verifyChain bool, roots *x509.CertPool) (*tls.Config, error) {
+	if pin != "" && !ValidPin(pin) {
 		return nil, fmt.Errorf("invalid public key pin %q", pin)
 	}
-	return &tls.Config{
-		MinVersion:         tls.VersionTLS13,
-		InsecureSkipVerify: true, // replaced by the pin check below; see the doc comment
-		VerifyConnection: func(cs tls.ConnectionState) error {
-			if len(cs.PeerCertificates) == 0 {
-				return errors.New("the server presented no certificate")
-			}
-			got := PublicKeyPin(cs.PeerCertificates[0])
-			if subtle.ConstantTimeCompare([]byte(got), []byte(pin)) != 1 {
-				return &KeyMismatchError{Pinned: pin, Presented: got}
-			}
-			return nil
-		},
-	}, nil
+	if !verifyChain && pin == "" {
+		return nil, errors.New("a public key pin is required unless the certificate chain is verified")
+	}
+	checkPin := func(cs tls.ConnectionState) error {
+		if len(cs.PeerCertificates) == 0 {
+			return errors.New("the server presented no certificate")
+		}
+		got := PublicKeyPin(cs.PeerCertificates[0])
+		if subtle.ConstantTimeCompare([]byte(got), []byte(pin)) != 1 {
+			return &KeyMismatchError{Pinned: pin, Presented: got}
+		}
+		return nil
+	}
+	if !verifyChain {
+		return &tls.Config{
+			MinVersion:         tls.VersionTLS13,
+			InsecureSkipVerify: true, // replaced by the pin check; see the doc comment
+			VerifyConnection:   checkPin,
+		}, nil
+	}
+	cfg := &tls.Config{
+		MinVersion: tls.VersionTLS13,
+		ServerName: host,
+		RootCAs:    roots, // nil: the system roots
+	}
+	if pin != "" {
+		// Runs after the standard verification has succeeded.
+		cfg.VerifyConnection = checkPin
+	}
+	return cfg, nil
+}
+
+// LoadCAFile reads a PEM file of CA certificates for Options.RootCAs.
+func LoadCAFile(path string) (*x509.CertPool, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read CA file: %w", err)
+	}
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(data) {
+		return nil, fmt.Errorf("%s contains no PEM certificate", path)
+	}
+	return pool, nil
+}
+
+// IsUntrustedCertificate reports whether err is a failed chain or host
+// name verification (Options.VerifyChain), as opposed to a network error.
+func IsUntrustedCertificate(err error) bool {
+	var (
+		ua  x509.UnknownAuthorityError
+		he  x509.HostnameError
+		ci  x509.CertificateInvalidError
+		cve *tls.CertificateVerificationError
+	)
+	return errors.As(err, &cve) || errors.As(err, &ua) || errors.As(err, &he) || errors.As(err, &ci)
 }
 
 // ProbeTimeout bounds FetchCertificate when the context has no deadline.
@@ -162,4 +209,33 @@ func FetchCertificate(ctx context.Context, server string) (*x509.Certificate, er
 	}
 	conn.Close()
 	return leaf, nil
+}
+
+// CheckConnection completes a TLS handshake with the checks opts asks for
+// (pin, chain, or both) and closes the connection without sending a
+// request. It lets a caller confirm a trust setting before storing it.
+func CheckConnection(ctx context.Context, opts Options) error {
+	addr, err := hostPort(opts.Server)
+	if err != nil {
+		return err
+	}
+	hostname, _, _ := net.SplitHostPort(addr)
+	cfg, err := tlsConfig(hostname, opts.Pin, opts.VerifyChain, opts.RootCAs)
+	if err != nil {
+		return err
+	}
+	if _, ok := ctx.Deadline(); !ok {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, ProbeTimeout)
+		defer cancel()
+	}
+	conn, err := (&tls.Dialer{Config: cfg}).DialContext(ctx, "tcp", addr)
+	if err != nil {
+		var km *KeyMismatchError
+		if errors.As(err, &km) {
+			return km
+		}
+		return fmt.Errorf("connect to %s: %w", addr, err)
+	}
+	return conn.Close()
 }

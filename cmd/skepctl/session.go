@@ -8,6 +8,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -43,20 +44,46 @@ type session struct {
 	client *client.Client
 }
 
-// connect opens the stored session for a server. It needs both a pinned
-// key and a session token; it never trusts a key by itself.
+// clientOptions turns a stored trust setting into client options. The CA
+// file is read on every run, so replacing it takes effect at once.
+func clientOptions(server string, t ctlstate.Trust, token string) (client.Options, error) {
+	opts := client.Options{Server: server, Pin: t.PublicKeySHA256, Token: token, UserAgent: userAgent()}
+	if t.VerifiesChain() {
+		opts.VerifyChain = true
+		if t.CAFile != "" {
+			pool, err := client.LoadCAFile(t.CAFile)
+			if err != nil {
+				return client.Options{}, fmt.Errorf("the CA file for %s: %w", server, err)
+			}
+			opts.RootCAs = pool
+		}
+	}
+	return opts, nil
+}
+
+// newClient returns a client for a server with its stored trust setting.
+func newClient(server string, t ctlstate.Trust, token string) (*client.Client, error) {
+	opts, err := clientOptions(server, t, token)
+	if err != nil {
+		return nil, err
+	}
+	return client.New(opts)
+}
+
+// connect opens the stored session for a server. It needs both a stored
+// trust setting and a session token; it never trusts a server by itself.
 func connect(e env, serverFlag string) (*session, error) {
 	store := ctlstate.New(e.stateDir)
 	server, err := resolveServer(store, serverFlag)
 	if err != nil {
 		return nil, err
 	}
-	pin, ok, err := store.Pin(server)
+	trust, ok, err := store.Trust(server)
 	if err != nil {
 		return nil, err
 	}
 	if !ok {
-		return nil, fmt.Errorf("no trusted key for %s: run skepctl login --server %s", server, server)
+		return nil, fmt.Errorf("no trust setting for %s: run skepctl login --server %s", server, server)
 	}
 	sess, ok, err := store.Session(server)
 	if err != nil {
@@ -65,7 +92,7 @@ func connect(e env, serverFlag string) (*session, error) {
 	if !ok {
 		return nil, fmt.Errorf("not logged in to %s: run skepctl login --server %s", server, server)
 	}
-	c, err := client.New(client.Options{Server: server, Pin: pin.PublicKeySHA256, Token: sess.Token, UserAgent: userAgent()})
+	c, err := newClient(server, trust, sess.Token)
 	if err != nil {
 		return nil, err
 	}
@@ -79,6 +106,8 @@ func (s *session) explain(err error) error {
 	switch {
 	case errors.As(err, &km):
 		return keyChangedError(s.server, km)
+	case client.IsUntrustedCertificate(err):
+		return untrustedError(s.server, err)
 	case client.IsUnauthenticated(err):
 		if derr := s.store.DeleteSession(s.server); derr != nil {
 			return fmt.Errorf("the session with %s has ended, and its token could not be forgotten: %w", s.server, derr)
@@ -97,8 +126,95 @@ func keyChangedError(server string, km *client.KeyMismatchError) error {
 This happens after "skep-api tls regenerate" on the host, and it is also what
 an attack in the middle looks like. Run "skep-api tls fingerprint" on the host.
 Only if it prints the presented key, accept it with:
-  skepctl login --server %s --username NAME --trust-key %s`,
+  skepctl login --server %s --username NAME --trust-key %s
+If the server now has an operator-supplied certificate, use --ca-file FILE or
+--system-roots instead of --trust-key.`,
 		server, km.Pinned, km.Presented, server, km.Presented)
+}
+
+// untrustedError explains a certificate that failed chain or host name
+// verification. Nothing was sent to the server.
+func untrustedError(server string, err error) error {
+	return fmt.Errorf("the certificate of %s is not trusted; nothing was sent to it: %w\n"+
+		"If the operator's CA has changed, log in again with --ca-file NEWFILE (or --system-roots).", server, err)
+}
+
+// trustFlags are the login flags that decide how a server is trusted.
+type trustFlags struct {
+	// key is --trust-key: the pin.
+	key string
+	// caFile is --ca-file; systemRoots is --system-roots. Either one
+	// selects chain verification.
+	caFile      string
+	systemRoots bool
+}
+
+func (f trustFlags) chain() bool { return f.caFile != "" || f.systemRoots }
+
+// establishTrust makes sure the server has a stored trust setting that the
+// user chose, before any password is asked for:
+//
+//   - --ca-file or --system-roots: chain and host name verification, with
+//     --trust-key as an optional extra pin. Checked with a handshake
+//     before it is stored.
+//   - an entry in chain mode and no flags: kept as it is.
+//   - otherwise a pinned key, confirmed on first contact (trustServer).
+func establishTrust(ctx context.Context, e env, store *ctlstate.Store, server string, f trustFlags) error {
+	stored, have, err := store.Trust(server)
+	if err != nil {
+		return err
+	}
+	if f.chain() {
+		t := ctlstate.Trust{Mode: ctlstate.TrustCA, PublicKeySHA256: f.key, TrustedAt: e.now().UTC()}
+		if f.caFile != "" {
+			if t.CAFile, err = filepath.Abs(f.caFile); err != nil {
+				return err
+			}
+		}
+		opts, err := clientOptions(server, t, "")
+		if err != nil {
+			return err
+		}
+		if err := client.CheckConnection(ctx, opts); err != nil {
+			var km *client.KeyMismatchError
+			if errors.As(err, &km) {
+				return fmt.Errorf("%s presents public key %s, not %s as given with --trust-key; nothing was trusted",
+					server, km.Presented, km.Pinned)
+			}
+			if client.IsUntrustedCertificate(err) {
+				return fmt.Errorf("the certificate of %s does not verify against %s; nothing was trusted: %w",
+					server, rootsName(t), err)
+			}
+			return err
+		}
+		if have && t.CAFile == stored.CAFile && t.PublicKeySHA256 == stored.PublicKeySHA256 && stored.VerifiesChain() {
+			return nil
+		}
+		if have && !stored.VerifiesChain() {
+			fmt.Fprintf(e.stderr, "Switching %s from the pinned key %s to verifying its certificate against %s.\n",
+				server, stored.PublicKeySHA256, rootsName(t))
+		} else {
+			fmt.Fprintf(e.stderr, "The certificate of %s verifies against %s.\n", server, rootsName(t))
+		}
+		return store.SetTrust(server, t)
+	}
+	if have && stored.VerifiesChain() {
+		if f.key == "" {
+			return nil
+		}
+		// --trust-key alone switches back to a pinned key.
+		fmt.Fprintf(e.stderr, "Switching %s from certificate verification to a pinned key.\n", server)
+		return trustServer(ctx, e, store, server, f.key, false)
+	}
+	return trustServer(ctx, e, store, server, f.key, have)
+}
+
+// rootsName names what a chain is verified against, for messages.
+func rootsName(t ctlstate.Trust) string {
+	if t.CAFile != "" {
+		return t.CAFile
+	}
+	return "the system roots"
 }
 
 // describeCertificate shows what the user is asked to trust.
@@ -118,12 +234,14 @@ func describeCertificate(w io.Writer, server string, cert *x509.Certificate) {
 
 // trustServer makes sure a pin is stored for the server that the user has
 // confirmed, either on the terminal or by naming it with --trust-key.
-// A pinned key is replaced only by naming the new one.
-func trustServer(ctx context.Context, e env, store *ctlstate.Store, server, trustKey string) error {
-	stored, have, err := store.Pin(server)
+// A pinned key is replaced only by naming the new one. havePin says
+// whether a pin is stored for the server now.
+func trustServer(ctx context.Context, e env, store *ctlstate.Store, server, trustKey string, havePin bool) error {
+	stored, _, err := store.Trust(server)
 	if err != nil {
 		return err
 	}
+	have := havePin
 	if have && trustKey == stored.PublicKeySHA256 {
 		return nil
 	}
@@ -158,7 +276,8 @@ func trustServer(ctx context.Context, e env, store *ctlstate.Store, server, trus
 		ok, err := e.confirm(ctx, "Trust this key? [y/N] ")
 		if err != nil {
 			if errors.Is(err, termpass.ErrNoTerminal) {
-				return fmt.Errorf("%w to confirm the key on; pass it with --trust-key %s once you have compared it", err, presented)
+				return fmt.Errorf("there is no terminal to confirm the key on; pass it with --trust-key %s once you have "+
+					"compared it (for an operator-supplied certificate, use --ca-file FILE or --system-roots)", presented)
 			}
 			return err
 		}
@@ -166,7 +285,7 @@ func trustServer(ctx context.Context, e env, store *ctlstate.Store, server, trus
 			return errors.New("the key was not trusted; nothing was sent to the server")
 		}
 	}
-	return store.SetPin(server, ctlstate.Pin{PublicKeySHA256: presented, TrustedAt: e.now().UTC()})
+	return store.SetTrust(server, ctlstate.Trust{Mode: ctlstate.TrustPin, PublicKeySHA256: presented, TrustedAt: e.now().UTC()})
 }
 
 func readPassword(ctx context.Context, e env, fromStdin bool, prompt string) (string, error) {
@@ -191,7 +310,12 @@ func cmdLogin(ctx context.Context, args []string, e env) error {
 	username := fs.String("username", "", "user to log in as")
 	fromStdin := fs.Bool("password-stdin", false, "read the password from standard input instead of the terminal")
 	trustKey := fs.String("trust-key", "", `public key pin to trust, as printed by "skep-api tls fingerprint"; `+
-		"needed to accept a changed key, and instead of the question on first contact")
+		"needed to accept a changed key, and instead of the question on first contact; with --ca-file or "+
+		"--system-roots, an optional extra check")
+	caFile := fs.String("ca-file", "", "for an operator-supplied certificate: verify the chain and host name against "+
+		"the CA certificates in this PEM file instead of pinning the key")
+	systemRoots := fs.Bool("system-roots", false, "for an operator-supplied certificate: verify the chain and host name "+
+		"against the system's CA certificates instead of pinning the key")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -204,15 +328,18 @@ func cmdLogin(ctx context.Context, args []string, e env) error {
 	if *trustKey != "" && !client.ValidPin(*trustKey) {
 		return fmt.Errorf("--trust-key must be sha256: followed by 64 lowercase hex digits, as \"skep-api tls fingerprint\" prints it")
 	}
+	if *caFile != "" && *systemRoots {
+		return errors.New("--ca-file and --system-roots cannot be used together")
+	}
 	store := ctlstate.New(e.stateDir)
 	server, err := resolveServer(store, *serverFlag)
 	if err != nil {
 		return err
 	}
-	if err := trustServer(ctx, e, store, server, *trustKey); err != nil {
+	if err := establishTrust(ctx, e, store, server, trustFlags{key: *trustKey, caFile: *caFile, systemRoots: *systemRoots}); err != nil {
 		return err
 	}
-	pin, _, err := store.Pin(server)
+	trust, _, err := store.Trust(server)
 	if err != nil {
 		return err
 	}
@@ -221,7 +348,7 @@ func cmdLogin(ctx context.Context, args []string, e env) error {
 	if err != nil {
 		return err
 	}
-	anon, err := client.New(client.Options{Server: server, Pin: pin.PublicKeySHA256, UserAgent: userAgent()})
+	anon, err := newClient(server, trust, "")
 	if err != nil {
 		return err
 	}
@@ -232,12 +359,18 @@ func cmdLogin(ctx context.Context, args []string, e env) error {
 		if errors.As(err, &km) {
 			return keyChangedError(server, km)
 		}
+		if client.IsUntrustedCertificate(err) {
+			return untrustedError(server, err)
+		}
 		return fmt.Errorf("login failed: %w", err)
 	}
 
-	// A previous session with this server is ended, not just forgotten.
+	// The previous session in skepctl's own token file is ended, not just
+	// forgotten. This is a logout with that one token: the server ends
+	// only the session the token belongs to, never the user's other
+	// sessions (a browser, another skepctl).
 	if old, ok, err := store.Session(server); err == nil && ok && old.Token != res.Token {
-		if c, err := client.New(client.Options{Server: server, Pin: pin.PublicKeySHA256, Token: old.Token, UserAgent: userAgent()}); err == nil {
+		if c, err := newClient(server, trust, old.Token); err == nil {
 			_ = c.Logout(ctx) // best effort: it may have expired already
 			c.Close()
 		}
@@ -246,7 +379,7 @@ func cmdLogin(ctx context.Context, args []string, e env) error {
 		Username: res.User.Username, Token: res.Token, CreatedAt: res.Session.CreatedAt, ExpiresAt: res.Session.ExpiresAt,
 	}); err != nil {
 		// Do not leave a live session behind that nobody holds.
-		c, cerr := client.New(client.Options{Server: server, Pin: pin.PublicKeySHA256, Token: res.Token, UserAgent: userAgent()})
+		c, cerr := newClient(server, trust, res.Token)
 		if cerr == nil {
 			_ = c.Logout(ctx)
 			c.Close()

@@ -28,7 +28,17 @@ import (
 	"syscall"
 	"time"
 
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/sha256"
 	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/hex"
+	"encoding/pem"
+	"math/big"
+	"net"
 
 	"golang.org/x/sys/unix"
 )
@@ -514,6 +524,50 @@ func main() {
 	check(al.count(local, "user.delete", "denied") == 1, "audit: the refused delete of andy")
 	check(al.count(local, "user.delete", "success") == 1, "audit: the delete of carol")
 	check(al.count(local, "session.revoke", "success") == 1, "audit: carol's session revoked by the disable")
+	step("an operator-supplied certificate: chain verification, renewals with a new key")
+	api.Process.Signal(syscall.SIGTERM)
+	api.Wait()
+	ca := newCA()
+	caFile := filepath.Join(scratch, "operator-ca.pem")
+	writePEM(caFile, "CERTIFICATE", ca.cert.Raw)
+	opCert, opKey := filepath.Join(scratch, "op-cert.pem"), filepath.Join(scratch, "op-key.pem")
+	first := ca.issue(opCert, opKey, 10)
+	cfgFile := filepath.Join(scratch, "api.json")
+	cfg, _ := json.Marshal(map[string]any{"tls": map[string]string{"cert_file": opCert, "key_file": opKey}})
+	os.WriteFile(cfgFile, cfg, 0o600)
+	api = startProc(apiLog.path+".op", e.api, "-dev", "-config", cfgFile, "-data-dir", e.dataDir, "-listen", listen, "-log-format", "json")
+	cleanups = append(cleanups, func() { api.Process.Kill(); api.Wait() })
+	if !check(waitHealthy(), "skep-api answers with the operator certificate") {
+		exit(1)
+	}
+	r = e.ctlRun("system")
+	check(r.exit != 0 && strings.Contains(r.out, "has changed") && strings.Contains(r.out, "--ca-file"),
+		"the pinned self-signed key no longer matches; the error points to --ca-file")
+	r = e.runNoTTY(password+"\n", e.ctl, "login", "--username", "andy", "--password-stdin", "--system-roots")
+	check(r.exit != 0 && strings.Contains(r.out, "does not verify against the system roots"), "--system-roots refuses the private CA: %s", short(r.out))
+	r = e.runNoTTY(password+"\n", e.ctl, "login", "--username", "andy", "--password-stdin", "--ca-file", caFile)
+	check(r.exit == 0 && strings.Contains(r.out, "from the pinned key") && strings.Contains(r.out, "Logged in"),
+		"login --ca-file switches from the pin to chain verification: %s", short(r.out))
+	pinsData, _ = os.ReadFile(filepath.Join(e.ctlDir, "pins.json"))
+	check(strings.Contains(string(pinsData), `"mode": "ca"`) && strings.Contains(string(pinsData), caFile), "pins.json holds mode ca and the CA file")
+	check(e.ctlRun("system").exit == 0, "system works")
+	second := ca.issue(opCert, opKey, 11)
+	check(spkiPin(second) != spkiPin(first), "the operator renews the certificate with a new key")
+	api.Process.Signal(syscall.SIGHUP)
+	time.Sleep(time.Second)
+	r = e.ctlRun("system")
+	check(r.exit == 0 && strings.Contains(r.out, spkiPin(second)), "system works after the renewal, without a new login; the server shows the new key")
+	otherCA := newCA()
+	otherCA.issue(opCert, opKey, 12)
+	api.Process.Signal(syscall.SIGHUP)
+	time.Sleep(time.Second)
+	before = apiLog.count(`"msg":"http request"`) + logFile{apiLog.path + ".op"}.count(`"msg":"http request"`)
+	r = e.ctlRun("system")
+	check(r.exit != 0 && strings.Contains(r.out, "not trusted"), "a certificate from another CA is refused: %s", short(r.out))
+	check(apiLog.count(`"msg":"http request"`)+logFile{apiLog.path + ".op"}.count(`"msg":"http request"`) == before, "no HTTP request reached skep-api")
+	ca.issue(opCert, opKey, 13)
+	api.Process.Signal(syscall.SIGHUP)
+	time.Sleep(time.Second)
 	r = e.ctlRun("logout")
 	check(r.exit == 0, "logout")
 
@@ -540,4 +594,57 @@ func indent(s string) string {
 		b.WriteString("       | " + line + "\n")
 	}
 	return b.String()
+}
+
+// testCA is an operator's CA.
+type testCA struct {
+	cert *x509.Certificate
+	key  *ecdsa.PrivateKey
+}
+
+func newCA() *testCA {
+	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "Skep test operator CA"},
+		NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(24 * time.Hour),
+		IsCA: true, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	if err != nil {
+		fatal("create the CA: %v", err)
+	}
+	cert, _ := x509.ParseCertificate(der)
+	return &testCA{cert: cert, key: key}
+}
+
+// issue writes a certificate for 127.0.0.1 with a new key, as an operator
+// renewing it would.
+func (ca *testCA) issue(certFile, keyFile string, serial int64) *x509.Certificate {
+	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(serial), Subject: pkix.Name{CommonName: "hearst"},
+		NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour),
+		IPAddresses: []net.IP{net.ParseIP("127.0.0.1")},
+		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}, KeyUsage: x509.KeyUsageDigitalSignature,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, ca.cert, &key.PublicKey, ca.key)
+	if err != nil {
+		fatal("issue a certificate: %v", err)
+	}
+	keyDER, _ := x509.MarshalPKCS8PrivateKey(key)
+	writePEM(keyFile, "PRIVATE KEY", keyDER)
+	writePEM(certFile, "CERTIFICATE", der)
+	cert, _ := x509.ParseCertificate(der)
+	return cert
+}
+
+func writePEM(path, typ string, der []byte) {
+	if err := os.WriteFile(path, pem.EncodeToMemory(&pem.Block{Type: typ, Bytes: der}), 0o600); err != nil {
+		fatal("write %s: %v", path, err)
+	}
+}
+
+func spkiPin(cert *x509.Certificate) string {
+	sum := sha256.Sum256(cert.RawSubjectPublicKeyInfo)
+	return "sha256:" + hex.EncodeToString(sum[:])
 }
