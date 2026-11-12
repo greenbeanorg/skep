@@ -75,6 +75,8 @@ skep_agent_child_pidfile="${skep_agent_run_dir}/agent.pid"
 command="/usr/sbin/daemon"
 procname="daemon"
 start_precmd="skep_agent_precmd"
+start_postcmd="skep_agent_poststart"
+status_cmd="skep_agent_status"
 
 # These would be applied to daemon(8) by rc.subr. See the header.
 skep_agent_flags=""
@@ -128,6 +130,49 @@ skep_agent_precmd()
 	/usr/bin/install -d -o "${skep_agent_runas}" -g "${skep_agent_rungroup}" -m 0700 \
 		"${skep_agent_data_dir}/agent" ||
 		err 1 "cannot create ${skep_agent_data_dir}/agent"
+}
+
+# Prints the pid of the agent itself, or nothing when it is not running.
+skep_agent_agent_pid()
+{
+	check_pidfile "${skep_agent_child_pidfile}" "${skep_agent_bin}"
+}
+
+# daemon(8) returns as soon as the supervisor exists, even when the agent
+# then fails at once (a bad argument, an unreadable configuration file).
+# Wait briefly for the agent, so that "start" does not report success for a
+# service that is only crash-looping.
+skep_agent_poststart()
+{
+	_skep_tries=0
+	while [ "${_skep_tries}" -lt 50 ]; do
+		if [ -n "$(skep_agent_agent_pid)" ]; then
+			return 0
+		fi
+		sleep 0.2
+		_skep_tries=$((_skep_tries + 1))
+	done
+	warn "skep-agent is not running after start; see the ${skep_agent_syslog_facility} log, tag ${skep_agent_syslog_tag}"
+	if [ -n "${skep_agent_restart_args}" ]; then
+		warn "the supervisor keeps retrying every ${skep_agent_restart_delay}s; use 'service ${name} stop' to stop it"
+	fi
+	return 1
+}
+
+# The default status only looks at the supervisor, which stays up while a
+# failing agent is restarted over and over. Report the agent itself.
+skep_agent_status()
+{
+	if [ -z "${rc_pid}" ]; then
+		echo "${name} is not running."
+		return 1
+	fi
+	_skep_agent_pid=$(skep_agent_agent_pid)
+	if [ -z "${_skep_agent_pid}" ]; then
+		echo "${name} is not running: the supervisor (pid ${rc_pid}) is up, but skep-agent has exited and is being restarted."
+		return 1
+	fi
+	echo "${name} is running as pid ${_skep_agent_pid} (supervisor pid ${rc_pid})."
 }
 
 run_rc_command "$1"

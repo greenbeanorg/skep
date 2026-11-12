@@ -65,7 +65,7 @@ func main() {
 	flag.DurationVar(&o.restartDelay, "restart-delay", 5*time.Second, "skep_agent_restart_delay")
 	flag.StringVar(&o.stateFile, "state", "", "file that carries state from pre-reboot to post-reboot")
 	flag.Usage = func() {
-		fmt.Fprintln(os.Stderr, "usage: rcd-test [flags] lifecycle | pre-reboot | post-reboot")
+		fmt.Fprintln(os.Stderr, "usage: rcd-test [flags] lifecycle | crashloop | norestart | pre-reboot | post-reboot")
 		flag.PrintDefaults()
 	}
 	flag.Parse()
@@ -88,6 +88,10 @@ func main() {
 	switch flag.Arg(0) {
 	case "lifecycle":
 		err = s.lifecycle()
+	case "crashloop":
+		err = s.crashLoop()
+	case "norestart":
+		err = s.noRestart()
 	case "pre-reboot":
 		err = s.preReboot()
 	case "post-reboot":
@@ -559,6 +563,90 @@ func (s *suite) lifecycle() error {
 	}
 	// The last sleep task was stopped by the final service stop.
 	s.check(unfinished == 0, "no task is left pending or running after the final stop (%d tasks in history)", len(all))
+	return nil
+}
+
+func (s *suite) sysrc(name string) string {
+	out, code := run(5*time.Second, "/usr/sbin/sysrc", "-n", s.opts.service+"_"+name)
+	if code != 0 {
+		return ""
+	}
+	return out
+}
+
+// crashLoop checks the service when the agent fails at every start. The
+// operator sets skep_agent_args to an argument the agent rejects first.
+func (s *suite) crashLoop() error {
+	const badArg = "-no-such-flag"
+	if !strings.Contains(s.sysrc("args"), badArg) {
+		return fmt.Errorf("set %s_args=%q first, so that the agent fails at every start", s.opts.service, badArg)
+	}
+	if s.opts.restartDelay <= 0 {
+		return errors.New("this phase needs supervision (-restart-delay > 0)")
+	}
+
+	step("start with an agent that exits at once")
+	s.svc("stop")
+	out, code := s.svc("start")
+	s.check(code != 0 && strings.Contains(out, "not running after start"),
+		"service start reports that the agent is not running (exit %d)", code)
+	supervisor := readPid(s.supervisorPidfile())
+	s.check(alive(supervisor) && psField(supervisor, "user") == "root", "the supervisor is running (pid %d)", supervisor)
+	out, code = s.svc("status")
+	s.check(code != 0 && strings.Contains(out, "has exited"), "service status does not claim that the agent is running")
+	s.check(!s.healthy(), "the API does not answer")
+
+	step("the supervisor keeps retrying and can be stopped")
+	time.Sleep(2*s.opts.restartDelay + time.Second)
+	s.check(alive(supervisor) && readPid(s.supervisorPidfile()) == supervisor,
+		"the supervisor is still running after two restart delays")
+	out, _ = run(5*time.Second, "/usr/bin/pgrep", "-u", s.opts.user)
+	s.check(out == "", "no process of %s is left running between attempts (%q)", s.opts.user, out)
+	_, code = s.svc("stop")
+	s.check(code == 0, "service stop succeeds")
+	s.checkStopped(supervisor, 0)
+	return nil
+}
+
+// noRestart checks skep_agent_restart_delay=0: a killed agent stays down.
+func (s *suite) noRestart() error {
+	if s.sysrc("restart_delay") != "0" {
+		return fmt.Errorf("set %s_restart_delay=0 first", s.opts.service)
+	}
+	if err := s.requireTestBuild(); err != nil {
+		return err
+	}
+
+	step("start without crash supervision")
+	s.svc("stop")
+	_, code := s.svc("start")
+	s.check(code == 0, "service start succeeds")
+	supervisor, child := s.checkRunning()
+	sleep, ok := s.waitSleepRunning("")
+	if !ok {
+		return errors.New("no in-flight task")
+	}
+
+	step("kill -9 the agent: it must stay down")
+	if err := syscall.Kill(child, syscall.SIGKILL); err != nil {
+		return err
+	}
+	fmt.Printf("       sent SIGKILL to agent pid %d\n", child)
+	s.check(waitFor(10*time.Second, func() bool { return !alive(supervisor) && !alive(child) }),
+		"the supervisor exited with the agent")
+	time.Sleep(2 * time.Second)
+	s.checkStopped(supervisor, child)
+	t, _ := s.task(sleep.ID)
+	s.check(t.Status == "running", "the killed agent's task is still recorded as running until the next start (%s)", t.Status)
+
+	step("the next start sweeps the task")
+	_, code = s.svc("start")
+	s.check(code == 0, "service start succeeds")
+	supervisor, child = s.checkRunning()
+	s.checkInterrupted(sleep.ID, "agent_restart")
+	_, code = s.svc("stop")
+	s.check(code == 0, "service stop succeeds")
+	s.checkStopped(supervisor, child)
 	return nil
 }
 

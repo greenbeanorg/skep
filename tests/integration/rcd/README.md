@@ -13,6 +13,8 @@ variables are set up by the operator beforehand.
 | Phase | What it checks |
 |---|---|
 | `lifecycle` | Start with the run directory missing; ownership and modes; the agent runs as `skep` under a root `daemon(8)`; loopback only; `kill -9` of the agent with a task in flight (supervisor restarts it, the task is `interrupted`/`agent_restart`, not resumed, audit trail complete); `stop` with a task in flight (`agent_shutdown`); `restart`; no task left unfinished |
+| `crashloop` | With `skep_agent_args="-no-such-flag"`, so that the agent exits at every start: `start` fails with a warning, `status` says the agent is not running although the supervisor is, the supervisor keeps retrying, `stop` cleans up |
+| `norestart` | With `skep_agent_restart_delay=0`: a killed agent stays down, the supervisor exits, the pid files go; the next start marks the task `interrupted`/`agent_restart` |
 | `pre-reboot` | Leaves the service running with a task in flight and saves the boot time, node ID, and task ID |
 | `post-reboot` | Starts nothing. The service came up at boot; node ID unchanged; history kept; the in-flight task was recorded `interrupted`/`agent_shutdown` by the agent during shutdown |
 
@@ -31,6 +33,15 @@ sudo sysrc skep_agent_enable=YES \
     skep_agent_env="SKEP_TEST_SLEEP=5m"
 
 sudo ~/skep-m3/rcd-test lifecycle
+
+sudo sysrc skep_agent_args="-no-such-flag"
+sudo ~/skep-m3/rcd-test crashloop
+sudo sysrc -x skep_agent_args
+
+sudo sysrc skep_agent_restart_delay=0
+sudo ~/skep-m3/rcd-test -restart-delay 0s norestart
+sudo sysrc -x skep_agent_restart_delay
+
 sudo ~/skep-m3/rcd-test -state ~/skep-m3/reboot-state.json pre-reboot
 sudo shutdown -r now
 sudo ~/skep-m3/rcd-test -state ~/skep-m3/reboot-state.json post-reboot
@@ -38,52 +49,89 @@ sudo ~/skep-m3/rcd-test -state ~/skep-m3/reboot-state.json post-reboot
 
 ## Result on FreeBSD 15.1-RELEASE-p6 (hearst, 2026-11-12)
 
-Agent test build at commit `6ad561a`; account `skep` uid 1002, gid 1002.
+Account `skep` uid 1002, gid 1002. Every phase was run with the rc.d
+script as committed here; the agent test build was at `7bfb32c` (the agent
+code itself is unchanged since `6ad561a`).
 
-- `lifecycle`: **PASS**, every check. Excerpt:
+All five phases: **PASS**, every check. The host was rebooted twice in
+total (once with an earlier version of the script, once with this one) and
+was back within 30 seconds both times.
 
-  ```
-  ok     supervisor pid 3201 is daemon(8) running as root (root: daemon: /home/aba/skep-m3/skep-agent-testbuild[3202] (daemon))
-  ok     agent pid 3202 runs as skep, not root (user=skep ruser=skep)
-  ok     the API is not reachable on 10.79.20.170:8765
-  == kill -9 the agent while a task is in flight
-  ok     a test.sleep task is in flight with progress events: id=ac243fea-... status=running
-         sent SIGKILL to agent pid 3202
-  ok     the supervisor started a new agent (pid 3293, was 3202)
-  ok     task ac243fea-... is interrupted with error code "agent_restart"
-  ok     its last event is "task is interrupted"
-  ok     its audit trail is requested/success then finished/failure(interrupted), actor system, peer uid 1002
-  ok     the interrupted task was not resumed
-  == service stop while a task is in flight
-  ok     service stop succeeds (took 25ms)
-  ok     task 1064cc5b-... is interrupted with error code "agent_shutdown"
-  ```
+`lifecycle` (78 checks), excerpt:
 
-- `pre-reboot`, `shutdown -r now`, `post-reboot`: **PASS**. The host was
-  back in 20 seconds. Excerpt:
+```
+       $ service skep_agent status -> exit 0: skep_agent is running as pid 3731 (supervisor pid 3729).
+ok     supervisor pid 3201 is daemon(8) running as root (root: daemon: /home/aba/skep-m3/skep-agent-testbuild[3202] (daemon))
+ok     agent pid 3202 runs as skep, not root (user=skep ruser=skep)
+ok     the API is not reachable on 10.79.20.170:8765
+== kill -9 the agent while a task is in flight
+ok     a test.sleep task is in flight with progress events: id=ac243fea-... status=running
+       sent SIGKILL to agent pid 3202
+ok     the supervisor started a new agent (pid 3293, was 3202)
+ok     task ac243fea-... is interrupted with error code "agent_restart"
+ok     its last event is "task is interrupted"
+ok     its audit trail is requested/success then finished/failure(interrupted), actor system, peer uid 1002
+ok     the interrupted task was not resumed
+== service stop while a task is in flight
+ok     service stop succeeds (took 25ms)
+ok     task 1064cc5b-... is interrupted with error code "agent_shutdown"
+```
 
-  ```
-  ok     kern.boottime changed: { sec = 1794464708, usec = 620780 } Thu Nov 12 01:25:08 2026
-  ok     service status reports running
-  ok     /var/run/skep is 0:1002 mode 0750 (want 0:1002 0750)
-  ok     agent pid 1335 runs as skep, not root (user=skep ruser=skep)
-  ok     the node ID is unchanged: 97fc6968-7e82-49c9-bda8-9026775ca964
-  ok     task history survived and grew: 12 tasks before, 14 now
-  ok     task 330ab553-... is interrupted with error code "agent_shutdown"
-  ok     this start ran discovery.refresh: ... status=succeeded actor=system peer_uid=1002
-  ```
+(The pids in the excerpt are from the first of two runs; the status line is
+from the second, with the final script.)
 
-- The shipped (untagged) agent was also started and stopped through the
-  service by hand: `status` running, `/api/v1/health` ok, running as `skep`.
-- Log lines arrived in `/var/log/daemon.log` only, with the default
+`crashloop`:
+
+```
+       $ service skep_agent start -> exit 1: Starting skep_agent. | ... WARNING: skep-agent is not running after start; see the daemon log, tag skep-agent | ... WARNING: the supervisor keeps retrying every 5s; use 'service skep_agent stop' to stop it
+ok     service start reports that the agent is not running (exit 1)
+ok     the supervisor is running (pid 3220)
+       $ service skep_agent status -> exit 1: skep_agent is not running: the supervisor (pid 3220) is up, but skep-agent has exited and is being restarted.
+ok     the supervisor is still running after two restart delays
+ok     no process of skep is left running between attempts ("")
+ok     service stop succeeds
+ok     both pid files were removed
+```
+
+`norestart`:
+
+```
+       sent SIGKILL to agent pid 2761
+ok     the supervisor exited with the agent
+ok     both pid files were removed
+       $ service skep_agent status -> exit 1: skep_agent is not running.
+ok     the killed agent's task is still recorded as running until the next start (running)
+== the next start sweeps the task
+ok     task 66dd7f07-... is interrupted with error code "agent_restart"
+```
+
+`pre-reboot`, `shutdown -r now`, `post-reboot`:
+
+```
+ok     kern.boottime changed: { sec = 1794465822, usec = 647064 } Thu Nov 12 01:43:42 2026
+       $ service skep_agent status -> exit 0: skep_agent is running as pid 1322 (supervisor pid 1320).
+ok     /var/run/skep is 0:1002 mode 0750 (want 0:1002 0750)
+ok     agent pid 1322 runs as skep, not root (user=skep ruser=skep)
+ok     the node ID is unchanged: 97fc6968-7e82-49c9-bda8-9026775ca964
+ok     task history survived and grew: 31 tasks before, 33 now
+ok     task 783f6de9-... is interrupted with error code "agent_shutdown"
+ok     this start ran discovery.refresh: ... status=succeeded actor=system peer_uid=1002
+```
+
+Also checked by hand:
+
+- The shipped (untagged) agent, started and stopped through the service:
+  `status` running, `/api/v1/health` ok, running as `skep`.
+- Log lines arrive in `/var/log/daemon.log` only, with the default
   `daemon.info`.
 
 Not covered:
 
 - On this host `/var/run` is on the UFS root and `cleanvar` removes files,
-  not directories, so `/var/run/skep` itself survived the reboot. The
+  not directories, so `/var/run/skep` itself survived the reboots. The
   "directory is missing" case is covered by `lifecycle`, which removes it,
   not by a real tmpfs `/var/run`.
 - A ZFS-root host.
-- A crash loop (an agent that fails at every start).
-- `service stop` when the agent ignores SIGTERM past rc.subr's wait.
+- An agent that ignores SIGTERM past rc.subr's wait.
+- An agent that starts, runs for a while, and then begins to crash: `start`
+  has long returned, so only `status` and the log show it.

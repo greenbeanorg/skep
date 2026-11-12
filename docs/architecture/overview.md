@@ -204,7 +204,8 @@ imported, both as an unprivileged user and as root.
 | QEMU detection and version parsing | **Pending FreeBSD validation** (QEMU is not installed on the lab VM) |
 | Core count on a host with SMT | **Pending FreeBSD validation** (the lab VM has no SMT) |
 | Running under rc.d as a service: start, stop, restart, status, crash supervision, start at boot, as the `skep` account | Validated (2026-11-12, see `tests/integration/rcd`) |
-| A tmpfs `/var/run`; a crash loop | **Pending FreeBSD validation** |
+| A crash loop (agent exits at every start) and `skep_agent_restart_delay=0` under rc.d | Validated (2026-11-12, see `tests/integration/rcd`) |
+| A tmpfs `/var/run` | **Pending FreeBSD validation** |
 | Agent socket with the `skep` account, under `/var/run/skep` | **Pending FreeBSD validation** (Milestone 4; the account and the directory exist and are validated, the socket does not exist yet) |
 | ZFS-root host | **Pending FreeBSD validation** (the lab VM is UFS-root) |
 | arm64 | Not a target yet |

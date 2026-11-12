@@ -23,6 +23,12 @@ recorded result.
   | `/var/db/skep` | `root:wheel` | `0755` | Shared data directory |
   | `/var/db/skep/agent` | `skep:skep` | `0700` | The agent's private database directory |
 
+- `service skep_agent start` waits up to ten seconds for the agent itself.
+  If the agent exits at once (a bad argument, an unreadable configuration
+  file), `start` prints a warning and returns 1. The supervisor is still
+  running and keeps retrying; `service skep_agent stop` stops it.
+- `service skep_agent status` reports the agent, not the supervisor: it
+  returns 1 while a failing agent is being restarted.
 - Is stopped by `rc.shutdown` (`KEYWORD: shutdown`), so the agent records
   running tasks as `interrupted` before the host goes down.
 - Sends the agent's JSON log lines to syslog as `daemon.info`, tag
