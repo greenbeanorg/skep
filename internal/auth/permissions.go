@@ -1,0 +1,55 @@
+package auth
+
+// Permissions are "resource:action" strings. This file is the only place
+// they are declared. A milestone defines only the permissions it can
+// enforce; later milestones add their own (for example vm:read, vm:power)
+// together with a migration that gives them to the built-in roles.
+const (
+	PermSystemRead = "system:read"
+	PermNodeRead   = "node:read"
+	PermTaskRead   = "task:read"
+	PermTaskCancel = "task:cancel"
+	PermUserRead   = "user:read"
+	PermUserManage = "user:manage"
+	PermRoleRead   = "role:read"
+	PermAuditRead  = "audit:read"
+
+	// PermAll is how the admin role is stored: every permission,
+	// including ones added later.
+	PermAll = "*"
+)
+
+// Permissions lists every permission that exists.
+var Permissions = []string{
+	PermSystemRead, PermNodeRead, PermTaskRead, PermTaskCancel,
+	PermUserRead, PermUserManage, PermRoleRead, PermAuditRead,
+}
+
+// KnownPermission reports whether p is a declared permission.
+func KnownPermission(p string) bool {
+	for _, known := range Permissions {
+		if p == known {
+			return true
+		}
+	}
+	return false
+}
+
+// Allows reports whether the role grants a permission. Anything that is
+// not granted is denied: an empty or unknown permission is never allowed,
+// not even for the admin role.
+func (r Role) Allows(permission string) bool {
+	if !KnownPermission(permission) {
+		return false
+	}
+	for _, p := range r.Permissions {
+		if p == PermAll || p == permission {
+			return true
+		}
+	}
+	return false
+}
+
+// ActionDenied is the audit action of a request refused for lack of a
+// permission.
+const ActionDenied = "authz.deny"

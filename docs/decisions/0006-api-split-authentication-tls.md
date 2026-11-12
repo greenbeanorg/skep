@@ -1,7 +1,8 @@
 # ADR 0006: API split, authentication, and TLS (Milestone 4)
 
-- Status: **Accepted** (not implemented yet; nothing in this document
-  exists in the code)
+- Status: **Accepted**, implemented in Milestone 4 (see
+  [Implementation notes](#implementation-notes) and
+  [FreeBSD validation required](#freebsd-validation-required))
 - Date: 2026-11-12 (proposed and accepted)
 - Depends on: [ADR 0004](0004-privilege-boundary.md) (accepted), which fixes
   the two-process shape and the socket. This ADR decides how to build it and
@@ -489,16 +490,38 @@ loopback-only and read-only, as it is today.
 
 ## FreeBSD validation required
 
-Nothing here is validated; all of it is pending. In particular:
+State on FreeBSD 15.1-RELEASE-p6 (`hearst`), 2026-11-12. The recorded runs
+are in `tests/integration/apitls`, `tests/integration/adminprompt`, and
+`tests/integration/rcd`.
 
-- The socket under `/var/run/skep` with the real `skep` account and a root
-  agent, including the `skep` to root ownership change of
-  `/var/db/skep/agent`.
-- `skep-api` under rc.d as `skep`, binding its port without privileges.
-- Argon2id timing and memory on `hearst` (2 cores, 2 GB).
+Validated, as an ordinary user:
+
 - Certificate generation, renewal with the same key without a restart,
-  `tls regenerate`, and `SIGHUP` reload.
-- Terminal password entry without echo on the FreeBSD console and over SSH.
+  `tls regenerate`, `SIGHUP` reload, operator certificates, TLS 1.3 only.
+- Argon2id timing: 121 to 151 ms per hash with the default parameters on
+  2 cores, inside the 100 to 500 ms target, so the pass count stays at 3.
+  Peak resident memory of four sequential hashes: 147 MiB.
+- Terminal password entry without echo on a pseudo-terminal and over SSH.
+- The agent on its socket, the API through it, login, and task cancel
+  with the user in the agent's audit log.
+
+Validated under rc.d, with the real `skep` account (`tests/integration/rcd`,
+all phases including one reboot):
+
+- The socket under `/var/run/skep` with a root agent, `root:skep 0660`,
+  refusing other users by file permissions and by the peer check, and the
+  `skep` to root ownership change of `/var/db/skep/agent` on an in-place
+  upgrade from Milestone 3.
+- `skep-api` under rc.d as `skep`, binding `127.0.0.1:8443` without
+  privileges, generating its key as `skep`, and starting at boot.
+- `skep-api admin create` started as root giving up root: what it wrote
+  belongs to `skep`.
+- Task cancel through the API, with the user and the verified peer uid in
+  the agent's audit log.
+
+Still pending:
+
+- Terminal password entry on the FreeBSD system console.
 
 ## Decisions
 
@@ -540,3 +563,49 @@ correction: the name of the request field that asks for a bearer session
 (`"session": "bearer"`), and the per-username ceiling (50 failures in 15
 minutes, answered with 429). Amendment (a) is also read to mean that a
 token is accepted only through the channel it was issued for.
+
+## Implementation notes
+
+Points where the implementation had to settle a detail the text above left
+open, or could not follow it literally. Each is open to correction.
+
+- **Argon2id test vectors (Decision 2).** The RFC 9106 test vector sets
+  the optional secret and associated-data inputs, which
+  `golang.org/x/crypto/argon2` does not expose and Skep does not use. The
+  hashing is tested against the known answers of the Argon2 reference
+  implementation's own test suite instead (eight Argon2id vectors,
+  including their PHC encodings).
+- **Subject alternative names (Decision 6).** No DNS query is made when a
+  certificate is generated. The fully qualified name is included when the
+  kernel hostname is one (as it is on a normally configured FreeBSD host),
+  together with its short form, `localhost`, and the interface addresses.
+- **Reload of the generated certificate (Decision 6).** The certificate
+  files are checked once a minute, not once a day, and `SIGHUP` reloads
+  and checks at once in both modes. A daily check would have left a
+  `tls regenerate` unnoticed by a running server for up to a day.
+- **Local commands and privileges (Decision 8).** A local command started
+  as root changes to the owner of `/var/db/skep/api`, which is the account
+  the service runs as, instead of looking up the name `skep`. If that
+  directory does not exist yet the command stops and says to start the
+  service once.
+- **No role cache (Decision 5).** The user and role are read from
+  `api.db` on every request, in the same indexed lookup that checks the
+  session, so there is nothing to invalidate and a change is effective at
+  the very next request. The short-lived cache the text mentions can be
+  added if this ever shows up in a profile.
+- **Routes that need only a session (Decision 5).** Logout, the session
+  document, and changing one's own password require a valid session and
+  no permission: they concern only the caller. Every other non-public
+  route requires a permission.
+- **Audit endpoint (Decision 5).** `audit:read` is enforced on
+  `GET /api/v1/audit`, which was added so the permission has something to
+  protect.
+- **Throttled attempts answer 429 (Decision 4).** The per-username and
+  address delay is enforced by refusing attempts that arrive before the
+  delay has passed, with `Retry-After`, not by holding the connection
+  open.
+- **Hash timing command.** `skep-api admin hash-benchmark` was added to
+  measure the Argon2id parameters on a host, as Decision 2 asks for.
+- **`skepctl`.** Its key pinning (Decision 6) and token file
+  (Decision 3) are specified here but not built: `skepctl` is not part of
+  this milestone's implementation order.

@@ -3,6 +3,8 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -34,11 +36,8 @@ func TestLoadProductionDefaults(t *testing.T) {
 	if cfg.DevMode {
 		t.Error("dev mode must be off by default")
 	}
-	if cfg.API.ListenAddress != DefaultListenAddress {
-		t.Errorf("listen = %q", cfg.API.ListenAddress)
-	}
-	if cfg.API.AllowInsecureRemote {
-		t.Error("remote binding must be off by default")
+	if cfg.ShutdownTimeout.Std() != 10*time.Second {
+		t.Errorf("shutdown timeout = %v", cfg.ShutdownTimeout.Std())
 	}
 	if cfg.DataDir != DefaultDataDir {
 		t.Errorf("data dir = %q", cfg.DataDir)
@@ -69,31 +68,29 @@ func TestLoadDevDefaults(t *testing.T) {
 	if cfg.Log.Level != "debug" || cfg.Log.Format != "text" {
 		t.Errorf("log = %+v", cfg.Log)
 	}
-	if cfg.API.ListenAddress != DefaultListenAddress {
-		t.Errorf("dev mode must still bind to loopback, got %q", cfg.API.ListenAddress)
-	}
 }
 
 func TestPrecedenceFileEnvOverrides(t *testing.T) {
 	path := writeFile(t, `{
 		"data_dir": "/from/file",
-		"api": {"listen_address": "127.0.0.1:1111", "read_timeout": "3s"},
+		"socket": {"path": "/from/file.sock"},
+		"shutdown_timeout": "3s",
 		"log": {"level": "warn", "format": "text"},
 		"discovery": {"cache_ttl": "1m"}
 	}`)
 	cfg, err := Load(LoadOptions{
 		Path: path,
 		LookupEnv: envMap(map[string]string{
-			EnvListen:   "127.0.0.1:2222",
+			EnvSocket:   "/from/env.sock",
 			EnvLogLevel: "ERROR",
 		}),
-		Overrides: Overrides{ListenAddress: "[::1]:3333"},
+		Overrides: Overrides{SocketPath: "/from/flag.sock"},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.API.ListenAddress != "[::1]:3333" {
-		t.Errorf("override must win, got %q", cfg.API.ListenAddress)
+	if cfg.Socket.Path != "/from/flag.sock" {
+		t.Errorf("override must win, got %q", cfg.Socket.Path)
 	}
 	if cfg.Log.Level != "error" {
 		t.Errorf("env must beat file and be lower-cased, got %q", cfg.Log.Level)
@@ -101,7 +98,7 @@ func TestPrecedenceFileEnvOverrides(t *testing.T) {
 	if cfg.Log.Format != "text" || cfg.DataDir != "/from/file" {
 		t.Errorf("file values lost: %+v", cfg)
 	}
-	if cfg.API.ReadTimeout.Std() != 3*time.Second || cfg.Discovery.CacheTTL.Std() != time.Minute {
+	if cfg.ShutdownTimeout.Std() != 3*time.Second || cfg.Discovery.CacheTTL.Std() != time.Minute {
 		t.Errorf("durations not parsed: %+v", cfg)
 	}
 	if cfg.Database.Path != filepath.Join("/from/file", "agent", "agent.db") {
@@ -130,14 +127,11 @@ func TestLoadErrors(t *testing.T) {
 		{"unknown field", LoadOptions{Path: writeFile(t, `{"nope": 1}`)}, "unknown field"},
 		{"bad json", LoadOptions{Path: writeFile(t, `{`)}, "parse"},
 		{"trailing data", LoadOptions{Path: writeFile(t, `{} {}`)}, "unexpected data"},
-		{"bad duration", LoadOptions{Path: writeFile(t, `{"api":{"read_timeout":"soon"}}`)}, "invalid duration"},
-		{"negative duration", LoadOptions{Path: writeFile(t, `{"api":{"read_timeout":"-1s"}}`)}, "must be positive"},
+		{"bad duration", LoadOptions{Path: writeFile(t, `{"shutdown_timeout":"soon"}`)}, "invalid duration"},
+		{"negative duration", LoadOptions{Path: writeFile(t, `{"shutdown_timeout":"-1s"}`)}, "must be positive"},
+		{"the old api section", LoadOptions{Path: writeFile(t, `{"api":{"listen_address":"127.0.0.1:8765"}}`)}, "unknown field"},
 		{"bad level", LoadOptions{Overrides: Overrides{LogLevel: "loud"}}, "log.level"},
 		{"bad format", LoadOptions{Overrides: Overrides{LogFormat: "xml"}}, "log.format"},
-		{"bad listen", LoadOptions{Overrides: Overrides{ListenAddress: "nope"}}, "host:port"},
-		{"bad port", LoadOptions{Overrides: Overrides{ListenAddress: "127.0.0.1:99999"}}, "invalid port"},
-		{"all interfaces", LoadOptions{Overrides: Overrides{ListenAddress: ":8765"}}, "not a loopback"},
-		{"remote address", LoadOptions{Overrides: Overrides{ListenAddress: "10.79.20.80:8765"}}, "not a loopback"},
 		{"too many workers", LoadOptions{Path: writeFile(t, `{"tasks":{"workers":65}}`)}, "tasks.workers"},
 		{"negative workers", LoadOptions{Path: writeFile(t, `{"tasks":{"workers":-1}}`)}, "tasks.workers"},
 		{"huge queue", LoadOptions{Path: writeFile(t, `{"tasks":{"queue_size":5000}}`)}, "tasks.queue_size"},
@@ -154,17 +148,6 @@ func TestLoadErrors(t *testing.T) {
 				t.Fatalf("error = %v, want it to contain %q", err, tt.want)
 			}
 		})
-	}
-}
-
-func TestRemoteBindRequiresOptIn(t *testing.T) {
-	path := writeFile(t, `{"api": {"listen_address": "0.0.0.0:8765", "allow_insecure_remote": true}}`)
-	cfg, err := Load(LoadOptions{Path: path, LookupEnv: noEnv})
-	if err != nil {
-		t.Fatalf("explicit opt-in must be accepted: %v", err)
-	}
-	if cfg.API.ListenAddress != "0.0.0.0:8765" {
-		t.Errorf("listen = %q", cfg.API.ListenAddress)
 	}
 }
 
@@ -208,7 +191,208 @@ func TestSampleConfigMatchesDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if sample != defaults {
+	if !reflect.DeepEqual(sample, defaults) {
 		t.Errorf("sample config differs from the defaults:\nsample   %+v\ndefaults %+v", sample, defaults)
+	}
+}
+
+func TestSocketDefaults(t *testing.T) {
+	prod, err := Load(LoadOptions{LookupEnv: noEnv, DefaultPath: noDefault})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if prod.Socket.Path != DefaultSocketPath || prod.Socket.Group != "skep" ||
+		!reflect.DeepEqual(prod.Socket.AllowedUsers, []string{"root", "skep"}) {
+		t.Errorf("production socket = %+v", prod.Socket)
+	}
+	if prod.Socket.RequestTimeout.Std() != 30*time.Second || prod.Socket.MaxConnections != 64 {
+		t.Errorf("production socket limits = %+v", prod.Socket)
+	}
+
+	dev := true
+	cfg, err := Load(LoadOptions{LookupEnv: noEnv, DefaultPath: noDefault, Overrides: Overrides{DevMode: &dev, DataDir: "/tmp/skep-dev"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Socket.Path != "/tmp/skep-dev/run/agent.sock" || cfg.Socket.Group != "" {
+		t.Errorf("dev socket = %+v", cfg.Socket)
+	}
+	// In dev mode only the developer's own UID may connect.
+	if !reflect.DeepEqual(cfg.Socket.AllowedUsers, []string{strconv.Itoa(os.Geteuid())}) {
+		t.Errorf("dev allow-list = %v", cfg.Socket.AllowedUsers)
+	}
+}
+
+func TestSocketOverridesAndErrors(t *testing.T) {
+	cfg, err := Load(LoadOptions{
+		DefaultPath: noDefault,
+		LookupEnv:   envMap(map[string]string{EnvSocket: "/tmp/env.sock"}),
+	})
+	if err != nil || cfg.Socket.Path != "/tmp/env.sock" {
+		t.Errorf("env: %+v, %v", cfg.Socket, err)
+	}
+	cfg, err = Load(LoadOptions{
+		DefaultPath: noDefault,
+		LookupEnv:   envMap(map[string]string{EnvSocket: "/tmp/env.sock"}),
+		Overrides:   Overrides{SocketPath: "/tmp/flag.sock"},
+	})
+	if err != nil || cfg.Socket.Path != "/tmp/flag.sock" {
+		t.Errorf("flag: %+v, %v", cfg.Socket, err)
+	}
+
+	for name, tt := range map[string]struct{ body, want string }{
+		"empty allow-list": {`{"socket":{"allowed_users":[]}}`, "allowed_users must not be empty"},
+		"bad user":         {`{"socket":{"allowed_users":["a b"]}}`, "not a user name"},
+		"bad group":        {`{"socket":{"group":"a/b"}}`, "socket.group"},
+		"long path":        {`{"socket":{"path":"/tmp/` + strings.Repeat("x", 90) + `"}}`, "longer than"},
+		"too many conns":   {`{"socket":{"max_connections":5000}}`, "max_connections"},
+		"bad timeout":      {`{"socket":{"request_timeout":"-1s"}}`, "must be positive"},
+	} {
+		_, err := Load(LoadOptions{Path: writeFile(t, tt.body), LookupEnv: noEnv})
+		if err == nil || !strings.Contains(err.Error(), tt.want) {
+			t.Errorf("%s: error = %v, want it to contain %q", name, err, tt.want)
+		}
+	}
+}
+
+func loadAPI(t *testing.T, opts APILoadOptions) (API, error) {
+	t.Helper()
+	if opts.LookupEnv == nil {
+		opts.LookupEnv = noEnv
+	}
+	if opts.DefaultPath == "" {
+		opts.DefaultPath = noDefault
+	}
+	return LoadAPI(opts)
+}
+
+func TestAPIDefaults(t *testing.T) {
+	cfg, err := loadAPI(t, APILoadOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.DevMode || cfg.DataDir != DefaultDataDir || cfg.ListenAddress != "127.0.0.1:8443" ||
+		cfg.AgentSocket != DefaultSocketPath || cfg.Log.Level != "info" || cfg.Log.Format != "json" {
+		t.Errorf("production defaults = %+v", cfg)
+	}
+
+	dev := true
+	cfg, err = loadAPI(t, APILoadOptions{Overrides: APIOverrides{DevMode: &dev, DataDir: "/tmp/skep-dev"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Database.Path != "/tmp/skep-dev/api/api.db" || cfg.TLSDir() != "/tmp/skep-dev/api/tls" {
+		t.Errorf("dev state paths: %s, %s", cfg.Database.Path, cfg.TLSDir())
+	}
+	// Dev mode does not weaken password hashing.
+	if cfg.Auth.Argon2.MemoryKiB != 65536 || cfg.Auth.Argon2.Passes != 3 {
+		t.Errorf("dev argon2 = %+v", cfg.Auth.Argon2)
+	}
+	// Dev mode finds the dev agent's socket and still binds to loopback.
+	if cfg.AgentSocket != "/tmp/skep-dev/run/agent.sock" || cfg.ListenAddress != "127.0.0.1:8443" || cfg.Log.Format != "text" {
+		t.Errorf("dev defaults = %+v", cfg)
+	}
+}
+
+func TestAPIPrecedence(t *testing.T) {
+	path := writeFile(t, `{"listen_address": "127.0.0.1:1111", "agent_socket": "/file.sock", "read_timeout": "3s", "log": {"level": "warn"}}`)
+	cfg, err := loadAPI(t, APILoadOptions{
+		Path:      path,
+		LookupEnv: envMap(map[string]string{EnvAPIListen: "127.0.0.1:2222", EnvSocket: "/env.sock", EnvLogLevel: "ERROR"}),
+		Overrides: APIOverrides{ListenAddress: "[::1]:3333"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.ListenAddress != "[::1]:3333" || cfg.AgentSocket != "/env.sock" || cfg.Log.Level != "error" ||
+		cfg.ReadTimeout.Std() != 3*time.Second {
+		t.Errorf("precedence: %+v", cfg)
+	}
+
+	cfg, err = loadAPI(t, APILoadOptions{LookupEnv: envMap(map[string]string{EnvAPIConfig: writeFile(t, `{"dev_mode": true}`)})})
+	if err != nil || !cfg.DevMode {
+		t.Errorf("SKEP_API_CONFIG: %+v, %v", cfg, err)
+	}
+}
+
+func TestAPIErrors(t *testing.T) {
+	for name, tt := range map[string]struct {
+		opts APILoadOptions
+		want string
+	}{
+		"missing file":          {APILoadOptions{Path: "/nonexistent/api.json"}, "open"},
+		"unknown field":         {APILoadOptions{Path: writeFile(t, `{"socket": {}}`)}, "unknown field"},
+		"bad listen":            {APILoadOptions{Overrides: APIOverrides{ListenAddress: "nope"}}, "host:port"},
+		"bad port":              {APILoadOptions{Overrides: APIOverrides{ListenAddress: "127.0.0.1:99999"}}, "invalid port"},
+		"long idle timeout":     {APILoadOptions{Path: writeFile(t, `{"auth": {"session": {"idle_timeout": "25h", "absolute_timeout": "48h"}}}`)}, "idle_timeout"},
+		"absolute below idle":   {APILoadOptions{Path: writeFile(t, `{"auth": {"session": {"idle_timeout": "2h", "absolute_timeout": "1h"}}}`)}, "absolute_timeout"},
+		"absolute over 30 days": {APILoadOptions{Path: writeFile(t, `{"auth": {"session": {"absolute_timeout": "721h"}}}`)}, "absolute_timeout"},
+		"negative login limit":  {APILoadOptions{Path: writeFile(t, `{"auth": {"login": {"per_address_per_minute": -1}}}`)}, "per_address_per_minute"},
+		"bad trusted proxy":     {APILoadOptions{Path: writeFile(t, `{"auth": {"trusted_proxies": ["proxy.example.org"]}}`)}, "trusted_proxies"},
+		"bad timeout":           {APILoadOptions{Path: writeFile(t, `{"write_timeout": "-1s"}`)}, "must be positive"},
+		"cert without key":      {APILoadOptions{Path: writeFile(t, `{"tls": {"cert_file": "/etc/ssl/skep.crt"}}`)}, "must be set together"},
+		"relative cert path":    {APILoadOptions{Path: writeFile(t, `{"tls": {"cert_file": "skep.crt", "key_file": "skep.key"}}`)}, "absolute path"},
+		"weak argon2 memory":    {APILoadOptions{Path: writeFile(t, `{"auth": {"argon2": {"memory_kib": 8192}}}`)}, "auth.argon2.memory_kib"},
+		"one argon2 pass":       {APILoadOptions{Path: writeFile(t, `{"auth": {"argon2": {"passes": 1}}}`)}, "auth.argon2.passes"},
+		"huge argon2 memory":    {APILoadOptions{Path: writeFile(t, `{"auth": {"argon2": {"memory_kib": 4194304}}}`)}, "auth.argon2.memory_kib"},
+		"bad level":             {APILoadOptions{Overrides: APIOverrides{LogLevel: "loud"}}, "log.level"},
+		"bad dev env":           {APILoadOptions{LookupEnv: envMap(map[string]string{EnvDev: "maybe"})}, "not a boolean"},
+	} {
+		if _, err := loadAPI(t, tt.opts); err == nil || !strings.Contains(err.Error(), tt.want) {
+			t.Errorf("%s: error = %v, want it to contain %q", name, err, tt.want)
+		}
+	}
+}
+
+// TestAPISampleConfigMatchesDefaults keeps the shipped sample loadable and
+// in step with the built-in production defaults.
+func TestAPISampleConfigMatchesDefaults(t *testing.T) {
+	sample, err := loadAPI(t, APILoadOptions{Path: "../../packaging/etc/api.json.sample"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defaults, err := loadAPI(t, APILoadOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(sample, defaults) {
+		t.Errorf("sample config differs from the defaults:\nsample   %+v\ndefaults %+v", sample, defaults)
+	}
+}
+
+// TestAPIListenAddressIsAnExplicitChoice: loopback is the default, and
+// opening the API to a network is one explicit setting (ADR 0006
+// decision 7).
+func TestAPIListenAddressIsAnExplicitChoice(t *testing.T) {
+	cfg, err := loadAPI(t, APILoadOptions{})
+	if err != nil || !IsLoopbackHost(strings.Split(cfg.ListenAddress, ":")[0]) {
+		t.Fatalf("default listen address %q is not loopback (%v)", cfg.ListenAddress, err)
+	}
+	for _, addr := range []string{"10.79.20.170:8443", ":8443", "[::]:8443"} {
+		cfg, err := loadAPI(t, APILoadOptions{Path: writeFile(t, `{"listen_address": "`+addr+`"}`)})
+		if err != nil || cfg.ListenAddress != addr {
+			t.Errorf("listen_address %q: %+v, %v", addr, cfg.ListenAddress, err)
+		}
+	}
+}
+
+func TestAPIAuthDefaultsAndProxies(t *testing.T) {
+	cfg, err := loadAPI(t, APILoadOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := cfg.Auth
+	if a.Session.IdleTimeout.Std() != 30*time.Minute || a.Session.AbsoluteTimeout.Std() != 12*time.Hour ||
+		a.Login.PerAddressPerMinute != 10 || a.Login.FailuresBeforeDelay != 5 || a.Login.MaxDelay.Std() != time.Minute ||
+		a.Login.PerUsernameFailures != 50 || len(a.TrustedProxies) != 0 {
+		t.Errorf("auth defaults = %+v", a)
+	}
+	cfg, err = loadAPI(t, APILoadOptions{Path: writeFile(t, `{"auth": {"trusted_proxies": ["10.0.0.5", "192.0.2.77/24", "2001:db8::/32"]}}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	prefixes, err := cfg.TrustedProxyPrefixes()
+	if err != nil || len(prefixes) != 3 || prefixes[0].String() != "10.0.0.5/32" || prefixes[1].String() != "192.0.2.0/24" {
+		t.Errorf("prefixes = %v, %v", prefixes, err)
 	}
 }
