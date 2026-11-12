@@ -159,8 +159,8 @@ retention test in
 
 ## Web interface
 
-A first, read-only web interface is in [web/](web/README.md). It is a draft
-that has not been built yet.
+A first, read-only web interface is in [web/](web/README.md). It is a draft:
+it builds and its unit tests pass, but it has not been reviewed in a browser.
 
 ## Configuration
 
