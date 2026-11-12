@@ -32,6 +32,10 @@ type Options struct {
 	Discoverer hardware.Discoverer
 	// Database is pinged by the health check. Optional.
 	Database Pinger
+	// Nodes stores what discovery observed. Optional.
+	Nodes NodeStore
+	// Tasks reads tasks for the API. Optional; without it there are none.
+	Tasks TaskReader
 	// CacheTTL is how long a discovery result is reused. Zero disables
 	// caching.
 	CacheTTL time.Duration
@@ -47,6 +51,8 @@ type Service struct {
 	devMode  bool
 	disc     hardware.Discoverer
 	db       Pinger
+	nodes    NodeStore
+	tasks    TaskReader
 	cacheTTL time.Duration
 	log      *slog.Logger
 	now      func() time.Time
@@ -78,6 +84,8 @@ func NewService(opts Options) (*Service, error) {
 		devMode:  opts.DevMode,
 		disc:     opts.Discoverer,
 		db:       opts.Database,
+		nodes:    opts.Nodes,
+		tasks:    opts.Tasks,
 		cacheTTL: opts.CacheTTL,
 		log:      opts.Logger,
 		now:      opts.Now,
@@ -157,6 +165,12 @@ func (s *Service) discover(ctx context.Context) (models.Hardware, error) {
 	if s.haveCache && s.now().Sub(s.cachedAt) < s.cacheTTL {
 		return s.cached, nil
 	}
+	return s.discoverLocked(ctx)
+}
+
+// discoverLocked runs one discovery pass and replaces the cache. The
+// caller holds s.mu.
+func (s *Service) discoverLocked(ctx context.Context) (models.Hardware, error) {
 	start := s.now()
 	hw, err := s.disc.Discover(ctx)
 	if err != nil {

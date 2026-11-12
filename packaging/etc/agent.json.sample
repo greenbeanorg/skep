@@ -18,5 +18,9 @@
   "discovery": {
     "command_timeout": "5s",
     "cache_ttl": "10s"
+  },
+  "tasks": {
+    "workers": 4,
+    "queue_size": 64
   }
 }

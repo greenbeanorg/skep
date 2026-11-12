@@ -78,6 +78,16 @@ type Config struct {
 	Log       LogConfig       `json:"log"`
 	Database  DatabaseConfig  `json:"database"`
 	Discovery DiscoveryConfig `json:"discovery"`
+	Tasks     TasksConfig     `json:"tasks"`
+}
+
+// TasksConfig configures the task engine.
+type TasksConfig struct {
+	// Workers is the number of tasks that may run at once.
+	Workers int `json:"workers"`
+	// QueueSize is the number of accepted tasks that may wait for a worker.
+	// Further submissions are refused until there is room.
+	QueueSize int `json:"queue_size"`
 }
 
 // APIConfig configures the HTTP API listener.
@@ -280,6 +290,12 @@ func (c *Config) applyDefaults() {
 	if c.Discovery.CacheTTL == 0 {
 		c.Discovery.CacheTTL = Duration(10 * time.Second)
 	}
+	if c.Tasks.Workers == 0 {
+		c.Tasks.Workers = 4
+	}
+	if c.Tasks.QueueSize == 0 {
+		c.Tasks.QueueSize = 64
+	}
 }
 
 // Validate reports every problem in the configuration as one error.
@@ -318,6 +334,12 @@ func (c Config) Validate() error {
 		if d <= 0 {
 			add("%s must be positive", name)
 		}
+	}
+	if c.Tasks.Workers < 1 || c.Tasks.Workers > 64 {
+		add("tasks.workers must be between 1 and 64")
+	}
+	if c.Tasks.QueueSize < 1 || c.Tasks.QueueSize > 4096 {
+		add("tasks.queue_size must be between 1 and 4096")
 	}
 	if len(errs) == 0 {
 		return nil

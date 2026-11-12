@@ -34,9 +34,15 @@ func writeJSON(w http.ResponseWriter, r *http.Request, status int, v any) {
 
 // writeError writes the standard error envelope.
 func writeError(w http.ResponseWriter, r *http.Request, status int, code, message string) {
+	writeErrorDetails(w, r, status, code, message, nil)
+}
+
+// writeErrorDetails writes the standard error envelope with details.
+func writeErrorDetails(w http.ResponseWriter, r *http.Request, status int, code, message string, details map[string]any) {
 	writeJSON(w, r, status, models.ErrorResponse{Error: models.ErrorBody{
 		Code:      code,
 		Message:   message,
 		RequestID: requestID(r.Context()),
+		Details:   details,
 	}})
 }

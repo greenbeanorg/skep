@@ -22,6 +22,22 @@ type fakeBackend struct {
 	hardware  models.Hardware
 	hwErr     error
 	panicMsg  string
+	tasks     models.TaskList
+	tasksErr  error
+	taskOpts  models.TaskListOptions
+	task      models.TaskDetail
+}
+
+func (f *fakeBackend) Tasks(_ context.Context, opts models.TaskListOptions) (models.TaskList, error) {
+	f.taskOpts = opts
+	return f.tasks, f.tasksErr
+}
+
+func (f *fakeBackend) Task(_ context.Context, id string) (models.TaskDetail, error) {
+	if id != f.task.ID {
+		return models.TaskDetail{}, fmt.Errorf("task %q: %w", id, models.ErrNotFound)
+	}
+	return f.task, nil
 }
 
 func (f *fakeBackend) Health(context.Context) models.Health { return f.health }
@@ -52,6 +68,21 @@ func newBackend() *fakeBackend {
 			Platform: models.PlatformFreeBSD,
 			CPU:      models.CPUInfo{Model: "Test CPU", Cores: 2, Threads: 4},
 			Warnings: []string{},
+		},
+		tasks: models.TaskList{
+			Items: []models.Task{{
+				ID: "task-1", Type: "discovery.refresh", Status: models.TaskSucceeded,
+				Actor: models.TaskActor{ID: "system", Name: "system"},
+			}},
+			NextCursor: "next-page",
+		},
+		task: models.TaskDetail{
+			Task: models.Task{
+				ID: "task-1", Type: "discovery.refresh", Status: models.TaskFailed,
+				Actor: models.TaskActor{ID: "system", Name: "system"},
+				Error: &models.TaskError{Code: "timeout", Message: "the task exceeded its time limit"},
+			},
+			Events: []models.TaskEvent{{ID: 1, Kind: models.TaskEventState, Level: "info", Message: "task is pending"}},
 		},
 	}
 }
@@ -245,5 +276,97 @@ func TestAccessLog(t *testing.T) {
 	if rec["msg"] != "http request" || rec["method"] != "GET" || rec["status"] != float64(404) ||
 		rec["path"] != "/api/v1/nodes/other/hardware" || rec["request_id"] == "" {
 		t.Errorf("access log = %v", rec)
+	}
+}
+
+func TestTasksList(t *testing.T) {
+	b := newBackend()
+	rec := do(t, b, http.MethodGet, "/api/v1/tasks?status=succeeded&limit=25&cursor=abc", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", rec.Code, rec.Body)
+	}
+	got := decode[models.TaskList](t, rec)
+	if len(got.Items) != 1 || got.Items[0].ID != "task-1" || got.NextCursor != "next-page" {
+		t.Errorf("list = %+v", got)
+	}
+	want := models.TaskListOptions{Status: models.TaskSucceeded, Limit: 25, Cursor: "abc"}
+	if b.taskOpts != want {
+		t.Errorf("options passed to the backend = %+v, want %+v", b.taskOpts, want)
+	}
+
+	// No parameters: the backend picks the defaults.
+	do(t, b, http.MethodGet, "/api/v1/tasks", nil)
+	if b.taskOpts != (models.TaskListOptions{}) {
+		t.Errorf("options = %+v, want zero values", b.taskOpts)
+	}
+}
+
+func TestTasksListErrors(t *testing.T) {
+	for _, q := range []string{"limit=abc", "limit=0", "limit=-5"} {
+		wantError(t, do(t, newBackend(), http.MethodGet, "/api/v1/tasks?"+q, nil),
+			http.StatusBadRequest, CodeInvalidRequest)
+	}
+	// Validation errors from the service keep their message.
+	b := newBackend()
+	b.tasksErr = models.Invalid("unknown task status done")
+	body := wantError(t, do(t, b, http.MethodGet, "/api/v1/tasks?status=done", nil),
+		http.StatusBadRequest, CodeInvalidRequest)
+	if body.Message != "unknown task status done" {
+		t.Errorf("message = %q", body.Message)
+	}
+}
+
+func TestTaskDetail(t *testing.T) {
+	rec := do(t, newBackend(), http.MethodGet, "/api/v1/tasks/task-1", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", rec.Code, rec.Body)
+	}
+	got := decode[models.TaskDetail](t, rec)
+	if got.ID != "task-1" || got.Error == nil || got.Error.Code != "timeout" || len(got.Events) != 1 {
+		t.Errorf("task = %+v", got)
+	}
+	wantError(t, do(t, newBackend(), http.MethodGet, "/api/v1/tasks/other", nil), http.StatusNotFound, CodeNotFound)
+	wantError(t, do(t, newBackend(), http.MethodGet, "/api/v1/tasks/bad%20id", nil), http.StatusBadRequest, CodeInvalidRequest)
+}
+
+// TestTasksAreReadOnly guards the Milestone 2 rule: nothing can be
+// submitted or cancelled over the unauthenticated API.
+func TestTasksAreReadOnly(t *testing.T) {
+	for _, method := range []string{http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete} {
+		for _, path := range []string{"/api/v1/tasks", "/api/v1/tasks/task-1"} {
+			wantError(t, do(t, newBackend(), method, path, nil), http.StatusMethodNotAllowed, CodeMethodNotAllowed)
+		}
+	}
+	wantError(t, do(t, newBackend(), http.MethodPost, "/api/v1/tasks/task-1/cancel", nil), http.StatusNotFound, CodeNotFound)
+}
+
+// TestDomainErrorMapping checks the HTTP status of each stable error code,
+// including the conflicts the task engine returns.
+func TestDomainErrorMapping(t *testing.T) {
+	tests := map[string]int{
+		models.CodeInvalidRequest:      http.StatusBadRequest,
+		models.CodeResourceBusy:        http.StatusConflict,
+		models.CodeIdempotencyConflict: http.StatusConflict,
+		models.CodeNotCancellable:      http.StatusConflict,
+		models.CodeQueueFull:           http.StatusServiceUnavailable,
+		models.CodeShuttingDown:        http.StatusServiceUnavailable,
+	}
+	for code, status := range tests {
+		b := newBackend()
+		b.tasksErr = fmt.Errorf("wrapped: %w", &models.Error{
+			Code: code, Message: "message for " + code, Details: map[string]any{"task_id": "task-9"},
+		})
+		body := wantError(t, do(t, b, http.MethodGet, "/api/v1/tasks", nil), status, code)
+		if body.Message != "message for "+code || body.Details["task_id"] != "task-9" {
+			t.Errorf("%s: body = %+v", code, body)
+		}
+	}
+
+	// An unknown code is not trusted: it becomes a generic internal error.
+	b := newBackend()
+	b.tasksErr = &models.Error{Code: "something_new", Message: "internal detail"}
+	body := wantError(t, do(t, b, http.MethodGet, "/api/v1/tasks", nil), http.StatusInternalServerError, CodeInternal)
+	if strings.Contains(body.Message, "internal detail") {
+		t.Errorf("message leaked: %q", body.Message)
 	}
 }
