@@ -176,7 +176,7 @@ func TestAdminCreateRefusals(t *testing.T) {
 	if err := run(context.Background(), append([]string{"admin", "create", "--username", "andy"}, base...), e); err == nil {
 		t.Error("a password was taken from the environment")
 	}
-	for name, args := range map[string][]string{"no command": {"admin"}, "unknown command": {"admin", "delete"}} {
+	for name, args := range map[string][]string{"no command": {"admin"}, "unknown command": {"admin", "destroy"}} {
 		if err := run(context.Background(), args, e); err == nil {
 			t.Errorf("%s: succeeded", name)
 		}
@@ -308,5 +308,166 @@ func TestConfigAndAuthAgreeOnArgon2Bounds(t *testing.T) {
 	top := auth.Params{MemoryKiB: config.MaxArgon2MemoryKiB, Passes: config.MaxArgon2Passes, Lanes: 1}
 	if err := top.Validate(); err != nil {
 		t.Errorf("the configuration's maximum is refused by internal/auth: %v", err)
+	}
+}
+
+// createLocal creates a user with a local command and returns its ID.
+func createLocal(t *testing.T, base []string, username string) {
+	t.Helper()
+	e, _, _ := adminEnv(testPassword + "\n")
+	if err := run(context.Background(), append([]string{"admin", "create", "--username", username, "--password-stdin"}, base...), e); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// addSession gives a user a session row, as a login would.
+func addSession(t *testing.T, dataDir, userID string) {
+	t.Helper()
+	rw, err := sql.Open("sqlite", "file:"+filepath.Join(dataDir, "api", "api.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rw.Close()
+	token, _ := auth.NewToken()
+	if _, err := rw.Exec(`INSERT INTO sessions (token_hash, user_id, kind, created_at, last_seen_at, expires_at, source_ip)
+		VALUES (?, ?, 'bearer', '2026-11-12T12:00:00.000Z', '2026-11-12T12:00:00.000Z', '2099-11-13T00:00:00.000Z', '192.0.2.9')`,
+		auth.HashToken(token), userID); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func countRows(t *testing.T, db *sql.DB, query string, args ...any) int {
+	t.Helper()
+	var n int
+	if err := db.QueryRow(query, args...).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	return n
+}
+
+func TestAdminDisable(t *testing.T) {
+	dataDir, cfg := t.TempDir(), fastConfig(t)
+	base := []string{"-dev", "-config", cfg, "-data-dir", dataDir}
+	createLocal(t, base, "andy")
+
+	// The only enabled administrator is refused, and the refusal is
+	// audited.
+	e, _, _ := adminEnv("")
+	err := run(context.Background(), append([]string{"admin", "disable", "--username", "andy"}, base...), e)
+	if err == nil || !strings.Contains(err.Error(), "only enabled administrator") {
+		t.Fatalf("disabling the last administrator: %v", err)
+	}
+	db := openAPIDB(t, dataDir)
+	if u, _ := readUser(t, db, "andy"); u.Disabled != 0 {
+		t.Fatal("the last administrator was disabled")
+	}
+	if n := countRows(t, db, `SELECT COUNT(*) FROM audit_log WHERE action = 'user.update' AND outcome = 'denied' AND actor_name = 'local:4242'`); n != 1 {
+		t.Errorf("%d audited refusals, want 1", n)
+	}
+
+	// With a second administrator, it works and ends the sessions.
+	createLocal(t, base, "carol")
+	andy, _ := readUser(t, db, "andy")
+	addSession(t, dataDir, andy.ID)
+	e, out, _ := adminEnv("")
+	if err := run(context.Background(), append([]string{"admin", "disable", "--username", "andy"}, base...), e); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), `"andy" was disabled`) {
+		t.Errorf("output = %q", out.String())
+	}
+	if u, _ := readUser(t, db, "andy"); u.Disabled != 1 {
+		t.Error("andy is not disabled")
+	}
+	if n := countRows(t, db, `SELECT COUNT(*) FROM sessions WHERE user_id = ?`, andy.ID); n != 0 {
+		t.Error("the disabled user's session survived")
+	}
+	if n := countRows(t, db, `SELECT COUNT(*) FROM audit_log WHERE action = 'session.revoke' AND actor_name = 'local:4242' AND details LIKE '%user disabled%'`); n != 1 {
+		t.Errorf("%d audited revocations, want 1", n)
+	}
+
+	// Again: nothing to do. carol is now the only enabled administrator.
+	e, out, _ = adminEnv("")
+	if err := run(context.Background(), append([]string{"admin", "disable", "--username", "andy"}, base...), e); err != nil || !strings.Contains(out.String(), "already disabled") {
+		t.Errorf("second disable: %v, %q", err, out.String())
+	}
+	e, _, _ = adminEnv("")
+	if err := run(context.Background(), append([]string{"admin", "disable", "--username", "carol"}, base...), e); err == nil {
+		t.Error("the remaining enabled administrator was disabled")
+	}
+	for name, args := range map[string][]string{
+		"unknown user": {"--username", "nobody"},
+		"no username":  {},
+		"bad username": {"--username", "Not Valid"},
+	} {
+		e, _, _ = adminEnv("")
+		if err := run(context.Background(), append(append([]string{"admin", "disable"}, args...), base...), e); err == nil {
+			t.Errorf("%s: succeeded", name)
+		}
+	}
+}
+
+func TestAdminDelete(t *testing.T) {
+	dataDir, cfg := t.TempDir(), fastConfig(t)
+	base := []string{"-dev", "-config", cfg, "-data-dir", dataDir}
+	createLocal(t, base, "andy")
+	db := openAPIDB(t, dataDir)
+
+	e, _, _ := adminEnv("")
+	err := run(context.Background(), append([]string{"admin", "delete", "--username", "andy", "--yes"}, base...), e)
+	if err == nil || !strings.Contains(err.Error(), "only enabled administrator") {
+		t.Fatalf("deleting the last administrator: %v", err)
+	}
+	if _, ok := readUser(t, db, "andy"); !ok {
+		t.Fatal("the last administrator was deleted")
+	}
+	if n := countRows(t, db, `SELECT COUNT(*) FROM audit_log WHERE action = 'user.delete' AND outcome = 'denied'`); n != 1 {
+		t.Errorf("%d audited refusals, want 1", n)
+	}
+
+	createLocal(t, base, "carol")
+	andy, _ := readUser(t, db, "andy")
+	addSession(t, dataDir, andy.ID)
+
+	// Without --yes nothing happens.
+	e, _, _ = adminEnv("")
+	err = run(context.Background(), append([]string{"admin", "delete", "--username", "andy"}, base...), e)
+	if err == nil || !strings.Contains(err.Error(), "--yes") {
+		t.Fatalf("without --yes: %v", err)
+	}
+	if _, ok := readUser(t, db, "andy"); !ok {
+		t.Fatal("deleted without --yes")
+	}
+
+	e, out, _ := adminEnv("")
+	if err := run(context.Background(), append([]string{"admin", "delete", "--username", "andy", "--yes"}, base...), e); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), `"andy" was deleted`) {
+		t.Errorf("output = %q", out.String())
+	}
+	if _, ok := readUser(t, db, "andy"); ok {
+		t.Error("andy still exists")
+	}
+	if n := countRows(t, db, `SELECT COUNT(*) FROM sessions`); n != 0 {
+		t.Error("the deleted user's session survived")
+	}
+	if n := countRows(t, db, `SELECT COUNT(*) FROM audit_log WHERE action = 'user.delete' AND outcome = 'success' AND actor_name = 'local:4242'`); n != 1 {
+		t.Errorf("%d audited deletions, want 1", n)
+	}
+	e, _, _ = adminEnv("")
+	if err := run(context.Background(), append([]string{"admin", "delete", "--username", "andy", "--yes"}, base...), e); err == nil || !strings.Contains(err.Error(), "no user") {
+		t.Errorf("deleting again: %v", err)
+	}
+
+	// A disabled administrator is not the one the rule protects.
+	createLocal(t, base, "dave")
+	e, _, _ = adminEnv("")
+	if err := run(context.Background(), append([]string{"admin", "disable", "--username", "dave"}, base...), e); err != nil {
+		t.Fatal(err)
+	}
+	e, _, _ = adminEnv("")
+	if err := run(context.Background(), append([]string{"admin", "delete", "--username", "dave", "--yes"}, base...), e); err != nil {
+		t.Errorf("deleting a disabled administrator: %v", err)
 	}
 }
