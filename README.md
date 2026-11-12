@@ -157,6 +157,11 @@ The native service test is in
 retention test in
 [tests/integration/retention](tests/integration/retention/README.md).
 
+## Web interface
+
+A first, read-only web interface is in [web/](web/README.md). It is a draft
+that has not been built yet.
+
 ## Configuration
 
 Configuration is layered, lowest precedence first: built-in defaults, a JSON
