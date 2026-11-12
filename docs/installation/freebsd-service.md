@@ -87,6 +87,23 @@ Configuration files are optional. When present they are read from
 samples are in `packaging/etc/`. `api.json` must be readable by the `skep`
 account (`root:skep`, `0640`).
 
+## The first administrator
+
+There are no default credentials. After `skep_api` has started once (which
+creates `/var/db/skep/api`), create an administrator on the host:
+
+```sh
+skep-api admin create --username andy
+```
+
+The command asks for the password twice, without echo. Run it as root: it
+changes to the `skep` account before it opens anything. For unattended
+installs, `--password-stdin` reads the password from standard input. A
+lost password is replaced the same way, with
+`skep-api admin reset-password --username NAME`, which also ends that
+user's sessions. `skep-api` does not need to be running, or restarted, for
+either command.
+
 ## TLS certificate
 
 `skep-api` serves TLS 1.3 only. At its first start it generates a key and a

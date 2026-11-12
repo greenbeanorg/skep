@@ -18,6 +18,13 @@ func formatTime(t time.Time) string { return t.UTC().Format(timeLayout) }
 
 func parseTime(s string) (time.Time, error) { return time.Parse(timeLayout, s) }
 
+// FormatTime renders t the way both Skep databases store timestamps.
+func FormatTime(t time.Time) string { return formatTime(t) }
+
+// ParseTime reads a timestamp stored by FormatTime or by the schema's
+// strftime defaults.
+func ParseTime(s string) (time.Time, error) { return parseTime(s) }
+
 // execer is satisfied by *sql.DB and *sql.Tx.
 type execer interface {
 	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)

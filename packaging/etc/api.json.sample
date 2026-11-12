@@ -16,5 +16,11 @@
   "tls": {
     "cert_file": "",
     "key_file": ""
+  },
+  "auth": {
+    "argon2": {
+      "memory_kib": 65536,
+      "passes": 3
+    }
   }
 }

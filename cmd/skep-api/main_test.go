@@ -33,6 +33,9 @@ func testEnv(stdout, stderr io.Writer) env {
 	return env{
 		stdin: strings.NewReader(""), stdout: stdout, stderr: stderr, uid: 1002, euid: 1002,
 		drop: func(uint32, uint32) error { return errors.New("the test environment is not root") },
+		readPassword: func(context.Context, string) (string, error) {
+			return "", errors.New("the test environment has no terminal")
+		},
 	}
 }
 
@@ -76,6 +79,8 @@ func TestRunRejectsBadInput(t *testing.T) {
 type syncBuffer struct {
 	mu  sync.Mutex
 	buf bytes.Buffer
+	// stop stops the server that writes to this buffer.
+	stop func()
 }
 
 func (b *syncBuffer) Write(p []byte) (int, error) {
@@ -154,13 +159,25 @@ func startAgent(t *testing.T, socket string, agent *fakeAgent) (stop func()) {
 // base URL. Use client to talk to it.
 func startAPI(t *testing.T, args ...string) (base string) {
 	t.Helper()
+	base, _ = startAPIWithLogs(t, args...)
+	return base
+}
+
+// startAPIWithLogs is startAPI that also returns the server's log.
+func startAPIWithLogs(t *testing.T, args ...string) (base string, logs *syncBuffer) {
+	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
-	logs := &syncBuffer{}
+	logs = &syncBuffer{}
 	done := make(chan error, 1)
 	go func() {
 		done <- run(ctx, append([]string{"-listen", "127.0.0.1:0", "-log-format", "json"}, args...), testEnv(io.Discard, logs))
 	}()
-	t.Cleanup(func() {
+	stopped := false
+	stop := func() {
+		if stopped {
+			return
+		}
+		stopped = true
 		cancel()
 		select {
 		case err := <-done:
@@ -170,7 +187,9 @@ func startAPI(t *testing.T, args ...string) (base string) {
 		case <-time.After(15 * time.Second):
 			t.Error("skep-api did not stop")
 		}
-	})
+	}
+	t.Cleanup(stop)
+	logs.stop = stop
 
 	addrRE := regexp.MustCompile(`"msg":"API listening","address":"([^"]+)"`)
 	deadline := time.Now().Add(15 * time.Second)
@@ -182,7 +201,7 @@ func startAPI(t *testing.T, args ...string) (base string) {
 		default:
 		}
 		if m := addrRE.FindStringSubmatch(logs.String()); m != nil {
-			return "https://" + m[1]
+			return "https://" + m[1], logs
 		}
 		if time.Now().After(deadline) {
 			t.Fatalf("skep-api did not start listening:\n%s", logs.String())

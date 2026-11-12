@@ -47,7 +47,36 @@ type API struct {
 	// log. It defaults to api/api.db in the data directory.
 	Database DatabaseConfig `json:"database"`
 	TLS      TLSConfig      `json:"tls"`
+	Auth     AuthConfig     `json:"auth"`
 }
+
+// AuthConfig configures authentication.
+type AuthConfig struct {
+	Argon2 Argon2Config `json:"argon2"`
+}
+
+// Argon2Config holds the Argon2id cost parameters for new password hashes.
+// They can be raised, never set below the minimum. Existing hashes keep
+// working and are recomputed at the next successful login.
+type Argon2Config struct {
+	// MemoryKiB is the memory per hash. Default 65536 (64 MiB).
+	MemoryKiB uint32 `json:"memory_kib"`
+	// Passes is the number of passes. Default 3. If one hash takes much
+	// less than 100 ms or much more than 500 ms on the host, change
+	// this, not the memory ("skep-api admin hash-benchmark" measures it).
+	Passes uint32 `json:"passes"`
+}
+
+// Bounds of the Argon2id parameters. The lower bound is the OWASP minimum
+// (19 MiB, 2 passes); internal/auth enforces the same range.
+const (
+	DefaultArgon2MemoryKiB = 64 * 1024
+	DefaultArgon2Passes    = 3
+	MinArgon2MemoryKiB     = 19 * 1024
+	MinArgon2Passes        = 2
+	MaxArgon2MemoryKiB     = 1024 * 1024
+	MaxArgon2Passes        = 16
+)
 
 // TLSConfig selects the certificate skep-api serves. The API is TLS 1.3
 // only; there is no plaintext listener and no setting that adds one.
@@ -189,6 +218,12 @@ func (c *API) applyDefaults() {
 	if c.Database.Path == "" {
 		c.Database.Path = filepath.Join(c.StateDir(), "api.db")
 	}
+	if c.Auth.Argon2.MemoryKiB == 0 {
+		c.Auth.Argon2.MemoryKiB = DefaultArgon2MemoryKiB
+	}
+	if c.Auth.Argon2.Passes == 0 {
+		c.Auth.Argon2.Passes = DefaultArgon2Passes
+	}
 }
 
 // Validate reports every problem in the configuration as one error.
@@ -216,6 +251,12 @@ func (c API) Validate() error {
 		if f != "" && !filepath.IsAbs(f) {
 			add("%s %q must be an absolute path", name, f)
 		}
+	}
+	if m := c.Auth.Argon2.MemoryKiB; m < MinArgon2MemoryKiB || m > MaxArgon2MemoryKiB {
+		add("auth.argon2.memory_kib must be between %d and %d", MinArgon2MemoryKiB, MaxArgon2MemoryKiB)
+	}
+	if t := c.Auth.Argon2.Passes; t < MinArgon2Passes || t > MaxArgon2Passes {
+		add("auth.argon2.passes must be between %d and %d", MinArgon2Passes, MaxArgon2Passes)
 	}
 	errs = append(errs, c.Log.validate()...)
 	for name, d := range map[string]Duration{

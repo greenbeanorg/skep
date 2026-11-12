@@ -65,8 +65,9 @@ native integration tests is compiled only with the `skep_testtasks` build
 tag. CI fails if the shipped FreeBSD binary contains it.
 
 **Separate databases.** Node state (`agent.db`) and identity data (`api.db`)
-are separate databases with separate schemas, so the unprivileged API
-process never opens the agent's state. Only `agent.db` is opened so far.
+are separate databases with separate schemas, each opened by one process
+only: the unprivileged API never opens the agent's state, and the agent
+never opens the API's.
 
 **Schema-level rules.** `users.password_hash` only accepts Argon2id hashes in
 PHC format, so a plaintext password cannot be stored by mistake. Both
@@ -74,8 +75,8 @@ PHC format, so a plaintext password cannot be stored by mistake. Both
 and audit entries cannot be stored without an actor, and audit entries
 cannot be stored without the caller's UID. Triggers also enforce the legal
 task state transitions and make finished tasks and their request fields
-immutable. No user accounts exist yet, and nothing writes to the API-side
-audit log.
+immutable. In the API's schema, a session row holds only the SHA-256 of
+its token.
 
 **Operation audit.** Every task writes to the agent's audit log when it is
 requested and when it finishes, in the same transaction as the state
@@ -94,6 +95,40 @@ handler errors are logged and replaced by a generic message on the task.
 **HTTP hardening.** Read, write, and idle timeouts and a header size limit
 are set. Responses carry `X-Content-Type-Options: nosniff`,
 `Cache-Control: no-store`, and a deny-all `Content-Security-Policy`.
+
+## Accounts and passwords
+
+- **No default credentials, and no network path to the first account.**
+  The first administrator is created with `skep-api admin create` on the
+  host. The command opens `api.db` directly, so it runs as the service
+  account: started as root it gives up root first, and as any other user
+  it fails on file permissions. There is no first-run page and no setup
+  token.
+- **Passwords are never accepted as an argument or from the environment.**
+  They are read from the terminal with echo off, or from standard input
+  with `--password-stdin`.
+- **Argon2id**, through `golang.org/x/crypto/argon2`: 64 MiB, 3 passes,
+  1 lane, a 16-byte random salt, a 32-byte hash, stored as a PHC string
+  that carries its parameters. The parameters can be raised in the
+  configuration and never set below 19 MiB and 2 passes.
+- **At most two hashes run at once.** A flood of logins costs at most
+  128 MiB and two cores; further attempts wait briefly and are refused.
+- **Password rules** follow NIST SP 800-63B: 12 to 256 characters, no
+  composition rules, no forced rotation.
+- **No pepper.** Skep has no secret storage yet; this is revisited with
+  secret encryption.
+- **Roles.** Three built-in roles (`admin`, `operator`, `viewer`) are
+  created by migration and cannot be changed or deleted, even with direct
+  SQL. The only enabled administrator cannot be disabled, deleted, or
+  demoted.
+- **Changes end sessions.** A password change, a role change, disabling,
+  and deletion delete the user's sessions in the same transaction and are
+  written to the access audit log, one entry per ended session.
+- **The agent contains none of this.** `skep-agent` does not link the
+  password or user code and never opens `api.db`.
+
+Login, sessions, and permission checks on the API are the next steps of
+Milestone 4; until they land, accounts can be created but not used.
 
 ## TLS
 

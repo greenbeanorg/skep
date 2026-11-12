@@ -1,4 +1,4 @@
-package database
+package apidb
 
 import (
 	"context"
@@ -7,18 +7,19 @@ import (
 	"testing"
 
 	"github.com/greenbeanorg/skep/internal/audit"
+	"github.com/greenbeanorg/skep/internal/database"
 	"github.com/greenbeanorg/skep/migrations"
 )
 
 func openAPIDB(t *testing.T) *AccessLog {
 	t.Helper()
 	ctx := context.Background()
-	db, err := Open(ctx, filepath.Join(t.TempDir(), "api", "api.db"))
+	db, err := database.Open(ctx, filepath.Join(t.TempDir(), "api", "api.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { db.Close() })
-	if _, err := Migrate(ctx, db, migrations.API()); err != nil {
+	if _, err := database.Migrate(ctx, db, migrations.API()); err != nil {
 		t.Fatal(err)
 	}
 	return NewAccessLog(db)

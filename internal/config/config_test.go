@@ -281,6 +281,13 @@ func TestAPIDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if cfg.Database.Path != "/tmp/skep-dev/api/api.db" || cfg.TLSDir() != "/tmp/skep-dev/api/tls" {
+		t.Errorf("dev state paths: %s, %s", cfg.Database.Path, cfg.TLSDir())
+	}
+	// Dev mode does not weaken password hashing.
+	if cfg.Auth.Argon2.MemoryKiB != 65536 || cfg.Auth.Argon2.Passes != 3 {
+		t.Errorf("dev argon2 = %+v", cfg.Auth.Argon2)
+	}
 	// Dev mode finds the dev agent's socket and still binds to loopback.
 	if cfg.AgentSocket != "/tmp/skep-dev/run/agent.sock" || cfg.ListenAddress != "127.0.0.1:8443" || cfg.Log.Format != "text" {
 		t.Errorf("dev defaults = %+v", cfg)
@@ -313,15 +320,20 @@ func TestAPIErrors(t *testing.T) {
 		opts APILoadOptions
 		want string
 	}{
-		"missing file":   {APILoadOptions{Path: "/nonexistent/api.json"}, "open"},
-		"unknown field":  {APILoadOptions{Path: writeFile(t, `{"socket": {}}`)}, "unknown field"},
-		"bad listen":     {APILoadOptions{Overrides: APIOverrides{ListenAddress: "nope"}}, "host:port"},
-		"bad port":       {APILoadOptions{Overrides: APIOverrides{ListenAddress: "127.0.0.1:99999"}}, "invalid port"},
-		"all interfaces": {APILoadOptions{Overrides: APIOverrides{ListenAddress: ":8443"}}, "not a loopback"},
-		"remote address": {APILoadOptions{Overrides: APIOverrides{ListenAddress: "10.79.20.80:8443"}}, "not a loopback"},
-		"bad timeout":    {APILoadOptions{Path: writeFile(t, `{"write_timeout": "-1s"}`)}, "must be positive"},
-		"bad level":      {APILoadOptions{Overrides: APIOverrides{LogLevel: "loud"}}, "log.level"},
-		"bad dev env":    {APILoadOptions{LookupEnv: envMap(map[string]string{EnvDev: "maybe"})}, "not a boolean"},
+		"missing file":       {APILoadOptions{Path: "/nonexistent/api.json"}, "open"},
+		"unknown field":      {APILoadOptions{Path: writeFile(t, `{"socket": {}}`)}, "unknown field"},
+		"bad listen":         {APILoadOptions{Overrides: APIOverrides{ListenAddress: "nope"}}, "host:port"},
+		"bad port":           {APILoadOptions{Overrides: APIOverrides{ListenAddress: "127.0.0.1:99999"}}, "invalid port"},
+		"all interfaces":     {APILoadOptions{Overrides: APIOverrides{ListenAddress: ":8443"}}, "not a loopback"},
+		"remote address":     {APILoadOptions{Overrides: APIOverrides{ListenAddress: "10.79.20.80:8443"}}, "not a loopback"},
+		"bad timeout":        {APILoadOptions{Path: writeFile(t, `{"write_timeout": "-1s"}`)}, "must be positive"},
+		"cert without key":   {APILoadOptions{Path: writeFile(t, `{"tls": {"cert_file": "/etc/ssl/skep.crt"}}`)}, "must be set together"},
+		"relative cert path": {APILoadOptions{Path: writeFile(t, `{"tls": {"cert_file": "skep.crt", "key_file": "skep.key"}}`)}, "absolute path"},
+		"weak argon2 memory": {APILoadOptions{Path: writeFile(t, `{"auth": {"argon2": {"memory_kib": 8192}}}`)}, "auth.argon2.memory_kib"},
+		"one argon2 pass":    {APILoadOptions{Path: writeFile(t, `{"auth": {"argon2": {"passes": 1}}}`)}, "auth.argon2.passes"},
+		"huge argon2 memory": {APILoadOptions{Path: writeFile(t, `{"auth": {"argon2": {"memory_kib": 4194304}}}`)}, "auth.argon2.memory_kib"},
+		"bad level":          {APILoadOptions{Overrides: APIOverrides{LogLevel: "loud"}}, "log.level"},
+		"bad dev env":        {APILoadOptions{LookupEnv: envMap(map[string]string{EnvDev: "maybe"})}, "not a boolean"},
 	} {
 		if _, err := loadAPI(t, tt.opts); err == nil || !strings.Contains(err.Error(), tt.want) {
 			t.Errorf("%s: error = %v, want it to contain %q", name, err, tt.want)

@@ -23,12 +23,14 @@ import (
 
 	"github.com/greenbeanorg/skep/internal/agentclient"
 	"github.com/greenbeanorg/skep/internal/api"
+	"github.com/greenbeanorg/skep/internal/apidb"
 	"github.com/greenbeanorg/skep/internal/apitls"
 	"github.com/greenbeanorg/skep/internal/audit"
 	"github.com/greenbeanorg/skep/internal/config"
 	"github.com/greenbeanorg/skep/internal/database"
 	"github.com/greenbeanorg/skep/internal/logging"
 	"github.com/greenbeanorg/skep/internal/privdrop"
+	"github.com/greenbeanorg/skep/internal/termpass"
 	"github.com/greenbeanorg/skep/migrations"
 	"github.com/greenbeanorg/skep/pkg/models"
 	"github.com/greenbeanorg/skep/pkg/version"
@@ -41,7 +43,8 @@ func main() {
 	err := run(ctx, os.Args[1:], env{
 		stdin: os.Stdin, stdout: os.Stdout, stderr: os.Stderr,
 		uid: os.Getuid(), euid: os.Geteuid(),
-		drop: privdrop.To,
+		drop:         privdrop.To,
+		readPassword: termpass.Read,
 	})
 	switch {
 	case err == nil:
@@ -62,6 +65,8 @@ type env struct {
 	uid, euid int
 	// drop gives up root for the given user and group.
 	drop func(uid, gid uint32) error
+	// readPassword asks for a password on the terminal, without echo.
+	readPassword func(ctx context.Context, prompt string) (string, error)
 }
 
 // errRoot is returned when the server is started as root.
@@ -69,11 +74,13 @@ var errRoot = errors.New("refusing to run as root: skep-api is the network-facin
 	"must run as the unprivileged skep account (use the skep_api rc.d service)")
 
 // run is the whole program; main only maps its error to an exit code.
-// Without a command it runs the server; "tls" is a local command for the
-// host's administrator.
+// Without a command it runs the server; "admin" and "tls" are local
+// commands for the host's administrator.
 func run(ctx context.Context, args []string, e env) error {
 	if len(args) > 0 {
 		switch args[0] {
+		case "admin":
+			return runAdmin(ctx, args[1:], e)
 		case "tls":
 			return runTLS(ctx, args[1:], e)
 		}
@@ -140,7 +147,8 @@ func runServer(ctx context.Context, args []string, e env) error {
 		return err
 	}
 	defer db.Close()
-	access := database.NewAccessLog(db)
+	access := apidb.NewAccessLog(db)
+	logLocalActions(ctx, access, log)
 
 	certs, err := apitls.New(ctx, apitls.Options{
 		Dir:      cfg.TLSDir(),
@@ -201,9 +209,28 @@ func openDatabase(ctx context.Context, cfg config.API, log *slog.Logger) (*sql.D
 	return db, nil
 }
 
+// logLocalActions logs what was done with local commands since skep-api
+// last started, so that an administrator created or a key replaced while
+// the server was down still appears in its log. It then records this
+// start.
+func logLocalActions(ctx context.Context, access *apidb.AccessLog, log *slog.Logger) {
+	actions, err := access.LocalSinceLastStart(ctx)
+	if err != nil {
+		log.Error("could not read the local actions from the access audit log", "error", err)
+	}
+	for _, a := range actions {
+		log.Info("local command since the last start",
+			"at", a.At, "actor", a.Actor, "action", a.Action, "resource_id", a.ResourceID, "details", a.Details)
+	}
+	writeAudit(ctx, access, log, audit.AccessEntry{
+		ActorName: audit.System, Action: apidb.ActionAPIStart, Outcome: audit.Success,
+		Details: map[string]any{"version": version.Version},
+	})
+}
+
 // writeAudit appends to the access audit log. A failure is logged with the
 // entry, so the event is not lost, and does not stop the caller.
-func writeAudit(ctx context.Context, w *database.AccessLog, log *slog.Logger, e audit.AccessEntry) {
+func writeAudit(ctx context.Context, w *apidb.AccessLog, log *slog.Logger, e audit.AccessEntry) {
 	if err := w.Write(ctx, e); err != nil {
 		log.Error("could not write to the access audit log", "error", err,
 			"action", e.Action, "actor", e.ActorName, "outcome", string(e.Outcome))

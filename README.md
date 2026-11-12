@@ -30,7 +30,8 @@ manage anything yet.
 | Task engine | Persistent tasks with states, events, idempotency keys, cancellation, and an audit trail; nothing is resumed after a restart |
 | FreeBSD services | rc.d scripts for both processes, supervised, started at boot |
 | Database | SQLite with versioned migrations and a stable node ID; separate databases for the agent and the API |
-| Not yet | VM or jail management, storage or network changes, authentication, UI, CLI, clustering |
+| Users | Accounts with Argon2id password hashes and three built-in roles; the first administrator is created with a local command (`skep-api admin create`), never with default credentials |
+| Not yet | Login, sessions, and permission checks on the API (in progress); VM or jail management, storage or network changes, UI, CLI, clustering |
 
 ## Platforms
 
@@ -164,6 +165,8 @@ file, environment variables, command-line flags.
 | Timeouts | `read_timeout`, `write_timeout`, `shutdown_timeout` | | | `15s`, `1m`, `10s` |
 | API database file | `database.path` | | | `<data_dir>/api/api.db` |
 | Operator certificate | `tls.cert_file`, `tls.key_file` | | | empty: generate a self-signed certificate in `<data_dir>/api/tls/` |
+| Argon2id memory | `auth.argon2.memory_kib` | | | `65536` (64 MiB); 19456 to 1048576 |
+| Argon2id passes | `auth.argon2.passes` | | | `3`; 2 to 16 |
 | Log level | `log.level` | `SKEP_LOG_LEVEL` | `-log-level` | `info` / `debug` |
 | Log format | `log.format` | `SKEP_LOG_FORMAT` | `-log-format` | `json` / `text` |
 
@@ -189,6 +192,28 @@ Complete examples with every key at its production default are in
   from 30 days before expiry. `Strict-Transport-Security` is sent only in
   this mode.
 
+### Administrators
+
+There are no default credentials. The first administrator is created on
+the host, with a command that has no network path:
+
+```sh
+skep-api admin create --username andy          # asks for the password twice, without echo
+skep-api admin reset-password --username andy  # recovery for a lost password; ends that user's sessions
+skep-api admin hash-benchmark                  # how long one password hash takes on this host
+```
+
+Run them as root (they change to the service account before opening
+anything) or as `skep`; in development add `-dev`. The password is read
+from the terminal. For unattended installs `--password-stdin` reads it
+from standard input; it is never accepted as an argument or from the
+environment. `admin create` works at any time, not only for the first
+administrator. Both commands are written to the access audit log with the
+actor `local:<uid>`.
+
+Passwords are 12 to 256 characters, with no composition rules, and are
+stored as Argon2id hashes (64 MiB, 3 passes, 1 lane by default).
+
 ## API
 
 The API lives under `/api/v1` and is documented in
@@ -209,10 +234,13 @@ internal/internalapi/  the agent's internal API: socket listener, peer check, ha
 internal/agentclient/  skep-api's client for the agent socket
 internal/agentproto/   what both sides share about the internal API (actor headers)
 internal/httpkit/      error envelope, request IDs, access log, recovery
+internal/auth/         password hashing (Argon2id), users and roles
+internal/apidb/        storage of api.db: users, roles, sessions, access audit
+internal/termpass/     reading a password from the terminal without echo
 internal/apitls/       skep-api's certificate: generation, renewal, reload
 internal/privdrop/     giving up root in skep-api's local commands
 internal/hardware/     read-only host discovery (FreeBSD native, Linux dev)
-internal/database/     SQLite access, migration runner, node identity
+internal/database/     SQLite access, migration runner, node identity, the agent's stores
 internal/config/       typed configuration
 internal/logging/      log/slog setup
 internal/tasks/        task engine (states, cancellation, idempotency, restart rules)

@@ -4,13 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/greenbeanorg/skep/internal/apidb"
 	"io"
 	"strings"
 	"time"
 
 	"github.com/greenbeanorg/skep/internal/apitls"
 	"github.com/greenbeanorg/skep/internal/audit"
-	"github.com/greenbeanorg/skep/internal/database"
 )
 
 const tlsUsage = `usage:
@@ -20,7 +20,8 @@ const tlsUsage = `usage:
 // runTLS dispatches the "tls" commands.
 func runTLS(ctx context.Context, args []string, e env) error {
 	if len(args) == 0 {
-		return errors.New(tlsUsage)
+		fmt.Fprintln(e.stderr, tlsUsage)
+		return errors.New("missing tls command")
 	}
 	switch args[0] {
 	case "fingerprint":
@@ -28,7 +29,8 @@ func runTLS(ctx context.Context, args []string, e env) error {
 	case "regenerate":
 		return tlsRegenerate(ctx, args[1:], e)
 	default:
-		return fmt.Errorf("unknown tls command %q\n%s", args[0], tlsUsage)
+		fmt.Fprintln(e.stderr, tlsUsage)
+		return fmt.Errorf("unknown tls command %q", args[0])
 	}
 }
 
@@ -90,7 +92,7 @@ func tlsRegenerate(ctx context.Context, args []string, e env) error {
 		details["old_public_key_sha256"] = before.PublicKeySHA256
 		details["old_certificate_sha256"] = before.CertificateSHA256
 	}
-	if err := database.NewAccessLog(db).Write(ctx, audit.AccessEntry{
+	if err := apidb.NewAccessLog(db).Write(ctx, audit.AccessEntry{
 		ActorName: audit.LocalActor(e.uid), Action: apitls.ActionRegenerate, ResourceType: "tls",
 		Outcome: audit.Success, Details: details,
 	}); err != nil {

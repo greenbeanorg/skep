@@ -153,10 +153,11 @@ There are two databases, each owned by one process and closed to the other
 | Database | Owner | Migrations | Holds |
 |---|---|---|---|
 | `<data_dir>/agent/agent.db` | `skep-agent` | `migrations/sqlite/agent` | Node identity, VMs, disks, networks, containers, storage, interfaces, tasks, task events, operation audit |
-| `<data_dir>/api/api.db` | `skep-api` | `migrations/sqlite/api` | Users, roles, access audit |
+| `<data_dir>/api/api.db` | `skep-api` | `migrations/sqlite/api` | Users, roles, sessions, access audit |
 
-Only the agent database is opened so far. `skep-api` starts using its
-database with the authentication steps of Milestone 4.
+`internal/database` opens and migrates both and holds the agent's stores.
+The stores of `api.db` are in `internal/apidb`, which only `skep-api`
+links, so the agent binary contains no identity code.
 
 - Migrations are plain SQL files named `NNNN_name.sql`, embedded in the
   binary, and applied at startup, each in its own transaction. Applied
