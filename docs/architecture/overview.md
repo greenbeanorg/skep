@@ -232,8 +232,15 @@ imported, both as an unprivileged user and as root.
 | Running under rc.d as a service: start, stop, restart, status, crash supervision, start at boot, as the `skep` account | Validated (2026-11-12, see `tests/integration/rcd`) |
 | A crash loop (agent exits at every start) and `skep_agent_restart_delay=0` under rc.d | Validated (2026-11-12, see `tests/integration/rcd`) |
 | A tmpfs `/var/run` | **Pending FreeBSD validation** |
-| Agent socket under `/var/run/skep` with a root agent and the `skep` account; ownership change of `/var/db/skep/agent` from `skep` to root | **Pending FreeBSD validation** (Milestone 4) |
-| `skep-api` under rc.d as `skep`, binding its port without privileges, serving the API through the socket | **Pending FreeBSD validation** (Milestone 4) |
+| Agent on a Unix socket only, API through the socket, peer UID check, mandatory actor: both processes as one ordinary user | Validated (2026-11-12) |
+| Unit tests of the new packages run natively (`internalapi`, `agentclient`, `apitls`, `auth`, `apidb`, `api`, `privdrop`, `sysaccount`, `tests/e2e`, both commands) | Validated (2026-11-12) |
+| TLS: certificate generation, file modes, TLS 1.3 only, renewal with the same key on a live server, `SIGHUP` reload, `tls regenerate`, `tls fingerprint`, operator certificates | Validated as an ordinary user (2026-11-12, see `tests/integration/apitls`) |
+| Password prompt without echo on a pseudo-terminal and over SSH; `--password-stdin` | Validated (2026-11-12, see `tests/integration/adminprompt`) |
+| Password prompt on the system console | **Pending FreeBSD validation** |
+| Argon2id time with the default parameters | Validated: 121 to 151 ms per hash on hearst (2026-11-12) |
+| Login (cookie and bearer), `401` without a session, task cancel through the API with the user recorded by the agent | Validated as an ordinary user (2026-11-12) |
+| Agent socket under `/var/run/skep` with a root agent and the real `skep` account (`root:skep 0660`, refusal of other UIDs); ownership change of `/var/db/skep/agent` from `skep` to root | **Pending FreeBSD validation** (needs the rc.d services installed; `tests/integration/rcd`) |
+| `skep-api` under rc.d as `skep`, binding its port without privileges, generating its key as `skep`; `skep-api admin` started as root giving up root | **Pending FreeBSD validation** (same) |
 | ZFS-root host | **Pending FreeBSD validation** (the lab VM is UFS-root) |
 | arm64 | Not a target yet |
 

@@ -537,8 +537,15 @@ func TestLocalCommandsDropRoot(t *testing.T) {
 	if err := run(context.Background(), []string{"tls", "regenerate", "-dev", "-data-dir", dataDir}, e); err != nil {
 		t.Fatal(err)
 	}
-	if !dropped || gotUID != uint32(os.Getuid()) || gotGID != uint32(os.Getgid()) {
-		t.Errorf("dropped=%v to %d:%d, want the directory owner %d:%d", dropped, gotUID, gotGID, os.Getuid(), os.Getgid())
+	// The directory's own owner and group: on FreeBSD a new directory
+	// takes the group of its parent, not of the process.
+	info, err := os.Stat(filepath.Join(dataDir, "api"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	st := info.Sys().(*syscall.Stat_t)
+	if !dropped || gotUID != st.Uid || gotGID != st.Gid {
+		t.Errorf("dropped=%v to %d:%d, want the directory owner %d:%d", dropped, gotUID, gotGID, st.Uid, st.Gid)
 	}
 
 	// If root cannot be given up, nothing is opened.

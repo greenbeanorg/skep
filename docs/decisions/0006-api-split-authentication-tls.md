@@ -490,16 +490,29 @@ loopback-only and read-only, as it is today.
 
 ## FreeBSD validation required
 
-Nothing here is validated; all of it is pending. In particular:
+State on FreeBSD 15.1-RELEASE-p6 (`hearst`), 2026-11-12. The recorded runs
+are in `tests/integration/apitls`, `tests/integration/adminprompt`, and
+`tests/integration/rcd`.
+
+Validated, as an ordinary user:
+
+- Certificate generation, renewal with the same key without a restart,
+  `tls regenerate`, `SIGHUP` reload, operator certificates, TLS 1.3 only.
+- Argon2id timing: 121 to 151 ms per hash with the default parameters on
+  2 cores, inside the 100 to 500 ms target, so the pass count stays at 3.
+  Peak resident memory of four sequential hashes: 147 MiB.
+- Terminal password entry without echo on a pseudo-terminal and over SSH.
+- The agent on its socket, the API through it, login, and task cancel
+  with the user in the agent's audit log.
+
+Pending, because they need the rc.d services installed on the host:
 
 - The socket under `/var/run/skep` with the real `skep` account and a root
   agent, including the `skep` to root ownership change of
   `/var/db/skep/agent`.
 - `skep-api` under rc.d as `skep`, binding its port without privileges.
-- Argon2id timing and memory on `hearst` (2 cores, 2 GB).
-- Certificate generation, renewal with the same key without a restart,
-  `tls regenerate`, and `SIGHUP` reload.
-- Terminal password entry without echo on the FreeBSD console and over SSH.
+- A local command started as root giving up root for `skep`.
+- Terminal password entry on the FreeBSD system console.
 
 ## Decisions
 

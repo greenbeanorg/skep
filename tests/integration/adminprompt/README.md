@@ -30,5 +30,38 @@ scp bin/freebsd-amd64/skep-api bin/freebsd-amd64-test/adminprompt-test hearst:sk
 
 ## Result
 
-**Pending FreeBSD validation.** This section is replaced by the recorded
-run.
+FreeBSD 15.1-RELEASE-p6 (hearst, 2 cores, 2 GB; 2026-11-12), `skep-api` at
+`94042c7`, as the ordinary user `aba`: **PASS**, 24 checks. Excerpt:
+
+```
+ok     echo is off while the password is typed
+ok     echo is off for the repeat
+ok     the terminal never showed the password
+ok     echo is back on afterwards
+       the terminal showed: "New password for andy: \r\nRepeat the password: \r\nAdministrator \"andy\" created (user ID ...).\r\n"
+ok     echo is back on after Ctrl-C
+ok     refused, and it names --password-stdin: "skep-api: no terminal to read the password from: open /dev/tty: device not configured; ..."
+ok     a password as an argument is not accepted
+       argon2id, 64 MiB, 3 passes, 1 lane
+       mean 130 ms, fastest 121 ms, slowest 151 ms
+       Within the 100 to 500 ms target.
+```
+
+Argon2id on hearst: 121 to 151 ms per hash over three runs of ten (means
+130, 135, 137 ms). The default of 3 passes stays. `/usr/bin/time -l` on a
+run of four sequential hashes reported a maximum resident set size of
+147 MiB: the Go runtime keeps the previous 64 MiB block until it is
+collected, so the memory in use is above the nominal 64 MiB per hash.
+
+Also checked by hand, over a real SSH session (`ssh -tt hearst`, driven
+from a pseudo-terminal on the development machine): both prompts appear,
+the administrator is created, and nothing the SSH terminal showed contains
+the password.
+
+Not covered:
+
+- The FreeBSD system console (`ttyv0`). The test and the SSH check both
+  use pseudo-terminals, which share the terminal layer with the console
+  but are not the console.
+- The command started as root, giving up root for the `skep` account.
+  That is checked by `rcd-test api`.
