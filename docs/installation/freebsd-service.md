@@ -105,6 +105,14 @@ lost password is replaced the same way, with
 user's sessions. `skep-api` does not need to be running, or restarted, for
 either command.
 
+`skep-api admin disable --username NAME` and
+`skep-api admin delete --username NAME --yes` disable or delete a user on
+the host, ending its sessions. Neither touches the only enabled
+administrator.
+
+To use the API from the command line, see
+[skepctl](../administration/skepctl.md).
+
 ## Opening the API to the network
 
 `skep-api` listens on `127.0.0.1:8443` until told otherwise. To reach it

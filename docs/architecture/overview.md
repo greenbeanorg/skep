@@ -1,6 +1,6 @@
 # Architecture overview
 
-This document describes Skep as of 0.1.0, Milestone 4. It covers what exists
+This document describes Skep as of 0.1.0, Milestone 4b. It covers what exists
 now. Planned subsystems are listed in `CLAUDE.md` and are not described here
 until they are built.
 
@@ -70,6 +70,12 @@ The public API and the internal API are separate interfaces with separate
 versions (`/api/v1`, `/internal/v1`). Shared types live in `pkg/models`;
 the error envelope and middleware they have in common live in
 `internal/httpkit`.
+
+Clients sit in front of `skep-api` and use only `/api/v1`. The first is
+`skepctl` (`cmd/skepctl`), built on the Go client in `pkg/client`, which
+pins the server's public key on every connection; its local state (pins and
+session tokens) is in `internal/ctlstate`. See
+[docs/administration/skepctl.md](../administration/skepctl.md).
 
 Either process can start first or restart alone. In development,
 `make run-dev` starts both, exactly as in production but as the developer.
@@ -242,6 +248,8 @@ imported, both as an unprivileged user and as root.
 | Agent socket under `/var/run/skep` with a root agent and the real `skep` account (`root:skep 0660`; refusal by file permissions and by the peer check); ownership change of `/var/db/skep/agent` from `skep` to root on upgrade | Validated (2026-11-12, see `tests/integration/rcd`) |
 | `skep-api` under rc.d as `skep`, binding its port without privileges, generating its key as `skep`, start at boot; `skep-api admin` started as root giving up root | Validated (2026-11-12, same) |
 | Task cancel through the API under rc.d: the agent records the user as the actor and uid 1002 (`skep`) as the verified peer | Validated (2026-11-12, same) |
+| `skepctl`: first-contact key confirmation on a pseudo-terminal and refusal without one, `--trust-key`, refusal of a changed key with nothing sent, password without echo, `0600` token file in a `0700` directory, read-only commands, logout, a session ended on the server; `skep-api admin disable` and `admin delete` with the last-administrator rule | Validated as an ordinary user, API on loopback (2026-11-12, see `tests/integration/skepctl`) |
+| `skepctl` from another host, and against the `skep_api` rc.d service | **Pending FreeBSD validation** |
 | ZFS-root host | **Pending FreeBSD validation** (the lab VM is UFS-root) |
 | arm64 | Not a target yet |
 

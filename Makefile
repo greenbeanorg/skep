@@ -7,7 +7,7 @@ BUILD_DATE := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 GO      ?= go
 PKG     := github.com/greenbeanorg/skep
 BIN_DIR := bin
-CMDS    := skep-agent skep-api
+CMDS    := skep-agent skep-api skepctl
 
 LDFLAGS := -s -w \
 	-X $(PKG)/pkg/version.Version=$(VERSION) \
@@ -53,6 +53,8 @@ build-freebsd-test: ## Cross-compile the FreeBSD test agent and integration test
 		-o $(BIN_DIR)/freebsd-amd64-test/apitls-test ./tests/integration/apitls
 	GOOS=freebsd GOARCH=amd64 $(GO) build -trimpath \
 		-o $(BIN_DIR)/freebsd-amd64-test/adminprompt-test ./tests/integration/adminprompt
+	GOOS=freebsd GOARCH=amd64 $(GO) build -trimpath \
+		-o $(BIN_DIR)/freebsd-amd64-test/skepctl-test ./tests/integration/skepctl
 
 test: ## Run the unit tests, with the race detector (needs a C compiler)
 	CGO_ENABLED=1 $(GO) test -race -count=1 ./...

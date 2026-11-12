@@ -22,11 +22,16 @@ const adminUsage = `usage:
         create an administrator; the password is asked for twice on the terminal
   skep-api admin reset-password --username NAME [--password-stdin] [flags]
         set a new password for a user and end that user's sessions
+  skep-api admin disable --username NAME [flags]
+        disable a user and end that user's sessions
+  skep-api admin delete --username NAME --yes [flags]
+        delete a user and end that user's sessions
   skep-api admin hash-benchmark [flags]
         measure how long one password hash takes on this host
 
 The password is never accepted as an argument or from the environment.
-With --password-stdin it is read from standard input (one line).`
+With --password-stdin it is read from standard input (one line).
+The only enabled administrator can be neither disabled nor deleted.`
 
 // runAdmin dispatches the "admin" commands. They are the only way to
 // create the first administrator and the documented recovery for a lost
@@ -42,6 +47,10 @@ func runAdmin(ctx context.Context, args []string, e env) error {
 		return adminCreate(ctx, args[1:], e)
 	case "reset-password":
 		return adminResetPassword(ctx, args[1:], e)
+	case "disable":
+		return adminDisable(ctx, args[1:], e)
+	case "delete":
+		return adminDelete(ctx, args[1:], e)
 	case "hash-benchmark":
 		return adminHashBenchmark(ctx, args[1:], e)
 	default:
@@ -171,6 +180,94 @@ func adminResetPassword(ctx context.Context, args []string, e env) error {
 	if user.Disabled {
 		fmt.Fprintf(e.stdout, "Note: %q is disabled and still cannot log in.\n", user.Username)
 	}
+	return nil
+}
+
+// lookupUser finds a user by name for a local command.
+func lookupUser(ctx context.Context, users *auth.Users, username string) (auth.User, error) {
+	user, err := users.ByName(ctx, username)
+	if errors.Is(err, models.ErrNotFound) {
+		return auth.User{}, fmt.Errorf("there is no user %q", username)
+	}
+	return user, err
+}
+
+// lastAdminError explains a refusal by the last-administrator rule
+// (ADR 0006 decision 5) in terms of what to do about it.
+func lastAdminError(username, verb string) error {
+	return fmt.Errorf("%q is the only enabled administrator and cannot be %s; create another "+
+		"administrator first (skep-api admin create --username NAME) or re-enable one through the API; nothing was changed", username, verb)
+}
+
+// adminDisable disables a user, which ends all of that user's sessions.
+// The only enabled administrator is refused, as through the API.
+func adminDisable(ctx context.Context, args []string, e env) error {
+	flags := newLocalFlags("skep-api admin disable", e.stderr)
+	username := flags.set.String("username", "", "name of the user to disable")
+	cfg, err := flags.prepare(args, e)
+	if err != nil {
+		return err
+	}
+	if err := auth.ValidateUsername(*username); err != nil {
+		return err
+	}
+	users, done, err := adminSetup(ctx, cfg, e)
+	if err != nil {
+		return err
+	}
+	defer done()
+	user, err := lookupUser(ctx, users, *username)
+	if err != nil {
+		return err
+	}
+	if user.Disabled {
+		fmt.Fprintf(e.stdout, "%q is already disabled; nothing was changed.\n", user.Username)
+		return nil
+	}
+	disabled := true
+	if _, err := users.Update(ctx, auth.Actor{Name: audit.LocalActor(e.uid)}, user.ID, auth.UserUpdate{Disabled: &disabled}); err != nil {
+		if errors.Is(err, auth.ErrLastAdmin) {
+			return lastAdminError(user.Username, "disabled")
+		}
+		return err
+	}
+	fmt.Fprintf(e.stdout, "%q was disabled and all of that user's sessions were ended.\n", user.Username)
+	return nil
+}
+
+// adminDelete deletes a user and its sessions. It asks for --yes because it
+// cannot be undone; the only enabled administrator is refused.
+func adminDelete(ctx context.Context, args []string, e env) error {
+	flags := newLocalFlags("skep-api admin delete", e.stderr)
+	username := flags.set.String("username", "", "name of the user to delete")
+	yes := flags.set.Bool("yes", false, "confirm the deletion, which cannot be undone")
+	cfg, err := flags.prepare(args, e)
+	if err != nil {
+		return err
+	}
+	if err := auth.ValidateUsername(*username); err != nil {
+		return err
+	}
+	users, done, err := adminSetup(ctx, cfg, e)
+	if err != nil {
+		return err
+	}
+	defer done()
+	user, err := lookupUser(ctx, users, *username)
+	if err != nil {
+		return err
+	}
+	if !*yes {
+		return fmt.Errorf("deleting %q (role %s) cannot be undone; run the command again with --yes to confirm",
+			user.Username, user.Role.Name)
+	}
+	if err := users.Delete(ctx, auth.Actor{Name: audit.LocalActor(e.uid)}, user.ID); err != nil {
+		if errors.Is(err, auth.ErrLastAdmin) {
+			return lastAdminError(user.Username, "deleted")
+		}
+		return err
+	}
+	fmt.Fprintf(e.stdout, "%q was deleted and all of that user's sessions were ended.\n", user.Username)
 	return nil
 }
 

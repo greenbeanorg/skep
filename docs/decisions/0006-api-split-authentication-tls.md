@@ -607,5 +607,9 @@ open, or could not follow it literally. Each is open to correction.
 - **Hash timing command.** `skep-api admin hash-benchmark` was added to
   measure the Argon2id parameters on a host, as Decision 2 asks for.
 - **`skepctl`.** Its key pinning (Decision 6) and token file
-  (Decision 3) are specified here but not built: `skepctl` is not part of
-  this milestone's implementation order.
+  (Decision 3) were not part of this milestone's implementation order.
+  They were built in Milestone 4b; the details that milestone settled are
+  in [docs/administration/skepctl.md](../administration/skepctl.md).
+- **Local disable and delete (Decision 5).** `skep-api admin disable` and
+  `skep-api admin delete` were added in Milestone 4b. They apply the
+  last-administrator rule through the same code as the API.

@@ -6,9 +6,9 @@ with QEMU as an optional secondary engine), jails, OpenZFS storage, and
 networking on single hosts and, later, multi-node clusters, through a REST
 API, a web UI, and a CLI.
 
-**Status: 0.1.0, Milestone 4 "API split, authentication, and TLS".** The
-code contains the host agent, the API server with TLS, accounts, sessions,
-and permissions, read-only host discovery, a task engine with history,
+**Status: 0.1.0, Milestone 4b "CLI".** The code contains the host agent,
+the API server with TLS, accounts, sessions, and permissions, the `skepctl`
+command-line client, read-only host discovery, a task engine with history,
 and two audit logs. It cannot create or manage VMs, jails, storage, or
 networks yet.
 
@@ -34,7 +34,8 @@ networks yet.
 | Sessions | Login with a cookie session (browsers) or a bearer session (scripts), never both; idle and absolute timeouts; logout; login rate limits that never lock an account; every endpoint except the health status and the login needs a session |
 | Permissions | One role per user; every endpoint requires a permission and is denied by default; `admin`, `operator`, and `viewer` are built in; every denial is audited |
 | User management | `GET/POST /users`, `GET/PUT/DELETE /users/{id}`, `GET /roles`, `GET /audit`; the last administrator cannot be removed |
-| Not yet | VM or jail management, storage or network changes, UI, CLI, clustering |
+| `skepctl` | Command-line client on the public API: bearer-session login with the token in a `0600` file, the server's public key pinned on first use and never skipped, logout, and read-only `system`, `hardware`, `tasks`, and `audit` commands |
+| Not yet | VM or jail management, storage or network changes, UI, clustering |
 
 ## Platforms
 
@@ -54,7 +55,7 @@ networks yet.
 ## Build
 
 ```sh
-make build          # development binaries for this machine: bin/skep-agent, bin/skep-api
+make build          # development binaries for this machine: bin/skep-agent, bin/skep-api, bin/skepctl
 make build-freebsd  # FreeBSD amd64 binaries in bin/freebsd-amd64/
 ```
 
@@ -225,6 +226,8 @@ the host, with a command that has no network path:
 ```sh
 skep-api admin create --username andy          # asks for the password twice, without echo
 skep-api admin reset-password --username andy  # recovery for a lost password; ends that user's sessions
+skep-api admin disable --username carol        # disable a user; ends that user's sessions
+skep-api admin delete --username carol --yes   # delete a user; ends that user's sessions
 skep-api admin hash-benchmark                  # how long one password hash takes on this host
 ```
 
@@ -233,11 +236,33 @@ anything) or as `skep`; in development add `-dev`. The password is read
 from the terminal. For unattended installs `--password-stdin` reads it
 from standard input; it is never accepted as an argument or from the
 environment. `admin create` works at any time, not only for the first
-administrator. Both commands are written to the access audit log with the
-actor `local:<uid>`.
+administrator. `disable` and `delete` refuse the only enabled
+administrator, as the API does. Every one of these commands is written to
+the access audit log with the actor `local:<uid>`.
 
 Passwords are 12 to 256 characters, with no composition rules, and are
 stored as Argon2id hashes (64 MiB, 3 passes, 1 lane by default).
+
+### skepctl
+
+`skepctl` is the command-line client. It talks only to the public API, from
+the host or from any machine that can reach it:
+
+```sh
+skepctl login --server 10.79.20.170 --username andy   # shows the key and asks before trusting it
+skepctl system
+skepctl hardware
+skepctl tasks list --status running
+skepctl tasks show TASK_ID
+skepctl audit list --limit 20
+skepctl logout
+```
+
+On first contact it shows the server's public key pin; compare it with
+`skep-api tls fingerprint` on the host before answering. A changed key is
+refused until it is named with `--trust-key`. There is no option to skip
+the check. The token and the pins are kept in `~/.config/skepctl`, `0600`.
+See [docs/administration/skepctl.md](docs/administration/skepctl.md).
 
 ## API
 
@@ -253,6 +278,7 @@ The API lives under `/api/v1` and is documented in
 ```
 cmd/skep-agent/        the host agent binary (root, Unix socket only)
 cmd/skep-api/          the API server binary (unprivileged, the only network listener)
+cmd/skepctl/           the command-line client (public API only)
 internal/agent/        the agent's service layer (business logic, no HTTP)
 internal/api/          public API handlers (no business logic)
 internal/internalapi/  the agent's internal API: socket listener, peer check, handlers
@@ -272,11 +298,13 @@ internal/tasks/        task engine (states, cancellation, idempotency, restart r
 internal/audit/        operation audit entries
 internal/peercred/     Unix socket peer credentials, read from the kernel
 internal/sysaccount/   user and group name resolution
+internal/ctlstate/     skepctl's pins and session tokens on disk
 packaging/             rc.d scripts and sample configuration
 scripts/               development helpers
 migrations/sqlite/     versioned SQL migrations, one set per database (agent, api)
 tests/integration/     native tests that run on a real FreeBSD host
 tests/e2e/             agent and API together in one process
+pkg/client/            Go client for the public API, with public key pinning
 pkg/models/            public API data types
 pkg/version/           build metadata
 api/openapi.yaml       API description
@@ -288,6 +316,7 @@ docs/                  architecture, security, and decision records
 - [Architecture overview](docs/architecture/overview.md)
 - [Security overview](docs/security/overview.md)
 - [Running Skep as FreeBSD services](docs/installation/freebsd-service.md)
+- [skepctl](docs/administration/skepctl.md)
 - Decision records:
   [0001 Go toolchain and SQLite driver](docs/decisions/0001-go-toolchain-and-sqlite-driver.md),
   [0002 Discovery abstraction](docs/decisions/0002-discovery-abstraction.md),

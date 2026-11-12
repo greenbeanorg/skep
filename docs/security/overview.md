@@ -222,8 +222,33 @@ and a request body limit are set. Responses carry `X-Content-Type-Options: nosni
 - **Local commands drop root.** `skep-api tls ...` started as root changes
   to the owner of `/var/db/skep/api` before it opens anything.
 
-Certificate verification by `skepctl` (trust on first use, pinned key)
-arrives with `skepctl`, which does not exist yet.
+### skepctl
+
+- **Trust on first use, pinned key.** `skepctl` pins the SHA-256 of the
+  server's public key (SubjectPublicKeyInfo). On first contact it shows the
+  key and asks, or takes it from `--trust-key`; nothing but a TLS handshake
+  happens before that. Every later connection is refused during the
+  handshake unless the key matches, so neither a token nor a password
+  reaches a server with another key. A changed key is accepted only by
+  naming the new pin with `--trust-key`. There is no option that turns the
+  check off.
+- **No chain or host name check.** With a pinned key, neither adds
+  anything: the pin names the exact key. The Go TLS configuration
+  therefore sets `InsecureSkipVerify` together with a `VerifyConnection`
+  function that does the pin check; a client cannot be built without a pin
+  (`pkg/client`). TLS 1.3 only, no proxy, redirects are not followed.
+- **Token file.** The bearer token is stored as it is in
+  `~/.config/skepctl/sessions.json` (`0600`, directory `0700`, atomic
+  replacement). A file or directory that is a symbolic link, belongs to
+  another user, or is readable or writable by others is refused. The
+  pins file gets the same treatment, because whoever can write it chooses
+  the trusted key. A `401` deletes the token; logout deletes it after the
+  server has ended the session.
+- **Terminal input.** The password is read without echo, or from standard
+  input with `--password-stdin`; never from an argument or the
+  environment. The trust question is asked on `/dev/tty`, so piped input
+  cannot answer it. Values from the server are stripped of control
+  characters before they are printed as text.
 
 ## The privilege boundary
 
