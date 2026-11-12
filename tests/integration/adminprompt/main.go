@@ -19,7 +19,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -82,6 +84,13 @@ type session struct {
 	done          chan error
 }
 
+// wrapper runs the command under a shell that stays alive for a few
+// seconds afterwards. The shell is the session leader, so the terminal
+// outlives the command and its settings can still be read: when a session
+// leader exits, FreeBSD revokes its terminal. "trap :" lets the shell
+// survive a Ctrl-C that is meant for the command.
+const wrapper = `trap : INT; "$0" "$@"; echo "skep-exit=$?"; sleep 5`
+
 // startOnTerminal runs the command with a new pseudo-terminal as its
 // controlling terminal, standard input, output, and error.
 func startOnTerminal(bin string, args ...string) *session {
@@ -89,7 +98,7 @@ func startOnTerminal(bin string, args ...string) *session {
 	if err != nil {
 		fatal("open a pseudo-terminal: %v", err)
 	}
-	cmd := exec.Command(bin, args...)
+	cmd := exec.Command("/bin/sh", append([]string{"-c", wrapper, bin}, args...)...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = slave, slave, slave
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true, Setctty: true, Ctty: 0}
 	if err := cmd.Start(); err != nil {
@@ -127,26 +136,27 @@ func (s *session) typeLine(line string) {
 	}
 }
 
-// finish waits for the command to exit and for its last output to arrive.
+var exitRE = regexp.MustCompile(`skep-exit=(\d+)`)
+
+// finish waits for the command to exit and returns its exit status. The
+// terminal stays usable for a few seconds after that.
 func (s *session) finish() (exit int) {
-	var err error
-	select {
-	case err = <-s.done:
-	case <-time.After(60 * time.Second):
-		s.cmd.Process.Kill()
+	if !s.waitFor("skep-exit=") {
 		fatal("the command did not exit; the terminal showed %q", s.shown.String())
 	}
-	time.Sleep(300 * time.Millisecond)
-	if err != nil {
-		if ee, ok := err.(*exec.ExitError); ok {
-			return ee.ExitCode()
-		}
-		return -1
+	time.Sleep(200 * time.Millisecond)
+	m := exitRE.FindStringSubmatch(s.shown.String())
+	if m == nil {
+		fatal("no exit status on the terminal: %q", s.shown.String())
 	}
-	return 0
+	exit, _ = strconv.Atoi(m[1])
+	return exit
 }
 
+// close ends the shell and the terminal.
 func (s *session) close() {
+	s.cmd.Process.Kill()
+	<-s.done
 	s.master.Close()
 	s.slave.Close()
 }
@@ -200,7 +210,7 @@ func main() {
 	check(!strings.Contains(s.shown.String(), password) && !strings.Contains(s.shown.String(), "Tr0ub4dor"),
 		"the terminal never showed the password")
 	check(s.echo(), "echo is back on afterwards")
-	fmt.Printf("       the terminal showed: %q\n", s.shown.String())
+	fmt.Printf("       the terminal showed: %q\n", strings.Split(s.shown.String(), "skep-exit=")[0])
 	s.close()
 
 	step("the account exists and the password is the one typed")
