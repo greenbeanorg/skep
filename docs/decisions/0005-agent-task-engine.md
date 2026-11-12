@@ -1,7 +1,7 @@
 # ADR 0005: The agent's task engine
 
-- Status: **Proposed, awaiting review.** No code implements this yet.
-- Date: 2026-11-12
+- Status: Accepted
+- Date: 2026-11-12 (proposed and accepted)
 
 ## Summary
 
@@ -11,14 +11,14 @@ entries naming who asked for it. The engine is deliberately conservative:
 it never resumes or retries work on its own, and every state change is
 written in the same transaction as its event and its audit entry.
 
-Six points need your decision. They are listed under
-[Decisions for review](#decisions-for-review).
+The six points that were put to review, and their outcomes, are under
+[Decisions](#decisions). The engine is implemented in `internal/tasks`.
 
 ## Context
 
 Long-running operations are asynchronous and return a task ID. Milestone 2
 builds the engine before any privileged operation exists, so that the first
-one (Milestone 6) lands on tested machinery. ADR 0004 fixes three
+one lands on tested machinery. ADR 0004 fixes three
 constraints: the agent owns `agent.db`, every task carries a mandatory
 actor asserted by the API, and the agent keeps its own append-only audit
 log.
@@ -135,14 +135,20 @@ way, by the sweep alone.
 
 Cancellation is a request, made with an actor like any other operation.
 
-- **A pending task** becomes `cancelled` immediately.
-- **A running task** has the request recorded and its context cancelled.
+- **A pending task** becomes `cancelled` immediately, whatever its type:
+  nothing has run, so there is nothing unsafe to abandon.
+- **Each task type declares whether it is cancellable.** Cancelling a
+  running task of a non-cancellable type is refused up front with
+  `not_cancellable` (HTTP 409). The request is not accepted and then
+  ignored; the task is untouched and the refusal is audited.
+- **A running, cancellable task** has the request recorded and its context
+  cancelled.
   The handler stops at its next safe point. If it stops because of the
   cancel, the task becomes `cancelled`. If it had already finished, the
   task keeps its real outcome: a cancel can lose the race, and the response
   shows the state the task actually reached.
 - **A terminal task** is unchanged, and the request returns its state.
-  Cancelling twice is harmless.
+  Cancelling twice is harmless and writes no further audit entry.
 
 Cancellation is cooperative. The engine never kills a handler. A handler
 may finish a step that is unsafe to abandon before it honours the cancel.
@@ -158,16 +164,23 @@ from the client. It makes a retried request safe when the client does not
 know whether the first attempt arrived.
 
 - The key is optional, limited to 128 characters from `[A-Za-z0-9._:-]`.
-- Along with the key, the agent stores a hash of the request: task type,
-  resource, payload, and actor.
+- Along with the key, the agent stores a fingerprint of the request: task
+  type, resource, payload, and actor. The payload is canonicalised first,
+  so key order and whitespace do not matter.
 - **Same key, same request:** the agent returns the existing task, whatever
   state it is in, and creates nothing. This holds after the task is
   terminal: replaying the key of a failed task returns the failed task, not
   a second attempt.
-- **Same key, different request:** rejected with a conflict error. A key is
-  never rebound.
-- The existing `UNIQUE` constraint on the key decides races: two
-  simultaneous submissions with one key produce one task.
+- **Same key, different request:** rejected with
+  `idempotency_key_conflict` (HTTP 409). A key is never rebound. Because
+  the actor is part of the fingerprint, the same key sent by a different
+  actor is a conflict, not a replay, and does not reveal the other actor's
+  task.
+- Keys share one namespace per agent.
+- Two simultaneous submissions with one key produce one task. Transactions
+  take the database write lock when they begin, so the lookup and the
+  insert cannot interleave; the `UNIQUE` constraint on the key is the
+  backstop.
 - A key lives as long as its task row. There is no expiry until task
   retention is designed.
 
@@ -183,9 +196,10 @@ the API), and `peer_uid` (verified by the kernel).
 | When | Entry |
 |---|---|
 | Submission accepted | Phase `requested`, outcome `success`, the task ID |
-| Submission refused (invalid, outside host confinement, unknown type) | Phase `requested`, outcome `denied` or `failure`, no task ID; no task is created |
+| Submission refused as invalid (unknown type, bad payload) or because the agent cannot take it (queue full, shutting down) | Phase `requested`, outcome `failure`, no task ID; no task is created |
+| Submission refused by a rule (resource busy, idempotency conflict) | Phase `requested`, outcome `denied`, no task ID; no task is created |
 | Task reaches a terminal state | Phase `finished`, the terminal status, outcome `success` only for `succeeded` |
-| Cancel requested | Its own entry, naming the actor who cancelled, who may not be the actor who submitted |
+| Cancel requested | Its own entry, action `task.cancel`, naming the actor who cancelled, who may not be the actor who submitted; outcome `denied` when refused |
 
 Details:
 
@@ -210,8 +224,16 @@ operation cannot run without a `requested` entry or end without a
   type, a validator, and a handler. An unknown type is refused. There is no
   generic "run this" task (ADR 0004).
 - **Bounded concurrency.** A fixed number of workers, set in configuration.
-- **One task per resource at a time.** Tasks naming the same resource run
-  in submission order, never concurrently.
+- **One unfinished task per resource.** A submission for a resource that
+  already has a pending or running task is refused with `resource_busy`
+  (HTTP 409), and the error names the task that holds the resource. It is
+  not queued, for the same reason pending tasks do not survive a restart:
+  an operation that runs later, after another one has changed the
+  resource, acts on a state the requester never saw. A unique index in the
+  database enforces this as well.
+- **A bounded queue.** Accepted tasks wait for a free worker in a queue of
+  fixed size. When it is full, new submissions are refused with
+  `queue_full`; an idempotent replay is still answered.
 - **Time limits.** Each task type declares a maximum duration. Exceeding it
   cancels the handler's context and the task becomes `failed` with a
   timeout error code.
@@ -246,27 +268,65 @@ record. Until then, only the agent itself submits tasks, as `system`.
   lose the fact that something was in flight, which is exactly what must
   not be lost.
 
-## Decisions for review
+## Decisions
 
-1. **Pending tasks at restart.** Recommended: mark them `interrupted` as
-   well. They never started, so nothing on the host is half-done, but
-   running a queued operation after an outage of unknown length, on a host
-   that may have changed, is the kind of surprise this design avoids. The
-   alternative is to keep them queued and run them after the restart.
-2. **Two tasks for the same resource.** Recommended: run them in order.
-   The alternative is to refuse the second as "resource busy", which is
-   stricter but pushes queueing onto every client.
-3. **Idempotency key scope.** Recommended: one namespace per agent, with a
-   conflict if a key is reused for a different request or by a different
-   actor. Scoping keys per actor instead would need the `tasks` table
-   rebuilt to change its unique constraint, for little gain.
-4. **Cancellation is cooperative and does not roll back.** Recommended as
-   described.
-5. **Audit outcome for `cancelled` and `interrupted`.** Recommended: both
-   are recorded with outcome `failure` (the operation did not complete as
-   requested) and the exact status alongside. The alternative is to widen
-   the outcome values, which changes the meaning of a column the API-side
-   log also uses.
-6. **Milestone 2 scope.** Recommended as above: tasks are read-only over
-   the API, `discovery.refresh` is the only task type, and submission and
-   cancellation over the network wait for Milestone 4.
+Accepted on 2026-11-12 with these outcomes.
+
+1. **Pending tasks at restart are marked `interrupted`.** Accepted.
+2. **A second task on a busy resource is refused**, with `resource_busy`
+   (HTTP 409), not queued. This changed the proposal, which ran tasks for
+   one resource in order. The reason is the same as for the first decision:
+   stale intent.
+3. **One idempotency namespace per agent.** Accepted, with the actor
+   included in the request fingerprint, so the same key from a different
+   actor is a conflict.
+4. **Cancellation is cooperative and does not roll back.** Accepted, with
+   an addition: each task type declares whether it is cancellable, and
+   cancelling a running task of a non-cancellable type is refused up front.
+5. **`cancelled` and `interrupted` are audited with outcome `failure`** and
+   the exact status alongside. Accepted.
+6. **Milestone 2 scope.** Accepted: tasks are read-only over the API, and
+   `discovery.refresh`, submitted by `system`, is the only task type.
+
+One reading of decision 4 was made during implementation and is worth
+confirming: a *pending* task of a non-cancellable type can still be
+cancelled, because its handler has not started. "Non-cancellable" protects
+a handler that is running.
+
+## Implementation status
+
+| Part | State |
+|---|---|
+| Engine: states, conditional transitions, bounded workers and queue, timeouts, panic handling | Done (`internal/tasks`) |
+| Store: one transaction per state change with its event and audit entries | Done (`internal/database`) |
+| Database rules: legal transitions, immutable finished tasks and request fields, one unfinished task per resource, append-only events | Done (migration `agent/0002`) |
+| Startup sweep and graceful shutdown | Done |
+| Cancellation, including refusal for non-cancellable types | Done in the engine; not reachable over the network until Milestone 4 |
+| Idempotency keys | Done in the engine; not reachable over the network until Milestone 4 |
+| Audit writer with mandatory actor and peer UID | Done (`internal/audit`, `internal/database`) |
+| `discovery.refresh`, submitted once at agent start | Done |
+| `GET /api/v1/tasks`, `GET /api/v1/tasks/{id}` | Done, read-only |
+| Task submission and cancellation over the agent socket | Milestone 4 |
+| Task and audit retention | Not designed |
+
+The agent refreshes its inventory once at start. A periodic refresh is
+deliberately left out until retention exists, because every task adds rows
+to `tasks`, `task_events`, and `audit_log` that nothing removes yet.
+
+## FreeBSD validation
+
+Validated on FreeBSD 15.1-RELEASE-p6 (`hearst`, 2026-11-12):
+
+- The engine, store, and audit test suites, cross-compiled and run
+  natively, including the restart sweep, shutdown, cancellation,
+  idempotency, and the concurrent-submission test.
+- The agent itself: the startup `discovery.refresh` task ran as `system`,
+  stored the observed node state, and wrote a `requested` and a `finished`
+  audit entry with the agent's UID. Task history survived a clean restart
+  and a `kill -9`.
+
+Pending FreeBSD validation: an interruption of a real in-flight task on a
+real agent. `discovery.refresh` finishes in a few milliseconds, so the
+`kill -9` run had nothing in flight; the sweep itself is covered by the
+native engine tests. This becomes testable with the first long-running
+task type.

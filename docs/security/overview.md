@@ -23,8 +23,8 @@ What limits the exposure until then:
   0.1.0 changes host state.
 
 Anyone who can reach the port can read the host's hostname, OS release, CPU
-model, memory size, installed hypervisor binaries, and ZFS pool names and
-sizes. On a multi-user host, "anyone" includes every local user.
+model, memory size, installed hypervisor binaries, ZFS pool names and
+sizes, and the task history, including task types, times, and actor names. On a multi-user host, "anyone" includes every local user.
 
 ## What 0.1.0 does enforce
 
@@ -63,8 +63,24 @@ process never needs to open the agent's state. Only `agent.db` is opened in
 PHC format, so a plaintext password cannot be stored by mistake. Both
 `audit_log` tables reject updates and deletes. In the agent's schema, tasks
 and audit entries cannot be stored without an actor, and audit entries
-cannot be stored without the caller's UID. No user accounts exist in 0.1.0
-and nothing writes to either audit log yet.
+cannot be stored without the caller's UID. Triggers also enforce the legal
+task state transitions and make finished tasks and their request fields
+immutable. No user accounts exist yet, and nothing writes to the API-side
+audit log.
+
+**Operation audit.** Every task writes to the agent's audit log when it is
+requested and when it finishes, in the same transaction as the state
+change. A request without an actor is refused before anything is written.
+Refused requests are recorded too. So far the only actor is `system`: the
+agent's own inventory refresh.
+
+**No task control over the network.** Tasks can be listed and read, not
+submitted or cancelled. Those operations need an authenticated actor and
+arrive with Milestone 4.
+
+**Task content.** Task payloads are not returned by the API. Results,
+errors, and events are, so handlers must not put secrets in them. Unexpected
+handler errors are logged and replaced by a generic message on the task.
 
 **HTTP hardening.** Read, write, and idle timeouts and a header size limit
 are set. Responses carry `X-Content-Type-Options: nosniff`,
@@ -94,8 +110,9 @@ without authentication, exactly as described at the top of this document.
   is revisited before 1.0.
 - **Signed per-request tokens** replace the API-asserted identity before
   any agent accepts requests from another node.
-- **Audit log retention.** Both logs are strictly append-only today.
-  Retention and archiving need a design that does not weaken that.
+- **Retention.** Both audit logs are strictly append-only, and tasks and
+  task events are never removed. Retention and archiving need a design
+  that does not weaken the audit guarantee.
 - **Secrets storage.** Nothing secret is stored yet. Secret encryption is
   required before anything is.
 
