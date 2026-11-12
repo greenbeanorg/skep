@@ -332,7 +332,8 @@ accepting this ADR.
 | Agent database at `<data_dir>/agent/agent.db`, private directory | Done (0.1.0) |
 | Peer credential reading (`internal/peercred`) | Done and validated on FreeBSD; not yet used by the agent |
 | `skep-api` binary, agent Unix socket, `/internal/v1` | Milestone 4 |
-| `skep` account, rc.d services, socket under `/var/run/skep` | Milestone 4 |
+| `skep` account, `/var/run/skep` (`root:skep`, `0750`), rc.d service for the agent | Done and validated on FreeBSD (Milestone 3). Until Milestone 4 the service runs the agent as `skep`, not root, because the agent still has a network listener; see `docs/installation/freebsd-service.md` |
+| rc.d service for `skep-api`, agent socket under `/var/run/skep`, agent as root | Milestone 4 |
 | Authentication, sessions, RBAC, TLS | Milestone 4 |
 | Privileged operations package (`internal/hostops`) and host confinement configuration | With the first privileged operation |
 | Signed per-request tokens | Clustering milestone, before any remote caller |
@@ -366,7 +367,11 @@ Validated on FreeBSD 15.1-RELEASE-p6:
 
 Pending FreeBSD validation:
 
-- The same checks with a dedicated `skep` account and group, which does
-  not exist on the lab VM yet.
-- A socket under `/var/run`, including after a reboot clears it.
+- The peer-credential and socket permission checks with the dedicated
+  `skep` account. The account and `/var/run/skep` now exist and are
+  validated under rc.d (`tests/integration/rcd`), but no socket is created
+  there yet.
+- A socket under `/var/run` on a host where `/var/run` is really emptied
+  at boot (tmpfs). The rc.d script recreates the directory at every start;
+  that was validated by removing it, not by a tmpfs.
 - Running `skep-api` under rc.d as the `skep` user.

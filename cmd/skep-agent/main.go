@@ -66,6 +66,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	}
 	if *showVersion {
 		fmt.Fprintln(stdout, "skep-agent", version.Get())
+		if testTasksBuilt {
+			fmt.Fprintln(stdout, "TEST BUILD: contains test-only task types; not for installation")
+		}
 		return nil
 	}
 
@@ -148,6 +151,10 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if err := engine.Register(svc.RefreshDefinition()); err != nil {
 		return err
 	}
+	// Nothing in a shipped build; see testtasks.go.
+	if err := registerTestTasks(engine); err != nil {
+		return err
+	}
 
 	// Start marks tasks left unfinished by a previous run as interrupted.
 	// It must finish before anything can be submitted or served.
@@ -167,6 +174,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	}); err != nil {
 		log.Warn("could not submit the initial discovery task", "error", err)
 	}
+	submitTestTasks(ctx, engine, log)
 
 	serveErr := serve(ctx, cfg, api.NewHandler(svc, log), log)
 

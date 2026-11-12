@@ -197,14 +197,16 @@ imported, both as an unprivileged user and as root.
 | Database directory `0700`, file `0600`, shared data directory `0755` | Validated (unprivileged and root) |
 | Task engine, store, and audit test suites run natively (restart sweep, shutdown, cancellation, idempotency, concurrent submissions) | Validated (2026-11-12) |
 | Startup `discovery.refresh` task, observed node state stored, audit entries written; history survives a restart and a `kill -9` | Validated (2026-11-12) |
-| Interruption of a real in-flight task on a running agent | **Pending FreeBSD validation** (no long-running task type yet) |
+| Interruption of a real in-flight task on a running agent, by `kill -9`, by `service stop`, and by a reboot | Validated (2026-11-12, test-only `test.sleep` task; see `tests/integration/rcd`) |
 | Unix socket peer credentials (`LOCAL_PEERCRED`), UID allow-list, socket file permissions | Validated (see `tests/integration/peercred`) |
 | A degraded or faulted pool; a pool reporting `-` for fragmentation | **Pending FreeBSD validation** (parser tested against a synthetic fixture) |
 | ZFS `unavailable` when `zfs.ko` is not loaded | **Pending FreeBSD validation** (needs the pool exported and zfs unloaded) |
 | QEMU detection and version parsing | **Pending FreeBSD validation** (QEMU is not installed on the lab VM) |
 | Core count on a host with SMT | **Pending FreeBSD validation** (the lab VM has no SMT) |
-| Running under rc.d as a service | **Pending FreeBSD validation** (no rc.d script yet) |
-| Agent socket with a dedicated `skep` account, under `/var/run` | **Pending FreeBSD validation** (Milestone 4) |
+| Running under rc.d as a service: start, stop, restart, status, crash supervision, start at boot, as the `skep` account | Validated (2026-11-12, see `tests/integration/rcd`) |
+| A crash loop (agent exits at every start) and `skep_agent_restart_delay=0` under rc.d | Validated (2026-11-12, see `tests/integration/rcd`) |
+| A tmpfs `/var/run` | **Pending FreeBSD validation** |
+| Agent socket with the `skep` account, under `/var/run/skep` | **Pending FreeBSD validation** (Milestone 4; the account and the directory exist and are validated, the socket does not exist yet) |
 | ZFS-root host | **Pending FreeBSD validation** (the lab VM is UFS-root) |
 | arm64 | Not a target yet |
 
