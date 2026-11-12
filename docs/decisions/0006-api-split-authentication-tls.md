@@ -1,0 +1,465 @@
+# ADR 0006: API split, authentication, and TLS (Milestone 4)
+
+- Status: **Proposed** (not implemented; nothing in this document exists in
+  the code yet)
+- Date: 2026-11-12
+- Depends on: [ADR 0004](0004-privilege-boundary.md) (accepted), which fixes
+  the two-process shape and the socket. This ADR decides how to build it and
+  everything ADR 0004 left to "Milestone 4".
+
+## Summary
+
+Milestone 4 turns the single unauthenticated agent into the two processes
+of ADR 0004 and puts authentication, authorization, and TLS in front of the
+API. No state-changing endpoint for the host may exist before it is done.
+
+There are eight decisions. Each has options and a recommendation. The
+recommendations, in one table:
+
+| # | Decision | Recommendation |
+|---|---|---|
+| 1 | Process and socket wiring | `skep-api` as `skep` on TCP+TLS; agent on `/var/run/skep/agent.sock` only, under `/internal/v1`; the agent becomes root in this milestone |
+| 2 | Password storage | Argon2id via `golang.org/x/crypto`, 64 MiB / 3 passes / 1 lane, PHC strings, bounded concurrency |
+| 3 | Sessions | Opaque random tokens, stored hashed in `api.db`; cookie for the UI, the same token as a bearer for `skepctl` |
+| 4 | Login throttling | In-memory rate limits per address and per username; delay, never lock out |
+| 5 | RBAC model | One global role per user, permission strings, three built-in roles, deny by default |
+| 6 | TLS certificates | Operator-supplied if configured, otherwise a self-signed certificate generated and renewed by `skep-api`; TLS 1.3 only |
+| 7 | Listen address | Loopback by default; opening it is an explicit configuration change |
+| 8 | First administrator | A local command on the host, with no network path; no default credentials, ever |
+
+## Context
+
+What exists today:
+
+- `skep-agent` serves the read-only public API on `127.0.0.1:8765`, without
+  authentication or TLS. Under rc.d it runs as the unprivileged `skep`
+  account (Milestone 3).
+- `internal/api` depends only on the `api.Backend` interface.
+- `internal/peercred` reads Unix socket peer credentials and is validated
+  on FreeBSD.
+- `migrations/sqlite/api/0001` defines `roles`, `users` (one `role_id` per
+  user, `password_hash` constrained to `$argon2id$`), and an append-only
+  access `audit_log`. Nothing opens `api.db` yet.
+- The task engine can submit and cancel tasks, with a mandatory actor, but
+  neither is reachable from the network because there is no actor to record.
+
+What the standing requirements demand: TLS everywhere, Argon2id, RBAC,
+audit logging, secure sessions, rate limiting, input validation, no
+plaintext secrets, restrictive file permissions, the web application not
+running as root, and no silent weakening of any of these.
+
+Out of scope here, and not prejudged: mutual TLS between nodes, a cluster
+CA, signed per-request tokens (clustering milestone, ADR 0004), external
+identity providers, two-factor authentication, and API tokens for
+automation beyond what Decision 3 says.
+
+## Decision 1: process and socket wiring
+
+ADR 0004 fixes the shape. What is left to decide:
+
+### 1a. What the agent runs as after the split
+
+| Option | Notes |
+|---|---|
+| A. Root, from this milestone | What ADR 0004 says. The agent has no network listener any more, so the reason Milestone 3 ran it as `skep` is gone. |
+| B. Stay `skep` until the first privileged operation (Milestone 6) | Looks conservative, but the API also runs as `skep`. Two processes with one UID can open each other's files and signal or trace each other. The database separation and the "API cannot erase the agent's audit log" guarantee of ADR 0004 would not hold. |
+| C. A second unprivileged account (`skep-agent`) until Milestone 6 | Keeps both isolation and least privilege for two milestones. Costs a second account that is deleted again later, a second ownership migration, and a peer-credential allow-list that changes twice. |
+
+**Recommendation: A.** B silently breaks ADR 0004. C is defensible but buys
+little: after the split the agent parses requests from exactly one local
+peer that the kernel has identified. The one-time ownership change of
+`/var/db/skep/agent` from `skep` to `root` is done by the rc.d script's
+start step, which already enforces that directory's owner.
+
+### 1b. The internal API
+
+- The agent listens on `/var/run/skep/agent.sock` only (`root:skep`, `0660`,
+  directory `0750`), checks peer credentials on every connection, and
+  accepts UIDs `0` and `skep`. It has **no TCP listener** any more; the
+  `api.listen_address` and `api.allow_insecure_remote` settings leave the
+  agent's configuration.
+- Routes move under `/internal/v1`. Milestone 4 carries exactly today's
+  read operations, plus task cancel, which already exists in the engine and
+  needs an actor: `health`, `system`, `nodes/{id}/hardware`, `tasks`,
+  `tasks/{id}`, `tasks/{id}/cancel`. Nothing else. Task *submission* over
+  the socket arrives with the first operation that needs it (Milestone 6).
+- Every request carries the metadata ADR 0004 requires. Options for how:
+
+  | Option | Notes |
+  |---|---|
+  | A. HTTP headers (`Skep-Actor-Id`, `Skep-Actor-Name`, `Skep-Request-Id`, `Skep-Source-Ip`, `Idempotency-Key`) | Uniform for GET and POST; one middleware on each side. |
+  | B. A JSON envelope around every body | Typed, but GET requests have no body and would need a second mechanism. |
+
+  **Recommendation: A**, validated by the agent against the same character
+  sets as today. A request without an actor is refused with 400 before any
+  handler runs, including reads, so the rule has no exceptions to remember.
+- `skep-api` implements `api.Backend` with a small client for this socket
+  (`internal/agentclient`). The public handlers do not change. Timeouts:
+  5 s to connect, 30 s per request. If the socket is absent or refuses, node
+  endpoints return `503 agent_unavailable`; login and user management keep
+  working.
+
+### 1c. `skep-api`
+
+- New binary `cmd/skep-api`, running as `skep`, with its own configuration
+  file `/usr/local/etc/skep/api.json` (root-owned, `0640 root:skep`), its
+  own rc.d script (`skep_api`, `REQUIRE: skep_agent`), and `api.db` in
+  `/var/db/skep/api` (`skep:skep`, `0700`).
+- It refuses to start as root.
+- It owns: TLS, sessions, users, roles, the access audit log, rate limits.
+- Start order does not matter for correctness: either process may start
+  first or restart alone.
+
+### 1d. Development mode
+
+ADR 0004 decided on two processes in dev mode too. `make run-dev` starts
+both, with the socket in `.skep-dev/run/`, the peer allow-list set to the
+developer's own UID, and a self-signed certificate. There is no "combined"
+binary and no flag that turns authentication off.
+
+## Decision 2: password storage
+
+Argon2id is a standing requirement. It is not in the Go standard library.
+
+| Option | Notes |
+|---|---|
+| A. `golang.org/x/crypto/argon2` | Maintained by the Go team, pure Go, cross-compiles to FreeBSD, already the module family of `x/sys`. |
+| B. A third-party wrapper library | Adds a maintainer to trust for about 60 lines of encoding code. |
+| C. scrypt/PBKDF2 from the standard library | Avoids the dependency but violates the requirement. |
+
+**Recommendation: A.** New dependency: `golang.org/x/crypto`, reason:
+Argon2id. The PHC encoding and verification are written in
+`internal/auth` (small, fully unit-tested against the RFC 9106 test
+vectors).
+
+Parameters:
+
+| Option | Memory | Passes | Lanes | Notes |
+|---|---|---|---|---|
+| A. OWASP minimum | 19 MiB | 2 | 1 | Cheapest acceptable. |
+| B. RFC 9106 "second recommended" | 64 MiB | 3 | 4 | The usual default. Four lanes mostly help the defender on idle cores. |
+| C. | 64 MiB | 3 | 1 | Same memory hardness, one core per login. |
+
+**Recommendation: C**, with a 16-byte random salt and a 32-byte hash. A
+management host should not let logins occupy four cores, and the lab node
+has two. Supporting rules:
+
+- **At most two hashes run at once** (a semaphore). A flood of login
+  attempts then costs at most 128 MiB and two cores; further attempts wait
+  briefly and are then refused with 429.
+- Parameters are stored in each hash (PHC string). On a successful login
+  with weaker stored parameters, the hash is recomputed. Parameters can be
+  raised in configuration, never set below option A.
+- A login for an unknown or disabled user verifies against a fixed dummy
+  hash, so the response time does not reveal which usernames exist.
+- Password rules follow NIST SP 800-63B: 12 to 256 characters, no
+  composition rules, no forced rotation. The upper bound stops hashing of
+  huge inputs.
+- **No pepper** for now. A pepper is another secret to store and rotate,
+  and Skep has no secret storage yet. Revisit with secret encryption.
+
+To be measured on FreeBSD before acceptance of the implementation: the
+wall-clock time of one hash on `hearst`. Target 100 to 500 ms; if it is
+outside, the pass count changes, not the memory.
+
+## Decision 3: sessions
+
+| Option | Notes |
+|---|---|
+| A. Opaque random token, server-side row in `api.db` | Revocation is a row delete. One indexed lookup per request. |
+| B. Stateless signed token (JWT or similar) | No lookup, but no real revocation without a server-side list, which removes the benefit; needs a signing key to store and rotate. |
+| C. Encrypted cookie holding the session | Same revocation problem as B. |
+
+**Recommendation: A.**
+
+- The token is 32 random bytes from `crypto/rand`, base64url. `api.db`
+  stores only its SHA-256, so a copy of the database does not contain a
+  usable session. (A fast hash is correct here: the input has 256 bits of
+  entropy.)
+- New table in migration `api/0002`: `sessions (token_hash PRIMARY KEY,
+  user_id, created_at, last_seen_at, expires_at, source_ip, user_agent)`.
+- **Web UI:** cookie `__Host-skep_session`; `Secure`, `HttpOnly`,
+  `SameSite=Strict`, `Path=/`. Never readable by scripts.
+- **`skepctl` and scripts:** `POST /api/v1/auth/login` also returns the
+  token; it is sent as `Authorization: Bearer`. `skepctl` stores it in a
+  `0600` file. It is the same session with the same lifetime.
+- **Lifetime:** 30 minutes idle, 12 hours absolute, both configurable
+  downwards and up to 24 h / 30 days. `last_seen_at` is written at most
+  once a minute per session.
+- **Revocation:** logout deletes the row. Changing a password, disabling a
+  user, or changing a user's role deletes all of that user's sessions. A
+  new session is always issued at login (no fixation). Expired rows are
+  deleted by a periodic sweep.
+- **CSRF:** `SameSite=Strict` is the first control. The second: any
+  non-GET request authenticated by cookie must carry `Origin` matching the
+  request host, or it is refused. Bearer-authenticated requests are exempt:
+  a browser does not attach them by itself.
+- **Long-lived API tokens** for automation (named, per user, revocable,
+  optionally read-only) are a separate credential type. Options: build
+  them in Milestone 4, or later. **Recommendation: later**, as its own
+  small ADR, before the first integration needs one. Until then automation
+  logs in like `skepctl`.
+
+Public endpoints added: `POST /api/v1/auth/login`, `POST /api/v1/auth/logout`,
+`GET /api/v1/auth/session`, `PUT /api/v1/auth/password`, and `users` CRUD.
+All are added to `api/openapi.yaml`. Errors: `401 unauthenticated`,
+`403 forbidden`, `429 rate_limited`.
+
+Unauthenticated after this milestone: `GET /api/v1/health` only, and it
+returns the status only (no version, no uptime). Everything else requires a
+session.
+
+## Decision 4: login throttling
+
+| Option | Notes |
+|---|---|
+| A. Lock the account after N failures | Simple; lets anyone who can reach the port lock every administrator out. |
+| B. Rate limit per source address and per username, with growing delay, no lockout | No denial of service against an account; slows guessing to a crawl. |
+| C. B plus a CAPTCHA or proof of work | Not appropriate for an infrastructure API. |
+
+**Recommendation: B**, in memory (lost at restart, which is acceptable):
+
+- Per source address: 10 attempts per minute.
+- Per username: 5 failures, then each further attempt is delayed, doubling
+  from 1 s to a cap of 60 s; the counter clears on success or after 15
+  minutes without attempts.
+- Every failed and throttled login is written to the access audit log
+  with the source address. The submitted username is recorded only if it
+  matches the username character set, so the log cannot be used to store
+  arbitrary input.
+- The source address is the TCP peer. `X-Forwarded-For` is ignored unless a
+  list of trusted proxies is configured; none by default.
+
+## Decision 5: RBAC model
+
+| Option | Notes |
+|---|---|
+| A. Fixed roles in code, no permissions table | Smallest. Any change to who may do what is a release. |
+| B. One role per user; a role is a set of permission strings; global scope | Matches the schema already in `api/0001`. Custom roles are possible. No per-resource scoping. |
+| C. Role bindings with a scope path (user, role, `/vms/{id}`), as Proxmox does | Needed for delegation and multi-tenant use. Considerably more to design, test, and explain; the resources to scope do not exist yet. |
+| D. An embedded policy engine | A dependency and a second language for a problem this size. |
+
+**Recommendation: B now, with C as an additive change later.** There are no
+VMs, pools, or jails to scope yet, so scopes designed today would be
+guesses. When scoping is needed, a `role_bindings (user_id, role_id, scope)`
+table is added and `users.role_id` becomes the binding at scope `/`; no
+existing data changes meaning.
+
+- **Permissions** are `resource:action` strings, declared as constants in
+  one Go file. Milestone 4 defines only those it can enforce:
+  `system:read`, `node:read`, `task:read`, `task:cancel`, `user:read`,
+  `user:manage`, `role:read`, `audit:read`. Each later milestone adds its
+  own (for example `vm:read`, `vm:write`, `vm:power`).
+- **Built-in roles**, created by migration, not editable or deletable:
+
+  | Role | Permissions |
+  |---|---|
+  | `admin` | all, including ones added later (stored as `*`) |
+  | `operator` | all `:read` plus operational actions (`task:cancel` now; power and lifecycle actions later); never `user:manage` |
+  | `viewer` | all `:read` except `audit:read` and `user:read` |
+
+  Custom roles: the schema allows them. **Recommendation:** do not expose
+  role editing in Milestone 4; ship the three built-in roles and add custom
+  roles when someone needs one.
+- **Enforcement** is in `skep-api`, in one middleware, **deny by default**:
+  a route is registered together with the permission it requires, and a
+  unit test fails if any route has none. The agent makes no authorization
+  decision (ADR 0004).
+- **Every denial is audited**, with actor, permission, and route.
+- **The last administrator is protected:** disabling, deleting, or demoting
+  the only enabled `admin` is refused.
+- A role or permission change takes effect on the next request (roles are
+  read per request, from a short-lived in-process cache invalidated on
+  write), and ends the user's sessions.
+
+## Decision 6: TLS certificates
+
+| Option | Notes |
+|---|---|
+| A. Self-signed certificate generated at first start | Works out of the box. Browsers warn until the operator trusts or replaces it. |
+| B. A per-node local CA that signs a leaf | Lets an operator trust one CA; but a CA key on the node is a larger secret, and the clustering milestone will need a *cluster* CA whose design should not be guessed now. |
+| C. Operator-supplied certificate and key only | Correct for production; a fresh install cannot start without extra steps. |
+| D. ACME | Needs public DNS or reachability; unusual for management interfaces; a dependency. |
+
+**Recommendation: C when configured, otherwise A.** Not B (see the table),
+not D for now.
+
+- **Generation (A):** done by `skep-api` itself, as `skep`, at first start.
+  ECDSA P-256; validity 397 days; subject alternative names: the hostname,
+  the FQDN, `localhost`, and the host's addresses at generation time.
+  Stored in `/var/db/skep/api/tls/` (`0700`), key file `0600`. The agent
+  never sees the key.
+- **The private key is a plaintext file readable only by `skep`.** An
+  unattended service must be able to read its key at boot, so this is the
+  standard and unavoidable form. It is stated here because of the "no
+  plaintext secrets" rule: the rule is met for stored credentials (hashes
+  only); a TLS server key cannot be hashed.
+- **Rotation of the generated certificate:** `skep-api` checks daily and
+  replaces the certificate, with a **new key**, 30 days before expiry. The
+  listener uses `tls.Config.GetCertificate`, so the swap needs no restart
+  and drops no connection. Each rotation is written to the access audit
+  log with the old and new SHA-256 fingerprints. A changed address or
+  hostname does not trigger regeneration by itself; `skep-api tls
+  regenerate` does it on request.
+- **Operator-supplied certificate (C):** `tls.cert_file` and `tls.key_file`
+  in `api.json`. `skep-api` reloads them on `SIGHUP` and when the files
+  change, after checking that the pair matches; a bad pair is logged and
+  the old one stays in use. Skep never rotates or overwrites operator
+  files. It logs a warning from 30 days before expiry and reports the
+  expiry date in the authenticated system document.
+- **Protocol:** options are TLS 1.2+ (Go's default) or TLS 1.3 only.
+  **Recommendation: TLS 1.3 only.** Every supported browser, `curl`, and Go
+  client has it, and there are no legacy clients to keep working.
+  `Strict-Transport-Security` is sent on every response.
+- **No plaintext HTTP listener**, not even for a redirect.
+- **Trust on first use for `skepctl`:** it shows the certificate's SHA-256
+  fingerprint on first contact, stores it after confirmation, and refuses
+  a changed certificate unless told to accept it. The fingerprint is
+  printed by `skep-api tls fingerprint` on the host, so it can be compared
+  out of band. `skepctl` never has a "skip verification" flag.
+
+## Decision 7: listen address
+
+| Option | Notes |
+|---|---|
+| A. All interfaces by default | Convenient; exposes a login page on every network the host touches, including storage and VM networks, before anyone has chosen that. |
+| B. Loopback by default; the operator sets the management address | One extra step; nothing is exposed by default. |
+| C. Loopback until the first administrator exists, then all interfaces | Automatic, but the exposure changes as a side effect of creating a user. |
+
+**Recommendation: B**, default `127.0.0.1:8443`. The installer (Milestone
+10) is the right place to ask for the management address and write it.
+The port number is a proposal; it is not registered with IANA for Skep and
+can change before 1.0.
+
+## Decision 8: the first administrator
+
+| Option | Notes |
+|---|---|
+| A. Default credentials (`admin`/`admin`) | Rejected outright. |
+| B. A local command on the host creates the administrator | No network path at all. Requires shell access to the host, which whoever installs it has. |
+| C. A one-time setup token, printed at first start, entered in a first-run page of the UI | Friendly, but it is a network-reachable way to become administrator, protected by one secret that sits in a log or on a console. |
+| D. Authenticate the host's `root` through PAM, as Proxmox does | The unprivileged API cannot verify system passwords; doing so needs a privileged helper and cgo. It also ties API access to the root password. Rejected. |
+| E. Initial password from an environment variable or file at first start | The secret ends up in `rc.conf`, a process environment, or a leftover file. |
+
+**Recommendation: B.**
+
+```
+skep-api admin create --username NAME      # prompts twice on the terminal
+skep-api admin reset-password --username NAME
+```
+
+- The command opens `api.db` directly, so it must run as `skep`; started as
+  root it drops to `skep` before opening anything, and as any other user it
+  fails on file permissions. It needs no running `skep-api`.
+- The password is read from the terminal without echo. For unattended
+  installs it may be read from standard input (`--password-stdin`); it is
+  never accepted as an argument or from the environment.
+- `admin create` works at any time, not only when no administrator exists:
+  whoever is root on the host already owns the node, and a second path that
+  only works once invites workarounds. `reset-password` is the documented
+  recovery for a lost password and ends that user's sessions.
+- Both write to the access audit log with the actor `local:<uid>` of the
+  invoking user, and are logged by `skep-api` at the next start if it was
+  not running.
+- Until an administrator exists, login returns `503 setup_required` with a
+  message naming the command. There is no first-run page.
+- Option C can be added for the installer later without changing any of
+  this; it is not needed before there is a UI.
+
+## What a request looks like afterwards
+
+```
+browser / skepctl
+   |  TLS 1.3, session cookie or bearer token
+   v
+skep-api (skep)   request ID -> rate limit -> session -> role -> permission
+   |              for this route -> validation -> access audit
+   |  Unix socket, peer UID checked, actor headers
+   v
+skep-agent (root) actor present? -> validate again -> execute or enqueue
+                  -> operation audit
+```
+
+## Storage changes (migration `api/0002`, sketch)
+
+- `sessions`, as in Decision 3.
+- `users`: `password_changed_at`.
+- `roles`: the three built-in rows.
+- The access `audit_log` is unchanged. Its retention is the subject of
+  ADR 0007.
+
+`agent.db` needs no schema change.
+
+## Alternatives considered for the milestone as a whole
+
+- **Authentication first, split later.** Smaller first step, but it puts
+  password handling and session code into the process that is about to
+  become root. Rejected; ADR 0004's migration order (split, then
+  authentication) stands.
+- **A reverse proxy (nginx, relayd) for TLS and authentication.** Moves the
+  most security-critical code out of the tested codebase into
+  configuration, adds a package dependency, and still needs sessions and
+  RBAC in Skep. An operator may put a proxy in front; Skep does not require
+  one.
+- **mTLS client certificates for users.** Strong, but painful in browsers
+  and an operational burden for a first release. Not excluded later for
+  automation.
+
+## Consequences
+
+- One new dependency: `golang.org/x/crypto`.
+- A second binary, rc.d script, configuration file, and database in use.
+- The API contract gains authentication endpoints and three error codes;
+  existing read endpoints keep their paths and bodies but now require a
+  session, which is a breaking change for anything that called 0.1.0
+  without one. Nothing is deployed, so no compatibility shim is proposed.
+- The agent stops listening on TCP. `curl` against the agent needs
+  `--unix-socket` and root or `skep`.
+- The agent runs as root from this milestone on, with no privileged
+  operation yet to use it. That is the price of keeping the two processes
+  under different UIDs (Decision 1a).
+- Sessions and users are per node. A cluster needs shared identity; that
+  belongs to the clustering milestone and `api.db` stays behind its store
+  interfaces so it can move.
+
+## Suggested implementation order
+
+Each step is one reviewable change that leaves the tree working.
+
+1. Internal API on the Unix socket with peer-credential checks, next to the
+   existing TCP listener; `internal/agentclient`.
+2. `skep-api` serving today's read-only API through the socket, loopback,
+   still unauthenticated; rc.d script. Remove the agent's TCP listener;
+   agent runs as root.
+3. TLS (Decisions 6 and 7).
+4. `internal/auth`: Argon2id, users, `admin create` (Decisions 2 and 8).
+5. Sessions, login throttling, CSRF check (Decisions 3 and 4).
+6. RBAC middleware and route table, user management endpoints, access
+   audit (Decision 5).
+7. `tasks/{id}/cancel`, the first authenticated state-changing endpoint,
+   end to end with the actor in the agent's audit log.
+
+Between steps 2 and 5 the API is still unauthenticated and stays
+loopback-only and read-only, as it is today.
+
+## FreeBSD validation required
+
+Nothing here is validated; all of it is pending. In particular:
+
+- The socket under `/var/run/skep` with the real `skep` account and a root
+  agent, including the `skep` to root ownership change of
+  `/var/db/skep/agent`.
+- `skep-api` under rc.d as `skep`, binding its port without privileges.
+- Argon2id timing and memory on `hearst` (2 cores, 2 GB).
+- Certificate generation, hot rotation, and `SIGHUP` reload.
+- Terminal password entry without echo on the FreeBSD console and over SSH.
+
+## Questions for review
+
+1. Decision 1a: is root-from-Milestone-4 acceptable, or do you prefer the
+   second unprivileged account (option C) until Milestone 6?
+2. Decision 3: is deferring long-lived API tokens acceptable?
+3. Decision 5: three built-in roles and no role editing in this milestone?
+4. Decision 6: TLS 1.3 only?
+5. Decision 7: loopback by default until the installer exists?
+6. Decision 8: local command only, no first-run page?
