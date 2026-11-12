@@ -36,9 +36,10 @@
 #       supervision off: a crashed agent stays down. A restarted agent
 #       never resumes work; it marks unfinished tasks interrupted.
 #   skep_agent_syslog_facility="daemon"
-#   skep_agent_syslog_priority="notice"
+#   skep_agent_syslog_priority="info"
 #   skep_agent_syslog_tag="skep-agent"
 #       The agent logs JSON lines to stderr; daemon(8) sends them to syslog.
+#       With the stock syslog.conf, daemon.info goes to /var/log/daemon.log.
 #   skep_agent_env=""
 #       Environment for the agent (standard rc.subr variable).
 #
@@ -63,7 +64,7 @@ load_rc_config "${name}"
 : "${skep_agent_args:=}"
 : "${skep_agent_restart_delay:=5}"
 : "${skep_agent_syslog_facility:=daemon}"
-: "${skep_agent_syslog_priority:=notice}"
+: "${skep_agent_syslog_priority:=info}"
 : "${skep_agent_syslog_tag:=skep-agent}"
 
 # pidfile is the daemon(8) supervisor, which rc.subr signals and waits for.

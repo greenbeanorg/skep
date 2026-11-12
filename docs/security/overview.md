@@ -54,6 +54,14 @@ The health endpoint reports that the database is unreachable, not why.
 **Local state permissions.** The directory holding the agent database is
 created `0700` and the database file `0600`.
 
+**The service does not run as root.** Under rc.d the agent runs as the
+unprivileged `skep` account; only the `daemon(8)` supervisor is root. See
+[the service documentation](../installation/freebsd-service.md).
+
+**Test-only code is not shipped.** The `test.sleep` task type used by the
+native integration tests is compiled only with the `skep_testtasks` build
+tag. CI fails if the shipped FreeBSD binary contains it.
+
 **Separate databases.** Node state (`agent.db`) and identity data (`api.db`)
 are separate databases with separate schemas, so the future unprivileged API
 process never needs to open the agent's state. Only `agent.db` is opened in
