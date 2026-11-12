@@ -1,0 +1,186 @@
+# Architecture overview
+
+This document describes Skep as of 0.1.0 (Foundation). It covers what exists
+now. Planned subsystems are listed in `CLAUDE.md` and are not described here
+until they are built.
+
+## Shape of the system in 0.1.0
+
+One binary, `skep-agent`, runs on a host. It discovers the host read-only,
+keeps local state in SQLite, and serves a small read-only REST API.
+
+```
+            HTTP (loopback only, no auth in 0.1.0)
+                          |
+        +-----------------v------------------+
+        | internal/api        HTTP layer     |  routing, validation, error
+        |                                    |  envelope, request IDs, logging
+        +-----------------+------------------+
+                          | api.Backend (interface)
+        +-----------------v------------------+
+        | internal/agent      service layer  |  node identity, caching,
+        |                                    |  health, system document
+        +--------+-------------------+-------+
+                 |                   |
+   hardware.Discoverer        agent.Pinger
+                 |                   |
+   +-------------v-----+   +---------v-----------+
+   | internal/hardware |   | internal/database   |
+   | read-only         |   | SQLite, migrations, |
+   | discovery         |   | node identity       |
+   +-------------------+   +---------------------+
+```
+
+`cmd/skep-agent` is the only place that knows about all of these packages. It
+loads the configuration, builds the logger, opens and migrates the database,
+resolves the node ID, and wires the layers together.
+
+### Layer rules
+
+- **`internal/api`** translates HTTP to calls on the `api.Backend` interface
+  and back. It holds no business logic and imports neither `internal/agent`
+  nor `internal/hardware`.
+- **`internal/agent`** holds the logic. It knows nothing about HTTP.
+- **`internal/hardware`** talks to the operating system. It knows nothing
+  about the API or the database.
+
+Because the HTTP layer depends only on `api.Backend`, moving the API into a
+separate `skep-api` process means writing a new `Backend` that calls the
+agent over its Unix socket. The handlers do not change. That split is
+decided in [ADR 0004](../decisions/0004-privilege-boundary.md) and is
+Milestone 4; until then the agent serves the read-only API itself.
+
+## Host discovery
+
+See [ADR 0002](../decisions/0002-discovery-abstraction.md) and
+[ADR 0003](../decisions/0003-read-only-discovery.md).
+
+`hardware.Discoverer` has one method, `Discover`. Each platform provides an
+implementation:
+
+| Platform | Source of facts | Role |
+|---|---|---|
+| FreeBSD | `sysctl(3)` through `golang.org/x/sys/unix`, file existence checks, `zpool list`, `qemu-* --version` | Production |
+| Linux | `/proc`, `/sys`, `/etc/os-release`, `zpool list`, `qemu-* --version` | Development only |
+| Other | Go runtime | Builds and runs; every capability is `unknown` |
+
+Each capability (bhyve, QEMU, ZFS) reports `available`, `unavailable`, or
+`unknown` together with a reason. A failed probe never fails the whole pass;
+missing facts are listed in `warnings`.
+
+How each capability is decided on FreeBSD:
+
+- **bhyve** is `available` when the sysctl OID `hw.vmm.maxcpu` exists (the
+  vmm module is loaded or compiled in) and `/usr/sbin/bhyve` exists. When vmm
+  is not loaded, discovery reports whether `vmm.ko` is present, and does not
+  load it.
+- **QEMU** is `available` when a `qemu-system-*` binary is found. It is
+  always reported with `acceleration: tcg`. There is no KVM on FreeBSD.
+- **ZFS** is `available` when the sysctl OID `vfs.zfs.version.module` exists
+  and the `zpool` binary is found. Pools are listed with a fixed
+  `zpool list -H -p -o ...` invocation, and only when the module is already
+  loaded.
+
+The service layer caches a discovery result for `discovery.cache_ttl`
+(10 seconds by default), and serialises discovery so concurrent requests
+share one pass.
+
+## Persistence
+
+SQLite holds local state, using the pure-Go `modernc.org/sqlite` driver
+([ADR 0001](../decisions/0001-go-toolchain-and-sqlite-driver.md)). It is not
+the cluster database.
+
+There are two databases, each owned by one process and closed to the other
+([ADR 0004](../decisions/0004-privilege-boundary.md)):
+
+| Database | Owner | Migrations | Holds |
+|---|---|---|---|
+| `<data_dir>/agent/agent.db` | `skep-agent` | `migrations/sqlite/agent` | Node identity, VMs, disks, networks, containers, storage, interfaces, tasks, task events, operation audit |
+| `<data_dir>/api/api.db` | `skep-api` | `migrations/sqlite/api` | Users, roles, access audit |
+
+In 0.1.0 only the agent database is opened. `skep-api` does not exist yet;
+its schema is defined and tested so that the split is in place from the
+first release.
+
+- Migrations are plain SQL files named `NNNN_name.sql`, embedded in the
+  binary, and applied at startup, each in its own transaction. Applied
+  versions and their SHA-256 checksums are recorded in `schema_migrations`.
+  The two sets are versioned independently.
+- The runner refuses to start when an applied migration was edited
+  afterwards, or when the database is newer than the binary.
+- The directory holding a database is created with mode `0700` and the file
+  with mode `0600`. The data directory above it is created `0755`, because
+  the two processes share it and run as different users.
+- The node ID is a random UUID generated on first start and stored in the
+  `nodes` table (`is_local = 1`). It does not change when the hostname does.
+- Tasks and operation audit entries carry a mandatory actor, as asserted by
+  the API, and the audit log also records the kernel-verified UID of the
+  caller.
+
+### Desired and observed state
+
+Desired state and observed state never share a column. In every table,
+`desired_*` columns and configuration columns hold what an administrator
+asked for; `observed_*` columns hold what the agent last saw, with
+`observed_at` recording when. History is kept separately in `task_events`
+and the append-only `audit_log` tables.
+
+In 0.1.0 only `schema_migrations` and the local row in `nodes` are written.
+The other tables define the schema that later milestones build on. Expect
+the schema to gain migrations as those subsystems are designed in detail.
+
+## Configuration and logging
+
+Configuration is a typed model (`internal/config`) loaded from defaults, a
+JSON file, environment variables, and flags, then validated as a whole. JSON
+was chosen because the standard library parses it; no dependency was added
+for a configuration format. Logging uses `log/slog`, JSON in production and
+text in dev mode.
+
+## FreeBSD validation status
+
+Validated means it ran on FreeBSD 15.1-RELEASE-p6 (amd64, UFS-root, `hearst`)
+and the output was checked. Everything else is **pending FreeBSD validation**,
+even though it cross-compiles and passes unit tests on Linux.
+
+Last validation run: 2026-11-11, in two host states. First with vmm not
+loaded and no pools; then with vmm loaded and the file-backed pool `skeptest`
+imported, both as an unprivileged user and as root.
+
+| Item | Status |
+|---|---|
+| Agent starts, migrates the database, serves all three endpoints, stops on SIGTERM | Validated (unprivileged and root) |
+| Hostname, OS name, version, release, kernel, architecture | Validated |
+| CPU model, core and thread counts | Validated (2 vCPU VM, no SMT) |
+| Total and available memory | Validated |
+| bhyve `unavailable` when vmm is not loaded and `vmm.ko` is present | Validated |
+| bhyve `available` when vmm is loaded; `/dev/vmmctl` detected | Validated (unprivileged and root) |
+| Discovery does not load or unload kernel modules | Validated (`kldstat` before and after, both states) |
+| ZFS module detection and version | Validated |
+| `zpool list` with no pools | Validated |
+| `zpool list` with one healthy pool, including sizes and percentages | Validated (`skeptest`, unprivileged and root) |
+| Discovery leaves the pool untouched | Validated (`zpool list` before and after) |
+| Database directory `0700`, file `0600`, shared data directory `0755` | Validated (unprivileged and root) |
+| Unix socket peer credentials (`LOCAL_PEERCRED`), UID allow-list, socket file permissions | Validated (see `tests/integration/peercred`) |
+| A degraded or faulted pool; a pool reporting `-` for fragmentation | **Pending FreeBSD validation** (parser tested against a synthetic fixture) |
+| ZFS `unavailable` when `zfs.ko` is not loaded | **Pending FreeBSD validation** (needs the pool exported and zfs unloaded) |
+| QEMU detection and version parsing | **Pending FreeBSD validation** (QEMU is not installed on the lab VM) |
+| Core count on a host with SMT | **Pending FreeBSD validation** (the lab VM has no SMT) |
+| Running under rc.d as a service | **Pending FreeBSD validation** (no rc.d script yet) |
+| Agent socket with a dedicated `skep` account, under `/var/run` | **Pending FreeBSD validation** (Milestone 4) |
+| ZFS-root host | **Pending FreeBSD validation** (the lab VM is UFS-root) |
+| arm64 | Not a target yet |
+
+## Known limitations
+
+- No authentication, authorization, or TLS. Loopback only.
+- The local node is the only node.
+- `os.release` on FreeBSD is the kernel release (`kern.osrelease`). The
+  userland patch level can differ and is not reported.
+- Memory "available" on FreeBSD is an estimate: free, inactive, and laundry
+  pages. It does not account for the ZFS ARC, which the kernel can also
+  shrink.
+- CPU virtualization support (VT-x, EPT) is not probed while vmm is
+  unloaded.
+- Discovery searches a fixed list of directories for binaries, not `$PATH`.

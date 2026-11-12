@@ -1,0 +1,21 @@
+hw.model: Intel(R) Core(TM) i5-10600K CPU @ 4.10GHz
+hw.ncpu: 2
+kern.smp.cpus: 2
+kern.smp.cores: 2
+kern.smp.threads_per_core: 1
+hw.physmem: 2107019264
+hw.pagesize: 4096
+vm.stats.vm.v_free_count: 437754
+vm.stats.vm.v_inactive_count: 3233
+vm.stats.vm.v_laundry_count: 0
+kern.ostype: FreeBSD
+kern.osrelease: 15.1-RELEASE-p6
+kern.osreldate: 1501000
+kern.version: FreeBSD 15.1-RELEASE-p6 releng/15.1-n283643-95719d8a895b GENERIC
+
+hw.machine: amd64
+hw.machine_arch: amd64
+kern.hostname: hearst.greenbean.org
+vfs.zfs.version.module: 2.4.2-1-FreeBSD_g6330a45b0
+hw.vmm.maxcpu: 2
+hw.vmm.vmx.initialized: 1
