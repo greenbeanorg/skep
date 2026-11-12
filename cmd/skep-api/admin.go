@@ -195,8 +195,8 @@ func lookupUser(ctx context.Context, users *auth.Users, username string) (auth.U
 // lastAdminError explains a refusal by the last-administrator rule
 // (ADR 0006 decision 5) in terms of what to do about it.
 func lastAdminError(username, verb string) error {
-	return fmt.Errorf("%q is the only enabled administrator and cannot be %s; create or enable another "+
-		"administrator first (skep-api admin create --username NAME); nothing was changed", username, verb)
+	return fmt.Errorf("%q is the only enabled administrator and cannot be %s; create another "+
+		"administrator first (skep-api admin create --username NAME) or re-enable one through the API; nothing was changed", username, verb)
 }
 
 // adminDisable disables a user, which ends all of that user's sessions.
