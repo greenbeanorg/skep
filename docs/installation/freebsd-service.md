@@ -8,9 +8,10 @@ Skep runs as two rc.d services (ADR 0004, ADR 0006):
 | `skep_api` | `packaging/rc.d/skep_api` | `skep` (unprivileged) | TCP, `127.0.0.1:8443` by default |
 
 There is no package or installer yet (Milestone 10), so the steps below are
-manual. The native test is in
-[tests/integration/rcd](../../tests/integration/rcd/README.md), which also
-records what has been validated on FreeBSD and what is still pending.
+manual. They were run on FreeBSD 15.1-RELEASE-p6, including an in-place
+upgrade of a Milestone 3 installation; the native test and its recorded
+result are in
+[tests/integration/rcd](../../tests/integration/rcd/README.md).
 
 ## What the services do
 

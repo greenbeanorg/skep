@@ -331,9 +331,9 @@ accepting this ADR.
 | Separate agent and API schemas, mandatory actor, `peer_uid` in the agent's audit log | Done (0.1.0) |
 | Agent database at `<data_dir>/agent/agent.db`, private directory | Done (0.1.0) |
 | Peer credential reading (`internal/peercred`) | Done and validated on FreeBSD; used by the agent socket since Milestone 4 |
-| `skep-api` binary, agent Unix socket, `/internal/v1`, mandatory actor headers | Done (Milestone 4); pending FreeBSD validation |
+| `skep-api` binary, agent Unix socket, `/internal/v1`, mandatory actor headers | Done and validated on FreeBSD (Milestone 4) |
 | `skep` account, `/var/run/skep` (`root:skep`, `0750`), rc.d service for the agent | Done and validated on FreeBSD (Milestone 3) |
-| rc.d service for `skep-api`, agent socket under `/var/run/skep`, agent as root with no network listener | Done (Milestone 4); pending FreeBSD validation |
+| rc.d service for `skep-api`, agent socket under `/var/run/skep`, agent as root with no network listener | Done and validated on FreeBSD (Milestone 4) |
 | Authentication, sessions, RBAC, TLS | Done (Milestone 4, [ADR 0006](0006-api-split-authentication-tls.md)) |
 | First operation that carries a user across the boundary: task cancel, with the actor and the verified peer in the agent's audit log | Done (Milestone 4) |
 | Privileged operations package (`internal/hostops`) and host confinement configuration | With the first privileged operation |
@@ -366,13 +366,14 @@ Validated on FreeBSD 15.1-RELEASE-p6:
 - Filesystem permissions on the socket and its directory refusing a user
   outside the group.
 
-Pending FreeBSD validation:
+Validated in Milestone 4 (`tests/integration/rcd`, 2026-11-12):
 
 - The peer-credential and socket permission checks with the dedicated
-  `skep` account. The account and `/var/run/skep` now exist and are
-  validated under rc.d (`tests/integration/rcd`), but no socket is created
-  there yet.
+  `skep` account and a root agent, under `/var/run/skep`.
+- Running `skep-api` under rc.d as the `skep` user.
+
+Pending FreeBSD validation:
+
 - A socket under `/var/run` on a host where `/var/run` is really emptied
   at boot (tmpfs). The rc.d script recreates the directory at every start;
   that was validated by removing it, not by a tmpfs.
-- Running `skep-api` under rc.d as the `skep` user.

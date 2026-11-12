@@ -229,7 +229,7 @@ imported, both as an unprivileged user and as root.
 | ZFS `unavailable` when `zfs.ko` is not loaded | **Pending FreeBSD validation** (needs the pool exported and zfs unloaded) |
 | QEMU detection and version parsing | **Pending FreeBSD validation** (QEMU is not installed on the lab VM) |
 | Core count on a host with SMT | **Pending FreeBSD validation** (the lab VM has no SMT) |
-| Running under rc.d as a service: start, stop, restart, status, crash supervision, start at boot, as the `skep` account | Validated (2026-11-12, see `tests/integration/rcd`) |
+| Running under rc.d as a service: start, stop, restart, status, crash supervision, start at boot | Validated (2026-11-12, Milestone 3 as `skep`, and again for Milestone 4 with the agent as root; see `tests/integration/rcd`) |
 | A crash loop (agent exits at every start) and `skep_agent_restart_delay=0` under rc.d | Validated (2026-11-12, see `tests/integration/rcd`) |
 | A tmpfs `/var/run` | **Pending FreeBSD validation** |
 | Agent on a Unix socket only, API through the socket, peer UID check, mandatory actor: both processes as one ordinary user | Validated (2026-11-12) |
@@ -239,8 +239,9 @@ imported, both as an unprivileged user and as root.
 | Password prompt on the system console | **Pending FreeBSD validation** |
 | Argon2id time with the default parameters | Validated: 121 to 151 ms per hash on hearst (2026-11-12) |
 | Login (cookie and bearer), `401` without a session, task cancel through the API with the user recorded by the agent | Validated as an ordinary user (2026-11-12) |
-| Agent socket under `/var/run/skep` with a root agent and the real `skep` account (`root:skep 0660`, refusal of other UIDs); ownership change of `/var/db/skep/agent` from `skep` to root | **Pending FreeBSD validation** (needs the rc.d services installed; `tests/integration/rcd`) |
-| `skep-api` under rc.d as `skep`, binding its port without privileges, generating its key as `skep`; `skep-api admin` started as root giving up root | **Pending FreeBSD validation** (same) |
+| Agent socket under `/var/run/skep` with a root agent and the real `skep` account (`root:skep 0660`; refusal by file permissions and by the peer check); ownership change of `/var/db/skep/agent` from `skep` to root on upgrade | Validated (2026-11-12, see `tests/integration/rcd`) |
+| `skep-api` under rc.d as `skep`, binding its port without privileges, generating its key as `skep`, start at boot; `skep-api admin` started as root giving up root | Validated (2026-11-12, same) |
+| Task cancel through the API under rc.d: the agent records the user as the actor and uid 1002 (`skep`) as the verified peer | Validated (2026-11-12, same) |
 | ZFS-root host | **Pending FreeBSD validation** (the lab VM is UFS-root) |
 | arm64 | Not a target yet |
 

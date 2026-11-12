@@ -181,6 +181,7 @@ Adjust the layout when implementation shows a better boundary, and record substa
 2. **Persistence:** SQLite, migrations, node identity, task engine and history, audit framework.
 3. **Native FreeBSD integration:** bhyve, vmm, ZFS, and QEMU detection; ZFS pool inventory; rc.d service; native integration tests.
 4. **API split, authentication, and TLS:** `skep-api` as an unprivileged process, the agent behind a Unix socket with peer-credential checks, the `skep` service account, authentication, sessions, RBAC, and TLS (ADR 0004). The frontend needs a login, and no VM work happens before this milestone.
+4b. **CLI (`skepctl`):** next after Milestone 4. Uses the public API only. Bearer-session login with the token stored in a `0600` file, trust on first use that pins the SHA-256 of the server's public key (SubjectPublicKeyInfo) and refuses a changed key unless told to accept it, the pin compared with `skep-api tls fingerprint`, and never a "skip verification" flag (ADR 0006, decisions 3 and 6).
 5. **First frontend:** original dashboard with Dashboard, Cluster, Nodes, VMs, Containers, Storage, Networking, HA, Backups, Monitoring, Users and Permissions, and Settings sections.
 6. **First working VM:** schema, bhyve adapter, disks, lifecycle, status, console. Only enable features verified on the target release.
 7. **Storage and containers:** ZFS management, jails, snapshots, clones, resource monitoring.

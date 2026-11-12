@@ -600,7 +600,13 @@ func (s *suite) checkRefresh(after string) {
 		"this start ran discovery.refresh: id=%s status=%s actor=%s peer_uid=%d", t.ID, t.Status, t.ActorID, t.PeerUID)
 }
 
-func (s *suite) checkStopped(supervisor, child int) {
+func (s *suite) checkStopped(supervisor, child int) { s.checkStoppedHow(supervisor, child, false) }
+
+// checkStoppedHow checks a stopped service. killed says the agent got
+// SIGKILL: it then had no chance to remove its socket, and a stale socket
+// file is expected. Nothing may answer on it, and the next start must
+// replace it (checkRunning checks that the agent answers again).
+func (s *suite) checkStoppedHow(supervisor, child int, killed bool) {
 	s.check(!alive(supervisor) && !alive(child), "the supervisor (%d) and the agent (%d) are gone", supervisor, child)
 	_, e1 := os.Stat(s.supervisorPidfile())
 	_, e2 := os.Stat(s.childPidfile())
@@ -609,6 +615,11 @@ func (s *suite) checkStopped(supervisor, child int) {
 	s.check(code != 0, "service status reports not running")
 	s.check(!s.healthy(), "the agent no longer answers on its socket")
 	_, err := os.Lstat(s.opts.socket)
+	if killed {
+		fmt.Printf("       after SIGKILL the socket file is %s (a stale socket is expected; the next start replaces it)\n",
+			map[bool]string{true: "gone", false: "left behind"}[errors.Is(err, fs.ErrNotExist)])
+		return
+	}
 	s.check(errors.Is(err, fs.ErrNotExist), "the socket file was removed (%v)", err)
 }
 
@@ -767,7 +778,7 @@ func (s *suite) noRestart() error {
 	s.check(waitFor(10*time.Second, func() bool { return !alive(supervisor) && !alive(child) }),
 		"the supervisor exited with the agent")
 	time.Sleep(2 * time.Second)
-	s.checkStopped(supervisor, child)
+	s.checkStoppedHow(supervisor, child, true)
 	t, _ := s.task(sleep.ID)
 	s.check(t.Status == "running", "the killed agent's task is still recorded as running until the next start (%s)", t.Status)
 

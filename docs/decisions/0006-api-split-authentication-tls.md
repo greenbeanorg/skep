@@ -505,13 +505,22 @@ Validated, as an ordinary user:
 - The agent on its socket, the API through it, login, and task cancel
   with the user in the agent's audit log.
 
-Pending, because they need the rc.d services installed on the host:
+Validated under rc.d, with the real `skep` account (`tests/integration/rcd`,
+all phases including one reboot):
 
-- The socket under `/var/run/skep` with the real `skep` account and a root
-  agent, including the `skep` to root ownership change of
-  `/var/db/skep/agent`.
-- `skep-api` under rc.d as `skep`, binding its port without privileges.
-- A local command started as root giving up root for `skep`.
+- The socket under `/var/run/skep` with a root agent, `root:skep 0660`,
+  refusing other users by file permissions and by the peer check, and the
+  `skep` to root ownership change of `/var/db/skep/agent` on an in-place
+  upgrade from Milestone 3.
+- `skep-api` under rc.d as `skep`, binding `127.0.0.1:8443` without
+  privileges, generating its key as `skep`, and starting at boot.
+- `skep-api admin create` started as root giving up root: what it wrote
+  belongs to `skep`.
+- Task cancel through the API, with the user and the verified peer uid in
+  the agent's audit log.
+
+Still pending:
+
 - Terminal password entry on the FreeBSD system console.
 
 ## Decisions

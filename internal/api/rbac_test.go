@@ -373,3 +373,44 @@ func TestRolesAndAuditEndpoints(t *testing.T) {
 			http.StatusBadRequest, httpkit.CodeInvalidRequest)
 	}
 }
+
+// TestAuditEndpointIsReadOnlyAndNeedsAuditRead pins the three promises of
+// GET /audit: it is declared once, for GET only, with audit:read; every
+// other method is refused and writes nothing to the log; and a role
+// without audit:read is denied.
+func TestAuditEndpointIsReadOnlyAndNeedsAuditRead(t *testing.T) {
+	e := freshEnv(t)
+	var declared []route
+	for _, rt := range tableOf(e) {
+		if rt.path == "/audit" {
+			declared = append(declared, rt)
+		}
+	}
+	if len(declared) != 1 || declared[0].method != http.MethodGet || declared[0].requires != auth.PermAuditRead {
+		t.Fatalf("/audit is declared as %+v, want exactly GET with %s", declared, auth.PermAuditRead)
+	}
+
+	h := e.handler(newBackend(), nil)
+	entries := func() int { return e.auditCount(t, `1 = 1`) }
+	for _, method := range []string{http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete} {
+		before := entries()
+		rec := e.serve(h, request{method: method, path: Prefix + "/audit", role: auth.RoleAdmin, body: `{}`})
+		wantError(t, rec, http.StatusMethodNotAllowed, httpkit.CodeMethodNotAllowed)
+		if got := rec.Header().Get("Allow"); got != "GET, HEAD" {
+			t.Errorf("%s /audit: Allow = %q", method, got)
+		}
+		if after := entries(); after != before {
+			t.Errorf("%s /audit changed the log: %d entries, then %d", method, before, after)
+		}
+	}
+	// A GET reads and writes nothing either.
+	before := entries()
+	if rec := e.serve(h, request{method: http.MethodGet, path: Prefix + "/audit", role: auth.RoleAdmin}); rec.Code != http.StatusOK {
+		t.Fatalf("GET /audit as admin: %d", rec.Code)
+	}
+	if after := entries(); after != before {
+		t.Errorf("GET /audit wrote %d entries", after-before)
+	}
+	wantError(t, e.serve(h, request{method: http.MethodGet, path: Prefix + "/audit", role: auth.RoleViewer}), http.StatusForbidden, auth.CodeForbidden)
+	wantError(t, e.serve(h, request{method: http.MethodGet, path: Prefix + "/audit"}), http.StatusUnauthorized, auth.CodeUnauthenticated)
+}
