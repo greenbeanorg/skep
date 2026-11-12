@@ -1,5 +1,6 @@
-// Package ctlstate keeps skepctl's local state: the public key pinned for
-// each server, and the bearer session token for each server.
+// Package ctlstate keeps skepctl's local state: how each server's
+// certificate is trusted (a pinned public key, or chain verification with
+// an optional pin), and the bearer session token for each server.
 //
 // Both live in one directory, by default $XDG_CONFIG_HOME/skepctl (on
 // FreeBSD and Linux usually ~/.config/skepctl), created 0700. Each file
@@ -45,12 +46,35 @@ func DefaultDir() (string, error) {
 	return filepath.Join(base, "skepctl"), nil
 }
 
-// Pin is a server's trusted public key.
-type Pin struct {
-	// PublicKeySHA256 is the pin, as "sha256:<hex>".
-	PublicKeySHA256 string    `json:"public_key_sha256"`
-	TrustedAt       time.Time `json:"trusted_at"`
+// Trust modes.
+const (
+	// TrustPin trusts exactly one public key: skep-api's self-signed
+	// certificate. It is the mode of an entry without a mode.
+	TrustPin = "pin"
+	// TrustCA verifies the certificate chain and host name: an
+	// operator-supplied certificate. A pin is optional.
+	TrustCA = "ca"
+)
+
+// Trust is how a server's certificate is trusted.
+//
+// An entry in TrustCA mode has no pin unless one was asked for. An older
+// skepctl, which knows only pins, therefore refuses such an entry instead
+// of connecting without a check.
+type Trust struct {
+	// Mode is TrustPin (or empty) or TrustCA.
+	Mode string `json:"mode,omitempty"`
+	// PublicKeySHA256 is the pin, as "sha256:<hex>". Required in
+	// TrustPin mode, optional in TrustCA mode.
+	PublicKeySHA256 string `json:"public_key_sha256,omitempty"`
+	// CAFile is the PEM file of CA certificates in TrustCA mode, an
+	// absolute path. Empty means the system roots.
+	CAFile    string    `json:"ca_file,omitempty"`
+	TrustedAt time.Time `json:"trusted_at"`
 }
+
+// VerifiesChain reports whether the entry is in TrustCA mode.
+func (t Trust) VerifiesChain() bool { return t.Mode == TrustCA }
 
 // Session is a bearer session with a server.
 type Session struct {
@@ -62,8 +86,8 @@ type Session struct {
 }
 
 type pinsFile struct {
-	Version int            `json:"version"`
-	Servers map[string]Pin `json:"servers"`
+	Version int              `json:"version"`
+	Servers map[string]Trust `json:"servers"`
 }
 
 type sessionsFile struct {
@@ -88,24 +112,25 @@ func New(dir string) *Store { return &Store{dir: dir, uid: os.Geteuid()} }
 // Dir returns the state directory.
 func (s *Store) Dir() string { return s.dir }
 
-// Pin returns the pin stored for a server.
-func (s *Store) Pin(server string) (Pin, bool, error) {
+// Trust returns how a server's certificate is trusted.
+func (s *Store) Trust(server string) (Trust, bool, error) {
 	var f pinsFile
 	if err := s.read(PinsFile, &f); err != nil {
-		return Pin{}, false, err
+		return Trust{}, false, err
 	}
 	p, ok := f.Servers[server]
 	return p, ok, nil
 }
 
-// SetPin stores the pin for a server, replacing any other.
-func (s *Store) SetPin(server string, p Pin) error {
+// SetTrust stores how a server's certificate is trusted, replacing what
+// was stored.
+func (s *Store) SetTrust(server string, p Trust) error {
 	var f pinsFile
 	if err := s.read(PinsFile, &f); err != nil {
 		return err
 	}
 	if f.Servers == nil {
-		f.Servers = map[string]Pin{}
+		f.Servers = map[string]Trust{}
 	}
 	f.Servers[server] = p
 	f.Version = formatVersion
