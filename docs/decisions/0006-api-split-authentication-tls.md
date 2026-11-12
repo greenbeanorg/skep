@@ -565,6 +565,22 @@ open, or could not follow it literally. Each is open to correction.
   the service runs as, instead of looking up the name `skep`. If that
   directory does not exist yet the command stops and says to start the
   service once.
+- **No role cache (Decision 5).** The user and role are read from
+  `api.db` on every request, in the same indexed lookup that checks the
+  session, so there is nothing to invalidate and a change is effective at
+  the very next request. The short-lived cache the text mentions can be
+  added if this ever shows up in a profile.
+- **Routes that need only a session (Decision 5).** Logout, the session
+  document, and changing one's own password require a valid session and
+  no permission: they concern only the caller. Every other non-public
+  route requires a permission.
+- **Audit endpoint (Decision 5).** `audit:read` is enforced on
+  `GET /api/v1/audit`, which was added so the permission has something to
+  protect.
+- **Throttled attempts answer 429 (Decision 4).** The per-username and
+  address delay is enforced by refusing attempts that arrive before the
+  delay has passed, with `Retry-After`, not by holding the connection
+  open.
 - **Hash timing command.** `skep-api admin hash-benchmark` was added to
   measure the Argon2id parameters on a host, as Decision 2 asks for.
 - **`skepctl`.** Its key pinning (Decision 6) and token file

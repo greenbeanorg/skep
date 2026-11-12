@@ -411,7 +411,7 @@ func TestHSTSOnlyWithOperatorCertificate(t *testing.T) {
 	for source, want := range map[string]string{"self-signed": "", "operator": "max-age=63072000"} {
 		info := models.TLSInfo{Source: source, NotAfter: expiry, PublicKeySHA256: "sha256:abc"}
 		h := NewHandler(Options{
-			Backend: newBackend(), Auth: e.authn, Users: e.users, Audit: e.access,
+			Backend: newBackend(), Auth: e.authn, Users: e.users, Audit: e.access, AuditLog: e.access,
 			Logger: slog.New(slog.NewJSONHandler(&bytes.Buffer{}, nil)),
 			TLS:    func() models.TLSInfo { return info },
 		})

@@ -26,13 +26,15 @@ manage anything yet.
 | `skep-api` | Runs unprivileged, serves the public API on loopback over TLS 1.3, and reaches the host only through the agent socket |
 | TLS | Self-signed certificate generated at first start and renewed with the same key, or an operator-supplied certificate reloaded on change and on `SIGHUP`; no plaintext listener |
 | Host discovery | Read-only: CPU, memory, OS, bhyve, QEMU, ZFS (FreeBSD native, Linux dev mode) |
-| API | `GET /api/v1/health`, `/system`, `/nodes/{id}/hardware`, `/tasks`, `/tasks/{id}`; all read-only |
+| Node API | `GET /api/v1/health`, `/system`, `/nodes/{id}/hardware`, `/tasks`, `/tasks/{id}`; nothing in the API changes the host yet |
 | Task engine | Persistent tasks with states, events, idempotency keys, cancellation, and an audit trail; nothing is resumed after a restart |
 | FreeBSD services | rc.d scripts for both processes, supervised, started at boot |
 | Database | SQLite with versioned migrations and a stable node ID; separate databases for the agent and the API |
 | Users | Accounts with Argon2id password hashes and three built-in roles; the first administrator is created with a local command (`skep-api admin create`), never with default credentials |
 | Sessions | Login with a cookie session (browsers) or a bearer session (scripts), never both; idle and absolute timeouts; logout; login rate limits that never lock an account; every endpoint except the health status and the login needs a session |
-| Not yet | Per-role permission checks and user management over the API (in progress); VM or jail management, storage or network changes, UI, CLI, clustering |
+| Permissions | One role per user; every endpoint requires a permission and is denied by default; `admin`, `operator`, and `viewer` are built in; every denial is audited |
+| User management | `GET/POST /users`, `GET/PUT/DELETE /users/{id}`, `GET /roles`, `GET /audit`; the last administrator cannot be removed |
+| Not yet | VM or jail management, storage or network changes, UI, CLI, clustering |
 
 ## Platforms
 

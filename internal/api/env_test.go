@@ -126,7 +126,7 @@ func (e *env) handler(b Backend, logBuf *bytes.Buffer) http.Handler {
 		logBuf = &bytes.Buffer{}
 	}
 	return NewHandler(Options{
-		Backend: b, Auth: e.authn, Users: e.users, Audit: e.access,
+		Backend: b, Auth: e.authn, Users: e.users, Audit: e.access, AuditLog: e.access,
 		Logger: slog.New(slog.NewJSONHandler(logBuf, nil)),
 	})
 }
@@ -174,3 +174,5 @@ func (e *env) auditCount(t *testing.T, where string, args ...any) int {
 	}
 	return n
 }
+
+func quietLog() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }

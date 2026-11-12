@@ -400,7 +400,7 @@ func TestSourceAddressAndTrustedProxies(t *testing.T) {
 		for _, p := range proxies {
 			prefixes = append(prefixes, netip.MustParsePrefix(p))
 		}
-		h := NewHandler(Options{Backend: b, Auth: e.authn, Users: e.users, Audit: e.access,
+		h := NewHandler(Options{Backend: b, Auth: e.authn, Users: e.users, Audit: e.access, AuditLog: e.access,
 			Logger: slog.New(slog.NewJSONHandler(&bytes.Buffer{}, nil)), TrustedProxies: prefixes})
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/system", nil)
 		req.RemoteAddr = remote

@@ -237,8 +237,8 @@ imported, both as an unprivileged user and as root.
 
 ## Known limitations
 
-- No per-role permission checks yet: every authenticated user can read
-  everything the API serves.
+- Permissions are global: there is no per-resource scoping and no custom
+  roles yet.
 - Sessions and users are per node.
 - The local node is the only node.
 - Tasks, task events, and audit entries are never removed. Retention is not

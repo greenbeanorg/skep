@@ -5,8 +5,11 @@
 // the agent's socket (internal/agentclient), so nothing here touches the
 // host; identity comes from internal/auth.
 //
-// Every route is declared in one table together with what it requires.
-// A route that is not marked public needs a session.
+// Every route is declared in one table together with the permission it
+// requires. Enforcement is in one place (serve) and denies by default: a
+// route without a known requirement is refused for everyone, and a test
+// fails if the table contains one. The agent makes no authorization
+// decision; this is where they are made.
 package api
 
 import (
@@ -18,6 +21,7 @@ import (
 	"strconv"
 
 	"github.com/greenbeanorg/skep/internal/agentproto"
+	"github.com/greenbeanorg/skep/internal/audit"
 	"github.com/greenbeanorg/skep/internal/auth"
 	"github.com/greenbeanorg/skep/internal/httpkit"
 	"github.com/greenbeanorg/skep/pkg/models"
@@ -48,6 +52,8 @@ type Options struct {
 	Users *auth.Users
 	// Audit is the access audit log.
 	Audit auth.AuditWriter
+	// AuditLog reads the access audit log.
+	AuditLog AuditReader
 	// Logger defaults to slog.Default().
 	Logger *slog.Logger
 	// TLS describes the certificate in use. It is reported in the system
@@ -65,41 +71,58 @@ type handler struct {
 	auth    *auth.Authenticator
 	users   *auth.Users
 	audit   auth.AuditWriter
+	history AuditReader
 	log     *slog.Logger
 	tls     func() models.TLSInfo
 	proxies []netip.Prefix
 }
 
-// access says what a route requires.
-type access int
+// AuditReader reads pages of the access audit log.
+type AuditReader interface {
+	List(ctx context.Context, limit int, before int64) (entries []models.AuditEntry, next int64, err error)
+}
 
+// What a route can require instead of a permission.
 const (
-	// public routes need no session. There are two: health and login.
-	public access = iota
-	// authenticated routes need a valid session.
-	authenticated
+	// requirePublic routes need no session. There are two: the health
+	// status and the login.
+	requirePublic = "public"
+	// requireSession routes need a valid session and nothing more: they
+	// concern only the caller's own session and password.
+	requireSession = "session"
 )
 
 // route is one entry of the route table.
 type route struct {
-	method  string
-	path    string
-	access  access
-	handler http.HandlerFunc
+	method string
+	path   string
+	// requires is requirePublic, requireSession, or a permission from
+	// internal/auth. Anything else, including the empty string, denies.
+	requires string
+	handler  http.HandlerFunc
 }
 
 // routes is the whole public API.
 func (h *handler) routes() []route {
 	return []route{
-		{http.MethodGet, "/health", public, h.health},
-		{http.MethodPost, "/auth/login", public, h.login},
-		{http.MethodPost, "/auth/logout", authenticated, h.logout},
-		{http.MethodGet, "/auth/session", authenticated, h.session},
-		{http.MethodPut, "/auth/password", authenticated, h.changePassword},
-		{http.MethodGet, "/system", authenticated, h.system},
-		{http.MethodGet, "/nodes/{id}/hardware", authenticated, h.nodeHardware},
-		{http.MethodGet, "/tasks", authenticated, h.tasks},
-		{http.MethodGet, "/tasks/{id}", authenticated, h.task},
+		{http.MethodGet, "/health", requirePublic, h.health},
+		{http.MethodPost, "/auth/login", requirePublic, h.login},
+		{http.MethodPost, "/auth/logout", requireSession, h.logout},
+		{http.MethodGet, "/auth/session", requireSession, h.session},
+		{http.MethodPut, "/auth/password", requireSession, h.changePassword},
+
+		{http.MethodGet, "/system", auth.PermSystemRead, h.system},
+		{http.MethodGet, "/nodes/{id}/hardware", auth.PermNodeRead, h.nodeHardware},
+		{http.MethodGet, "/tasks", auth.PermTaskRead, h.tasks},
+		{http.MethodGet, "/tasks/{id}", auth.PermTaskRead, h.task},
+
+		{http.MethodGet, "/users", auth.PermUserRead, h.listUsers},
+		{http.MethodPost, "/users", auth.PermUserManage, h.createUser},
+		{http.MethodGet, "/users/{id}", auth.PermUserRead, h.getUser},
+		{http.MethodPut, "/users/{id}", auth.PermUserManage, h.updateUser},
+		{http.MethodDelete, "/users/{id}", auth.PermUserManage, h.deleteUser},
+		{http.MethodGet, "/roles", auth.PermRoleRead, h.listRoles},
+		{http.MethodGet, "/audit", auth.PermAuditRead, h.listAudit},
 	}
 }
 
@@ -111,7 +134,7 @@ func NewHandler(opts Options) http.Handler {
 		log = slog.Default()
 	}
 	h := &handler{
-		backend: opts.Backend, auth: opts.Auth, users: opts.Users, audit: opts.Audit,
+		backend: opts.Backend, auth: opts.Auth, users: opts.Users, audit: opts.Audit, history: opts.AuditLog,
 		log: log, tls: opts.TLS, proxies: opts.TrustedProxies,
 	}
 
@@ -171,8 +194,9 @@ func (h *handler) dispatch(routes []route) http.Handler {
 	})
 }
 
-// serve authenticates the request as far as the route requires and calls
-// its handler with the identity and the agent caller in the context.
+// serve authenticates the request, checks what the route requires, and
+// only then calls its handler, with the identity and the agent caller in
+// the context. It is the one place where access is decided.
 func (h *handler) serve(rt route, w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	ip := h.sourceIP(r)
@@ -192,7 +216,7 @@ func (h *handler) serve(rt route, w http.ResponseWriter, r *http.Request) {
 			ActorID: id.User.ID, ActorName: id.User.Username,
 			RequestID: httpkit.RequestID(ctx), SourceIP: ip,
 		})
-	case rt.access == public && isUnauthenticated(err):
+	case rt.requires == requirePublic && isUnauthenticated(err):
 		// Health is the only thing skep-api asks the agent without a
 		// user; it does so as itself.
 		ctx = agentproto.WithCaller(ctx, agentproto.Caller{
@@ -203,7 +227,47 @@ func (h *handler) serve(rt route, w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r.WithContext(ctx), err)
 		return
 	}
-	rt.handler(w, r.WithContext(ctx))
+	r = r.WithContext(ctx)
+
+	switch rt.requires {
+	case requirePublic:
+	case requireSession:
+		// Reaching this point without an identity is impossible: the
+		// switch above returned. Checked anyway, because this is the
+		// gate.
+		if _, ok := identityFrom(ctx); !ok {
+			h.fail(w, r, auth.ErrUnauthenticated)
+			return
+		}
+	default:
+		// A permission. The role was read from the database for this
+		// request, so a role change is effective at once. Deny by
+		// default: an unknown requirement allows nobody.
+		if _, ok := identityFrom(ctx); !ok {
+			h.fail(w, r, auth.ErrUnauthenticated)
+			return
+		}
+		if !id.User.Role.Allows(rt.requires) {
+			h.deny(w, r, id, rt)
+			return
+		}
+	}
+	rt.handler(w, r)
+}
+
+// deny refuses a request for lack of a permission and audits the denial
+// with the actor, the permission, and the route.
+func (h *handler) deny(w http.ResponseWriter, r *http.Request, id auth.Identity, rt route) {
+	h.writeAudit(r, audit.AccessEntry{
+		ActorID: id.User.ID, ActorName: id.User.Username, Action: auth.ActionDenied, Outcome: audit.Denied,
+		Details: map[string]any{
+			"permission": rt.requires, "method": rt.method, "route": Prefix + rt.path, "role": id.User.Role.Name,
+		},
+	})
+	h.log.WarnContext(r.Context(), "request denied", "user", id.User.Username, "role", id.User.Role.Name,
+		"permission", rt.requires, "method", rt.method, "route", Prefix+rt.path)
+	httpkit.WriteErrorDetails(w, r, http.StatusForbidden, auth.CodeForbidden,
+		"your role does not allow this", map[string]any{"permission": rt.requires})
 }
 
 type (

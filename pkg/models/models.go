@@ -294,6 +294,74 @@ type PasswordChange struct {
 	NewPassword     string `json:"new_password"`
 }
 
+// UserList is the list of all users, ordered by username.
+type UserList struct {
+	Items []User `json:"items"`
+}
+
+// NewUser is the body of POST /users.
+type NewUser struct {
+	Username    string `json:"username"`
+	DisplayName string `json:"display_name,omitempty"`
+	Password    string `json:"password"`
+	// Role is the name of a role. It defaults to "viewer".
+	Role string `json:"role,omitempty"`
+}
+
+// UserUpdate is the body of PUT /users/{id}. Fields that are left out are
+// not changed.
+type UserUpdate struct {
+	DisplayName *string `json:"display_name,omitempty"`
+	Role        *string `json:"role,omitempty"`
+	Disabled    *bool   `json:"disabled,omitempty"`
+	// Password sets a new password for the user. It ends all of that
+	// user's sessions.
+	Password *string `json:"password,omitempty"`
+}
+
+// Role is a named set of permissions.
+type Role struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	// Permissions are "resource:action" strings. "*" means every
+	// permission.
+	Permissions []string `json:"permissions"`
+	// BuiltIn roles cannot be changed or deleted.
+	BuiltIn bool `json:"built_in"`
+}
+
+// RoleList is the list of all roles.
+type RoleList struct {
+	Items []Role `json:"items"`
+}
+
+// AuditEntry is one entry of the access audit log: an authentication
+// event, an authorization decision, or an administrative change.
+type AuditEntry struct {
+	ID         int64     `json:"id"`
+	OccurredAt time.Time `json:"occurred_at"`
+	// ActorID is empty when no known user was involved.
+	ActorID      string `json:"actor_id,omitempty"`
+	ActorName    string `json:"actor_name"`
+	Action       string `json:"action"`
+	ResourceType string `json:"resource_type,omitempty"`
+	ResourceID   string `json:"resource_id,omitempty"`
+	// Outcome is "success", "failure", or "denied".
+	Outcome   string         `json:"outcome"`
+	SourceIP  string         `json:"source_ip,omitempty"`
+	RequestID string         `json:"request_id,omitempty"`
+	Details   map[string]any `json:"details,omitempty"`
+}
+
+// AuditList is one page of the access audit log, newest first.
+type AuditList struct {
+	Items []AuditEntry `json:"items"`
+	// NextCursor is passed back as the cursor parameter to get the next
+	// (older) page. It is empty on the last page.
+	NextCursor string `json:"next_cursor,omitempty"`
+}
+
 // ErrorBody is the error payload used by every API error response.
 type ErrorBody struct {
 	// Code is a stable, machine-readable error code.

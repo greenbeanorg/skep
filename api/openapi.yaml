@@ -34,6 +34,14 @@ info:
     answers `503 setup_required`. Logins are rate limited (`429
     rate_limited` with `Retry-After`); accounts are never locked.
 
+    **Authorization.** Every user has one role, and a role is a set of
+    permission strings. Each endpoint requires one permission (listed in
+    its description); anything not granted is denied with
+    `403 forbidden`, and every denial is audited. Built-in roles:
+    `admin` (everything), `operator` (all reads plus operational actions;
+    never user management), `viewer` (reads, without users and the audit
+    log). The endpoints under `/auth` need only a session.
+
     `skep-api` listens on loopback unless `listen_address` is changed.
 
     The API is served over TLS 1.3 only. There is no plaintext listener.
@@ -57,6 +65,8 @@ security:
 tags:
   - name: auth
     description: Login, logout, and the caller's own session and password
+  - name: users
+    description: Accounts, roles, and the access audit log
   - name: system
     description: Health and identity of the local node
   - name: nodes
@@ -228,6 +238,7 @@ paths:
       tags: [system]
       operationId: getSystem
       summary: Local node description
+      x-skep-permission: system:read
       description: |
         Identity of the local node, its operating system, the Skep build, and
         a capability summary. The `node_id` is generated on first start and
@@ -244,6 +255,8 @@ paths:
                 $ref: "#/components/schemas/System"
         "401":
           $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "405":
           $ref: "#/components/responses/MethodNotAllowed"
         "500":
@@ -255,6 +268,7 @@ paths:
       tags: [nodes]
       operationId: getNodeHardware
       summary: Hardware and capabilities of a node
+      x-skep-permission: node:read
       description: |
         Result of read-only host discovery. Only the local node exists in
         0.1.0; use the `node_id` from `/system`. Results are cached briefly
@@ -287,6 +301,8 @@ paths:
           $ref: "#/components/responses/NotFound"
         "401":
           $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "405":
           $ref: "#/components/responses/MethodNotAllowed"
         "500":
@@ -298,6 +314,7 @@ paths:
       tags: [tasks]
       operationId: listTasks
       summary: List tasks
+      x-skep-permission: task:read
       description: |
         Returns tasks newest first. Entries are summaries: `result` is only
         returned by the single-task endpoint.
@@ -337,6 +354,8 @@ paths:
           $ref: "#/components/responses/InvalidRequest"
         "401":
           $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "405":
           $ref: "#/components/responses/MethodNotAllowed"
         "500":
@@ -346,6 +365,7 @@ paths:
       tags: [tasks]
       operationId: getTask
       summary: One task with its event history
+      x-skep-permission: task:read
       parameters:
         - name: id
           in: path
@@ -369,10 +389,214 @@ paths:
           $ref: "#/components/responses/NotFound"
         "401":
           $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "405":
           $ref: "#/components/responses/MethodNotAllowed"
         "500":
           $ref: "#/components/responses/InternalError"
+  /users:
+    get:
+      tags: [users]
+      operationId: listUsers
+      summary: List users
+      description: Requires `user:read`.
+      responses:
+        "200":
+          description: Every user, ordered by username.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/User"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      tags: [users]
+      operationId: createUser
+      summary: Create a user
+      description: Requires `user:manage`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NewUser"
+      responses:
+        "201":
+          description: Created.
+          headers:
+            Location:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: The username is taken (`username_taken`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /users/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      tags: [users]
+      operationId: getUser
+      summary: Get a user
+      description: Requires `user:read`.
+      responses:
+        "200":
+          description: The user.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      tags: [users]
+      operationId: updateUser
+      summary: Change a user
+      description: |
+        Requires `user:manage`. Fields that are left out are not changed.
+        A change of role, disabling, and a new password end all of the
+        user's sessions. The only enabled administrator cannot be disabled
+        or given another role.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UserUpdate"
+      responses:
+        "200":
+          description: The user after the change.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/LastAdmin"
+    delete:
+      tags: [users]
+      operationId: deleteUser
+      summary: Delete a user
+      description: |
+        Requires `user:manage`. Ends the user's sessions. The only enabled
+        administrator cannot be deleted. Audit entries about the user are
+        kept.
+      responses:
+        "204":
+          description: Deleted.
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/LastAdmin"
+  /roles:
+    get:
+      tags: [users]
+      operationId: listRoles
+      summary: List roles
+      description: Requires `role:read`. Roles cannot be edited through the API in this release.
+      responses:
+        "200":
+          description: Every role with its permissions.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Role"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /audit:
+    get:
+      tags: [users]
+      operationId: listAudit
+      summary: Read the access audit log
+      description: |
+        Requires `audit:read`. Returns authentication events, authorization
+        denials, and administrative changes, newest first. The log is
+        append-only. It never contains passwords, session tokens, or their
+        hashes. Operations performed on the host are recorded separately
+        by the agent.
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+            default: 100
+        - name: cursor
+          in: query
+          description: The `next_cursor` of the previous page.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: One page of entries.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/AuditEntry"
+                  next_cursor:
+                    type: string
+                    description: Empty or absent on the last page.
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
 components:
   securitySchemes:
     bearer:
@@ -418,11 +642,18 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/ErrorResponse"
+    LastAdmin:
+      description: The user is the only enabled administrator (`last_admin`).
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
     Forbidden:
       description: |
         The request is not allowed (`forbidden`): the `Origin` header is
         missing or does not match the host on a cookie-authenticated
-        request that changes something.
+        request that changes something, or the caller's role lacks the
+        permission the endpoint requires (named in `details.permission`).
       content:
         application/json:
           schema:
@@ -492,6 +723,9 @@ components:
                 - forbidden
                 - rate_limited
                 - setup_required
+                - username_taken
+                - last_admin
+                - unknown_role
                 - resource_busy
                 - idempotency_key_conflict
                 - not_cancellable
@@ -686,6 +920,85 @@ components:
         updated_at:
           type: string
           format: date-time
+    NewUser:
+      type: object
+      required: [username, password]
+      properties:
+        username:
+          type: string
+          pattern: "^[a-z][a-z0-9._-]{0,31}$"
+        display_name:
+          type: string
+          maxLength: 128
+        password:
+          type: string
+          format: password
+          minLength: 12
+          maxLength: 256
+        role:
+          type: string
+          default: viewer
+          description: Name of a role.
+    UserUpdate:
+      type: object
+      properties:
+        display_name:
+          type: string
+          maxLength: 128
+        role:
+          type: string
+        disabled:
+          type: boolean
+        password:
+          type: string
+          format: password
+          minLength: 12
+          maxLength: 256
+          description: Sets a new password and ends the user's sessions.
+    Role:
+      type: object
+      required: [id, name, description, permissions, built_in]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        description: { type: string }
+        permissions:
+          type: array
+          description: Permission strings of the form resource:action. An asterisk means every permission.
+          items:
+            type: string
+        built_in:
+          type: boolean
+          description: Built-in roles cannot be changed or deleted.
+    AuditEntry:
+      type: object
+      required: [id, occurred_at, actor_name, action, outcome]
+      properties:
+        id:
+          type: integer
+          format: int64
+        occurred_at:
+          type: string
+          format: date-time
+        actor_id:
+          type: string
+          description: Absent when no known user was involved.
+        actor_name:
+          type: string
+          description: A username, `system`, or `local:<uid>` for a command run on the host.
+        action:
+          type: string
+          example: auth.login
+        resource_type: { type: string }
+        resource_id: { type: string }
+        outcome:
+          type: string
+          enum: [success, failure, denied]
+        source_ip: { type: string }
+        request_id: { type: string }
+        details:
+          type: object
+          additionalProperties: true
     SessionResponse:
       type: object
       required: [user, session, permissions]

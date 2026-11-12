@@ -7,9 +7,8 @@ states plainly what is and is not protected.
 
 Milestone 4 is in progress
 ([ADR 0006](../decisions/0006-api-split-authentication-tls.md)). The split
-into two processes, TLS, accounts, and sessions are done. Per-role
-permission checks are not: until they land, every authenticated user can
-read everything the API serves, and nothing in the API changes the host.
+into two processes, TLS, accounts, sessions, and permission checks are
+done. Nothing in the API changes the host yet.
 
 `skep-api` listens on `127.0.0.1:8443` by default. Opening it to a network
 is an explicit change of `listen_address`.
@@ -130,6 +129,36 @@ handler errors are logged and replaced by a generic message on the task.
 and a request body limit are set. Responses carry `X-Content-Type-Options: nosniff`,
 `Cache-Control: no-store`, and a deny-all `Content-Security-Policy`.
 
+## Authorization
+
+- **One role per user, global scope.** A role is a set of
+  `resource:action` permission strings, declared in one file
+  (`internal/auth/permissions.go`). This milestone defines
+  `system:read`, `node:read`, `task:read`, `task:cancel`, `user:read`,
+  `user:manage`, `role:read`, and `audit:read`.
+- **Built-in roles**, created by migration: `admin` (stored as `*`: every
+  permission, including later ones), `operator` (all reads plus
+  operational actions, never `user:manage`), `viewer` (reads, without
+  `user:read` and `audit:read`). Roles cannot be edited in this release.
+- **Deny by default, in one place.** Every route is declared in one table
+  with the permission it requires, and one function enforces it. A route
+  with a missing or unknown requirement is refused for everyone, the
+  administrator included, and a unit test fails if the table contains
+  one. Another test calls every route as every built-in role.
+- **Only two routes are public:** the health status and the login. The
+  routes under `/auth` need a session and nothing more, because they
+  concern only the caller's own session and password.
+- **Every denial is audited** with the actor, the permission, and the
+  route.
+- **Changes apply at the next request.** The user and role are read from
+  the database for every request, and a role change also ends the user's
+  sessions.
+- **The agent makes no authorization decision** (ADR 0004). It records
+  the actor the API names.
+- **The audit log is readable through the API** by roles with
+  `audit:read`. It is append-only and holds no passwords, tokens, or
+  hashes.
+
 ## Accounts and passwords
 
 - **No default credentials, and no network path to the first account.**
@@ -223,9 +252,9 @@ and the two rc.d services are pending FreeBSD validation.
 
 ## Open items
 
-- **Per-role permission checks (RBAC)** and user management over the API:
-  the remaining steps of Milestone 4. No endpoint that changes the host is
-  added before them.
+- **Scoped permissions** (per VM, pool, or tenant) and **custom roles**:
+  not designed yet; the schema allows both to be added without changing
+  the meaning of existing data.
 - **Long-lived API tokens** for automation are deferred to their own ADR;
   until then automation logs in for a bearer session.
 - **Host confinement configuration** for the agent (which pools,

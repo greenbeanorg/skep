@@ -17,6 +17,7 @@ import (
 
 	"github.com/greenbeanorg/skep/internal/audit"
 	"github.com/greenbeanorg/skep/internal/database"
+	"github.com/greenbeanorg/skep/pkg/models"
 )
 
 // execer is satisfied by *sql.DB and *sql.Tx.
@@ -118,4 +119,67 @@ func (a *AccessLog) LocalSinceLastStart(ctx context.Context) ([]LocalAction, err
 		return nil, fmt.Errorf("audit: read local actions: %w", err)
 	}
 	return out, nil
+}
+
+// Page sizes of List.
+const (
+	DefaultAuditPageSize = 100
+	MaxAuditPageSize     = 500
+)
+
+// List returns a page of the log, newest first. before is the ID to start
+// below; zero starts at the newest entry. next is the value to pass as
+// before for the following page, or zero when there is none.
+func (a *AccessLog) List(ctx context.Context, limit int, before int64) (entries []models.AuditEntry, next int64, err error) {
+	switch {
+	case limit == 0:
+		limit = DefaultAuditPageSize
+	case limit < 0 || limit > MaxAuditPageSize:
+		return nil, 0, models.Invalid(fmt.Sprintf("limit must be between 1 and %d", MaxAuditPageSize))
+	}
+	if before < 0 {
+		return nil, 0, models.Invalid("invalid cursor")
+	}
+	query := `SELECT id, occurred_at, COALESCE(actor_id, ''), actor_name, action, COALESCE(resource_type, ''),
+		COALESCE(resource_id, ''), outcome, COALESCE(source_ip, ''), COALESCE(request_id, ''), COALESCE(details, '')
+		FROM audit_log`
+	args := []any{}
+	if before > 0 {
+		query += ` WHERE id < ?`
+		args = append(args, before)
+	}
+	query += ` ORDER BY id DESC LIMIT ?`
+	// One more than asked for, to know whether another page exists.
+	args = append(args, limit+1)
+	rows, err := a.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, 0, fmt.Errorf("audit: list: %w", err)
+	}
+	defer rows.Close()
+	entries = []models.AuditEntry{}
+	for rows.Next() {
+		var e models.AuditEntry
+		var at, details string
+		if err := rows.Scan(&e.ID, &at, &e.ActorID, &e.ActorName, &e.Action, &e.ResourceType,
+			&e.ResourceID, &e.Outcome, &e.SourceIP, &e.RequestID, &details); err != nil {
+			return nil, 0, fmt.Errorf("audit: list: %w", err)
+		}
+		if e.OccurredAt, err = database.ParseTime(at); err != nil {
+			return nil, 0, fmt.Errorf("audit: list: %w", err)
+		}
+		if details != "" {
+			if err := json.Unmarshal([]byte(details), &e.Details); err != nil {
+				return nil, 0, fmt.Errorf("audit: entry %d has invalid details: %w", e.ID, err)
+			}
+		}
+		entries = append(entries, e)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("audit: list: %w", err)
+	}
+	if len(entries) > limit {
+		entries = entries[:limit]
+		next = entries[limit-1].ID
+	}
+	return entries, next, nil
 }

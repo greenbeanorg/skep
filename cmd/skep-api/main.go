@@ -212,11 +212,12 @@ func runServer(ctx context.Context, args []string, e env) error {
 	defer agent.Close()
 
 	handler := api.NewHandler(api.Options{
-		Backend: agent,
-		Auth:    authn,
-		Users:   users,
-		Audit:   access,
-		Logger:  log,
+		Backend:  agent,
+		Auth:     authn,
+		Users:    users,
+		Audit:    access,
+		AuditLog: access,
+		Logger:   log,
 		TLS: func() models.TLSInfo {
 			info := certs.Info()
 			return models.TLSInfo{Source: string(info.Source), NotAfter: info.NotAfter.UTC(), PublicKeySHA256: info.PublicKeySHA256}
