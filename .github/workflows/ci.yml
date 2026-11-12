@@ -47,13 +47,27 @@ jobs:
       - name: Test
         run: go test -race -count=1 ./...
 
+      # The test-only task types are compiled only with this tag and never
+      # ship; they still have to build and pass.
+      - name: Test (test-only task types)
+        run: |
+          go vet -tags skep_testtasks ./cmd/...
+          go test -race -count=1 -tags skep_testtasks ./cmd/...
+
       - name: Build (Linux, development only)
         run: make build
 
       # Cross-compilation proves the FreeBSD build compiles. It does not
       # prove runtime behaviour; that is validated on a real FreeBSD host.
       - name: Cross-compile (FreeBSD amd64)
-        run: make build-freebsd
+        run: |
+          make build-freebsd
+          make build-freebsd-test
+          # The shipped agent must not contain the test-only task type.
+          if grep -q 'test\.sleep' bin/freebsd-amd64/skep-agent; then
+            echo "the shipped agent contains the test-only task type"
+            exit 1
+          fi
 
       - name: Static analysis
         run: |

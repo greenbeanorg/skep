@@ -3,16 +3,18 @@ package main
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"errors"
 	"io"
-	"net/http"
+	"io/fs"
+	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/greenbeanorg/skep/internal/agentclient"
+	"github.com/greenbeanorg/skep/internal/agentproto"
 	"github.com/greenbeanorg/skep/pkg/models"
 	"github.com/greenbeanorg/skep/pkg/version"
 )
@@ -32,7 +34,8 @@ func TestRunRejectsBadInput(t *testing.T) {
 		"unknown flag":      {"-nope"},
 		"stray argument":    {"extra"},
 		"missing config":    {"-config", "/nonexistent/skep.json"},
-		"non-loopback bind": {"-dev", "-listen", "0.0.0.0:0", "-data-dir", t.TempDir()},
+		"the removed flag":  {"-dev", "-listen", "127.0.0.1:0", "-data-dir", t.TempDir()},
+		"unknown peer user": {"-dev", "-data-dir", t.TempDir(), "-config", writeConfig(t, `{"socket":{"allowed_users":["skep-no-such-user"]}}`)},
 		"invalid log level": {"-dev", "-log-level", "loud", "-data-dir", t.TempDir()},
 	} {
 		var stdout, stderr bytes.Buffer
@@ -61,33 +64,50 @@ func (b *syncBuffer) String() string {
 	return b.buf.String()
 }
 
-// TestRunServesAPI boots the whole agent on an ephemeral loopback port with
-// the real discoverer and a real database, calls every endpoint, restarts
-// it, and checks that the node ID is stable across the restart.
-func TestRunServesAPI(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), "data")
+func writeConfig(t *testing.T, body string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "agent.json")
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
 
-	boot := func() (base string, stop func()) {
+// shortDir returns a directory with a short path: the agent socket lives
+// in it, and sun_path is limited to about 104 bytes.
+func shortDir(t *testing.T) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("", "skep-agent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	return dir
+}
+
+// TestRunServesInternalAPI boots the whole agent with the real discoverer
+// and a real database, calls every read operation over its socket, restarts
+// it, and checks that the node ID is stable across the restart.
+func TestRunServesInternalAPI(t *testing.T) {
+	dir := filepath.Join(shortDir(t), "data")
+	socket := filepath.Join(dir, "run", "agent.sock")
+
+	boot := func() (stop func()) {
 		t.Helper()
 		ctx, cancel := context.WithCancel(context.Background())
 		logs := &syncBuffer{}
 		done := make(chan error, 1)
 		go func() {
-			done <- run(ctx, []string{"-dev", "-listen", "127.0.0.1:0", "-data-dir", dir, "-log-format", "json"}, io.Discard, logs)
+			done <- run(ctx, []string{"-dev", "-data-dir", dir, "-log-format", "json"}, io.Discard, logs)
 		}()
 
-		addrRE := regexp.MustCompile(`"msg":"API listening","address":"([^"]+)"`)
 		deadline := time.Now().Add(15 * time.Second)
-		for base == "" {
+		for !strings.Contains(logs.String(), `"msg":"internal API listening"`) {
 			select {
 			case err := <-done:
 				cancel()
 				t.Fatalf("agent exited early: %v\n%s", err, logs.String())
 			default:
-			}
-			if m := addrRE.FindStringSubmatch(logs.String()); m != nil {
-				base = "http://" + m[1]
-				break
 			}
 			if time.Now().After(deadline) {
 				cancel()
@@ -95,7 +115,12 @@ func TestRunServesAPI(t *testing.T) {
 			}
 			time.Sleep(10 * time.Millisecond)
 		}
-		return base, func() {
+		// The agent must not have a network listener of any kind.
+		if strings.Contains(logs.String(), `"address"`) {
+			cancel()
+			t.Fatalf("the agent logged a network address:\n%s", logs.String())
+		}
+		return func() {
 			cancel()
 			select {
 			case err := <-done:
@@ -108,36 +133,28 @@ func TestRunServesAPI(t *testing.T) {
 		}
 	}
 
-	get := func(url string, wantStatus int, into any) {
-		t.Helper()
-		resp, err := http.Get(url)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer resp.Body.Close()
-		if resp.StatusCode != wantStatus {
-			t.Fatalf("GET %s: status %d, want %d", url, resp.StatusCode, wantStatus)
-		}
-		if err := json.NewDecoder(resp.Body).Decode(into); err != nil {
-			t.Fatalf("GET %s: invalid JSON: %v", url, err)
-		}
+	client, err := agentclient.New(agentclient.Options{SocketPath: socket})
+	if err != nil {
+		t.Fatal(err)
 	}
+	defer client.Close()
+	ctx := agentproto.WithCaller(context.Background(), agentproto.Caller{ActorID: "test", ActorName: "test"})
 
-	base, stop := boot()
-	var health models.Health
-	get(base+"/api/v1/health", http.StatusOK, &health)
+	stop := boot()
+	if info, err := os.Stat(socket); err != nil || info.Mode().Perm() != 0o600 {
+		t.Errorf("dev socket: %v, %v; want mode 0600", info, err)
+	}
+	health := client.Health(ctx)
 	if health.Status != models.HealthOK || health.Checks["database"].Status != models.HealthOK {
 		t.Errorf("health = %+v", health)
 	}
-	var sys models.System
-	get(base+"/api/v1/system", http.StatusOK, &sys)
-	if sys.NodeID == "" || !sys.DevMode || sys.ProductionHost {
-		t.Errorf("system = %+v", sys)
+	sys, err := client.System(ctx)
+	if err != nil || sys.NodeID == "" || !sys.DevMode || sys.ProductionHost {
+		t.Fatalf("system = %+v, %v", sys, err)
 	}
-	var hw models.Hardware
-	get(base+"/api/v1/nodes/"+sys.NodeID+"/hardware", http.StatusOK, &hw)
-	if hw.NodeID != sys.NodeID || hw.CPU.Threads < 1 || hw.Memory.TotalBytes == 0 {
-		t.Errorf("hardware = %+v", hw)
+	hw, err := client.Hardware(ctx, sys.NodeID)
+	if err != nil || hw.NodeID != sys.NodeID || hw.CPU.Threads < 1 || hw.Memory.TotalBytes == 0 {
+		t.Errorf("hardware = %+v, %v", hw, err)
 	}
 	for _, c := range []models.Capability{hw.Hypervisors.Bhyve.Capability, hw.Hypervisors.QEMU.Capability, hw.Storage.ZFS.Capability} {
 		if c.Status == "" || c.Reason == "" {
@@ -145,12 +162,14 @@ func TestRunServesAPI(t *testing.T) {
 		}
 	}
 	// The startup inventory refresh ran as a task, submitted by "system".
-	waitTask := func(base string, wantTotal int) models.Task {
+	waitTask := func(wantTotal int) models.Task {
 		t.Helper()
 		deadline := time.Now().Add(15 * time.Second)
 		for {
-			var list models.TaskList
-			get(base+"/api/v1/tasks", http.StatusOK, &list)
+			list, err := client.Tasks(ctx, models.TaskListOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
 			if len(list.Items) == wantTotal && list.Items[0].Status.Terminal() {
 				return list.Items[0]
 			}
@@ -160,39 +179,46 @@ func TestRunServesAPI(t *testing.T) {
 			time.Sleep(10 * time.Millisecond)
 		}
 	}
-	refresh := waitTask(base, 1)
+	refresh := waitTask(1)
 	if refresh.Type != "discovery.refresh" || refresh.Status != models.TaskSucceeded ||
 		refresh.Actor.ID != "system" || refresh.ResourceID != sys.NodeID {
 		t.Errorf("startup task = %+v", refresh)
 	}
-	var detail models.TaskDetail
-	get(base+"/api/v1/tasks/"+refresh.ID, http.StatusOK, &detail)
-	if detail.Result == nil {
-		t.Errorf("task detail has no result: %+v", detail)
+	detail, err := client.Task(ctx, refresh.ID)
+	if err != nil || detail.Result == nil {
+		t.Errorf("task detail has no result: %+v, %v", detail, err)
 	}
 	if len(detail.Events) < 3 || detail.Events[0].Message != "task is pending" ||
 		detail.Events[len(detail.Events)-1].Message != "task is succeeded" {
 		t.Errorf("task events = %+v", detail.Events)
 	}
-	var apiErr models.ErrorResponse
-	get(base+"/api/v1/tasks/unknown", http.StatusNotFound, &apiErr)
-	get(base+"/api/v1/tasks?limit=0", http.StatusBadRequest, &apiErr)
-	get(base+"/api/v1/nodes/unknown/hardware", http.StatusNotFound, &apiErr)
-	if apiErr.Error.Code != "not_found" {
-		t.Errorf("error = %+v", apiErr)
+	if _, err := client.Task(ctx, "unknown"); !errors.Is(err, models.ErrNotFound) {
+		t.Errorf("unknown task: %v", err)
+	}
+	if _, err := client.Hardware(ctx, "unknown"); !errors.Is(err, models.ErrNotFound) {
+		t.Errorf("unknown node: %v", err)
+	}
+	var invalid *models.Error
+	if _, err := client.Tasks(ctx, models.TaskListOptions{Limit: 100000}); !errors.As(err, &invalid) || invalid.Code != models.CodeInvalidRequest {
+		t.Errorf("invalid limit: %v", err)
 	}
 	stop()
+	if _, err := os.Stat(socket); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("the socket was not removed at shutdown: %v", err)
+	}
+	if _, err := client.System(ctx); !errors.Is(err, agentclient.ErrUnavailable) {
+		t.Errorf("a stopped agent: %v, want ErrUnavailable", err)
+	}
 
-	base, stop = boot()
+	stop = boot()
 	defer stop()
-	var again models.System
-	get(base+"/api/v1/system", http.StatusOK, &again)
-	if again.NodeID != sys.NodeID {
-		t.Errorf("node ID changed across a restart: %q then %q", sys.NodeID, again.NodeID)
+	again, err := client.System(ctx)
+	if err != nil || again.NodeID != sys.NodeID {
+		t.Errorf("node ID changed across a restart: %q then %q (%v)", sys.NodeID, again.NodeID, err)
 	}
 	// Task history survives the restart, and the new start adds its own
 	// refresh instead of touching the old one.
-	second := waitTask(base, 2)
+	second := waitTask(2)
 	if second.ID == refresh.ID || second.Status != models.TaskSucceeded {
 		t.Errorf("second startup task = %+v", second)
 	}

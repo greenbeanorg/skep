@@ -7,7 +7,7 @@ BUILD_DATE := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 GO      ?= go
 PKG     := github.com/greenbeanorg/skep
 BIN_DIR := bin
-CMDS    := skep-agent
+CMDS    := skep-agent skep-api skepctl
 
 LDFLAGS := -s -w \
 	-X $(PKG)/pkg/version.Version=$(VERSION) \
@@ -18,7 +18,7 @@ LDFLAGS := -s -w \
 # cross-compile needs no C toolchain.
 export CGO_ENABLED := 0
 
-.PHONY: all build build-freebsd test vet lint fmt run-dev clean help
+.PHONY: all build build-freebsd build-freebsd-test test vet lint fmt run-dev clean help
 
 all: vet test build build-freebsd
 
@@ -40,12 +40,30 @@ build-freebsd: ## Cross-compile the FreeBSD amd64 binaries into bin/freebsd-amd6
 			-o $(BIN_DIR)/freebsd-amd64/$$cmd ./cmd/$$cmd || exit 1; \
 	done
 
-test: ## Run the unit tests
-	$(GO) test -count=1 ./...
+# The test agent contains the test-only task types (build tag
+# skep_testtasks) and the rc.d integration test. Neither is ever installed
+# on a real host; they exist for native validation on the FreeBSD test VM.
+build-freebsd-test: ## Cross-compile the FreeBSD test agent and integration tests into bin/freebsd-amd64-test/
+	@mkdir -p $(BIN_DIR)/freebsd-amd64-test
+	GOOS=freebsd GOARCH=amd64 $(GO) build -trimpath -tags skep_testtasks -ldflags '$(LDFLAGS)' \
+		-o $(BIN_DIR)/freebsd-amd64-test/skep-agent-testbuild ./cmd/skep-agent
+	GOOS=freebsd GOARCH=amd64 $(GO) build -trimpath \
+		-o $(BIN_DIR)/freebsd-amd64-test/rcd-test ./tests/integration/rcd
+	GOOS=freebsd GOARCH=amd64 $(GO) build -trimpath \
+		-o $(BIN_DIR)/freebsd-amd64-test/apitls-test ./tests/integration/apitls
+	GOOS=freebsd GOARCH=amd64 $(GO) build -trimpath \
+		-o $(BIN_DIR)/freebsd-amd64-test/adminprompt-test ./tests/integration/adminprompt
+	GOOS=freebsd GOARCH=amd64 $(GO) build -trimpath \
+		-o $(BIN_DIR)/freebsd-amd64-test/skepctl-test ./tests/integration/skepctl
+
+test: ## Run the unit tests, with the race detector (needs a C compiler)
+	CGO_ENABLED=1 $(GO) test -race -count=1 ./...
+	CGO_ENABLED=1 $(GO) test -race -count=1 -tags skep_testtasks ./cmd/...
 
 vet: ## Run go vet for Linux and for the FreeBSD target
 	$(GO) vet ./...
 	GOOS=freebsd GOARCH=amd64 $(GO) vet ./...
+	GOOS=freebsd GOARCH=amd64 $(GO) vet -tags skep_testtasks ./cmd/...
 
 lint: vet ## Check formatting, vet, and run staticcheck when it is installed
 	@unformatted="$$(gofmt -l .)"; \
@@ -61,8 +79,8 @@ lint: vet ## Check formatting, vet, and run staticcheck when it is installed
 fmt: ## Format the Go sources
 	gofmt -w .
 
-run-dev: ## Run the agent in development mode on 127.0.0.1:8765
-	$(GO) run -ldflags '$(LDFLAGS)' ./cmd/skep-agent -dev
+run-dev: build ## Run skep-agent and skep-api in development mode (API on 127.0.0.1:8443)
+	./scripts/run-dev.sh
 
 clean: ## Remove build output and the development data directory
 	rm -rf $(BIN_DIR) .skep-dev

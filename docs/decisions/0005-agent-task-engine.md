@@ -288,10 +288,14 @@ Accepted on 2026-11-12 with these outcomes.
 6. **Milestone 2 scope.** Accepted: tasks are read-only over the API, and
    `discovery.refresh`, submitted by `system`, is the only task type.
 
-One reading of decision 4 was made during implementation and is worth
-confirming: a *pending* task of a non-cancellable type can still be
+One reading of decision 4 was made during implementation and confirmed on
+2026-11-12: a *pending* task of a non-cancellable type can still be
 cancelled, because its handler has not started. "Non-cancellable" protects
 a handler that is running.
+
+Also confirmed on 2026-11-12: the inventory is refreshed at startup only,
+and a full queue is answered with `queue_full` (HTTP 503), with defaults of
+64 queued tasks and 4 workers.
 
 ## Implementation status
 
@@ -325,8 +329,13 @@ Validated on FreeBSD 15.1-RELEASE-p6 (`hearst`, 2026-11-12):
   audit entry with the agent's UID. Task history survived a clean restart
   and a `kill -9`.
 
-Pending FreeBSD validation: an interruption of a real in-flight task on a
-real agent. `discovery.refresh` finishes in a few milliseconds, so the
-`kill -9` run had nothing in flight; the sweep itself is covered by the
-native engine tests. This becomes testable with the first long-running
-task type.
+- An interruption of a real in-flight task on a real agent, run as the
+  rc.d service: by `kill -9` (the task became `interrupted` with
+  `agent_restart` at the next start and was not resumed), by `service stop`,
+  and by a reboot (both `interrupted` with `agent_shutdown`, recorded by
+  the agent itself). Each had its `requested` and `finished` audit entries.
+  The task was `test.sleep`, a type that exists only in a test build of the
+  agent (build tag `skep_testtasks`) and is never shipped. The test and its
+  recorded output are in `tests/integration/rcd`.
+
+Nothing in this ADR is pending FreeBSD validation.

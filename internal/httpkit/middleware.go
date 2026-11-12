@@ -1,4 +1,4 @@
-package api
+package httpkit
 
 import (
 	"context"
@@ -22,8 +22,8 @@ const requestIDKey contextKey = iota
 // so arbitrary input never reaches the logs.
 var clientRequestIDRE = regexp.MustCompile(`^[A-Za-z0-9._-]{1,64}$`)
 
-// requestID returns the ID of the request ctx belongs to, or "".
-func requestID(ctx context.Context) string {
+// RequestID returns the ID of the request ctx belongs to, or "".
+func RequestID(ctx context.Context) string {
 	id, _ := ctx.Value(requestIDKey).(string)
 	return id
 }
@@ -36,9 +36,9 @@ func newRequestID() string {
 	return hex.EncodeToString(b[:])
 }
 
-// withRequestID assigns every request an ID, reusing a well-formed one from
+// WithRequestID assigns every request an ID, reusing a well-formed one from
 // the client, and echoes it in the response.
-func withRequestID(next http.Handler) http.Handler {
+func WithRequestID(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id := r.Header.Get(RequestIDHeader)
 		if !clientRequestIDRE.MatchString(id) {
@@ -49,8 +49,8 @@ func withRequestID(next http.Handler) http.Handler {
 	})
 }
 
-// withSecurityHeaders sets headers appropriate for a JSON-only API.
-func withSecurityHeaders(next http.Handler) http.Handler {
+// WithSecurityHeaders sets headers appropriate for a JSON-only API.
+func WithSecurityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := w.Header()
 		h.Set("X-Content-Type-Options", "nosniff")
@@ -83,8 +83,8 @@ func (s *statusRecorder) Write(b []byte) (int, error) {
 	return n, err
 }
 
-// withAccessLog logs one structured line per request.
-func withAccessLog(log *slog.Logger, next http.Handler) http.Handler {
+// WithAccessLog logs one structured line per request.
+func WithAccessLog(log *slog.Logger, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		rec := &statusRecorder{ResponseWriter: w}
@@ -96,13 +96,13 @@ func withAccessLog(log *slog.Logger, next http.Handler) http.Handler {
 			slog.Int("bytes", rec.bytes),
 			slog.Duration("duration", time.Since(start)),
 			slog.String("remote", r.RemoteAddr),
-			slog.String("request_id", requestID(r.Context())),
+			slog.String("request_id", RequestID(r.Context())),
 		)
 	})
 }
 
-// withRecovery turns a handler panic into a 500 error envelope.
-func withRecovery(log *slog.Logger, next http.Handler) http.Handler {
+// WithRecovery turns a handler panic into a 500 error envelope.
+func WithRecovery(log *slog.Logger, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
 			rec := recover()
@@ -112,11 +112,11 @@ func withRecovery(log *slog.Logger, next http.Handler) http.Handler {
 			if rec == http.ErrAbortHandler {
 				panic(rec)
 			}
-			log.ErrorContext(r.Context(), "api: handler panic",
+			log.ErrorContext(r.Context(), "http: handler panic",
 				"panic", rec,
-				"request_id", requestID(r.Context()),
+				"request_id", RequestID(r.Context()),
 				"stack", string(debug.Stack()))
-			writeError(w, r, http.StatusInternalServerError, CodeInternal, "internal server error")
+			WriteError(w, r, http.StatusInternalServerError, CodeInternal, "internal server error")
 		}()
 		next.ServeHTTP(w, r)
 	})

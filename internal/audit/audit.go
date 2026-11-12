@@ -1,4 +1,5 @@
-// Package audit defines the agent's operation audit entries.
+// Package audit defines the entries of the two audit logs: the agent's
+// operation audit (Entry) and skep-api's access audit (AccessEntry).
 //
 // Every privileged operation the agent accepts or refuses is recorded in an
 // append-only log in agent.db that skep-api cannot write to
@@ -94,3 +95,46 @@ func (e Entry) Validate() error {
 type Writer interface {
 	Write(ctx context.Context, e Entry) error
 }
+
+// AccessEntry is one record in skep-api's access audit log (api.db):
+// authentication events, authorization decisions, and local administrative
+// commands. It is a different log from the agent's operation audit, in a
+// different database, written by a different process.
+type AccessEntry struct {
+	// ActorID is the user's ID, or empty when no known user is involved
+	// (a failed login for an unknown name, the system itself, a local
+	// command).
+	ActorID string
+	// ActorName is mandatory: a username, "system", or "local:<uid>" for a
+	// command run on the host.
+	ActorName string
+	// Action is the event, for example "auth.login".
+	Action       string
+	ResourceType string
+	ResourceID   string
+	Outcome      Outcome
+	SourceIP     string
+	RequestID    string
+	// Details is optional structured context. It must never contain a
+	// password, a session token, or a token hash.
+	Details map[string]any
+}
+
+// Validate checks the rules every access entry must satisfy.
+func (e AccessEntry) Validate() error {
+	if e.ActorName == "" {
+		return errors.New("audit: actor_name is required")
+	}
+	if e.Action == "" {
+		return errors.New("audit: action is required")
+	}
+	switch e.Outcome {
+	case Success, Failure, Denied:
+	default:
+		return fmt.Errorf("audit: invalid outcome %q", e.Outcome)
+	}
+	return nil
+}
+
+// LocalActor is the actor name of a command run on the host by uid.
+func LocalActor(uid int) string { return fmt.Sprintf("local:%d", uid) }

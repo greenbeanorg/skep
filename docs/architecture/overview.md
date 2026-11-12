@@ -1,22 +1,38 @@
 # Architecture overview
 
-This document describes Skep as of 0.1.0 (Foundation). It covers what exists
+This document describes Skep as of 0.1.0, Milestone 4b. It covers what exists
 now. Planned subsystems are listed in `CLAUDE.md` and are not described here
 until they are built.
 
-## Shape of the system in 0.1.0
+## Shape of the system
 
-One binary, `skep-agent`, runs on a host. It discovers the host read-only,
-keeps local state in SQLite, and serves a small read-only REST API.
+Two binaries run on a host ([ADR 0004](../decisions/0004-privilege-boundary.md),
+[ADR 0006](../decisions/0006-api-split-authentication-tls.md)).
+`skep-api` is the only network listener and runs unprivileged. `skep-agent`
+runs as root, discovers the host, keeps the node's state in SQLite, runs
+tasks, and listens on a Unix socket only.
 
 ```
-            HTTP (loopback only, no auth in 0.1.0)
+            HTTPS (TLS 1.3; session cookie or bearer token)
                           |
+  skep-api (user skep)    |
         +-----------------v------------------+
-        | internal/api        HTTP layer     |  routing, validation, error
-        |                                    |  envelope, request IDs, logging
+        | internal/api        public API     |  route table, sessions (via
+        |                                    |  internal/auth), validation
         +-----------------+------------------+
                           | api.Backend (interface)
+        +-----------------v------------------+
+        | internal/agentclient               |  HTTP+JSON over the socket,
+        +-----------------+------------------+  actor headers on every call
+                          |
+         /var/run/skep/agent.sock  (root:skep 0660, peer UID checked)
+                          |
+  skep-agent (root)       |
+        +-----------------v------------------+
+        | internal/internalapi               |  peer allow-list, mandatory
+        |   /internal/v1                     |  actor, limits
+        +-----------------+------------------+
+                          | internalapi.Backend (interface)
         +-----------------v------------------+
         | internal/agent      service layer  |  node identity, caching,
         |                                    |  health, system document
@@ -31,24 +47,38 @@ keeps local state in SQLite, and serves a small read-only REST API.
    +-------------------+   +---------------------+
 ```
 
-`cmd/skep-agent` is the only place that knows about all of these packages. It
-loads the configuration, builds the logger, opens and migrates the database,
-resolves the node ID, and wires the layers together.
+`cmd/skep-agent` and `cmd/skep-api` are the only places that know about
+all of the packages on their side. Each loads its configuration, builds the
+logger, and wires its layers together.
 
 ### Layer rules
 
 - **`internal/api`** translates HTTP to calls on the `api.Backend` interface
   and back. It holds no business logic and imports neither `internal/agent`
   nor `internal/hardware`.
+- **`internal/agentclient`** implements `api.Backend` by calling the agent.
+  An unreachable agent becomes `503 agent_unavailable`; service errors
+  cross the socket with their codes intact.
+- **`internal/internalapi`** is the agent's listener and handlers. It
+  refuses peers outside the allow-list and requests without an actor
+  before any handler runs.
 - **`internal/agent`** holds the logic. It knows nothing about HTTP.
 - **`internal/hardware`** talks to the operating system. It knows nothing
   about the API or the database.
 
-Because the HTTP layer depends only on `api.Backend`, moving the API into a
-separate `skep-api` process means writing a new `Backend` that calls the
-agent over its Unix socket. The handlers do not change. That split is
-decided in [ADR 0004](../decisions/0004-privilege-boundary.md) and is
-Milestone 4; until then the agent serves the read-only API itself.
+The public API and the internal API are separate interfaces with separate
+versions (`/api/v1`, `/internal/v1`). Shared types live in `pkg/models`;
+the error envelope and middleware they have in common live in
+`internal/httpkit`.
+
+Clients sit in front of `skep-api` and use only `/api/v1`. The first is
+`skepctl` (`cmd/skepctl`), built on the Go client in `pkg/client`, which
+pins the server's public key on every connection; its local state (pins and
+session tokens) is in `internal/ctlstate`. See
+[docs/administration/skepctl.md](../administration/skepctl.md).
+
+Either process can start first or restart alone. In development,
+`make run-dev` starts both, exactly as in production but as the developer.
 
 ## Host discovery
 
@@ -113,9 +143,11 @@ implements.
 
 The only task type so far is `discovery.refresh`, which the agent submits
 as `system` once at start. It runs discovery and stores the result in the
-local node's `observed_*` columns. Tasks are read-only over the API:
-submission and cancellation over the network arrive with Milestone 4,
-because an unauthenticated API has no actor to record.
+local node's `observed_*` columns. Over the API tasks can be read and
+cancelled (`POST /tasks/{id}/cancel`, permission `task:cancel`); the agent
+records the authenticated user as the actor of the cancellation.
+Submission over the socket arrives with the first operation that needs
+it.
 
 ## Persistence
 
@@ -129,11 +161,11 @@ There are two databases, each owned by one process and closed to the other
 | Database | Owner | Migrations | Holds |
 |---|---|---|---|
 | `<data_dir>/agent/agent.db` | `skep-agent` | `migrations/sqlite/agent` | Node identity, VMs, disks, networks, containers, storage, interfaces, tasks, task events, operation audit |
-| `<data_dir>/api/api.db` | `skep-api` | `migrations/sqlite/api` | Users, roles, access audit |
+| `<data_dir>/api/api.db` | `skep-api` | `migrations/sqlite/api` | Users, roles, sessions, access audit |
 
-In 0.1.0 only the agent database is opened. `skep-api` does not exist yet;
-its schema is defined and tested so that the split is in place from the
-first release.
+`internal/database` opens and migrates both and holds the agent's stores.
+The stores of `api.db` are in `internal/apidb`, which only `skep-api`
+links, so the agent binary contains no identity code.
 
 - Migrations are plain SQL files named `NNNN_name.sql`, embedded in the
   binary, and applied at startup, each in its own transaction. Applied
@@ -197,20 +229,35 @@ imported, both as an unprivileged user and as root.
 | Database directory `0700`, file `0600`, shared data directory `0755` | Validated (unprivileged and root) |
 | Task engine, store, and audit test suites run natively (restart sweep, shutdown, cancellation, idempotency, concurrent submissions) | Validated (2026-11-12) |
 | Startup `discovery.refresh` task, observed node state stored, audit entries written; history survives a restart and a `kill -9` | Validated (2026-11-12) |
-| Interruption of a real in-flight task on a running agent | **Pending FreeBSD validation** (no long-running task type yet) |
+| Interruption of a real in-flight task on a running agent, by `kill -9`, by `service stop`, and by a reboot | Validated (2026-11-12, test-only `test.sleep` task; see `tests/integration/rcd`) |
 | Unix socket peer credentials (`LOCAL_PEERCRED`), UID allow-list, socket file permissions | Validated (see `tests/integration/peercred`) |
 | A degraded or faulted pool; a pool reporting `-` for fragmentation | **Pending FreeBSD validation** (parser tested against a synthetic fixture) |
 | ZFS `unavailable` when `zfs.ko` is not loaded | **Pending FreeBSD validation** (needs the pool exported and zfs unloaded) |
 | QEMU detection and version parsing | **Pending FreeBSD validation** (QEMU is not installed on the lab VM) |
 | Core count on a host with SMT | **Pending FreeBSD validation** (the lab VM has no SMT) |
-| Running under rc.d as a service | **Pending FreeBSD validation** (no rc.d script yet) |
-| Agent socket with a dedicated `skep` account, under `/var/run` | **Pending FreeBSD validation** (Milestone 4) |
+| Running under rc.d as a service: start, stop, restart, status, crash supervision, start at boot | Validated (2026-11-12, Milestone 3 as `skep`, and again for Milestone 4 with the agent as root; see `tests/integration/rcd`) |
+| A crash loop (agent exits at every start) and `skep_agent_restart_delay=0` under rc.d | Validated (2026-11-12, see `tests/integration/rcd`) |
+| A tmpfs `/var/run` | **Pending FreeBSD validation** |
+| Agent on a Unix socket only, API through the socket, peer UID check, mandatory actor: both processes as one ordinary user | Validated (2026-11-12) |
+| Unit tests of the new packages run natively (`internalapi`, `agentclient`, `apitls`, `auth`, `apidb`, `api`, `privdrop`, `sysaccount`, `tests/e2e`, both commands) | Validated (2026-11-12) |
+| TLS: certificate generation, file modes, TLS 1.3 only, renewal with the same key on a live server, `SIGHUP` reload, `tls regenerate`, `tls fingerprint`, operator certificates | Validated as an ordinary user (2026-11-12, see `tests/integration/apitls`) |
+| Password prompt without echo on a pseudo-terminal and over SSH; `--password-stdin` | Validated (2026-11-12, see `tests/integration/adminprompt`) |
+| Password prompt on the system console | **Pending FreeBSD validation** |
+| Argon2id time with the default parameters | Validated: 121 to 151 ms per hash on hearst (2026-11-12) |
+| Login (cookie and bearer), `401` without a session, task cancel through the API with the user recorded by the agent | Validated as an ordinary user (2026-11-12) |
+| Agent socket under `/var/run/skep` with a root agent and the real `skep` account (`root:skep 0660`; refusal by file permissions and by the peer check); ownership change of `/var/db/skep/agent` from `skep` to root on upgrade | Validated (2026-11-12, see `tests/integration/rcd`) |
+| `skep-api` under rc.d as `skep`, binding its port without privileges, generating its key as `skep`, start at boot; `skep-api admin` started as root giving up root | Validated (2026-11-12, same) |
+| Task cancel through the API under rc.d: the agent records the user as the actor and uid 1002 (`skep`) as the verified peer | Validated (2026-11-12, same) |
+| `skepctl`: first-contact key confirmation on a pseudo-terminal and refusal without one, `--trust-key`, refusal of a changed key with nothing sent, password without echo, `0600` token file in a `0700` directory, read-only commands, logout, a session ended on the server; `skep-api admin disable` and `admin delete` with the last-administrator rule | Validated as an ordinary user, API on loopback (2026-11-12, see `tests/integration/skepctl`) |
+| `skepctl` from another host, and against the `skep_api` rc.d service | **Pending FreeBSD validation** |
 | ZFS-root host | **Pending FreeBSD validation** (the lab VM is UFS-root) |
 | arm64 | Not a target yet |
 
 ## Known limitations
 
-- No authentication, authorization, or TLS. Loopback only.
+- Permissions are global: there is no per-resource scoping and no custom
+  roles yet.
+- Sessions and users are per node.
 - The local node is the only node.
 - Tasks, task events, and audit entries are never removed. Retention is not
   designed yet, which is why the inventory is refreshed only at start and

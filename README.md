@@ -6,26 +6,36 @@ with QEMU as an optional secondary engine), jails, OpenZFS storage, and
 networking on single hosts and, later, multi-node clusters, through a REST
 API, a web UI, and a CLI.
 
-**Status: 0.1.0, Milestone 2 "Persistence" in progress.** The code contains
-the host agent, read-only host discovery, a task engine with history and an
-operation audit log, a small read-only API, and the local database schema.
-It cannot create or manage anything yet.
+**Status: 0.1.0, Milestone 4b "CLI".** The code contains the host agent,
+the API server with TLS, accounts, sessions, and permissions, the `skepctl`
+command-line client, read-only host discovery, a task engine with history,
+and two audit logs. It cannot create or manage VMs, jails, storage, or
+networks yet.
 
-> **Security notice for 0.1.0:** the API has **no authentication and no TLS**.
-> The agent binds to `127.0.0.1` by default and refuses to start on any other
-> address unless you explicitly set `api.allow_insecure_remote`. Do not expose
-> it to a network. See [docs/security/overview.md](docs/security/overview.md).
+> **Security notice:** this is pre-release software. `skep-api` listens on
+> loopback by default; opening it to a network is an explicit
+> configuration change. See
+> [docs/security/overview.md](docs/security/overview.md) for what is and is
+> not protected.
 
 ## What works today
 
 | Area | State |
 |---|---|
-| `skep-agent` | Starts, discovers the host, serves the API, shuts down cleanly |
+| `skep-agent` | Runs as root with no network listener; discovers the host, runs tasks, and serves the internal API on a Unix socket to `skep-api` only |
+| `skep-api` | Runs unprivileged, serves the public API on loopback over TLS 1.3, and reaches the host only through the agent socket |
+| TLS | Self-signed certificate generated at first start and renewed with the same key, or an operator-supplied certificate reloaded on change and on `SIGHUP`; no plaintext listener |
 | Host discovery | Read-only: CPU, memory, OS, bhyve, QEMU, ZFS (FreeBSD native, Linux dev mode) |
-| API | `GET /api/v1/health`, `/system`, `/nodes/{id}/hardware`, `/tasks`, `/tasks/{id}`; all read-only |
+| Node API | `GET /api/v1/health`, `/system`, `/nodes/{id}/hardware`, `/tasks`, `/tasks/{id}`; `POST /tasks/{id}/cancel`, the first operation that reaches the agent on behalf of a user |
 | Task engine | Persistent tasks with states, events, idempotency keys, cancellation, and an audit trail; nothing is resumed after a restart |
-| Database | SQLite with versioned migrations and a stable node ID; separate schemas for the agent and the future API |
-| Not yet | VM or jail management, storage or network changes, authentication, TLS, UI, CLI, clustering |
+| FreeBSD services | rc.d scripts for both processes, supervised, started at boot |
+| Database | SQLite with versioned migrations and a stable node ID; separate databases for the agent and the API |
+| Users | Accounts with Argon2id password hashes and three built-in roles; the first administrator is created with a local command (`skep-api admin create`), never with default credentials |
+| Sessions | Login with a cookie session (browsers) or a bearer session (scripts), never both; idle and absolute timeouts; logout; login rate limits that never lock an account; every endpoint except the health status and the login needs a session |
+| Permissions | One role per user; every endpoint requires a permission and is denied by default; `admin`, `operator`, and `viewer` are built in; every denial is audited |
+| User management | `GET/POST /users`, `GET/PUT/DELETE /users/{id}`, `GET /roles`, `GET /audit`; the last administrator cannot be removed |
+| `skepctl` | Command-line client on the public API: bearer-session login with the token in a `0600` file, the server's public key pinned on first use and never skipped, logout, and read-only `system`, `hardware`, `tasks`, and `audit` commands |
+| Not yet | VM or jail management, storage or network changes, UI, clustering |
 
 ## Platforms
 
@@ -45,8 +55,8 @@ It cannot create or manage anything yet.
 ## Build
 
 ```sh
-make build          # development binary for this machine: bin/skep-agent
-make build-freebsd  # FreeBSD amd64 binary: bin/freebsd-amd64/skep-agent
+make build          # development binaries for this machine: bin/skep-agent, bin/skep-api, bin/skepctl
+make build-freebsd  # FreeBSD amd64 binaries in bin/freebsd-amd64/
 ```
 
 The version, commit, and build date are injected with `-ldflags`:
@@ -64,28 +74,52 @@ Override the version with `make build VERSION=0.1.1`.
 make run-dev
 ```
 
-This runs the agent with `-dev`: state goes to `./.skep-dev/`, logs are
-human-readable text at debug level, and the API listens on
-`127.0.0.1:8765`. Then, in another terminal:
+This builds and starts both processes with `-dev`, as you: state goes to
+`./.skep-dev/`, logs are human-readable text at debug level, the agent
+listens on the Unix socket `.skep-dev/run/agent.sock` (which only your own
+UID may open), and the API listens on `127.0.0.1:8443` with a self-signed
+certificate it generates in `.skep-dev/api/tls/`. There is no combined
+binary and no flag that turns a security control off. Then, in another
+terminal:
 
 ```sh
-curl -s http://127.0.0.1:8765/api/v1/health
-curl -s http://127.0.0.1:8765/api/v1/system
+# There are no default credentials: create an administrator first.
+bin/skep-api admin create --username andy -dev
+
+# Trust exactly the certificate this skep-api generated.
+CA=.skep-dev/api/tls/cert.pem
+API=https://127.0.0.1:8443/api/v1
+
+# Without a session only the health status is readable.
+curl -s --cacert $CA $API/health
+
+# Log in for a bearer session (scripts) and keep the token.
+TOKEN=$(curl -s --cacert $CA $API/auth/login -H 'Content-Type: application/json' \
+    -d '{"username":"andy","password":"YOUR PASSWORD","session":"bearer"}' |
+    sed -E 's/.*"token":"([^"]+)".*/\1/')
+AUTH="Authorization: Bearer $TOKEN"
+
+curl -s --cacert $CA -H "$AUTH" $API/system
 
 # The hardware endpoint takes the node_id reported by /system.
-ID=$(curl -s http://127.0.0.1:8765/api/v1/system | sed -E 's/.*"node_id":"([^"]+)".*/\1/')
-curl -s http://127.0.0.1:8765/api/v1/nodes/$ID/hardware
+ID=$(curl -s --cacert $CA -H "$AUTH" $API/system | sed -E 's/.*"node_id":"([^"]+)".*/\1/')
+curl -s --cacert $CA -H "$AUTH" $API/nodes/$ID/hardware
 
 # The agent refreshes its inventory at start, as a task.
-curl -s 'http://127.0.0.1:8765/api/v1/tasks?limit=5'
+curl -s --cacert $CA -H "$AUTH" "$API/tasks?limit=5"
+
+curl -s --cacert $CA -H "$AUTH" -X POST $API/auth/logout
+
+# The public key pin of the certificate, to compare out of band.
+bin/skep-api tls fingerprint -dev
 ```
 
-Stop the agent with Ctrl-C. `make clean` removes `bin/` and `.skep-dev/`.
+Stop both with Ctrl-C. `make clean` removes `bin/` and `.skep-dev/`.
 
 ## Test
 
 ```sh
-make test   # unit tests
+make test   # unit tests with the race detector (needs a C compiler)
 make vet    # go vet for Linux and for the FreeBSD target
 make lint   # gofmt check, vet, and staticcheck if it is installed
 ```
@@ -98,8 +132,8 @@ decision logic. It does not prove runtime behaviour on FreeBSD; see below.
 
 ```sh
 make build-freebsd
-scp bin/freebsd-amd64/skep-agent hearst:/tmp/skep-agent
-ssh hearst '/tmp/skep-agent -data-dir /tmp/skep-data'
+scp bin/freebsd-amd64/skep-agent bin/freebsd-amd64/skep-api hearst:skep-m4/
+ssh hearst '~/skep-m4/skep-agent -dev -data-dir ~/skep-m4/data'
 ```
 
 A successful cross-compile proves that the code compiles for FreeBSD and
@@ -107,17 +141,28 @@ nothing more. FreeBSD behaviour counts as validated only after it has run on
 FreeBSD. The current validation state is tracked in
 [docs/architecture/overview.md](docs/architecture/overview.md#freebsd-validation-status).
 
+To run Skep as services, see
+[docs/installation/freebsd-service.md](docs/installation/freebsd-service.md).
+The native service test is in
+[tests/integration/rcd](tests/integration/rcd/README.md).
+
 ## Configuration
 
 Configuration is layered, lowest precedence first: built-in defaults, a JSON
 file, environment variables, command-line flags.
 
+`skep-agent` (`/usr/local/etc/skep/agent.json`):
+
 | Setting | JSON key | Environment | Flag | Default (production / dev) |
 |---|---|---|---|---|
 | Config file | | `SKEP_CONFIG` | `-config` | `/usr/local/etc/skep/agent.json` if present |
 | Dev mode | `dev_mode` | `SKEP_DEV` | `-dev` | `false` |
-| Listen address | `api.listen_address` | `SKEP_LISTEN` | `-listen` | `127.0.0.1:8765` |
-| Allow non-loopback bind | `api.allow_insecure_remote` | | | `false` |
+| Socket path | `socket.path` | `SKEP_SOCKET` | `-socket` | `/var/run/skep/agent.sock` / `<data_dir>/run/agent.sock` |
+| Socket group | `socket.group` | | | `skep` (mode `0660`) / none (mode `0600`) |
+| Peers allowed to connect | `socket.allowed_users` | | | `["root", "skep"]` / your own UID |
+| Request time limit | `socket.request_timeout` | | | `30s` |
+| Connection limit | `socket.max_connections` | | | `64` |
+| Shutdown time limit | `shutdown_timeout` | | | `10s` |
 | State directory | `data_dir` | `SKEP_DATA_DIR` | `-data-dir` | `/var/db/skep` / `./.skep-dev` |
 | Agent database file | `database.path` | | | `<data_dir>/agent/agent.db` |
 | Log level | `log.level` | `SKEP_LOG_LEVEL` | `-log-level` | `info` / `debug` |
@@ -127,9 +172,97 @@ file, environment variables, command-line flags.
 | Task workers | `tasks.workers` | | | `4` |
 | Task queue size | `tasks.queue_size` | | | `64` |
 
-A complete example with every key at its production default is in
-[packaging/etc/agent.json.sample](packaging/etc/agent.json.sample). Unknown
-keys in the file are rejected.
+`skep-api` (`/usr/local/etc/skep/api.json`):
+
+| Setting | JSON key | Environment | Flag | Default (production / dev) |
+|---|---|---|---|---|
+| Config file | | `SKEP_API_CONFIG` | `-config` | `/usr/local/etc/skep/api.json` if present |
+| Dev mode | `dev_mode` | `SKEP_DEV` | `-dev` | `false` |
+| Listen address | `listen_address` | `SKEP_API_LISTEN` | `-listen` | `127.0.0.1:8443`; set the management address to open the API to a network |
+| Agent socket | `agent_socket` | `SKEP_SOCKET` | `-agent-socket` | `/var/run/skep/agent.sock` / `<data_dir>/run/agent.sock` |
+| State directory | `data_dir` | `SKEP_DATA_DIR` | `-data-dir` | `/var/db/skep` / `./.skep-dev` |
+| Timeouts | `read_timeout`, `write_timeout`, `shutdown_timeout` | | | `15s`, `1m`, `10s` |
+| API database file | `database.path` | | | `<data_dir>/api/api.db` |
+| Operator certificate | `tls.cert_file`, `tls.key_file` | | | empty: generate a self-signed certificate in `<data_dir>/api/tls/` |
+| Argon2id memory | `auth.argon2.memory_kib` | | | `65536` (64 MiB); 19456 to 1048576 |
+| Argon2id passes | `auth.argon2.passes` | | | `3`; 2 to 16 |
+| Session idle timeout | `auth.session.idle_timeout` | | | `30m`; at most `24h` |
+| Session absolute timeout | `auth.session.absolute_timeout` | | | `12h`; at most `720h` |
+| Login attempts per address | `auth.login.per_address_per_minute` | | | `10` |
+| Failures before a delay | `auth.login.failures_before_delay` | | | `5` (per username and address; the delay doubles from 1 s) |
+| Longest login delay | `auth.login.max_delay` | | | `1m` |
+| Failures per username | `auth.login.per_username_failures` | | | `50` in 15 minutes, across all addresses |
+| Trusted reverse proxies | `auth.trusted_proxies` | | | none: `X-Forwarded-For` is ignored |
+| Log level | `log.level` | `SKEP_LOG_LEVEL` | `-log-level` | `info` / `debug` |
+| Log format | `log.format` | `SKEP_LOG_FORMAT` | `-log-format` | `json` / `text` |
+
+Complete examples with every key at its production default are in
+[packaging/etc](packaging/etc). Unknown keys in a file are rejected.
+
+### TLS
+
+`skep-api` speaks TLS 1.3 only and has no plaintext listener.
+
+- **Without configuration** it generates an ECDSA P-256 key and a
+  self-signed certificate (397 days; names: the hostname, `localhost`, and
+  the host's addresses at that moment) at first start. It renews the
+  certificate 30 days before expiry **with the same key**, without a
+  restart, so a client that pinned the key keeps working.
+- `skep-api tls fingerprint` prints the SHA-256 of the public key, the
+  value to pin or compare. `skep-api tls regenerate` is the only way to get
+  a new key; it also picks up a changed hostname or address. Both are run
+  on the host, as root or as the service account.
+- **With `tls.cert_file` and `tls.key_file`** it serves that pair, reloads
+  it when the files change or on `SIGHUP`, refuses a pair that does not
+  match (the old one stays in use), and never writes to the files. It warns
+  from 30 days before expiry. `Strict-Transport-Security` is sent only in
+  this mode.
+
+### Administrators
+
+There are no default credentials. The first administrator is created on
+the host, with a command that has no network path:
+
+```sh
+skep-api admin create --username andy          # asks for the password twice, without echo
+skep-api admin reset-password --username andy  # recovery for a lost password; ends that user's sessions
+skep-api admin disable --username carol        # disable a user; ends that user's sessions
+skep-api admin delete --username carol --yes   # delete a user; ends that user's sessions
+skep-api admin hash-benchmark                  # how long one password hash takes on this host
+```
+
+Run them as root (they change to the service account before opening
+anything) or as `skep`; in development add `-dev`. The password is read
+from the terminal. For unattended installs `--password-stdin` reads it
+from standard input; it is never accepted as an argument or from the
+environment. `admin create` works at any time, not only for the first
+administrator. `disable` and `delete` refuse the only enabled
+administrator, as the API does. Every one of these commands is written to
+the access audit log with the actor `local:<uid>`.
+
+Passwords are 12 to 256 characters, with no composition rules, and are
+stored as Argon2id hashes (64 MiB, 3 passes, 1 lane by default).
+
+### skepctl
+
+`skepctl` is the command-line client. It talks only to the public API, from
+the host or from any machine that can reach it:
+
+```sh
+skepctl login --server 10.79.20.170 --username andy   # shows the key and asks before trusting it
+skepctl system
+skepctl hardware
+skepctl tasks list --status running
+skepctl tasks show TASK_ID
+skepctl audit list --limit 20
+skepctl logout
+```
+
+On first contact it shows the server's public key pin; compare it with
+`skep-api tls fingerprint` on the host before answering. A changed key is
+refused until it is named with `--trust-key`. There is no option to skip
+the check. The token and the pins are kept in `~/.config/skepctl`, `0600`.
+See [docs/administration/skepctl.md](docs/administration/skepctl.md).
 
 ## API
 
@@ -143,18 +276,35 @@ The API lives under `/api/v1` and is documented in
 ## Repository layout
 
 ```
-cmd/skep-agent/        the host agent binary
-internal/agent/        service layer (business logic, no HTTP)
-internal/api/          HTTP handlers and middleware (no business logic)
+cmd/skep-agent/        the host agent binary (root, Unix socket only)
+cmd/skep-api/          the API server binary (unprivileged, the only network listener)
+cmd/skepctl/           the command-line client (public API only)
+internal/agent/        the agent's service layer (business logic, no HTTP)
+internal/api/          public API handlers (no business logic)
+internal/internalapi/  the agent's internal API: socket listener, peer check, handlers
+internal/agentclient/  skep-api's client for the agent socket
+internal/agentproto/   what both sides share about the internal API (actor headers)
+internal/httpkit/      error envelope, request IDs, access log, recovery
+internal/auth/         password hashing (Argon2id), users and roles, sessions, login limits
+internal/apidb/        storage of api.db: users, roles, sessions, access audit
+internal/termpass/     reading a password from the terminal without echo
+internal/apitls/       skep-api's certificate: generation, renewal, reload
+internal/privdrop/     giving up root in skep-api's local commands
 internal/hardware/     read-only host discovery (FreeBSD native, Linux dev)
-internal/database/     SQLite access, migration runner, node identity
+internal/database/     SQLite access, migration runner, node identity, the agent's stores
 internal/config/       typed configuration
 internal/logging/      log/slog setup
 internal/tasks/        task engine (states, cancellation, idempotency, restart rules)
 internal/audit/        operation audit entries
-internal/peercred/     Unix socket peer credentials (for the agent socket; not used yet)
+internal/peercred/     Unix socket peer credentials, read from the kernel
+internal/sysaccount/   user and group name resolution
+internal/ctlstate/     skepctl's pins and session tokens on disk
+packaging/             rc.d scripts and sample configuration
+scripts/               development helpers
 migrations/sqlite/     versioned SQL migrations, one set per database (agent, api)
-tests/integration/     manual probes that run on a real FreeBSD host
+tests/integration/     native tests that run on a real FreeBSD host
+tests/e2e/             agent and API together in one process
+pkg/client/            Go client for the public API, with public key pinning
 pkg/models/            public API data types
 pkg/version/           build metadata
 api/openapi.yaml       API description
@@ -165,13 +315,16 @@ docs/                  architecture, security, and decision records
 
 - [Architecture overview](docs/architecture/overview.md)
 - [Security overview](docs/security/overview.md)
+- [Running Skep as FreeBSD services](docs/installation/freebsd-service.md)
+- [skepctl](docs/administration/skepctl.md)
 - Decision records:
   [0001 Go toolchain and SQLite driver](docs/decisions/0001-go-toolchain-and-sqlite-driver.md),
   [0002 Discovery abstraction](docs/decisions/0002-discovery-abstraction.md),
   [0003 Read-only discovery](docs/decisions/0003-read-only-discovery.md),
   [0004 Privilege boundary](docs/decisions/0004-privilege-boundary.md),
   [0005 Agent task engine](docs/decisions/0005-agent-task-engine.md),
-  [0007 Retention](docs/decisions/0007-retention.md) (proposed)
+  [0006 API split, authentication, and TLS](docs/decisions/0006-api-split-authentication-tls.md),
+  [0007 Retention](docs/decisions/0007-retention.md)
 
 ## Trademarks
 

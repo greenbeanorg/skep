@@ -182,6 +182,28 @@ type System struct {
 	Capabilities   CapabilitySummary `json:"capabilities"`
 	StartedAt      time.Time         `json:"started_at"`
 	UptimeSeconds  int64             `json:"uptime_seconds"`
+	// API describes the API server that answered. The agent leaves it
+	// out; skep-api fills it in.
+	API *APIInfo `json:"api,omitempty"`
+}
+
+// APIInfo describes the skep-api process that served a request.
+type APIInfo struct {
+	TLS TLSInfo `json:"tls"`
+}
+
+// TLSInfo describes the certificate skep-api serves. Nothing in it is
+// secret: a client sees the same in the handshake.
+type TLSInfo struct {
+	// Source is "self-signed" (generated and renewed by skep-api) or
+	// "operator" (supplied in the configuration; Skep never renews it).
+	Source string `json:"source"`
+	// NotAfter is when the certificate expires.
+	NotAfter time.Time `json:"not_after"`
+	// PublicKeySHA256 is the SHA-256 of the certificate's
+	// SubjectPublicKeyInfo, as "sha256:<hex>". Clients pin this value; it
+	// does not change when the certificate is renewed.
+	PublicKeySHA256 string `json:"public_key_sha256"`
 }
 
 // Health statuses.
@@ -204,6 +226,140 @@ type Health struct {
 	Version       string                 `json:"version"`
 	UptimeSeconds int64                  `json:"uptime_seconds"`
 	Checks        map[string]HealthCheck `json:"checks"`
+}
+
+// HealthStatus is what the health endpoint returns to a caller without a
+// session: the status and nothing else.
+type HealthStatus struct {
+	Status string `json:"status"`
+}
+
+// User is an account, as the API shows it. It never includes the password
+// hash.
+type User struct {
+	ID          string `json:"id"`
+	Username    string `json:"username"`
+	DisplayName string `json:"display_name"`
+	// Role is the name of the user's role.
+	Role              string     `json:"role"`
+	Disabled          bool       `json:"disabled"`
+	LastLoginAt       *time.Time `json:"last_login_at,omitempty"`
+	PasswordChangedAt *time.Time `json:"password_changed_at,omitempty"`
+	CreatedAt         time.Time  `json:"created_at"`
+	UpdatedAt         time.Time  `json:"updated_at"`
+}
+
+// Session kinds.
+const (
+	SessionCookie = "cookie"
+	SessionBearer = "bearer"
+)
+
+// LoginRequest is the body of POST /auth/login.
+type LoginRequest struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
+	// Session is "cookie" (the default) or "bearer". A cookie login sets
+	// the session cookie and returns no token. A bearer login returns
+	// the token in the body and sets no cookie.
+	Session string `json:"session,omitempty"`
+}
+
+// SessionInfo describes a session. It never includes the token.
+type SessionInfo struct {
+	Kind      string    `json:"kind"`
+	CreatedAt time.Time `json:"created_at"`
+	// ExpiresAt is the absolute end of the session.
+	ExpiresAt time.Time `json:"expires_at"`
+	// IdleTimeoutSeconds is how long the session survives without use.
+	IdleTimeoutSeconds int64 `json:"idle_timeout_seconds"`
+}
+
+// SessionResponse is the body of a successful login and of
+// GET /auth/session.
+type SessionResponse struct {
+	User    User        `json:"user"`
+	Session SessionInfo `json:"session"`
+	// Permissions are the permission strings of the user's role. "*"
+	// means every permission.
+	Permissions []string `json:"permissions"`
+	// Token is the session token. It is present only in the response to
+	// a login that asked for a bearer session.
+	Token string `json:"token,omitempty"`
+}
+
+// PasswordChange is the body of PUT /auth/password.
+type PasswordChange struct {
+	CurrentPassword string `json:"current_password"`
+	NewPassword     string `json:"new_password"`
+}
+
+// UserList is the list of all users, ordered by username.
+type UserList struct {
+	Items []User `json:"items"`
+}
+
+// NewUser is the body of POST /users.
+type NewUser struct {
+	Username    string `json:"username"`
+	DisplayName string `json:"display_name,omitempty"`
+	Password    string `json:"password"`
+	// Role is the name of a role. It defaults to "viewer".
+	Role string `json:"role,omitempty"`
+}
+
+// UserUpdate is the body of PUT /users/{id}. Fields that are left out are
+// not changed.
+type UserUpdate struct {
+	DisplayName *string `json:"display_name,omitempty"`
+	Role        *string `json:"role,omitempty"`
+	Disabled    *bool   `json:"disabled,omitempty"`
+	// Password sets a new password for the user. It ends all of that
+	// user's sessions.
+	Password *string `json:"password,omitempty"`
+}
+
+// Role is a named set of permissions.
+type Role struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	// Permissions are "resource:action" strings. "*" means every
+	// permission.
+	Permissions []string `json:"permissions"`
+	// BuiltIn roles cannot be changed or deleted.
+	BuiltIn bool `json:"built_in"`
+}
+
+// RoleList is the list of all roles.
+type RoleList struct {
+	Items []Role `json:"items"`
+}
+
+// AuditEntry is one entry of the access audit log: an authentication
+// event, an authorization decision, or an administrative change.
+type AuditEntry struct {
+	ID         int64     `json:"id"`
+	OccurredAt time.Time `json:"occurred_at"`
+	// ActorID is empty when no known user was involved.
+	ActorID      string `json:"actor_id,omitempty"`
+	ActorName    string `json:"actor_name"`
+	Action       string `json:"action"`
+	ResourceType string `json:"resource_type,omitempty"`
+	ResourceID   string `json:"resource_id,omitempty"`
+	// Outcome is "success", "failure", or "denied".
+	Outcome   string         `json:"outcome"`
+	SourceIP  string         `json:"source_ip,omitempty"`
+	RequestID string         `json:"request_id,omitempty"`
+	Details   map[string]any `json:"details,omitempty"`
+}
+
+// AuditList is one page of the access audit log, newest first.
+type AuditList struct {
+	Items []AuditEntry `json:"items"`
+	// NextCursor is passed back as the cursor parameter to get the next
+	// (older) page. It is empty on the last page.
+	NextCursor string `json:"next_cursor,omitempty"`
 }
 
 // ErrorBody is the error payload used by every API error response.
@@ -250,6 +406,8 @@ const (
 	CodeNotCancellable      = "not_cancellable"
 	CodeQueueFull           = "queue_full"
 	CodeShuttingDown        = "shutting_down"
+	// CodeAgentUnavailable means skep-api could not reach the host agent.
+	CodeAgentUnavailable = "agent_unavailable"
 )
 
 // Invalid returns an invalid_request Error with the given message.

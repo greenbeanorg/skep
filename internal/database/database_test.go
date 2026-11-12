@@ -162,7 +162,7 @@ func TestMigrateCreatesAgentSchema(t *testing.T) {
 
 func TestMigrateCreatesAPISchema(t *testing.T) {
 	got := tableNames(t, migratedAPIDB(t))
-	want := []string{"audit_log", "roles", "schema_migrations", "users"}
+	want := []string{"audit_log", "roles", "schema_migrations", "sessions", "users"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Errorf("tables = %v\nwant     %v", got, want)
 	}
@@ -346,7 +346,8 @@ func TestAgentSchemaConstraints(t *testing.T) {
 func TestAPISchemaConstraints(t *testing.T) {
 	db := migratedAPIDB(t)
 
-	mustExec(t, db, `INSERT INTO roles (id, name) VALUES ('r1', 'admin')`)
+	mustExec(t, db, `INSERT INTO roles (id, name) VALUES ('r1', 'custom')`)
+	wantConstraintError(t, db, "a second role with a built-in name", `INSERT INTO roles (id, name) VALUES ('r2', 'admin')`)
 	wantConstraintError(t, db, "plaintext password",
 		`INSERT INTO users (id, username, password_hash, role_id) VALUES ('u0', 'root', 'hunter2', 'r1')`)
 	wantConstraintError(t, db, "user with unknown role",
@@ -354,6 +355,24 @@ func TestAPISchemaConstraints(t *testing.T) {
 	mustExec(t, db,
 		`INSERT INTO users (id, username, password_hash, role_id) VALUES ('u1', 'andy', '$argon2id$v=19$m=65536,t=3,p=4$c2FsdA$aGFzaA', 'r1')`)
 	wantConstraintError(t, db, "deleting a role that is in use", `DELETE FROM roles WHERE id = 'r1'`)
+	wantConstraintError(t, db, "changing a built-in role", `UPDATE roles SET permissions = '["*"]' WHERE id = 'viewer'`)
+	wantConstraintError(t, db, "deleting a built-in role", `DELETE FROM roles WHERE id = 'operator'`)
+
+	// Sessions: only a SHA-256 in hex, a known kind, and an existing user.
+	hash := strings.Repeat("ab", 32)
+	const times = `'2026-11-12T12:00:00.000Z', '2026-11-12T12:00:00.000Z', '2026-11-13T00:00:00.000Z'`
+	insert := `INSERT INTO sessions (token_hash, user_id, kind, created_at, last_seen_at, expires_at) VALUES `
+	wantConstraintError(t, db, "session with a raw token", insert+`('a-raw-token', 'u1', 'cookie', `+times+`)`)
+	wantConstraintError(t, db, "session of an unknown kind", insert+`('`+hash+`', 'u1', 'jwt', `+times+`)`)
+	wantConstraintError(t, db, "session without a user", insert+`('`+hash+`', 'nobody', 'cookie', `+times+`)`)
+	mustExec(t, db, insert+`('`+hash+`', 'u1', 'bearer', `+times+`)`)
+	wantConstraintError(t, db, "the same token twice", insert+`('`+hash+`', 'u1', 'cookie', `+times+`)`)
+	// Deleting a user deletes the sessions with it.
+	mustExec(t, db, `DELETE FROM users WHERE id = 'u1'`)
+	var sessions int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM sessions`).Scan(&sessions); err != nil || sessions != 0 {
+		t.Errorf("sessions after deleting their user: %d, %v", sessions, err)
+	}
 
 	// A failed login for an unknown name has no actor ID.
 	mustExec(t, db, `INSERT INTO audit_log (actor_name, action, outcome) VALUES ('mallory', 'auth.login', 'denied')`)
