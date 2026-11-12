@@ -1,0 +1,121 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+/*
+ * Skep design tokens. A skep is a straw beehive: the palette is warm straw
+ * and honey on a paper background in the light theme, and honey on a deep
+ * blue-black in the dark theme. Status colours are separate from the brand
+ * colour so that "amber" never means both "Skep" and "warning".
+ */
+:root {
+  --radius: 0.5rem;
+
+  --background: oklch(0.985 0.006 85);
+  --foreground: oklch(0.22 0.02 260);
+  --surface: oklch(1 0 0);
+  --surface-raised: oklch(0.97 0.008 85);
+  --muted: oklch(0.955 0.008 85);
+  --muted-foreground: oklch(0.5 0.02 260);
+  --border: oklch(0.9 0.01 85);
+  --ring: oklch(0.68 0.15 70);
+
+  --primary: oklch(0.72 0.15 72);
+  --primary-foreground: oklch(0.2 0.03 70);
+  --accent: oklch(0.94 0.04 85);
+  --accent-foreground: oklch(0.3 0.05 70);
+
+  --sidebar: oklch(0.965 0.01 85);
+  --sidebar-foreground: oklch(0.35 0.02 260);
+
+  --ok: oklch(0.58 0.13 155);
+  --ok-soft: oklch(0.95 0.04 155);
+  --warn: oklch(0.6 0.14 50);
+  --warn-soft: oklch(0.95 0.04 60);
+  --bad: oklch(0.55 0.19 25);
+  --bad-soft: oklch(0.95 0.03 25);
+  --info: oklch(0.55 0.13 250);
+  --info-soft: oklch(0.95 0.025 250);
+}
+
+.dark {
+  --background: oklch(0.17 0.015 260);
+  --foreground: oklch(0.93 0.01 85);
+  --surface: oklch(0.205 0.017 260);
+  --surface-raised: oklch(0.24 0.018 260);
+  --muted: oklch(0.25 0.017 260);
+  --muted-foreground: oklch(0.68 0.015 260);
+  --border: oklch(0.3 0.017 260);
+  --ring: oklch(0.8 0.14 78);
+
+  --primary: oklch(0.8 0.14 78);
+  --primary-foreground: oklch(0.2 0.03 70);
+  --accent: oklch(0.3 0.04 75);
+  --accent-foreground: oklch(0.9 0.08 80);
+
+  --sidebar: oklch(0.145 0.014 260);
+  --sidebar-foreground: oklch(0.78 0.012 260);
+
+  --ok: oklch(0.75 0.14 155);
+  --ok-soft: oklch(0.28 0.05 155);
+  --warn: oklch(0.78 0.13 60);
+  --warn-soft: oklch(0.29 0.05 60);
+  --bad: oklch(0.72 0.16 25);
+  --bad-soft: oklch(0.28 0.06 25);
+  --info: oklch(0.75 0.11 250);
+  --info-soft: oklch(0.28 0.05 250);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-surface: var(--surface);
+  --color-surface-raised: var(--surface-raised);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-border: var(--border);
+  --color-ring: var(--ring);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-ok: var(--ok);
+  --color-ok-soft: var(--ok-soft);
+  --color-warn: var(--warn);
+  --color-warn-soft: var(--warn-soft);
+  --color-bad: var(--bad);
+  --color-bad-soft: var(--bad-soft);
+  --color-info: var(--info);
+  --color-info-soft: var(--info-soft);
+
+  --radius-sm: calc(var(--radius) - 2px);
+  --radius-md: var(--radius);
+  --radius-lg: calc(var(--radius) + 4px);
+
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+}
+
+@layer base {
+  * {
+    border-color: var(--border);
+  }
+  html {
+    color-scheme: light;
+  }
+  html.dark {
+    color-scheme: dark;
+  }
+  body {
+    background-color: var(--background);
+    color: var(--foreground);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+  }
+  :focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+}

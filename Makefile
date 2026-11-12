@@ -18,7 +18,7 @@ LDFLAGS := -s -w \
 # cross-compile needs no C toolchain.
 export CGO_ENABLED := 0
 
-.PHONY: all build build-freebsd test vet lint fmt run-dev clean help
+.PHONY: all build build-freebsd test vet lint fmt run-dev clean help web-install web-check web-build
 
 all: vet test build build-freebsd
 
@@ -63,6 +63,16 @@ fmt: ## Format the Go sources
 
 run-dev: ## Run the agent in development mode on 127.0.0.1:8765
 	$(GO) run -ldflags '$(LDFLAGS)' ./cmd/skep-agent -dev
+
+# The web interface needs Node.js and npm. It is not part of "all".
+web-install: ## Install the web interface's dependencies
+	cd web && npm install
+
+web-check: ## Type-check and test the web interface
+	cd web && npm run typecheck && npm test
+
+web-build: ## Build the web interface into web/dist/
+	cd web && npm run build
 
 clean: ## Remove build output and the development data directory
 	rm -rf $(BIN_DIR) .skep-dev

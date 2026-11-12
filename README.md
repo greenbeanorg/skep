@@ -107,6 +107,11 @@ nothing more. FreeBSD behaviour counts as validated only after it has run on
 FreeBSD. The current validation state is tracked in
 [docs/architecture/overview.md](docs/architecture/overview.md#freebsd-validation-status).
 
+## Web interface
+
+A first, read-only web interface is in [web/](web/README.md). It is a draft
+that has not been built yet.
+
 ## Configuration
 
 Configuration is layered, lowest precedence first: built-in defaults, a JSON
