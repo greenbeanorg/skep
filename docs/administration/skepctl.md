@@ -11,6 +11,10 @@ a bearer session whose token is kept in a `0600` file (decision 3), and
 trust on first use that pins the SHA-256 of the server's public key
 (decision 6). There is no flag that skips the key check.
 
+Validated on FreeBSD 15.1-RELEASE as an ordinary user, with the API on
+loopback; see [tests/integration/skepctl](../../tests/integration/skepctl/README.md)
+for what was run and what is still pending.
+
 ## Commands
 
 ```sh
