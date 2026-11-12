@@ -170,7 +170,8 @@ docs/                  architecture, security, and decision records
   [0002 Discovery abstraction](docs/decisions/0002-discovery-abstraction.md),
   [0003 Read-only discovery](docs/decisions/0003-read-only-discovery.md),
   [0004 Privilege boundary](docs/decisions/0004-privilege-boundary.md),
-  [0005 Agent task engine](docs/decisions/0005-agent-task-engine.md)
+  [0005 Agent task engine](docs/decisions/0005-agent-task-engine.md),
+  [0007 Retention](docs/decisions/0007-retention.md) (proposed)
 
 ## Trademarks
 
