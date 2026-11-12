@@ -49,6 +49,9 @@ func TestLoadProductionDefaults(t *testing.T) {
 	if cfg.Log.Level != "info" || cfg.Log.Format != "json" {
 		t.Errorf("log = %+v", cfg.Log)
 	}
+	if cfg.Tasks.Workers != 4 || cfg.Tasks.QueueSize != 64 {
+		t.Errorf("tasks = %+v", cfg.Tasks)
+	}
 	if cfg.Discovery.CommandTimeout.Std() != 5*time.Second {
 		t.Errorf("command timeout = %v", cfg.Discovery.CommandTimeout.Std())
 	}
@@ -135,6 +138,9 @@ func TestLoadErrors(t *testing.T) {
 		{"bad port", LoadOptions{Overrides: Overrides{ListenAddress: "127.0.0.1:99999"}}, "invalid port"},
 		{"all interfaces", LoadOptions{Overrides: Overrides{ListenAddress: ":8765"}}, "not a loopback"},
 		{"remote address", LoadOptions{Overrides: Overrides{ListenAddress: "10.79.20.80:8765"}}, "not a loopback"},
+		{"too many workers", LoadOptions{Path: writeFile(t, `{"tasks":{"workers":65}}`)}, "tasks.workers"},
+		{"negative workers", LoadOptions{Path: writeFile(t, `{"tasks":{"workers":-1}}`)}, "tasks.workers"},
+		{"huge queue", LoadOptions{Path: writeFile(t, `{"tasks":{"queue_size":5000}}`)}, "tasks.queue_size"},
 		{"bad dev env", LoadOptions{LookupEnv: envMap(map[string]string{EnvDev: "maybe"})}, "not a boolean"},
 	}
 	for _, tt := range tests {

@@ -85,6 +85,38 @@ The service layer caches a discovery result for `discovery.cache_ttl`
 (10 seconds by default), and serialises discovery so concurrent requests
 share one pass.
 
+## Tasks
+
+Every operation the agent performs on the host runs as a task
+([ADR 0005](../decisions/0005-agent-task-engine.md)). `internal/tasks` is
+the engine; it depends on a `Store` interface that `internal/database`
+implements.
+
+- A task is `pending`, `running`, or one of four terminal states:
+  `succeeded`, `failed`, `cancelled`, `interrupted`. A terminal task never
+  changes.
+- Each state change is one transaction that also writes a task event and
+  the audit entry. The database enforces the legal transitions with
+  triggers, independently of the engine.
+- **Nothing is resumed.** At start, before anything is served, every
+  unfinished task is marked `interrupted`. A graceful shutdown does the
+  same for tasks it stops.
+- A resource has at most one unfinished task. A second submission is
+  refused with `resource_busy`; it is not queued.
+- Idempotency keys make a retried submission return the original task. The
+  same key with a different request, or from a different actor, is a
+  conflict.
+- Task types are registered in code, each with a time limit and a
+  declaration of whether a running task may be cancelled.
+- Every task carries a mandatory actor and writes a `requested` and a
+  `finished` entry to the agent's audit log.
+
+The only task type so far is `discovery.refresh`, which the agent submits
+as `system` once at start. It runs discovery and stores the result in the
+local node's `observed_*` columns. Tasks are read-only over the API:
+submission and cancellation over the network arrive with Milestone 4,
+because an unauthenticated API has no actor to record.
+
 ## Persistence
 
 SQLite holds local state, using the pure-Go `modernc.org/sqlite` driver
@@ -126,8 +158,9 @@ asked for; `observed_*` columns hold what the agent last saw, with
 `observed_at` recording when. History is kept separately in `task_events`
 and the append-only `audit_log` tables.
 
-In 0.1.0 only `schema_migrations` and the local row in `nodes` are written.
-The other tables define the schema that later milestones build on. Expect
+So far the agent writes `schema_migrations`, the local row in `nodes`,
+`tasks`, `task_events`, and `audit_log`. The other tables define the schema
+that later milestones build on. Expect
 the schema to gain migrations as those subsystems are designed in detail.
 
 ## Configuration and logging
@@ -162,6 +195,9 @@ imported, both as an unprivileged user and as root.
 | `zpool list` with one healthy pool, including sizes and percentages | Validated (`skeptest`, unprivileged and root) |
 | Discovery leaves the pool untouched | Validated (`zpool list` before and after) |
 | Database directory `0700`, file `0600`, shared data directory `0755` | Validated (unprivileged and root) |
+| Task engine, store, and audit test suites run natively (restart sweep, shutdown, cancellation, idempotency, concurrent submissions) | Validated (2026-11-12) |
+| Startup `discovery.refresh` task, observed node state stored, audit entries written; history survives a restart and a `kill -9` | Validated (2026-11-12) |
+| Interruption of a real in-flight task on a running agent | **Pending FreeBSD validation** (no long-running task type yet) |
 | Unix socket peer credentials (`LOCAL_PEERCRED`), UID allow-list, socket file permissions | Validated (see `tests/integration/peercred`) |
 | A degraded or faulted pool; a pool reporting `-` for fragmentation | **Pending FreeBSD validation** (parser tested against a synthetic fixture) |
 | ZFS `unavailable` when `zfs.ko` is not loaded | **Pending FreeBSD validation** (needs the pool exported and zfs unloaded) |
@@ -176,6 +212,9 @@ imported, both as an unprivileged user and as root.
 
 - No authentication, authorization, or TLS. Loopback only.
 - The local node is the only node.
+- Tasks, task events, and audit entries are never removed. Retention is not
+  designed yet, which is why the inventory is refreshed only at start and
+  not periodically.
 - `os.release` on FreeBSD is the kernel release (`kern.osrelease`). The
   userland patch level can differ and is not reported.
 - Memory "available" on FreeBSD is an estimate: free, inactive, and laundry

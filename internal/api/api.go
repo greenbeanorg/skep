@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"net/http"
 	"regexp"
+	"strconv"
 
 	"github.com/greenbeanorg/skep/pkg/models"
 )
@@ -24,9 +25,11 @@ type Backend interface {
 	Health(ctx context.Context) models.Health
 	System(ctx context.Context) (models.System, error)
 	Hardware(ctx context.Context, nodeID string) (models.Hardware, error)
+	Tasks(ctx context.Context, opts models.TaskListOptions) (models.TaskList, error)
+	Task(ctx context.Context, id string) (models.TaskDetail, error)
 }
 
-// nodeIDRE is the accepted shape of a node ID in a URL.
+// nodeIDRE is the accepted shape of a resource ID in a URL.
 var nodeIDRE = regexp.MustCompile(`^[A-Za-z0-9._-]{1,64}$`)
 
 type handler struct {
@@ -46,6 +49,8 @@ func NewHandler(backend Backend, log *slog.Logger) http.Handler {
 	mux.Handle(Prefix+"/health", readOnly(h.health))
 	mux.Handle(Prefix+"/system", readOnly(h.system))
 	mux.Handle(Prefix+"/nodes/{id}/hardware", readOnly(h.nodeHardware))
+	mux.Handle(Prefix+"/tasks", readOnly(h.tasks))
+	mux.Handle(Prefix+"/tasks/{id}", readOnly(h.task))
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, http.StatusNotFound, CodeNotFound, "no such endpoint: "+r.URL.Path)
 	})
@@ -105,9 +110,66 @@ func (h *handler) nodeHardware(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, r, http.StatusOK, hw)
 }
 
+// tasks lists tasks, newest first. Tasks are read-only over the API in this
+// release: nothing can be submitted or cancelled over the network until the
+// API has authentication, because every task needs an actor.
+func (h *handler) tasks(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	opts := models.TaskListOptions{
+		Status: models.TaskStatus(q.Get("status")),
+		Cursor: q.Get("cursor"),
+	}
+	if raw := q.Get("limit"); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n < 1 {
+			writeError(w, r, http.StatusBadRequest, CodeInvalidRequest, "limit must be a positive integer")
+			return
+		}
+		opts.Limit = n
+	}
+	list, err := h.backend.Tasks(r.Context(), opts)
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	writeJSON(w, r, http.StatusOK, list)
+}
+
+func (h *handler) task(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if !nodeIDRE.MatchString(id) {
+		writeError(w, r, http.StatusBadRequest, CodeInvalidRequest, "invalid task ID")
+		return
+	}
+	detail, err := h.backend.Task(r.Context(), id)
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	writeJSON(w, r, http.StatusOK, detail)
+}
+
+// statusForCode maps the stable error codes of models.Error to HTTP
+// statuses. A code that is not listed is treated as an internal error.
+var statusForCode = map[string]int{
+	models.CodeInvalidRequest:      http.StatusBadRequest,
+	models.CodeResourceBusy:        http.StatusConflict,
+	models.CodeIdempotencyConflict: http.StatusConflict,
+	models.CodeNotCancellable:      http.StatusConflict,
+	models.CodeQueueFull:           http.StatusServiceUnavailable,
+	models.CodeShuttingDown:        http.StatusServiceUnavailable,
+}
+
 // fail maps a service error to an error response. Internal error text is
 // logged and never sent to the client.
 func (h *handler) fail(w http.ResponseWriter, r *http.Request, err error) {
+	var me *models.Error
+	if errors.As(err, &me) {
+		if status, ok := statusForCode[me.Code]; ok {
+			writeErrorDetails(w, r, status, me.Code, me.Message, me.Details)
+			return
+		}
+	}
 	switch {
 	case errors.Is(err, models.ErrNotFound):
 		writeError(w, r, http.StatusNotFound, CodeNotFound, "the requested resource does not exist")

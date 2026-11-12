@@ -14,14 +14,17 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"runtime"
 	"syscall"
 
 	"github.com/greenbeanorg/skep/internal/agent"
 	"github.com/greenbeanorg/skep/internal/api"
+	"github.com/greenbeanorg/skep/internal/audit"
 	"github.com/greenbeanorg/skep/internal/config"
 	"github.com/greenbeanorg/skep/internal/database"
 	"github.com/greenbeanorg/skep/internal/hardware"
 	"github.com/greenbeanorg/skep/internal/logging"
+	"github.com/greenbeanorg/skep/internal/tasks"
 	"github.com/greenbeanorg/skep/migrations"
 	"github.com/greenbeanorg/skep/pkg/models"
 	"github.com/greenbeanorg/skep/pkg/version"
@@ -114,35 +117,70 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
+	if runtime.GOOS != "freebsd" {
+		log.Warn("this is not a FreeBSD host: running as a development build only, never as a production host")
+	}
 
+	engine, err := tasks.New(tasks.Options{
+		Store:     database.NewTaskStore(db),
+		Audit:     database.NewAuditLog(db),
+		NodeID:    nodeID,
+		Workers:   cfg.Tasks.Workers,
+		QueueSize: cfg.Tasks.QueueSize,
+		Logger:    log,
+	})
+	if err != nil {
+		return err
+	}
 	svc, err := agent.NewService(agent.Options{
 		NodeID:     nodeID,
 		DevMode:    cfg.DevMode,
 		Discoverer: disc,
 		Database:   db,
+		Nodes:      database.NewNodeStore(db),
+		Tasks:      engine,
 		CacheTTL:   cfg.Discovery.CacheTTL.Std(),
 		Logger:     log,
 	})
 	if err != nil {
 		return err
 	}
-
-	// Run discovery once at startup so problems show up in the log
-	// immediately. A failure here is not fatal: the agent must stay up.
-	if sys, err := svc.System(ctx); err != nil {
-		log.Warn("initial host discovery failed", "error", err)
-	} else {
-		log.Info("host discovered",
-			"node_id", sys.NodeID, "hostname", sys.Hostname, "platform", sys.Platform,
-			"os", sys.OS.Name, "release", sys.OS.Release, "arch", sys.Architecture,
-			"bhyve", sys.Capabilities.Bhyve.Status, "qemu", sys.Capabilities.QEMU.Status,
-			"zfs", sys.Capabilities.ZFS.Status)
-		if sys.Platform != models.PlatformFreeBSD {
-			log.Warn("this is not a FreeBSD host: running as a development build only, never as a production host")
-		}
+	if err := engine.Register(svc.RefreshDefinition()); err != nil {
+		return err
 	}
 
-	return serve(ctx, cfg, api.NewHandler(svc, log), log)
+	// Start marks tasks left unfinished by a previous run as interrupted.
+	// It must finish before anything can be submitted or served.
+	if err := engine.Start(ctx); err != nil {
+		return err
+	}
+
+	// Refresh the node inventory once at startup, as a task, so it leaves
+	// the same history and audit trail as any other operation. A refusal
+	// here is not fatal: the agent must stay up.
+	if _, _, err := engine.Submit(ctx, tasks.Request{
+		Type:         agent.TaskDiscoveryRefresh,
+		ResourceType: agent.NodeResource,
+		ResourceID:   nodeID,
+		Actor:        models.TaskActor{ID: audit.System, Name: audit.System},
+		PeerUID:      uint32(os.Geteuid()),
+	}); err != nil {
+		log.Warn("could not submit the initial discovery task", "error", err)
+	}
+
+	serveErr := serve(ctx, cfg, api.NewHandler(svc, log), log)
+
+	// Stop the engine after the listener: running tasks are told to stop
+	// and are recorded as interrupted.
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.API.ShutdownTimeout.Std())
+	defer cancel()
+	if err := engine.Shutdown(shutdownCtx); err != nil {
+		log.Warn("task engine did not stop cleanly; unfinished tasks will be marked interrupted at the next start", "error", err)
+	}
+	if serveErr == nil {
+		log.Info("stopped")
+	}
+	return serveErr
 }
 
 // serve runs the HTTP server until ctx is cancelled, then shuts it down
@@ -183,6 +221,5 @@ func serve(ctx context.Context, cfg config.Config, handler http.Handler, log *sl
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		return fmt.Errorf("http server shutdown: %w", err)
 	}
-	log.Info("stopped")
 	return nil
 }

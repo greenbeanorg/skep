@@ -144,6 +144,9 @@ func TestMigrateCreatesAgentSchema(t *testing.T) {
 		t.Fatalf("applied = %+v", applied)
 	}
 	got := tableNames(t, db)
+	if len(applied) != 2 || applied[1].Name != "task_engine" {
+		t.Fatalf("applied = %+v", applied)
+	}
 	want := []string{
 		"audit_log", "containers", "network_interfaces", "nodes", "schema_migrations",
 		"storage_pools", "storage_volumes", "system_config", "task_events", "tasks",
@@ -296,18 +299,14 @@ func TestAgentSchemaConstraints(t *testing.T) {
 	wantConstraintError(t, db, "unknown hypervisor engine",
 		`INSERT INTO virtual_machines (id, node_id, name, engine, cpu_count, memory_bytes) VALUES ('v0', 'n1', 'vm0', 'kvm', 1, 1024)`)
 
-	// Tasks: every documented status is accepted, and the asserted actor is
-	// mandatory.
-	for _, status := range []string{"pending", "running", "succeeded", "failed", "cancelled", "interrupted"} {
-		mustExec(t, db, `INSERT INTO tasks (id, type, status, actor_id, actor_name) VALUES (?, 'x', ?, 'u1', 'andy')`, "task-"+status, status)
-	}
-	wantConstraintError(t, db, "invalid task status",
-		`INSERT INTO tasks (id, type, status, actor_id, actor_name) VALUES ('t0', 'x', 'done', 'u1', 'andy')`)
-	wantConstraintError(t, db, "invalid json",
-		`INSERT INTO tasks (id, type, payload, actor_id, actor_name) VALUES ('t0', 'x', '{not json', 'u1', 'andy')`)
-	wantConstraintError(t, db, "task without actor", `INSERT INTO tasks (id, type) VALUES ('t0', 'x')`)
+	// The asserted actor is mandatory on tasks. The task engine's own rules
+	// are covered in TestTaskSchemaRules.
+	wantConstraintError(t, db, "task without actor",
+		`INSERT INTO tasks (id, type, peer_uid, request_hash) VALUES ('t0', 'x', 0, 'h')`)
 	wantConstraintError(t, db, "task with empty actor",
-		`INSERT INTO tasks (id, type, actor_id, actor_name) VALUES ('t0', 'x', '', '')`)
+		`INSERT INTO tasks (id, type, actor_id, actor_name, peer_uid, request_hash) VALUES ('t0', 'x', '', '', 0, 'h')`)
+	wantConstraintError(t, db, "invalid json",
+		`INSERT INTO tasks (id, type, payload, actor_id, actor_name, peer_uid, request_hash) VALUES ('t0', 'x', '{not json', 'u1', 'andy', 0, 'h')`)
 
 	// Desired and observed VM state are independent columns.
 	mustExec(t, db,

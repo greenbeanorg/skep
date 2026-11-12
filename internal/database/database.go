@@ -29,8 +29,9 @@ import (
 // and the API, which run as different users and each keep a private
 // subdirectory. Existing directories and files are left as they are.
 //
-// Foreign keys are enforced, the journal runs in WAL mode, and writers wait
-// up to five seconds for a lock.
+// Foreign keys are enforced, the journal runs in WAL mode, transactions
+// take the write lock when they begin, and writers wait up to five seconds
+// for a lock.
 func Open(ctx context.Context, path string) (*sql.DB, error) {
 	if path == "" {
 		return nil, fmt.Errorf("database: path must not be empty")
@@ -61,6 +62,10 @@ func Open(ctx context.Context, path string) (*sql.DB, error) {
 	q.Add("_pragma", "journal_mode(WAL)")
 	q.Add("_pragma", "busy_timeout(5000)")
 	q.Add("_pragma", "synchronous(NORMAL)")
+	// Transactions take the write lock when they begin. A transaction that
+	// reads and then writes can therefore not be overtaken by another
+	// writer in between, and waits (busy_timeout) instead of failing.
+	q.Set("_txlock", "immediate")
 	dsn := "file:" + (&url.URL{Path: abs}).EscapedPath() + "?" + q.Encode()
 
 	db, err := sql.Open("sqlite", dsn)

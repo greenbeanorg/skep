@@ -6,9 +6,10 @@ with QEMU as an optional secondary engine), jails, OpenZFS storage, and
 networking on single hosts and, later, multi-node clusters, through a REST
 API, a web UI, and a CLI.
 
-**Status: 0.1.0 "Foundation".** This release contains the host agent,
-read-only host discovery, the first three API endpoints, and the local
-database schema. It cannot create or manage anything yet.
+**Status: 0.1.0, Milestone 2 "Persistence" in progress.** The code contains
+the host agent, read-only host discovery, a task engine with history and an
+operation audit log, a small read-only API, and the local database schema.
+It cannot create or manage anything yet.
 
 > **Security notice for 0.1.0:** the API has **no authentication and no TLS**.
 > The agent binds to `127.0.0.1` by default and refuses to start on any other
@@ -21,7 +22,8 @@ database schema. It cannot create or manage anything yet.
 |---|---|
 | `skep-agent` | Starts, discovers the host, serves the API, shuts down cleanly |
 | Host discovery | Read-only: CPU, memory, OS, bhyve, QEMU, ZFS (FreeBSD native, Linux dev mode) |
-| API | `GET /api/v1/health`, `GET /api/v1/system`, `GET /api/v1/nodes/{id}/hardware` |
+| API | `GET /api/v1/health`, `/system`, `/nodes/{id}/hardware`, `/tasks`, `/tasks/{id}`; all read-only |
+| Task engine | Persistent tasks with states, events, idempotency keys, cancellation, and an audit trail; nothing is resumed after a restart |
 | Database | SQLite with versioned migrations and a stable node ID; separate schemas for the agent and the future API |
 | Not yet | VM or jail management, storage or network changes, authentication, TLS, UI, CLI, clustering |
 
@@ -73,6 +75,9 @@ curl -s http://127.0.0.1:8765/api/v1/system
 # The hardware endpoint takes the node_id reported by /system.
 ID=$(curl -s http://127.0.0.1:8765/api/v1/system | sed -E 's/.*"node_id":"([^"]+)".*/\1/')
 curl -s http://127.0.0.1:8765/api/v1/nodes/$ID/hardware
+
+# The agent refreshes its inventory at start, as a task.
+curl -s 'http://127.0.0.1:8765/api/v1/tasks?limit=5'
 ```
 
 Stop the agent with Ctrl-C. `make clean` removes `bin/` and `.skep-dev/`.
@@ -119,6 +124,8 @@ file, environment variables, command-line flags.
 | Log format | `log.format` | `SKEP_LOG_FORMAT` | `-log-format` | `json` / `text` |
 | Command timeout | `discovery.command_timeout` | | | `5s` |
 | Discovery cache | `discovery.cache_ttl` | | | `10s` |
+| Task workers | `tasks.workers` | | | `4` |
+| Task queue size | `tasks.queue_size` | | | `64` |
 
 A complete example with every key at its production default is in
 [packaging/etc/agent.json.sample](packaging/etc/agent.json.sample). Unknown
@@ -143,6 +150,8 @@ internal/hardware/     read-only host discovery (FreeBSD native, Linux dev)
 internal/database/     SQLite access, migration runner, node identity
 internal/config/       typed configuration
 internal/logging/      log/slog setup
+internal/tasks/        task engine (states, cancellation, idempotency, restart rules)
+internal/audit/        operation audit entries
 internal/peercred/     Unix socket peer credentials (for the agent socket; not used yet)
 migrations/sqlite/     versioned SQL migrations, one set per database (agent, api)
 tests/integration/     manual probes that run on a real FreeBSD host
@@ -160,7 +169,8 @@ docs/                  architecture, security, and decision records
   [0001 Go toolchain and SQLite driver](docs/decisions/0001-go-toolchain-and-sqlite-driver.md),
   [0002 Discovery abstraction](docs/decisions/0002-discovery-abstraction.md),
   [0003 Read-only discovery](docs/decisions/0003-read-only-discovery.md),
-  [0004 Privilege boundary](docs/decisions/0004-privilege-boundary.md)
+  [0004 Privilege boundary](docs/decisions/0004-privilege-boundary.md),
+  [0005 Agent task engine](docs/decisions/0005-agent-task-engine.md)
 
 ## Trademarks
 

@@ -144,7 +144,39 @@ func TestRunServesAPI(t *testing.T) {
 			t.Errorf("capability without status or reason: %+v", c)
 		}
 	}
+	// The startup inventory refresh ran as a task, submitted by "system".
+	waitTask := func(base string, wantTotal int) models.Task {
+		t.Helper()
+		deadline := time.Now().Add(15 * time.Second)
+		for {
+			var list models.TaskList
+			get(base+"/api/v1/tasks", http.StatusOK, &list)
+			if len(list.Items) == wantTotal && list.Items[0].Status.Terminal() {
+				return list.Items[0]
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("tasks = %+v", list)
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+	refresh := waitTask(base, 1)
+	if refresh.Type != "discovery.refresh" || refresh.Status != models.TaskSucceeded ||
+		refresh.Actor.ID != "system" || refresh.ResourceID != sys.NodeID {
+		t.Errorf("startup task = %+v", refresh)
+	}
+	var detail models.TaskDetail
+	get(base+"/api/v1/tasks/"+refresh.ID, http.StatusOK, &detail)
+	if detail.Result == nil {
+		t.Errorf("task detail has no result: %+v", detail)
+	}
+	if len(detail.Events) < 3 || detail.Events[0].Message != "task is pending" ||
+		detail.Events[len(detail.Events)-1].Message != "task is succeeded" {
+		t.Errorf("task events = %+v", detail.Events)
+	}
 	var apiErr models.ErrorResponse
+	get(base+"/api/v1/tasks/unknown", http.StatusNotFound, &apiErr)
+	get(base+"/api/v1/tasks?limit=0", http.StatusBadRequest, &apiErr)
 	get(base+"/api/v1/nodes/unknown/hardware", http.StatusNotFound, &apiErr)
 	if apiErr.Error.Code != "not_found" {
 		t.Errorf("error = %+v", apiErr)
@@ -157,5 +189,11 @@ func TestRunServesAPI(t *testing.T) {
 	get(base+"/api/v1/system", http.StatusOK, &again)
 	if again.NodeID != sys.NodeID {
 		t.Errorf("node ID changed across a restart: %q then %q", sys.NodeID, again.NodeID)
+	}
+	// Task history survives the restart, and the new start adds its own
+	// refresh instead of touching the old one.
+	second := waitTask(base, 2)
+	if second.ID == refresh.ID || second.Status != models.TaskSucceeded {
+		t.Errorf("second startup task = %+v", second)
 	}
 }

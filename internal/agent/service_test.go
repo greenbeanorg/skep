@@ -3,11 +3,13 @@ package agent
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"testing"
 	"time"
 
+	"github.com/greenbeanorg/skep/internal/tasks"
 	"github.com/greenbeanorg/skep/pkg/models"
 )
 
@@ -193,5 +195,161 @@ func TestHealth(t *testing.T) {
 	none := newTestService(t, Options{Discoverer: &fakeDiscoverer{}}).Health(ctx)
 	if none.Status != models.HealthOK || len(none.Checks) != 0 || none.Checks == nil {
 		t.Errorf("health without database = %+v", none)
+	}
+}
+
+type fakeNodes struct {
+	saved  []models.Hardware
+	nodeID string
+	err    error
+}
+
+func (f *fakeNodes) SaveObserved(_ context.Context, nodeID string, hw models.Hardware) error {
+	if f.err != nil {
+		return f.err
+	}
+	f.nodeID = nodeID
+	f.saved = append(f.saved, hw)
+	return nil
+}
+
+type fakeReporter struct{ messages []string }
+
+func (f *fakeReporter) Progress(message string, _ any) { f.messages = append(f.messages, message) }
+
+type fakeTasks struct {
+	items  []tasks.Task
+	events []models.TaskEvent
+	opts   models.TaskListOptions
+}
+
+func (f *fakeTasks) Get(_ context.Context, id string) (tasks.Task, error) {
+	for _, t := range f.items {
+		if t.ID == id {
+			return t, nil
+		}
+	}
+	return tasks.Task{}, fmt.Errorf("task %q: %w", id, models.ErrNotFound)
+}
+
+func (f *fakeTasks) Events(context.Context, string) ([]models.TaskEvent, error) {
+	return f.events, nil
+}
+
+func (f *fakeTasks) List(_ context.Context, opts models.TaskListOptions) ([]tasks.Task, string, error) {
+	f.opts = opts
+	return f.items, "cursor-2", nil
+}
+
+func TestRefreshTask(t *testing.T) {
+	d := &fakeDiscoverer{hw: freebsdHardware()}
+	nodes := &fakeNodes{}
+	s := newTestService(t, Options{Discoverer: d, Nodes: nodes, CacheTTL: time.Minute})
+	ctx := context.Background()
+
+	def := s.RefreshDefinition()
+	if def.Type != TaskDiscoveryRefresh || !def.Cancellable || def.Timeout <= 0 {
+		t.Errorf("definition = %+v", def)
+	}
+
+	// Prime the cache, then refresh: the task must run a fresh pass even
+	// though the cache is still valid.
+	if _, err := s.System(ctx); err != nil {
+		t.Fatal(err)
+	}
+	rep := &fakeReporter{}
+	out, err := def.Run(ctx, tasks.Task{}, rep)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.calls != 2 {
+		t.Errorf("discovery ran %d times, want 2 (the task must not use the cache)", d.calls)
+	}
+	res, ok := out.(RefreshResult)
+	if !ok || res.Platform != models.PlatformFreeBSD || res.Hostname != "hearst" ||
+		res.Capabilities.Bhyve.Status != models.StatusAvailable {
+		t.Errorf("result = %+v", out)
+	}
+	if len(nodes.saved) != 1 || nodes.nodeID != "node-1" || nodes.saved[0].NodeID != "node-1" {
+		t.Errorf("observed state not stored: %+v", nodes)
+	}
+	if len(rep.messages) != 2 {
+		t.Errorf("progress = %v", rep.messages)
+	}
+	// The refreshed result is what the API now serves, without another pass.
+	if _, err := s.System(ctx); err != nil || d.calls != 2 {
+		t.Errorf("calls = %d, err = %v", d.calls, err)
+	}
+}
+
+func TestRefreshTaskFailures(t *testing.T) {
+	ctx := context.Background()
+
+	// A cancelled discovery returns the context error so the engine can
+	// tell a cancel from a failure.
+	s := newTestService(t, Options{Discoverer: &fakeDiscoverer{err: context.Canceled}})
+	if _, err := s.RefreshDefinition().Run(ctx, tasks.Task{}, &fakeReporter{}); !errors.Is(err, context.Canceled) {
+		t.Errorf("error = %v, want context.Canceled", err)
+	}
+
+	s = newTestService(t, Options{
+		Discoverer: &fakeDiscoverer{hw: freebsdHardware()},
+		Nodes:      &fakeNodes{err: errors.New("disk full")},
+	})
+	if _, err := s.RefreshDefinition().Run(ctx, tasks.Task{}, &fakeReporter{}); err == nil {
+		t.Error("a failed store must fail the task")
+	}
+}
+
+func TestTasksAndTask(t *testing.T) {
+	ctx := context.Background()
+	ft := &fakeTasks{
+		items: []tasks.Task{{
+			ID: "t1", Type: TaskDiscoveryRefresh, Status: models.TaskFailed,
+			Actor:     models.TaskActor{ID: "system", Name: "system"},
+			PeerUID:   0,
+			ErrorCode: "timeout", ErrorMessage: "the task exceeded its time limit",
+			Payload: []byte(`{"internal":true}`), IdempotencyKey: "secret-key",
+		}},
+		events: []models.TaskEvent{{ID: 1, Kind: models.TaskEventState, Message: "task is pending"}},
+	}
+	s := newTestService(t, Options{Discoverer: &fakeDiscoverer{}, Tasks: ft})
+
+	list, err := s.Tasks(ctx, models.TaskListOptions{Limit: 5, Status: models.TaskFailed})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list.Items) != 1 || list.NextCursor != "cursor-2" || ft.opts.Limit != 5 {
+		t.Errorf("list = %+v, opts = %+v", list, ft.opts)
+	}
+	if e := list.Items[0].Error; e == nil || e.Code != "timeout" {
+		t.Errorf("task error = %+v", e)
+	}
+	ft.items[0].Result = []byte(`{"big":"document"}`)
+	list, _ = s.Tasks(ctx, models.TaskListOptions{})
+	if list.Items[0].Result != nil {
+		t.Error("list entries must not carry the task result")
+	}
+	if d, _ := s.Task(ctx, "t1"); d.Result == nil {
+		t.Error("the task detail must carry the result")
+	}
+	ft.items[0].Result = nil
+
+	detail, err := s.Task(ctx, "t1")
+	if err != nil || detail.ID != "t1" || len(detail.Events) != 1 {
+		t.Errorf("detail = %+v, err = %v", detail, err)
+	}
+	if _, err := s.Task(ctx, "nope"); !errors.Is(err, models.ErrNotFound) {
+		t.Errorf("error = %v, want ErrNotFound", err)
+	}
+
+	// Without a task engine there are simply no tasks.
+	bare := newTestService(t, Options{Discoverer: &fakeDiscoverer{}})
+	empty, err := bare.Tasks(ctx, models.TaskListOptions{})
+	if err != nil || empty.Items == nil || len(empty.Items) != 0 {
+		t.Errorf("empty list = %+v, err = %v", empty, err)
+	}
+	if _, err := bare.Task(ctx, "t1"); !errors.Is(err, models.ErrNotFound) {
+		t.Errorf("error = %v, want ErrNotFound", err)
 	}
 }
