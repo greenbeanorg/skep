@@ -89,14 +89,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # web/.node-version names the Node.js major the interface is built
+      # and tested with on the development machine.
       - uses: actions/setup-node@v4
         with:
-          node-version: lts/*
+          node-version-file: web/.node-version
+          cache: npm
+          cache-dependency-path: web/package-lock.json
 
-      # "npm install", not "npm ci": there is no lockfile yet. Switch to
-      # "npm ci" once package-lock.json is committed.
       - name: Install
-        run: npm install
+        run: npm ci
 
       - name: Type-check
         run: npm run typecheck
