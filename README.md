@@ -6,7 +6,7 @@ with QEMU as an optional secondary engine), jails, OpenZFS storage, and
 networking on single hosts and, later, multi-node clusters, through a REST
 API, a web UI, and a CLI.
 
-**Status: 0.1.0, Milestone 2 "Persistence" in progress.** The code contains
+**Status: 0.1.0, Milestone 3 "Native FreeBSD integration" in progress.** The code contains
 the host agent, read-only host discovery, a task engine with history and an
 operation audit log, a small read-only API, and the local database schema.
 It cannot create or manage anything yet.
@@ -24,6 +24,7 @@ It cannot create or manage anything yet.
 | Host discovery | Read-only: CPU, memory, OS, bhyve, QEMU, ZFS (FreeBSD native, Linux dev mode) |
 | API | `GET /api/v1/health`, `/system`, `/nodes/{id}/hardware`, `/tasks`, `/tasks/{id}`; all read-only |
 | Task engine | Persistent tasks with states, events, idempotency keys, cancellation, and an audit trail; nothing is resumed after a restart |
+| FreeBSD service | rc.d script; the agent runs supervised as the unprivileged `skep` account and starts at boot |
 | Database | SQLite with versioned migrations and a stable node ID; separate schemas for the agent and the future API |
 | Not yet | VM or jail management, storage or network changes, authentication, TLS, UI, CLI, clustering |
 
@@ -85,7 +86,7 @@ Stop the agent with Ctrl-C. `make clean` removes `bin/` and `.skep-dev/`.
 ## Test
 
 ```sh
-make test   # unit tests
+make test   # unit tests with the race detector (needs a C compiler)
 make vet    # go vet for Linux and for the FreeBSD target
 make lint   # gofmt check, vet, and staticcheck if it is installed
 ```
@@ -106,6 +107,11 @@ A successful cross-compile proves that the code compiles for FreeBSD and
 nothing more. FreeBSD behaviour counts as validated only after it has run on
 FreeBSD. The current validation state is tracked in
 [docs/architecture/overview.md](docs/architecture/overview.md#freebsd-validation-status).
+
+To run the agent as a service, see
+[docs/installation/freebsd-service.md](docs/installation/freebsd-service.md).
+The native service test is in
+[tests/integration/rcd](tests/integration/rcd/README.md).
 
 ## Web interface
 
@@ -170,6 +176,7 @@ docs/                  architecture, security, and decision records
 
 - [Architecture overview](docs/architecture/overview.md)
 - [Security overview](docs/security/overview.md)
+- [Running the agent as a FreeBSD service](docs/installation/freebsd-service.md)
 - Decision records:
   [0001 Go toolchain and SQLite driver](docs/decisions/0001-go-toolchain-and-sqlite-driver.md),
   [0002 Discovery abstraction](docs/decisions/0002-discovery-abstraction.md),

@@ -1,0 +1,178 @@
+#!/bin/sh
+#
+# rc.d script for the Skep host agent.
+#
+# PROVIDE: skep_agent
+# REQUIRE: LOGIN
+# KEYWORD: shutdown
+#
+# Add to /etc/rc.conf (or use sysrc) to enable the agent:
+#
+#   skep_agent_enable="YES"
+#
+# Optional settings and their defaults:
+#
+#   skep_agent_bin="/usr/local/sbin/skep-agent"
+#       The agent binary.
+#   skep_agent_runas="skep"
+#   skep_agent_rungroup="skep"
+#       The account and group the agent runs as. The account must exist;
+#       this script never creates it. The agent serves a read-only API on
+#       loopback and needs no privileges, so it does not run as root.
+#       (ADR 0004 moves it to root only once it has no network listener.)
+#   skep_agent_data_dir="/var/db/skep"
+#       State directory, passed to the agent as -data-dir. The agent keeps
+#       its database in the private subdirectory "agent".
+#   skep_agent_run_dir="/var/run/skep"
+#       Holds the pid files. Recreated at every start, because /var/run is
+#       cleared at boot.
+#   skep_agent_config=""
+#       Configuration file, passed as -config. When empty the agent reads
+#       /usr/local/etc/skep/agent.json if that file exists.
+#   skep_agent_args=""
+#       Extra arguments for skep-agent, for example "-log-level debug".
+#   skep_agent_restart_delay="5"
+#       Seconds to wait before a crashed agent is started again. "0" turns
+#       supervision off: a crashed agent stays down. A restarted agent
+#       never resumes work; it marks unfinished tasks interrupted.
+#   skep_agent_syslog_facility="daemon"
+#   skep_agent_syslog_priority="info"
+#   skep_agent_syslog_tag="skep-agent"
+#       The agent logs JSON lines to stderr; daemon(8) sends them to syslog.
+#       With the stock syslog.conf, daemon.info goes to /var/log/daemon.log.
+#   skep_agent_env=""
+#       Environment for the agent (standard rc.subr variable).
+#
+# skep_agent_flags, skep_agent_user and skep_agent_group are deliberately
+# not used: rc.subr would apply them to daemon(8), not to the agent.
+
+. /etc/rc.subr
+
+name="skep_agent"
+desc="Skep host agent"
+rcvar="skep_agent_enable"
+
+load_rc_config "${name}"
+
+: "${skep_agent_enable:=NO}"
+: "${skep_agent_bin:=/usr/local/sbin/skep-agent}"
+: "${skep_agent_runas:=skep}"
+: "${skep_agent_rungroup:=skep}"
+: "${skep_agent_data_dir:=/var/db/skep}"
+: "${skep_agent_run_dir:=/var/run/skep}"
+: "${skep_agent_config:=}"
+: "${skep_agent_args:=}"
+: "${skep_agent_restart_delay:=5}"
+: "${skep_agent_syslog_facility:=daemon}"
+: "${skep_agent_syslog_priority:=info}"
+: "${skep_agent_syslog_tag:=skep-agent}"
+
+# pidfile is the daemon(8) supervisor, which rc.subr signals and waits for.
+# The agent's own pid is in skep_agent_child_pidfile.
+pidfile="${skep_agent_run_dir}/agent-supervisor.pid"
+skep_agent_child_pidfile="${skep_agent_run_dir}/agent.pid"
+
+command="/usr/sbin/daemon"
+procname="daemon"
+start_precmd="skep_agent_precmd"
+start_postcmd="skep_agent_poststart"
+status_cmd="skep_agent_status"
+
+# These would be applied to daemon(8) by rc.subr. See the header.
+skep_agent_flags=""
+unset skep_agent_user skep_agent_group
+
+skep_agent_restart_args=""
+case "${skep_agent_restart_delay}" in
+0)
+	;;
+*[!0-9]* | "")
+	err 1 "skep_agent_restart_delay must be a number of seconds"
+	;;
+*)
+	skep_agent_restart_args="-R ${skep_agent_restart_delay}"
+	;;
+esac
+
+skep_agent_config_args=""
+if [ -n "${skep_agent_config}" ]; then
+	skep_agent_config_args="-config ${skep_agent_config}"
+fi
+
+command_args="-f \
+	-S -l ${skep_agent_syslog_facility} -s ${skep_agent_syslog_priority} -T ${skep_agent_syslog_tag} \
+	-P ${pidfile} -p ${skep_agent_child_pidfile} \
+	${skep_agent_restart_args} \
+	-u ${skep_agent_runas} \
+	${skep_agent_bin} -data-dir ${skep_agent_data_dir} ${skep_agent_config_args} ${skep_agent_args}"
+
+skep_agent_precmd()
+{
+	if [ ! -x "${skep_agent_bin}" ]; then
+		err 1 "${skep_agent_bin} is missing or not executable"
+	fi
+	if ! /usr/bin/id -u "${skep_agent_runas}" >/dev/null 2>&1; then
+		err 1 "user ${skep_agent_runas} does not exist; create the service account first"
+	fi
+	if ! /usr/sbin/pw groupshow "${skep_agent_rungroup}" >/dev/null 2>&1; then
+		err 1 "group ${skep_agent_rungroup} does not exist; create the service account first"
+	fi
+
+	# /var/run is cleared at boot, so the run directory is made here.
+	# root:skep 0750 is the layout ADR 0004 fixes for the agent socket.
+	/usr/bin/install -d -o root -g "${skep_agent_rungroup}" -m 0750 "${skep_agent_run_dir}" ||
+		err 1 "cannot create ${skep_agent_run_dir}"
+
+	# The data directory is shared with skep-api later; each process keeps
+	# a private subdirectory that the other cannot open.
+	/usr/bin/install -d -o root -g wheel -m 0755 "${skep_agent_data_dir}" ||
+		err 1 "cannot create ${skep_agent_data_dir}"
+	/usr/bin/install -d -o "${skep_agent_runas}" -g "${skep_agent_rungroup}" -m 0700 \
+		"${skep_agent_data_dir}/agent" ||
+		err 1 "cannot create ${skep_agent_data_dir}/agent"
+}
+
+# Prints the pid of the agent itself, or nothing when it is not running.
+skep_agent_agent_pid()
+{
+	check_pidfile "${skep_agent_child_pidfile}" "${skep_agent_bin}"
+}
+
+# daemon(8) returns as soon as the supervisor exists, even when the agent
+# then fails at once (a bad argument, an unreadable configuration file).
+# Wait briefly for the agent, so that "start" does not report success for a
+# service that is only crash-looping.
+skep_agent_poststart()
+{
+	_skep_tries=0
+	while [ "${_skep_tries}" -lt 50 ]; do
+		if [ -n "$(skep_agent_agent_pid)" ]; then
+			return 0
+		fi
+		sleep 0.2
+		_skep_tries=$((_skep_tries + 1))
+	done
+	warn "skep-agent is not running after start; see the ${skep_agent_syslog_facility} log, tag ${skep_agent_syslog_tag}"
+	if [ -n "${skep_agent_restart_args}" ]; then
+		warn "the supervisor keeps retrying every ${skep_agent_restart_delay}s; use 'service ${name} stop' to stop it"
+	fi
+	return 1
+}
+
+# The default status only looks at the supervisor, which stays up while a
+# failing agent is restarted over and over. Report the agent itself.
+skep_agent_status()
+{
+	if [ -z "${rc_pid}" ]; then
+		echo "${name} is not running."
+		return 1
+	fi
+	_skep_agent_pid=$(skep_agent_agent_pid)
+	if [ -z "${_skep_agent_pid}" ]; then
+		echo "${name} is not running: the supervisor (pid ${rc_pid}) is up, but skep-agent has exited and is being restarted."
+		return 1
+	fi
+	echo "${name} is running as pid ${_skep_agent_pid} (supervisor pid ${rc_pid})."
+}
+
+run_rc_command "$1"
