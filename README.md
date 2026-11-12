@@ -160,7 +160,8 @@ docs/                  architecture, security, and decision records
   [0001 Go toolchain and SQLite driver](docs/decisions/0001-go-toolchain-and-sqlite-driver.md),
   [0002 Discovery abstraction](docs/decisions/0002-discovery-abstraction.md),
   [0003 Read-only discovery](docs/decisions/0003-read-only-discovery.md),
-  [0004 Privilege boundary](docs/decisions/0004-privilege-boundary.md)
+  [0004 Privilege boundary](docs/decisions/0004-privilege-boundary.md),
+  [0005 Agent task engine (proposed)](docs/decisions/0005-agent-task-engine.md)
 
 ## Trademarks
 
