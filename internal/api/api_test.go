@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/greenbeanorg/skep/internal/agentproto"
+	"github.com/greenbeanorg/skep/internal/auth"
 	"github.com/greenbeanorg/skep/internal/httpkit"
 	"github.com/greenbeanorg/skep/pkg/models"
 )
@@ -92,15 +93,11 @@ func newBackend() *fakeBackend {
 	}
 }
 
+// do calls the API as the test administrator.
 func do(t *testing.T, b Backend, method, path string, logBuf *bytes.Buffer) *httptest.ResponseRecorder {
 	t.Helper()
-	if logBuf == nil {
-		logBuf = &bytes.Buffer{}
-	}
-	h := NewHandler(Options{Backend: b, Logger: slog.New(slog.NewJSONHandler(logBuf, nil))})
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(method, path, nil))
-	return rec
+	e := shared(t)
+	return e.serve(e.handler(b, logBuf), request{method: method, path: path, role: auth.RoleAdmin})
 }
 
 func decode[T any](t *testing.T, rec *httptest.ResponseRecorder) T {
@@ -241,7 +238,7 @@ func TestHeadHasNoBody(t *testing.T) {
 }
 
 func TestRequestIDAndSecurityHeaders(t *testing.T) {
-	h := NewHandler(Options{Backend: newBackend(), Logger: slog.New(slog.NewJSONHandler(&bytes.Buffer{}, nil))})
+	h := shared(t).handler(newBackend(), nil)
 
 	send := func(id string) http.Header {
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
@@ -377,18 +374,20 @@ func TestDomainErrorMapping(t *testing.T) {
 }
 
 // TestBackendCallsCarryACaller checks that every backend call is made for
-// an actor, with the request ID and the client's address: the agent refuses
-// anything else.
+// the authenticated user, with the request ID and the client's address:
+// the agent refuses anything without an actor and records this one.
 func TestBackendCallsCarryACaller(t *testing.T) {
+	e := shared(t)
 	b := newBackend()
-	h := NewHandler(Options{Backend: b, Logger: slog.New(slog.NewJSONHandler(&bytes.Buffer{}, nil))})
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/system", nil)
-	req.RemoteAddr = "[::ffff:192.0.2.7]:51234"
-	req.Header.Set(httpkit.RequestIDHeader, "req-7")
-	req.Header.Set("X-Forwarded-For", "203.0.113.9")
-	h.ServeHTTP(httptest.NewRecorder(), req)
-
-	want := agentproto.Caller{ActorID: AnonymousActor, ActorName: AnonymousActor, RequestID: "req-7", SourceIP: "192.0.2.7"}
+	rec := e.serve(e.handler(b, nil), request{
+		method: http.MethodGet, path: "/api/v1/system", role: auth.RoleOperator,
+		headers: map[string]string{httpkit.RequestIDHeader: "req-7", "X-Forwarded-For": "203.0.113.9"},
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	// X-Forwarded-For is ignored: no proxy is trusted.
+	want := agentproto.Caller{ActorID: e.ids[auth.RoleOperator], ActorName: "test-operator", RequestID: "req-7", SourceIP: "192.0.2.7"}
 	if b.caller != want {
 		t.Errorf("caller = %+v, want %+v", b.caller, want)
 	}
@@ -407,25 +406,23 @@ func TestAgentUnavailableIs503(t *testing.T) {
 // cannot click through a certificate warning, so it must never be sent
 // with the self-signed certificate.
 func TestHSTSOnlyWithOperatorCertificate(t *testing.T) {
+	e := shared(t)
 	expiry := time.Date(2027, 12, 14, 0, 0, 0, 0, time.UTC)
 	for source, want := range map[string]string{"self-signed": "", "operator": "max-age=63072000"} {
 		info := models.TLSInfo{Source: source, NotAfter: expiry, PublicKeySHA256: "sha256:abc"}
 		h := NewHandler(Options{
-			Backend: newBackend(),
-			Logger:  slog.New(slog.NewJSONHandler(&bytes.Buffer{}, nil)),
-			TLS:     func() models.TLSInfo { return info },
+			Backend: newBackend(), Auth: e.authn, Users: e.users, Audit: e.access,
+			Logger: slog.New(slog.NewJSONHandler(&bytes.Buffer{}, nil)),
+			TLS:    func() models.TLSInfo { return info },
 		})
 		for _, path := range []string{"/api/v1/system", "/api/v1/health", "/nope"} {
-			rec := httptest.NewRecorder()
-			h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+			rec := e.serve(h, request{method: http.MethodGet, path: path})
 			if got := rec.Header().Get("Strict-Transport-Security"); got != want {
 				t.Errorf("%s certificate, %s: Strict-Transport-Security = %q, want %q", source, path, got, want)
 			}
 		}
 		// The system document reports the certificate, including its expiry.
-		rec := httptest.NewRecorder()
-		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/system", nil))
-		sys := decode[models.System](t, rec)
+		sys := decode[models.System](t, e.serve(h, request{method: http.MethodGet, path: "/api/v1/system", role: auth.RoleViewer}))
 		if sys.API == nil || sys.API.TLS != info {
 			t.Errorf("%s: system.api = %+v", source, sys.API)
 		}

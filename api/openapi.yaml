@@ -6,13 +6,35 @@ info:
     REST API of Skep, a virtualization and infrastructure management platform
     built on the FreeBSD® operating system.
 
-    The API is read-only so far. It is served by `skep-api`, an
-    unprivileged process that reads everything about the node from
-    `skep-agent` over a local Unix socket.
+    The API is served by `skep-api`, an unprivileged process that reads
+    everything about the node from `skep-agent` over a local Unix socket.
 
-    **There is no authentication yet** (Milestone 4, in progress). Until
-    then `skep-api` binds to loopback and refuses any other address. Do
-    not forward the port to a network.
+    **Authentication.** Every endpoint except `GET /health` and
+    `POST /auth/login` needs a session. A login produces one kind of
+    session, chosen by the client:
+
+    - a **cookie session** (the default, for browsers): the token is set
+      in the cookie `__Host-skep_session` (`Secure`, `HttpOnly`,
+      `SameSite=Strict`) and is not in the response body;
+    - a **bearer session** (`"session": "bearer"`, for `skepctl` and
+      scripts): the token is returned in the response body, no cookie is
+      set, and the client sends it as `Authorization: Bearer <token>`.
+
+    A token is accepted only through the channel it was issued for.
+    Sessions end after 30 minutes without use and 12 hours after the login
+    (both configurable), at logout, and when the user's password or role
+    changes or the user is disabled.
+
+    A request that is authenticated by cookie and is not a GET or HEAD
+    must carry an `Origin` header that matches the request host, or it is
+    refused with `403 forbidden`. Bearer requests are exempt.
+
+    There are no default credentials. The first administrator is created
+    on the host with `skep-api admin create`; until one exists, login
+    answers `503 setup_required`. Logins are rate limited (`429
+    rate_limited` with `Retry-After`); accounts are never locked.
+
+    `skep-api` listens on loopback unless `listen_address` is changed.
 
     The API is served over TLS 1.3 only. There is no plaintext listener.
     Unless an operator-supplied certificate is configured, `skep-api`
@@ -29,26 +51,35 @@ info:
 servers:
   - url: https://127.0.0.1:8443/api/v1
     description: Local skep-api (default listen address)
+security:
+  - bearer: []
+  - cookie: []
 tags:
+  - name: auth
+    description: Login, logout, and the caller's own session and password
   - name: system
     description: Health and identity of the local node
   - name: nodes
     description: Node inventory
   - name: tasks
     description: |
-      Asynchronous operations performed by the agent. Tasks are read-only
-      over the API for now: they cannot be submitted or cancelled until the
-      API has authentication, because every task records who asked for it.
+      Asynchronous operations performed by the agent. Tasks cannot be
+      submitted over the API yet.
 paths:
   /health:
     get:
       tags: [system]
       operationId: getHealth
       summary: Health
+      security: [{}, {bearer: []}, {cookie: []}]
       description: |
         Reports whether the agent is reachable and whether it and its local
-        database are working. The `agent` check is `degraded` when skep-api
-        cannot reach the agent.
+        database are working.
+
+        Without a session the response is the status and nothing else
+        (`HealthStatus`). With a session it is the full `Health` document;
+        its `agent` check is `degraded` when skep-api cannot reach the
+        agent.
       responses:
         "200":
           description: Every check passed.
@@ -58,18 +89,140 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Health"
+                oneOf:
+                  - $ref: "#/components/schemas/HealthStatus"
+                  - $ref: "#/components/schemas/Health"
         "503":
-          description: At least one check failed. The body is still a Health document.
+          description: At least one check failed. The body has the same shape as for 200.
           headers:
             X-Request-ID:
               $ref: "#/components/headers/RequestID"
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Health"
+                oneOf:
+                  - $ref: "#/components/schemas/HealthStatus"
+                  - $ref: "#/components/schemas/Health"
         "405":
           $ref: "#/components/responses/MethodNotAllowed"
+  /auth/login:
+    post:
+      tags: [auth]
+      operationId: login
+      summary: Start a session
+      security: []
+      description: |
+        Checks a username and password and starts a new session. The body
+        must be `application/json`. If the request has an `Origin` header
+        it must match the request host.
+
+        Every failed login answers the same `401 invalid_credentials`,
+        whether the username exists or not, and takes the same time.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: |
+            Logged in. For a cookie session the token is in `Set-Cookie`
+            and not in the body. For a bearer session it is in `token` and
+            no cookie is set.
+          headers:
+            Set-Cookie:
+              description: The session cookie. Only for a cookie session.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionResponse"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          description: The username or password is not correct (`invalid_credentials`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "415":
+          description: The body is not `application/json` (`invalid_request`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "503":
+          description: |
+            No administrator exists yet (`setup_required`). Create one on
+            the host with `skep-api admin create --username NAME`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /auth/logout:
+    post:
+      tags: [auth]
+      operationId: logout
+      summary: End the current session
+      description: Deletes the session the request came in on and clears the cookie of a cookie session.
+      responses:
+        "204":
+          description: Logged out.
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /auth/session:
+    get:
+      tags: [auth]
+      operationId: getSession
+      summary: The caller and the session in use
+      responses:
+        "200":
+          description: The user, the session, and the permissions of the user's role. Never the token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionResponse"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+  /auth/password:
+    put:
+      tags: [auth]
+      operationId: changePassword
+      summary: Change the caller's own password
+      description: |
+        Needs the current password. On success every session of the user
+        ends, including the one that made the request; log in again.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PasswordChange"
+      responses:
+        "204":
+          description: The password was changed and all of the user's sessions were ended.
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          description: |
+            No valid session (`unauthenticated`), or the current password
+            is not correct (`invalid_credentials`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/RateLimited"
   /system:
     get:
       tags: [system]
@@ -89,6 +242,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/System"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
         "405":
           $ref: "#/components/responses/MethodNotAllowed"
         "500":
@@ -130,6 +285,8 @@ paths:
           $ref: "#/components/responses/InvalidRequest"
         "404":
           $ref: "#/components/responses/NotFound"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
         "405":
           $ref: "#/components/responses/MethodNotAllowed"
         "500":
@@ -178,6 +335,8 @@ paths:
                 $ref: "#/components/schemas/TaskList"
         "400":
           $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
         "405":
           $ref: "#/components/responses/MethodNotAllowed"
         "500":
@@ -208,11 +367,23 @@ paths:
           $ref: "#/components/responses/InvalidRequest"
         "404":
           $ref: "#/components/responses/NotFound"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
         "405":
           $ref: "#/components/responses/MethodNotAllowed"
         "500":
           $ref: "#/components/responses/InternalError"
 components:
+  securitySchemes:
+    bearer:
+      type: http
+      scheme: bearer
+      description: The token of a bearer session, from a login that asked for one.
+    cookie:
+      type: apiKey
+      in: cookie
+      name: __Host-skep_session
+      description: The cookie of a cookie session. Set by the login; never readable by JavaScript.
   headers:
     RequestID:
       description: ID that correlates the response with the server logs.
@@ -236,8 +407,39 @@ components:
               code: not_found
               message: the requested resource does not exist
               request_id: bffe76d4cd48e82bd841254b
+    Unauthenticated:
+      description: The request carries no valid session (`unauthenticated`).
+      headers:
+        WWW-Authenticate:
+          schema:
+            type: string
+            example: Bearer realm="skep"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    Forbidden:
+      description: |
+        The request is not allowed (`forbidden`): the `Origin` header is
+        missing or does not match the host on a cookie-authenticated
+        request that changes something.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    RateLimited:
+      description: Too many login attempts (`rate_limited`). Nothing is locked; wait and try again.
+      headers:
+        Retry-After:
+          description: Seconds to wait.
+          schema:
+            type: integer
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
     MethodNotAllowed:
-      description: Only GET and HEAD are supported (`method_not_allowed`).
+      description: The method is not supported on this endpoint (`method_not_allowed`).
       headers:
         Allow:
           schema:
@@ -285,6 +487,11 @@ components:
                 - internal_error
                 - service_unavailable
                 - agent_unavailable
+                - unauthenticated
+                - invalid_credentials
+                - forbidden
+                - rate_limited
+                - setup_required
                 - resource_busy
                 - idempotency_key_conflict
                 - not_cancellable
@@ -416,6 +623,104 @@ components:
         reason:
           type: string
           description: Why the capability has this status.
+    HealthStatus:
+      type: object
+      description: What the health endpoint returns without a session.
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [ok, degraded]
+    LoginRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username:
+          type: string
+        password:
+          type: string
+          format: password
+        session:
+          type: string
+          enum: [cookie, bearer]
+          default: cookie
+          description: |
+            The kind of session to start. `cookie` sets the session cookie
+            and returns no token. `bearer` returns the token in the body
+            and sets no cookie.
+    PasswordChange:
+      type: object
+      required: [current_password, new_password]
+      properties:
+        current_password:
+          type: string
+          format: password
+        new_password:
+          type: string
+          format: password
+          minLength: 12
+          maxLength: 256
+          description: 12 to 256 characters. There are no composition rules.
+    User:
+      type: object
+      description: An account. The password hash is never part of it.
+      required: [id, username, display_name, role, disabled, created_at, updated_at]
+      properties:
+        id: { type: string }
+        username: { type: string }
+        display_name: { type: string }
+        role:
+          type: string
+          description: Name of the user's role.
+          example: admin
+        disabled: { type: boolean }
+        last_login_at:
+          type: string
+          format: date-time
+        password_changed_at:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    SessionResponse:
+      type: object
+      required: [user, session, permissions]
+      properties:
+        user:
+          $ref: "#/components/schemas/User"
+        session:
+          type: object
+          required: [kind, created_at, expires_at, idle_timeout_seconds]
+          properties:
+            kind:
+              type: string
+              enum: [cookie, bearer]
+            created_at:
+              type: string
+              format: date-time
+            expires_at:
+              type: string
+              format: date-time
+              description: The absolute end of the session.
+            idle_timeout_seconds:
+              type: integer
+              format: int64
+              description: How long the session survives without use.
+        permissions:
+          type: array
+          description: The permission strings of the user's role. An asterisk means every permission.
+          items:
+            type: string
+        token:
+          type: string
+          description: |
+            The session token. Present only in the response to a login
+            that asked for a bearer session. It is shown once and is not
+            stored by the server, which keeps only its SHA-256.
     Health:
       type: object
       required: [status, version, uptime_seconds, checks]

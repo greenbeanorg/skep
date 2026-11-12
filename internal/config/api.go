@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/netip"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -16,7 +17,8 @@ const (
 	// exists.
 	DefaultAPIConfigPath = "/usr/local/etc/skep/api.json"
 	// DefaultAPIListenAddress is loopback: opening the API to a network
-	// is an explicit configuration change (ADR 0006 decision 7).
+	// is an explicit configuration change (ADR 0006 decision 7). Every
+	// request except the health status and the login needs a session.
 	DefaultAPIListenAddress = "127.0.0.1:8443"
 )
 
@@ -52,8 +54,49 @@ type API struct {
 
 // AuthConfig configures authentication.
 type AuthConfig struct {
-	Argon2 Argon2Config `json:"argon2"`
+	Argon2  Argon2Config  `json:"argon2"`
+	Session SessionConfig `json:"session"`
+	Login   LoginConfig   `json:"login"`
+	// TrustedProxies lists the addresses or networks (CIDR) of reverse
+	// proxies whose X-Forwarded-For header is believed when deciding a
+	// request's source address. Empty, the default: the header is
+	// ignored and the source address is the TCP peer.
+	TrustedProxies []string `json:"trusted_proxies"`
 }
+
+// SessionConfig holds the session lifetimes.
+type SessionConfig struct {
+	// IdleTimeout ends a session that was not used for this long.
+	// Default 30m, at most 24h.
+	IdleTimeout Duration `json:"idle_timeout"`
+	// AbsoluteTimeout ends a session this long after the login. Default
+	// 12h, at most 720h (30 days).
+	AbsoluteTimeout Duration `json:"absolute_timeout"`
+}
+
+// LoginConfig holds the login limits. They delay and refuse; they never
+// lock an account.
+type LoginConfig struct {
+	// PerAddressPerMinute is the number of login attempts one source
+	// address may make per minute. Default 10.
+	PerAddressPerMinute int `json:"per_address_per_minute"`
+	// FailuresBeforeDelay is the number of failures from one address for
+	// one username after which further attempts are delayed, doubling
+	// from one second. Default 5.
+	FailuresBeforeDelay int `json:"failures_before_delay"`
+	// MaxDelay caps that delay. Default 1m.
+	MaxDelay Duration `json:"max_delay"`
+	// PerUsernameFailures is the number of failures for one username,
+	// from all addresses together, within 15 minutes, above which logins
+	// for that username are refused until the window drains. Default 50.
+	PerUsernameFailures int `json:"per_username_failures"`
+}
+
+// Limits of the session lifetimes.
+const (
+	MaxSessionIdleTimeout     = 24 * time.Hour
+	MaxSessionAbsoluteTimeout = 30 * 24 * time.Hour
+)
 
 // Argon2Config holds the Argon2id cost parameters for new password hashes.
 // They can be raised, never set below the minimum. Existing hashes keep
@@ -224,6 +267,45 @@ func (c *API) applyDefaults() {
 	if c.Auth.Argon2.Passes == 0 {
 		c.Auth.Argon2.Passes = DefaultArgon2Passes
 	}
+	if c.Auth.Session.IdleTimeout == 0 {
+		c.Auth.Session.IdleTimeout = Duration(30 * time.Minute)
+	}
+	if c.Auth.Session.AbsoluteTimeout == 0 {
+		c.Auth.Session.AbsoluteTimeout = Duration(12 * time.Hour)
+	}
+	if c.Auth.Login.PerAddressPerMinute == 0 {
+		c.Auth.Login.PerAddressPerMinute = 10
+	}
+	if c.Auth.Login.FailuresBeforeDelay == 0 {
+		c.Auth.Login.FailuresBeforeDelay = 5
+	}
+	if c.Auth.Login.MaxDelay == 0 {
+		c.Auth.Login.MaxDelay = Duration(time.Minute)
+	}
+	if c.Auth.Login.PerUsernameFailures == 0 {
+		c.Auth.Login.PerUsernameFailures = 50
+	}
+	if c.Auth.TrustedProxies == nil {
+		c.Auth.TrustedProxies = []string{}
+	}
+}
+
+// TrustedProxyPrefixes parses auth.trusted_proxies. A bare address is a
+// network of one.
+func (c API) TrustedProxyPrefixes() ([]netip.Prefix, error) {
+	var out []netip.Prefix
+	for _, v := range c.Auth.TrustedProxies {
+		if p, err := netip.ParsePrefix(v); err == nil {
+			out = append(out, p.Masked())
+			continue
+		}
+		addr, err := netip.ParseAddr(v)
+		if err != nil {
+			return nil, fmt.Errorf("auth.trusted_proxies: %q is not an address or a network in CIDR form", v)
+		}
+		out = append(out, netip.PrefixFrom(addr, addr.BitLen()))
+	}
+	return out, nil
 }
 
 // Validate reports every problem in the configuration as one error.
@@ -258,6 +340,28 @@ func (c API) Validate() error {
 	if t := c.Auth.Argon2.Passes; t < MinArgon2Passes || t > MaxArgon2Passes {
 		add("auth.argon2.passes must be between %d and %d", MinArgon2Passes, MaxArgon2Passes)
 	}
+	idle, absolute := c.Auth.Session.IdleTimeout.Std(), c.Auth.Session.AbsoluteTimeout.Std()
+	if idle < time.Minute || idle > MaxSessionIdleTimeout {
+		add("auth.session.idle_timeout must be between 1m and %s", MaxSessionIdleTimeout)
+	}
+	if absolute < idle || absolute > MaxSessionAbsoluteTimeout {
+		add("auth.session.absolute_timeout must be at least the idle timeout and at most %s", MaxSessionAbsoluteTimeout)
+	}
+	if n := c.Auth.Login.PerAddressPerMinute; n < 1 || n > 10000 {
+		add("auth.login.per_address_per_minute must be between 1 and 10000")
+	}
+	if n := c.Auth.Login.FailuresBeforeDelay; n < 1 || n > 1000 {
+		add("auth.login.failures_before_delay must be between 1 and 1000")
+	}
+	if d := c.Auth.Login.MaxDelay.Std(); d < time.Second || d > time.Hour {
+		add("auth.login.max_delay must be between 1s and 1h")
+	}
+	if n := c.Auth.Login.PerUsernameFailures; n < 1 || n > 100000 {
+		add("auth.login.per_username_failures must be between 1 and 100000")
+	}
+	if _, err := c.TrustedProxyPrefixes(); err != nil {
+		errs = append(errs, err)
+	}
 	errs = append(errs, c.Log.validate()...)
 	for name, d := range map[string]Duration{
 		"read_timeout":     c.ReadTimeout,
@@ -275,18 +379,12 @@ func (c API) Validate() error {
 }
 
 func (c API) validateListen() error {
-	host, port, err := net.SplitHostPort(c.ListenAddress)
+	_, port, err := net.SplitHostPort(c.ListenAddress)
 	if err != nil {
 		return fmt.Errorf("listen_address %q is not host:port: %w", c.ListenAddress, err)
 	}
 	if n, err := strconv.Atoi(port); err != nil || n < 0 || n > 65535 {
 		return fmt.Errorf("listen_address %q has an invalid port", c.ListenAddress)
-	}
-	// Until the API has authentication and authorization it must not be
-	// reachable from a network (ADR 0006, implementation order).
-	if !IsLoopbackHost(host) {
-		return fmt.Errorf("listen_address %q is not a loopback address; the API has no "+
-			"authentication yet and stays on loopback", c.ListenAddress)
 	}
 	return nil
 }

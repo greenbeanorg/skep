@@ -3,29 +3,63 @@
 This document describes the security posture of Skep 0.1.0 (Foundation). It
 states plainly what is and is not protected.
 
-## The API is still unauthenticated
+## Status
 
 Milestone 4 is in progress
 ([ADR 0006](../decisions/0006-api-split-authentication-tls.md)). The split
-into two processes and TLS are done; authentication and authorization are
-not. Until they are, Skep's standing requirements (Argon2id, RBAC) are not
-met and it must not be deployed as if they were.
+into two processes, TLS, accounts, and sessions are done. Per-role
+permission checks are not: until they land, every authenticated user can
+read everything the API serves, and nothing in the API changes the host.
 
-What limits the exposure until then:
+`skep-api` listens on `127.0.0.1:8443` by default. Opening it to a network
+is an explicit change of `listen_address`.
 
-- **Loopback only.** `skep-api` listens on `127.0.0.1:8443` and treats any
-  non-loopback listen address, including the "all interfaces" form
-  `:8443`, as a configuration error. There is no setting that overrides
-  this.
-- **Read-only API.** Every endpoint accepts only GET and HEAD. Nothing
-  changes host state.
-- **The network-facing process is unprivileged.** `skep-api` runs as
-  `skep` and refuses to start as root.
+## Sessions and login
 
-Anyone who can reach the port can read the host's hostname, OS release, CPU
-model, memory size, installed hypervisor binaries, ZFS pool names and
-sizes, and the task history, including task types, times, and actor names.
-On a multi-user host, "anyone" includes every local user.
+- **Everything needs a session**, except `GET /api/v1/health`, which
+  without one returns the status only (no version, no uptime, no detail),
+  and the login itself.
+- **Opaque tokens, stored hashed.** A session token is 32 random bytes.
+  `api.db` holds only its SHA-256, so a copy of the database contains no
+  usable session.
+- **One kind of session per login, chosen by the client.** A cookie login
+  sets `__Host-skep_session` (`Secure`, `HttpOnly`, `SameSite=Strict`,
+  `Path=/`) and does not return the token in the body, so JavaScript never
+  sees it. A bearer login, only on request, returns the token in the body
+  and sets no cookie. A token is accepted only through the channel it was
+  issued for.
+- **Lifetimes:** 30 minutes idle and 12 hours absolute by default. A new
+  session is issued at every login. Logout deletes the session; a password
+  change, a role change, disabling, and deletion delete all of the user's
+  sessions. The user and role are read on every request.
+- **Cross-site requests.** `SameSite=Strict` is the first control. The
+  second: a request authenticated by cookie that is not a GET or HEAD must
+  carry an `Origin` header naming this host over HTTPS, or it is refused
+  and audited. Bearer requests are exempt, because a browser does not
+  attach them by itself. Request bodies must be `application/json`.
+- **Failed logins are indistinguishable.** A wrong password, an unknown
+  user, and a disabled user get the same answer, and the unknown and
+  disabled cases verify a dummy hash made with the current parameters, so
+  they take the same time.
+- **Rate limits, never a lockout.** Per source address: 10 attempts a
+  minute. Per username and address: after 5 failures each further attempt
+  must wait, doubling from 1 s to 60 s. Per username across all addresses:
+  50 failures in 15 minutes, then refusal until the window drains. Nothing
+  is written to the user, existing sessions keep working, and
+  `skep-api admin` on the host is unaffected. An attacker with many
+  addresses can keep new logins for one username throttled while the
+  attack lasts; that cost is accepted. The limits are in memory and reset
+  at a restart.
+- **The source address is the TCP peer.** `X-Forwarded-For` is ignored
+  unless `auth.trusted_proxies` lists the proxy.
+- **Audit.** Every successful login, failed login, throttled login,
+  logout, and session revocation is written to the access audit log with
+  the source address. A submitted username is recorded only if it has the
+  shape of a username. Tokens and their hashes are never logged.
+- **Before setup.** Until an administrator exists, login answers
+  `503 setup_required` and names the command to run on the host.
+- **The agent is told who.** Each request to the agent carries the
+  authenticated user as its actor.
 
 ## What 0.1.0 does enforce
 
@@ -92,8 +126,8 @@ arrive with Milestone 4.
 errors, and events are, so handlers must not put secrets in them. Unexpected
 handler errors are logged and replaced by a generic message on the task.
 
-**HTTP hardening.** Read, write, and idle timeouts and a header size limit
-are set. Responses carry `X-Content-Type-Options: nosniff`,
+**HTTP hardening.** Read, write, and idle timeouts, a header size limit,
+and a request body limit are set. Responses carry `X-Content-Type-Options: nosniff`,
 `Cache-Control: no-store`, and a deny-all `Content-Security-Policy`.
 
 ## Accounts and passwords
@@ -126,9 +160,6 @@ are set. Responses carry `X-Content-Type-Options: nosniff`,
   written to the access audit log, one entry per ended session.
 - **The agent contains none of this.** `skep-agent` does not link the
   password or user code and never opens `api.db`.
-
-Login, sessions, and permission checks on the API are the next steps of
-Milestone 4; until they land, accounts can be created but not used.
 
 ## TLS
 
@@ -186,15 +217,17 @@ implemented:
   `/var/db/skep/agent` is `root`, `0700`; `/var/db/skep/api` is `skep`,
   `0700`.
 
-Until authentication exists, the actor of every request is `anonymous`.
-The socket and the two rc.d services are pending FreeBSD validation.
+The actor of a request is the authenticated user. The health check that
+`skep-api` makes without a user carries the actor `skep-api`. The socket
+and the two rc.d services are pending FreeBSD validation.
 
 ## Open items
 
-- **Authentication, sessions, RBAC, and TLS** for the API: Milestone 4,
-  designed in [ADR 0006](../decisions/0006-api-split-authentication-tls.md)
-  (accepted, not implemented). No
-  state-changing endpoint is added before it.
+- **Per-role permission checks (RBAC)** and user management over the API:
+  the remaining steps of Milestone 4. No endpoint that changes the host is
+  added before them.
+- **Long-lived API tokens** for automation are deferred to their own ADR;
+  until then automation logs in for a bearer session.
 - **Host confinement configuration** for the agent (which pools,
   interfaces, and devices Skep may touch): designed with the first
   privileged operation.

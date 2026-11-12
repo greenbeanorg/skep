@@ -104,6 +104,19 @@ lost password is replaced the same way, with
 user's sessions. `skep-api` does not need to be running, or restarted, for
 either command.
 
+## Opening the API to the network
+
+`skep-api` listens on `127.0.0.1:8443` until told otherwise. To reach it
+from the management network, set the management address in
+`/usr/local/etc/skep/api.json` and restart the service:
+
+```json
+{ "listen_address": "10.79.20.170:8443" }
+```
+
+Create the administrator first. Every endpoint except the health status
+and the login needs a session.
+
 ## TLS certificate
 
 `skep-api` serves TLS 1.3 only. At its first start it generates a key and a

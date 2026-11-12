@@ -12,11 +12,11 @@ host discovery, a task engine with history and an operation audit log, a
 small read-only API, and the local database schema. It cannot create or
 manage anything yet.
 
-> **Security notice:** the API has **no authentication yet**; it arrives
-> with the remaining steps of Milestone 4. Until then `skep-api` binds to
-> loopback and refuses any other address, and every endpoint is read-only.
-> Do not forward the port to a network. See
-> [docs/security/overview.md](docs/security/overview.md).
+> **Security notice:** this is pre-release software. `skep-api` listens on
+> loopback by default; opening it to a network is an explicit
+> configuration change. See
+> [docs/security/overview.md](docs/security/overview.md) for what is and is
+> not protected.
 
 ## What works today
 
@@ -31,7 +31,8 @@ manage anything yet.
 | FreeBSD services | rc.d scripts for both processes, supervised, started at boot |
 | Database | SQLite with versioned migrations and a stable node ID; separate databases for the agent and the API |
 | Users | Accounts with Argon2id password hashes and three built-in roles; the first administrator is created with a local command (`skep-api admin create`), never with default credentials |
-| Not yet | Login, sessions, and permission checks on the API (in progress); VM or jail management, storage or network changes, UI, CLI, clustering |
+| Sessions | Login with a cookie session (browsers) or a bearer session (scripts), never both; idle and absolute timeouts; logout; login rate limits that never lock an account; every endpoint except the health status and the login needs a session |
+| Not yet | Per-role permission checks and user management over the API (in progress); VM or jail management, storage or network changes, UI, CLI, clustering |
 
 ## Platforms
 
@@ -79,17 +80,32 @@ binary and no flag that turns a security control off. Then, in another
 terminal:
 
 ```sh
+# There are no default credentials: create an administrator first.
+bin/skep-api admin create --username andy -dev
+
 # Trust exactly the certificate this skep-api generated.
 CA=.skep-dev/api/tls/cert.pem
-curl -s --cacert $CA https://127.0.0.1:8443/api/v1/health
-curl -s --cacert $CA https://127.0.0.1:8443/api/v1/system
+API=https://127.0.0.1:8443/api/v1
+
+# Without a session only the health status is readable.
+curl -s --cacert $CA $API/health
+
+# Log in for a bearer session (scripts) and keep the token.
+TOKEN=$(curl -s --cacert $CA $API/auth/login -H 'Content-Type: application/json' \
+    -d '{"username":"andy","password":"YOUR PASSWORD","session":"bearer"}' |
+    sed -E 's/.*"token":"([^"]+)".*/\1/')
+AUTH="Authorization: Bearer $TOKEN"
+
+curl -s --cacert $CA -H "$AUTH" $API/system
 
 # The hardware endpoint takes the node_id reported by /system.
-ID=$(curl -s --cacert $CA https://127.0.0.1:8443/api/v1/system | sed -E 's/.*"node_id":"([^"]+)".*/\1/')
-curl -s --cacert $CA https://127.0.0.1:8443/api/v1/nodes/$ID/hardware
+ID=$(curl -s --cacert $CA -H "$AUTH" $API/system | sed -E 's/.*"node_id":"([^"]+)".*/\1/')
+curl -s --cacert $CA -H "$AUTH" $API/nodes/$ID/hardware
 
 # The agent refreshes its inventory at start, as a task.
-curl -s --cacert $CA 'https://127.0.0.1:8443/api/v1/tasks?limit=5'
+curl -s --cacert $CA -H "$AUTH" "$API/tasks?limit=5"
+
+curl -s --cacert $CA -H "$AUTH" -X POST $API/auth/logout
 
 # The public key pin of the certificate, to compare out of band.
 bin/skep-api tls fingerprint -dev
@@ -159,7 +175,7 @@ file, environment variables, command-line flags.
 |---|---|---|---|---|
 | Config file | | `SKEP_API_CONFIG` | `-config` | `/usr/local/etc/skep/api.json` if present |
 | Dev mode | `dev_mode` | `SKEP_DEV` | `-dev` | `false` |
-| Listen address | `listen_address` | `SKEP_API_LISTEN` | `-listen` | `127.0.0.1:8443` (loopback only for now) |
+| Listen address | `listen_address` | `SKEP_API_LISTEN` | `-listen` | `127.0.0.1:8443`; set the management address to open the API to a network |
 | Agent socket | `agent_socket` | `SKEP_SOCKET` | `-agent-socket` | `/var/run/skep/agent.sock` / `<data_dir>/run/agent.sock` |
 | State directory | `data_dir` | `SKEP_DATA_DIR` | `-data-dir` | `/var/db/skep` / `./.skep-dev` |
 | Timeouts | `read_timeout`, `write_timeout`, `shutdown_timeout` | | | `15s`, `1m`, `10s` |
@@ -167,6 +183,13 @@ file, environment variables, command-line flags.
 | Operator certificate | `tls.cert_file`, `tls.key_file` | | | empty: generate a self-signed certificate in `<data_dir>/api/tls/` |
 | Argon2id memory | `auth.argon2.memory_kib` | | | `65536` (64 MiB); 19456 to 1048576 |
 | Argon2id passes | `auth.argon2.passes` | | | `3`; 2 to 16 |
+| Session idle timeout | `auth.session.idle_timeout` | | | `30m`; at most `24h` |
+| Session absolute timeout | `auth.session.absolute_timeout` | | | `12h`; at most `720h` |
+| Login attempts per address | `auth.login.per_address_per_minute` | | | `10` |
+| Failures before a delay | `auth.login.failures_before_delay` | | | `5` (per username and address; the delay doubles from 1 s) |
+| Longest login delay | `auth.login.max_delay` | | | `1m` |
+| Failures per username | `auth.login.per_username_failures` | | | `50` in 15 minutes, across all addresses |
+| Trusted reverse proxies | `auth.trusted_proxies` | | | none: `X-Forwarded-For` is ignored |
 | Log level | `log.level` | `SKEP_LOG_LEVEL` | `-log-level` | `info` / `debug` |
 | Log format | `log.format` | `SKEP_LOG_FORMAT` | `-log-format` | `json` / `text` |
 
@@ -234,7 +257,7 @@ internal/internalapi/  the agent's internal API: socket listener, peer check, ha
 internal/agentclient/  skep-api's client for the agent socket
 internal/agentproto/   what both sides share about the internal API (actor headers)
 internal/httpkit/      error envelope, request IDs, access log, recovery
-internal/auth/         password hashing (Argon2id), users and roles
+internal/auth/         password hashing (Argon2id), users and roles, sessions, login limits
 internal/apidb/        storage of api.db: users, roles, sessions, access audit
 internal/termpass/     reading a password from the terminal without echo
 internal/apitls/       skep-api's certificate: generation, renewal, reload

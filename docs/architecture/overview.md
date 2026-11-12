@@ -13,12 +13,12 @@ runs as root, discovers the host, keeps the node's state in SQLite, runs
 tasks, and listens on a Unix socket only.
 
 ```
-            HTTP (loopback only; authentication and TLS: Milestone 4)
+            HTTPS (TLS 1.3; session cookie or bearer token)
                           |
   skep-api (user skep)    |
         +-----------------v------------------+
-        | internal/api        public API     |  routing, validation, error
-        |                                    |  envelope, request IDs, logging
+        | internal/api        public API     |  route table, sessions (via
+        |                                    |  internal/auth), validation
         +-----------------+------------------+
                           | api.Backend (interface)
         +-----------------v------------------+
@@ -237,7 +237,9 @@ imported, both as an unprivileged user and as root.
 
 ## Known limitations
 
-- No authentication, authorization, or TLS. Loopback only.
+- No per-role permission checks yet: every authenticated user can read
+  everything the API serves.
+- Sessions and users are per node.
 - The local node is the only node.
 - Tasks, task events, and audit entries are never removed. Retention is not
   designed yet, which is why the inventory is refreshed only at start and

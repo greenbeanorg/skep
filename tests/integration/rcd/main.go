@@ -11,10 +11,13 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -59,6 +62,8 @@ type suite struct {
 	failed int
 	uid    uint32
 	gid    uint32
+	// token is the bearer session of the test administrator.
+	token string
 }
 
 func main() {
@@ -871,23 +876,38 @@ func (s *suite) apiSupervisorPidfile() string {
 }
 func (s *suite) apiChildPidfile() string { return filepath.Join(s.opts.runDir, "api.pid") }
 
-// apiGet calls the public API and returns the status and the decoded body.
-// It trusts exactly the certificate skep-api generated, which the test can
-// read because it runs as root.
-func (s *suite) apiGet(path string, into any) (int, error) {
+// apiClient trusts exactly the certificate skep-api generated, which the
+// test can read because it runs as root.
+func (s *suite) apiClient() (*http.Client, error) {
 	pemBytes, err := os.ReadFile(filepath.Join(s.opts.dataDir, "api", "tls", "cert.pem"))
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	pool := x509.NewCertPool()
 	if !pool.AppendCertsFromPEM(pemBytes) {
-		return 0, errors.New("the generated certificate is not PEM")
+		return nil, errors.New("the generated certificate is not PEM")
 	}
-	c := http.Client{Timeout: 10 * time.Second, Transport: &http.Transport{
+	return &http.Client{Timeout: 15 * time.Second, Transport: &http.Transport{
 		DisableKeepAlives: true,
 		TLSClientConfig:   &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS13},
-	}}
-	resp, err := c.Get("https://" + s.opts.apiAddr + path)
+	}}, nil
+}
+
+// apiGet calls the public API, with the session token when the test has
+// logged in, and returns the status and the decoded body.
+func (s *suite) apiGet(path string, into any) (int, error) {
+	c, err := s.apiClient()
+	if err != nil {
+		return 0, err
+	}
+	req, err := http.NewRequest(http.MethodGet, "https://"+s.opts.apiAddr+path, nil)
+	if err != nil {
+		return 0, err
+	}
+	if s.token != "" {
+		req.Header.Set("Authorization", "Bearer "+s.token)
+	}
+	resp, err := c.Do(req)
 	if err != nil {
 		return 0, err
 	}
@@ -895,8 +915,61 @@ func (s *suite) apiGet(path string, into any) (int, error) {
 	return resp.StatusCode, json.NewDecoder(resp.Body).Decode(into)
 }
 
+// testUser is the administrator the test creates with the local command.
+const testUser = "rcd-test"
+
+// createAdminAndLogin creates (or resets) the test administrator with
+// "skep-api admin ...", run as root, and logs in over the API.
+func (s *suite) createAdminAndLogin() error {
+	raw := make([]byte, 18)
+	if _, err := rand.Read(raw); err != nil {
+		return err
+	}
+	password := base64.RawURLEncoding.EncodeToString(raw)
+	admin := func(verb string) (string, error) {
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
+		cmd := exec.CommandContext(ctx, s.opts.apiBin, "admin", verb, "--username", testUser, "--password-stdin", "-data-dir", s.opts.dataDir)
+		cmd.Stdin = strings.NewReader(password + "\n")
+		out, err := cmd.CombinedOutput()
+		return strings.TrimSpace(string(out)), err
+	}
+	out, err := admin("create")
+	if err != nil && strings.Contains(out, "already exists") {
+		out, err = admin("reset-password")
+	}
+	s.check(err == nil, "'skep-api admin' run as root: %s", out)
+	if err != nil {
+		return err
+	}
+	// The command gave up root before it opened anything: what it wrote
+	// belongs to the service account.
+	for _, f := range []string{"api.db", "api.db-wal"} {
+		if _, statErr := os.Stat(filepath.Join(s.opts.dataDir, "api", f)); statErr == nil {
+			s.checkPath(filepath.Join(s.opts.dataDir, "api", f), s.uid, s.gid, 0o600)
+		}
+	}
+
+	c, err := s.apiClient()
+	if err != nil {
+		return err
+	}
+	body, _ := json.Marshal(models.LoginRequest{Username: testUser, Password: password, Session: models.SessionBearer})
+	resp, err := c.Post("https://"+s.opts.apiAddr+"/api/v1/auth/login", "application/json", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	var session models.SessionResponse
+	err = json.NewDecoder(resp.Body).Decode(&session)
+	s.check(err == nil && resp.StatusCode == http.StatusOK && session.Token != "" && session.User.Role == "admin",
+		"login over the API as %s: status %d, role %q", testUser, resp.StatusCode, session.User.Role)
+	s.token = session.Token
+	return nil
+}
+
 func (s *suite) apiAnswers() bool {
-	var h models.Health
+	var h models.HealthStatus
 	code, err := s.apiGet("/api/v1/health", &h)
 	return err == nil && code != 0
 }
@@ -966,11 +1039,23 @@ func (s *suite) api() error {
 	_, code = s.apiSvc("start")
 	s.check(code == 0, "service start succeeds")
 	_, child := s.checkAPIRunning()
-	var health models.Health
-	status, err := s.apiGet("/api/v1/health", &health)
-	s.check(err == nil && status == http.StatusServiceUnavailable && health.Checks["agent"].Status == models.HealthDegraded,
-		"health without the agent: status %d, agent check %q (err=%v)", status, health.Checks["agent"].Status, err)
+	var anonymous map[string]any
+	status, err := s.apiGet("/api/v1/health", &anonymous)
+	s.check(err == nil && status == http.StatusServiceUnavailable && len(anonymous) == 1 && anonymous["status"] == models.HealthDegraded,
+		"health without a session and without the agent: status %d, body %v (the status only)", status, anonymous)
 	var apiErr models.ErrorResponse
+	status, err = s.apiGet("/api/v1/system", &apiErr)
+	s.check(err == nil && status == http.StatusUnauthorized && apiErr.Error.Code == "unauthenticated",
+		"system without a session: status %d, code %q (err=%v)", status, apiErr.Error.Code, err)
+
+	step("an administrator is created on the host and logs in, with the agent still down")
+	if err := s.createAdminAndLogin(); err != nil {
+		return err
+	}
+	var health models.Health
+	status, err = s.apiGet("/api/v1/health", &health)
+	s.check(err == nil && status == http.StatusServiceUnavailable && health.Checks["agent"].Status == models.HealthDegraded,
+		"health with a session: status %d, agent check %q (err=%v)", status, health.Checks["agent"].Status, err)
 	status, err = s.apiGet("/api/v1/system", &apiErr)
 	s.check(err == nil && status == http.StatusServiceUnavailable && apiErr.Error.Code == models.CodeAgentUnavailable,
 		"system without the agent: status %d, code %q (err=%v)", status, apiErr.Error.Code, err)

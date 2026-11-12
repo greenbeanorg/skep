@@ -228,6 +228,72 @@ type Health struct {
 	Checks        map[string]HealthCheck `json:"checks"`
 }
 
+// HealthStatus is what the health endpoint returns to a caller without a
+// session: the status and nothing else.
+type HealthStatus struct {
+	Status string `json:"status"`
+}
+
+// User is an account, as the API shows it. It never includes the password
+// hash.
+type User struct {
+	ID          string `json:"id"`
+	Username    string `json:"username"`
+	DisplayName string `json:"display_name"`
+	// Role is the name of the user's role.
+	Role              string     `json:"role"`
+	Disabled          bool       `json:"disabled"`
+	LastLoginAt       *time.Time `json:"last_login_at,omitempty"`
+	PasswordChangedAt *time.Time `json:"password_changed_at,omitempty"`
+	CreatedAt         time.Time  `json:"created_at"`
+	UpdatedAt         time.Time  `json:"updated_at"`
+}
+
+// Session kinds.
+const (
+	SessionCookie = "cookie"
+	SessionBearer = "bearer"
+)
+
+// LoginRequest is the body of POST /auth/login.
+type LoginRequest struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
+	// Session is "cookie" (the default) or "bearer". A cookie login sets
+	// the session cookie and returns no token. A bearer login returns
+	// the token in the body and sets no cookie.
+	Session string `json:"session,omitempty"`
+}
+
+// SessionInfo describes a session. It never includes the token.
+type SessionInfo struct {
+	Kind      string    `json:"kind"`
+	CreatedAt time.Time `json:"created_at"`
+	// ExpiresAt is the absolute end of the session.
+	ExpiresAt time.Time `json:"expires_at"`
+	// IdleTimeoutSeconds is how long the session survives without use.
+	IdleTimeoutSeconds int64 `json:"idle_timeout_seconds"`
+}
+
+// SessionResponse is the body of a successful login and of
+// GET /auth/session.
+type SessionResponse struct {
+	User    User        `json:"user"`
+	Session SessionInfo `json:"session"`
+	// Permissions are the permission strings of the user's role. "*"
+	// means every permission.
+	Permissions []string `json:"permissions"`
+	// Token is the session token. It is present only in the response to
+	// a login that asked for a bearer session.
+	Token string `json:"token,omitempty"`
+}
+
+// PasswordChange is the body of PUT /auth/password.
+type PasswordChange struct {
+	CurrentPassword string `json:"current_password"`
+	NewPassword     string `json:"new_password"`
+}
+
 // ErrorBody is the error payload used by every API error response.
 type ErrorBody struct {
 	// Code is a stable, machine-readable error code.

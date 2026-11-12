@@ -62,6 +62,26 @@ type fixture struct {
 	hasher *auth.Hasher
 	audit  *auditLog
 	users  *auth.Users
+	authn  *auth.Authenticator
+	clock  *clock
+}
+
+// clock is a settable time source for session lifetimes and limits.
+type clock struct {
+	mu sync.Mutex
+	t  time.Time
+}
+
+func (c *clock) now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.t
+}
+
+func (c *clock) advance(d time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.t = c.t.Add(d)
 }
 
 func quiet() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
@@ -81,9 +101,23 @@ func newFixture(t *testing.T) *fixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f := &fixture{db: db, store: apidb.NewUserStore(db), hasher: hasher, audit: &auditLog{}}
+	f := &fixture{db: db, store: apidb.NewUserStore(db), hasher: hasher, audit: &auditLog{},
+		clock: &clock{t: time.Now().UTC().Truncate(time.Millisecond)}}
 	f.users = auth.NewUsers(f.store, hasher, f.audit, quiet())
+	f.authn, err = auth.NewAuthenticator(f.authnOptions())
+	if err != nil {
+		t.Fatal(err)
+	}
 	return f
+}
+
+func (f *fixture) authnOptions() auth.AuthenticatorOptions {
+	return auth.AuthenticatorOptions{
+		Users: f.store, Sessions: apidb.NewSessionStore(f.db), Hasher: f.hasher, Audit: f.audit,
+		Throttle: auth.DefaultThrottleConfig(),
+		Session:  auth.SessionConfig{IdleTimeout: auth.DefaultIdleTimeout, AbsoluteTimeout: auth.DefaultAbsoluteTimeout},
+		Logger:   quiet(), Now: f.clock.now,
+	}
 }
 
 var (

@@ -320,20 +320,23 @@ func TestAPIErrors(t *testing.T) {
 		opts APILoadOptions
 		want string
 	}{
-		"missing file":       {APILoadOptions{Path: "/nonexistent/api.json"}, "open"},
-		"unknown field":      {APILoadOptions{Path: writeFile(t, `{"socket": {}}`)}, "unknown field"},
-		"bad listen":         {APILoadOptions{Overrides: APIOverrides{ListenAddress: "nope"}}, "host:port"},
-		"bad port":           {APILoadOptions{Overrides: APIOverrides{ListenAddress: "127.0.0.1:99999"}}, "invalid port"},
-		"all interfaces":     {APILoadOptions{Overrides: APIOverrides{ListenAddress: ":8443"}}, "not a loopback"},
-		"remote address":     {APILoadOptions{Overrides: APIOverrides{ListenAddress: "10.79.20.80:8443"}}, "not a loopback"},
-		"bad timeout":        {APILoadOptions{Path: writeFile(t, `{"write_timeout": "-1s"}`)}, "must be positive"},
-		"cert without key":   {APILoadOptions{Path: writeFile(t, `{"tls": {"cert_file": "/etc/ssl/skep.crt"}}`)}, "must be set together"},
-		"relative cert path": {APILoadOptions{Path: writeFile(t, `{"tls": {"cert_file": "skep.crt", "key_file": "skep.key"}}`)}, "absolute path"},
-		"weak argon2 memory": {APILoadOptions{Path: writeFile(t, `{"auth": {"argon2": {"memory_kib": 8192}}}`)}, "auth.argon2.memory_kib"},
-		"one argon2 pass":    {APILoadOptions{Path: writeFile(t, `{"auth": {"argon2": {"passes": 1}}}`)}, "auth.argon2.passes"},
-		"huge argon2 memory": {APILoadOptions{Path: writeFile(t, `{"auth": {"argon2": {"memory_kib": 4194304}}}`)}, "auth.argon2.memory_kib"},
-		"bad level":          {APILoadOptions{Overrides: APIOverrides{LogLevel: "loud"}}, "log.level"},
-		"bad dev env":        {APILoadOptions{LookupEnv: envMap(map[string]string{EnvDev: "maybe"})}, "not a boolean"},
+		"missing file":          {APILoadOptions{Path: "/nonexistent/api.json"}, "open"},
+		"unknown field":         {APILoadOptions{Path: writeFile(t, `{"socket": {}}`)}, "unknown field"},
+		"bad listen":            {APILoadOptions{Overrides: APIOverrides{ListenAddress: "nope"}}, "host:port"},
+		"bad port":              {APILoadOptions{Overrides: APIOverrides{ListenAddress: "127.0.0.1:99999"}}, "invalid port"},
+		"long idle timeout":     {APILoadOptions{Path: writeFile(t, `{"auth": {"session": {"idle_timeout": "25h", "absolute_timeout": "48h"}}}`)}, "idle_timeout"},
+		"absolute below idle":   {APILoadOptions{Path: writeFile(t, `{"auth": {"session": {"idle_timeout": "2h", "absolute_timeout": "1h"}}}`)}, "absolute_timeout"},
+		"absolute over 30 days": {APILoadOptions{Path: writeFile(t, `{"auth": {"session": {"absolute_timeout": "721h"}}}`)}, "absolute_timeout"},
+		"negative login limit":  {APILoadOptions{Path: writeFile(t, `{"auth": {"login": {"per_address_per_minute": -1}}}`)}, "per_address_per_minute"},
+		"bad trusted proxy":     {APILoadOptions{Path: writeFile(t, `{"auth": {"trusted_proxies": ["proxy.example.org"]}}`)}, "trusted_proxies"},
+		"bad timeout":           {APILoadOptions{Path: writeFile(t, `{"write_timeout": "-1s"}`)}, "must be positive"},
+		"cert without key":      {APILoadOptions{Path: writeFile(t, `{"tls": {"cert_file": "/etc/ssl/skep.crt"}}`)}, "must be set together"},
+		"relative cert path":    {APILoadOptions{Path: writeFile(t, `{"tls": {"cert_file": "skep.crt", "key_file": "skep.key"}}`)}, "absolute path"},
+		"weak argon2 memory":    {APILoadOptions{Path: writeFile(t, `{"auth": {"argon2": {"memory_kib": 8192}}}`)}, "auth.argon2.memory_kib"},
+		"one argon2 pass":       {APILoadOptions{Path: writeFile(t, `{"auth": {"argon2": {"passes": 1}}}`)}, "auth.argon2.passes"},
+		"huge argon2 memory":    {APILoadOptions{Path: writeFile(t, `{"auth": {"argon2": {"memory_kib": 4194304}}}`)}, "auth.argon2.memory_kib"},
+		"bad level":             {APILoadOptions{Overrides: APIOverrides{LogLevel: "loud"}}, "log.level"},
+		"bad dev env":           {APILoadOptions{LookupEnv: envMap(map[string]string{EnvDev: "maybe"})}, "not a boolean"},
 	} {
 		if _, err := loadAPI(t, tt.opts); err == nil || !strings.Contains(err.Error(), tt.want) {
 			t.Errorf("%s: error = %v, want it to contain %q", name, err, tt.want)
@@ -354,5 +357,42 @@ func TestAPISampleConfigMatchesDefaults(t *testing.T) {
 	}
 	if !reflect.DeepEqual(sample, defaults) {
 		t.Errorf("sample config differs from the defaults:\nsample   %+v\ndefaults %+v", sample, defaults)
+	}
+}
+
+// TestAPIListenAddressIsAnExplicitChoice: loopback is the default, and
+// opening the API to a network is one explicit setting (ADR 0006
+// decision 7).
+func TestAPIListenAddressIsAnExplicitChoice(t *testing.T) {
+	cfg, err := loadAPI(t, APILoadOptions{})
+	if err != nil || !IsLoopbackHost(strings.Split(cfg.ListenAddress, ":")[0]) {
+		t.Fatalf("default listen address %q is not loopback (%v)", cfg.ListenAddress, err)
+	}
+	for _, addr := range []string{"10.79.20.170:8443", ":8443", "[::]:8443"} {
+		cfg, err := loadAPI(t, APILoadOptions{Path: writeFile(t, `{"listen_address": "`+addr+`"}`)})
+		if err != nil || cfg.ListenAddress != addr {
+			t.Errorf("listen_address %q: %+v, %v", addr, cfg.ListenAddress, err)
+		}
+	}
+}
+
+func TestAPIAuthDefaultsAndProxies(t *testing.T) {
+	cfg, err := loadAPI(t, APILoadOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := cfg.Auth
+	if a.Session.IdleTimeout.Std() != 30*time.Minute || a.Session.AbsoluteTimeout.Std() != 12*time.Hour ||
+		a.Login.PerAddressPerMinute != 10 || a.Login.FailuresBeforeDelay != 5 || a.Login.MaxDelay.Std() != time.Minute ||
+		a.Login.PerUsernameFailures != 50 || len(a.TrustedProxies) != 0 {
+		t.Errorf("auth defaults = %+v", a)
+	}
+	cfg, err = loadAPI(t, APILoadOptions{Path: writeFile(t, `{"auth": {"trusted_proxies": ["10.0.0.5", "192.0.2.77/24", "2001:db8::/32"]}}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	prefixes, err := cfg.TrustedProxyPrefixes()
+	if err != nil || len(prefixes) != 3 || prefixes[0].String() != "10.0.0.5/32" || prefixes[1].String() != "192.0.2.0/24" {
+		t.Errorf("prefixes = %v, %v", prefixes, err)
 	}
 }

@@ -21,6 +21,17 @@
     "argon2": {
       "memory_kib": 65536,
       "passes": 3
-    }
+    },
+    "session": {
+      "idle_timeout": "30m0s",
+      "absolute_timeout": "12h0m0s"
+    },
+    "login": {
+      "per_address_per_minute": 10,
+      "failures_before_delay": 5,
+      "max_delay": "1m0s",
+      "per_username_failures": 50
+    },
+    "trusted_proxies": []
   }
 }

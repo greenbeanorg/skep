@@ -26,6 +26,7 @@ import (
 	"github.com/greenbeanorg/skep/internal/apidb"
 	"github.com/greenbeanorg/skep/internal/apitls"
 	"github.com/greenbeanorg/skep/internal/audit"
+	"github.com/greenbeanorg/skep/internal/auth"
 	"github.com/greenbeanorg/skep/internal/config"
 	"github.com/greenbeanorg/skep/internal/database"
 	"github.com/greenbeanorg/skep/internal/logging"
@@ -166,6 +167,42 @@ func runServer(ctx context.Context, args []string, e env) error {
 		return err
 	}
 
+	// Identity: users, sessions, and the login limits.
+	hasher, err := auth.NewHasher(argon2Params(cfg), auth.DefaultHashConcurrency, auth.DefaultHashWait)
+	if err != nil {
+		return err
+	}
+	userStore := apidb.NewUserStore(db)
+	users := auth.NewUsers(userStore, hasher, access, log)
+	throttle := auth.DefaultThrottleConfig()
+	throttle.PerAddress = cfg.Auth.Login.PerAddressPerMinute
+	throttle.FailuresBeforeDelay = cfg.Auth.Login.FailuresBeforeDelay
+	throttle.MaxDelay = cfg.Auth.Login.MaxDelay.Std()
+	throttle.PerUsername = cfg.Auth.Login.PerUsernameFailures
+	authn, err := auth.NewAuthenticator(auth.AuthenticatorOptions{
+		Users: userStore, Sessions: apidb.NewSessionStore(db), Hasher: hasher, Audit: access,
+		Throttle: throttle,
+		Session: auth.SessionConfig{
+			IdleTimeout:     cfg.Auth.Session.IdleTimeout.Std(),
+			AbsoluteTimeout: cfg.Auth.Session.AbsoluteTimeout.Std(),
+		},
+		Logger: log,
+	})
+	if err != nil {
+		return err
+	}
+	proxies, err := cfg.TrustedProxyPrefixes()
+	if err != nil {
+		return err
+	}
+	if exists, err := users.AdminExists(ctx); err != nil {
+		return err
+	} else if !exists {
+		log.Warn("no administrator exists yet: nobody can log in. Create one on this host with " +
+			"'skep-api admin create --username NAME'")
+	}
+	go authn.Run(ctx, sessionSweepInterval)
+
 	// The client does not connect here: the agent may start later, or
 	// restart, and the API keeps answering in the meantime.
 	agent, err := agentclient.New(agentclient.Options{SocketPath: cfg.AgentSocket})
@@ -176,11 +213,15 @@ func runServer(ctx context.Context, args []string, e env) error {
 
 	handler := api.NewHandler(api.Options{
 		Backend: agent,
+		Auth:    authn,
+		Users:   users,
+		Audit:   access,
 		Logger:  log,
 		TLS: func() models.TLSInfo {
 			info := certs.Info()
 			return models.TLSInfo{Source: string(info.Source), NotAfter: info.NotAfter.UTC(), PublicKeySHA256: info.PublicKeySHA256}
 		},
+		TrustedProxies: proxies,
 	})
 	if err := serve(ctx, cfg, handler, certs, log); err != nil {
 		return err
@@ -188,6 +229,9 @@ func runServer(ctx context.Context, args []string, e env) error {
 	log.Info("stopped")
 	return nil
 }
+
+// sessionSweepInterval is how often expired sessions are deleted.
+const sessionSweepInterval = 5 * time.Minute
 
 // openDatabase opens api.db and brings its schema up to date.
 func openDatabase(ctx context.Context, cfg config.API, log *slog.Logger) (*sql.DB, error) {
@@ -287,7 +331,10 @@ func serve(ctx context.Context, cfg config.API, handler http.Handler, certs *api
 	info := certs.Info()
 	log.Info("API listening", "address", ln.Addr().String(), "base_path", api.Prefix,
 		"tls", "1.3", "certificate", string(info.Source), "public_key", info.PublicKeySHA256,
-		"authentication", "none")
+		"authentication", "sessions")
+	if host, _, err := net.SplitHostPort(cfg.ListenAddress); err == nil && !config.IsLoopbackHost(host) {
+		log.Info("the API is reachable from the network, as configured", "address", ln.Addr().String())
+	}
 
 	select {
 	case err := <-errc:

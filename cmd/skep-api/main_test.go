@@ -62,11 +62,11 @@ func TestRunRefusesRoot(t *testing.T) {
 
 func TestRunRejectsBadInput(t *testing.T) {
 	for name, args := range map[string][]string{
-		"unknown flag":      {"-nope"},
-		"stray argument":    {"extra"},
-		"missing config":    {"-config", "/nonexistent/api.json"},
-		"non-loopback bind": {"-dev", "-listen", "0.0.0.0:0", "-data-dir", t.TempDir()},
-		"invalid log level": {"-dev", "-log-level", "loud", "-data-dir", t.TempDir()},
+		"unknown flag":       {"-nope"},
+		"stray argument":     {"extra"},
+		"missing config":     {"-config", "/nonexistent/api.json"},
+		"bad listen address": {"-dev", "-listen", "nope", "-data-dir", t.TempDir()},
+		"invalid log level":  {"-dev", "-log-level", "loud", "-data-dir", t.TempDir()},
 	} {
 		if err := run(context.Background(), args, testEnv(io.Discard, io.Discard)); err == nil {
 			t.Errorf("%s: run succeeded, want an error", name)
@@ -227,6 +227,51 @@ func client(t *testing.T, dataDir string) *http.Client {
 	return c
 }
 
+// bearer adds a session token to every request of a client.
+type bearer struct {
+	token string
+	next  http.RoundTripper
+}
+
+func (b bearer) RoundTrip(r *http.Request) (*http.Response, error) {
+	r = r.Clone(r.Context())
+	r.Header.Set("Authorization", "Bearer "+b.token)
+	return b.next.RoundTrip(r)
+}
+
+// createAdmin creates the administrator "andy" with the local command, as
+// an operator would after installing.
+func createAdmin(t *testing.T, cfg, dataDir string) {
+	t.Helper()
+	e := testEnv(io.Discard, io.Discard)
+	e.stdin = strings.NewReader(testPassword + "\n")
+	if err := run(context.Background(), []string{"admin", "create", "--username", "andy", "--password-stdin", "-dev", "-config", cfg, "-data-dir", dataDir}, e); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// login logs "andy" in for a bearer session and returns a client that
+// sends its token.
+func login(t *testing.T, c *http.Client, base string) *http.Client {
+	t.Helper()
+	body, _ := json.Marshal(models.LoginRequest{Username: "andy", Password: testPassword, Session: models.SessionBearer})
+	resp, err := c.Post(base+"/api/v1/auth/login", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var out models.SessionResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil || resp.StatusCode != http.StatusOK || out.Token == "" {
+		t.Fatalf("login: status %d, %v", resp.StatusCode, err)
+	}
+	return withToken(c, out.Token)
+}
+
+func withToken(c *http.Client, token string) *http.Client {
+	authed := &http.Client{Transport: bearer{token: token, next: c.Transport}, Timeout: c.Timeout}
+	return authed
+}
+
 func get(t *testing.T, c *http.Client, url string, wantStatus int, into any) *http.Response {
 	t.Helper()
 	resp, err := c.Get(url)
@@ -255,9 +300,24 @@ func TestRunServesAPIThroughTheSocket(t *testing.T) {
 	socket := filepath.Join(dir, "agent.sock")
 
 	// The API starts first: the start order must not matter.
-	dataDir := filepath.Join(dir, "data")
-	base := startAPI(t, "-dev", "-data-dir", dataDir, "-agent-socket", socket)
-	c := client(t, dataDir)
+	dataDir, cfg := filepath.Join(dir, "data"), fastConfig(t)
+	createAdmin(t, cfg, dataDir)
+	base := startAPI(t, "-dev", "-config", cfg, "-data-dir", dataDir, "-agent-socket", socket)
+	anonymous := client(t, dataDir)
+
+	// Without a session: the health status and nothing else.
+	var status map[string]any
+	get(t, anonymous, base+"/api/v1/health", http.StatusServiceUnavailable, &status)
+	if len(status) != 1 || status["status"] != models.HealthDegraded {
+		t.Errorf("unauthenticated health = %v, want only the status", status)
+	}
+	var denied models.ErrorResponse
+	get(t, anonymous, base+"/api/v1/system", http.StatusUnauthorized, &denied)
+	if denied.Error.Code != "unauthenticated" {
+		t.Errorf("unauthenticated system = %+v", denied)
+	}
+	// Logging in works while the agent is down.
+	c := login(t, anonymous, base)
 
 	var health models.Health
 	get(t, c, base+"/api/v1/health", http.StatusServiceUnavailable, &health)
@@ -282,7 +342,8 @@ func TestRunServesAPIThroughTheSocket(t *testing.T) {
 	if sys.NodeID != "node-1" || sys.Hostname != "hearst" {
 		t.Errorf("system = %+v", sys)
 	}
-	if c := agent.seen(); c.ActorID != "anonymous" || c.RequestID == "" || c.SourceIP != "127.0.0.1" {
+	// The agent is told which user the request is for.
+	if c := agent.seen(); c.ActorName != "andy" || len(c.ActorID) != 36 || c.RequestID == "" || c.SourceIP != "127.0.0.1" {
 		t.Errorf("the agent saw caller %+v", c)
 	}
 	var hw models.Hardware
@@ -318,8 +379,9 @@ func TestRunTLS(t *testing.T) {
 	t.Cleanup(func() { os.RemoveAll(dir) })
 	socket := filepath.Join(dir, "agent.sock")
 	defer startAgent(t, socket, &fakeAgent{})()
-	dataDir := filepath.Join(dir, "data")
-	base := startAPI(t, "-dev", "-data-dir", dataDir, "-agent-socket", socket)
+	dataDir, cfg := filepath.Join(dir, "data"), fastConfig(t)
+	createAdmin(t, cfg, dataDir)
+	base := startAPI(t, "-dev", "-config", cfg, "-data-dir", dataDir, "-agent-socket", socket)
 	addr := strings.TrimPrefix(base, "https://")
 
 	for path, want := range map[string]os.FileMode{
@@ -357,7 +419,8 @@ func TestRunTLS(t *testing.T) {
 		t.Errorf("negotiated TLS version %x", state.Version)
 	}
 
-	c := client(t, dataDir)
+	c := login(t, client(t, dataDir), base)
+	token := c.Transport.(bearer).token
 	var sys models.System
 	resp = get(t, c, base+"/api/v1/system", http.StatusOK, &sys)
 	if hsts := resp.Header.Get("Strict-Transport-Security"); hsts != "" {
@@ -396,7 +459,8 @@ func TestRunTLS(t *testing.T) {
 	var after models.System
 	deadline := time.Now().Add(10 * time.Second)
 	for {
-		get(t, client(t, dataDir), base+"/api/v1/system", http.StatusOK, &after)
+		// The session survives the key change; only the trust anchor is new.
+		get(t, withToken(client(t, dataDir), token), base+"/api/v1/system", http.StatusOK, &after)
 		if after.API.TLS.PublicKeySHA256 != sys.API.TLS.PublicKeySHA256 {
 			break
 		}
@@ -500,7 +564,7 @@ func TestOperatorCertificateIsServedWithHSTS(t *testing.T) {
 	dataDir := filepath.Join(dir, "data")
 	base := startAPI(t, "-dev", "-config", cfgFile, "-data-dir", dataDir, "-agent-socket", filepath.Join(dir, "absent.sock"))
 
-	var health models.Health
+	var health models.HealthStatus
 	resp := get(t, client(t, gen), base+"/api/v1/health", http.StatusServiceUnavailable, &health)
 	if hsts := resp.Header.Get("Strict-Transport-Security"); !strings.HasPrefix(hsts, "max-age=") {
 		t.Errorf("Strict-Transport-Security = %q with an operator certificate", hsts)
