@@ -128,7 +128,7 @@ an attack in the middle looks like. Run "skep-api tls fingerprint" on the host.
 Only if it prints the presented key, accept it with:
   skepctl login --server %s --username NAME --trust-key %s
 If the server now has an operator-supplied certificate, use --ca-file FILE or
---system-roots instead of --trust-key.`,
+--system-roots instead of --trust-key`,
 		server, km.Pinned, km.Presented, server, km.Presented)
 }
 
@@ -136,7 +136,7 @@ If the server now has an operator-supplied certificate, use --ca-file FILE or
 // verification. Nothing was sent to the server.
 func untrustedError(server string, err error) error {
 	return fmt.Errorf("the certificate of %s is not trusted; nothing was sent to it: %w\n"+
-		"If the operator's CA has changed, log in again with --ca-file NEWFILE (or --system-roots).", server, err)
+		"If the operator's CA has changed, log in again with --ca-file NEWFILE (or --system-roots)", server, err)
 }
 
 // trustFlags are the login flags that decide how a server is trusted.

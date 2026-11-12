@@ -86,7 +86,7 @@ type Session struct {
 }
 
 type pinsFile struct {
-	Version int            `json:"version"`
+	Version int              `json:"version"`
 	Servers map[string]Trust `json:"servers"`
 }
 
