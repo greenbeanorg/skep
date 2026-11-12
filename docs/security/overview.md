@@ -109,7 +109,9 @@ without authentication, exactly as described at the top of this document.
 
 ## Open items
 
-- **Authentication, sessions, RBAC, and TLS** for the API: Milestone 4. No
+- **Authentication, sessions, RBAC, and TLS** for the API: Milestone 4,
+  designed in [ADR 0006](../decisions/0006-api-split-authentication-tls.md)
+  (accepted, not implemented). No
   state-changing endpoint is added before it.
 - **Host confinement configuration** for the agent (which pools,
   interfaces, and devices Skep may touch): designed with the first
