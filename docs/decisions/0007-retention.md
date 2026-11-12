@@ -1,8 +1,11 @@
 # ADR 0007: Retention of tasks, task events, and audit entries
 
-- Status: **Proposed** (not implemented; nothing in this document exists in
-  the code yet)
-- Date: 2026-11-12
+- Status: **Accepted** (not implemented yet; implementation is the
+  milestone after `skepctl`). The review answers and four amendments are
+  under [Decisions](#decisions) and are worked into the text, except
+  amendment (b), which changes shipped code and was implemented on its
+  own (see ADR 0006's implementation notes).
+- Date: 2026-11-12 (proposed and accepted)
 - Depends on: [ADR 0004](0004-privilege-boundary.md) (two audit logs, each
   append-only), [ADR 0005](0005-agent-task-engine.md) (tasks, events, and
   the audit trail of a task).
@@ -20,17 +23,19 @@ things:
   age. What happened stays in the audit log.
 - **The audit log is the record.** An entry is never changed, and it leaves
   the live database only after it is in a sealed, verified, hash-chained
-  archive file. The database enforces that rule itself.
+  archive file. The database enforces that rule itself. For the agent's
+  log, removal is off by default: sealing is automatic, removing live
+  entries is the operator's choice.
 
 | # | Decision | Recommendation |
 |---|---|---|
 | 1 | Task and event retention | Delete finished tasks, with their events, after 90 days; never fewer than 7 days; keep the newest task of each resource |
 | 2 | How pruning runs | A daily system task, itself audited, in small batches |
-| 3 | Audit retention model | Seal monthly archive segments; remove live rows only when sealed and verified, after 400 days |
+| 3 | Audit retention model | Seal monthly archive segments, whose membership is a range of entry IDs; remove live rows only when sealed and verified: never by default for the agent's log, after 90 days for the API's access log |
 | 4 | How the database enforces it | Replace the unconditional no-delete trigger with one that permits a delete only for rows inside a sealed segment |
 | 5 | Tamper evidence | Segments are hash-chained; each seal is also written to syslog |
 | 6 | Archive files | Skep never deletes them |
-| 7 | The API's access audit log | The same mechanism, run by `skep-api` on `api.db` |
+| 7 | The API's access audit log | The same mechanism, run by `skep-api` on `api.db`; throttled login attempts aggregated per address and minute |
 
 ## Context
 
@@ -51,8 +56,10 @@ Why this needs a decision now:
 
 - ADR 0005 holds back a periodic inventory refresh because every task adds
   rows that nothing removes.
-- Milestone 4 adds login events, including failed attempts that an
+- Milestone 4 added login events, including failed attempts that an
   unauthenticated client can generate at will (rate-limited, ADR 0006).
+  Throttled attempts, the ones an attacker can produce fastest, are now
+  aggregated into one entry per source address and minute (amendment b).
 - "Append-only" and "bounded" are in tension, and resolving it by quietly
   dropping a trigger later would be exactly the silent weakening the
   standing rules forbid.
@@ -141,28 +148,64 @@ refresh is a separate decision and is not made here.
 
 Two steps, on purpose far apart in time:
 
-1. **Seal.** After a calendar month (UTC) has ended, its entries are
-   written to an archive segment. The entries **stay** in the live table.
-   From this moment the month exists twice, and the file can be backed up
-   or copied off the host.
-2. **Remove.** Entries are removed from the live table when they are older
-   than `retention.audit_live_days`, default **400** (a full year of
-   look-back in the UI and API, plus margin), **and** their segment is
-   sealed, **and** the file has just been re-read and still matches its
-   recorded hash. `0` means never remove.
+1. **Seal.** After a calendar month (UTC) has ended, the entries of that
+   month are written to an archive segment. The entries **stay** in the
+   live table. From this moment the month exists twice, and the file can
+   be backed up or copied off the host.
+2. **Remove.** The live rows of a segment are removed when the segment's
+   month ended more than `retention.audit_live_days` ago, **and** the
+   segment is sealed, **and** the file has just been re-read and still
+   matches its recorded hash. Removal works on whole segments, never on
+   single entries.
+   - **The agent's audit log: `audit_live_days` defaults to `0`**, which
+     means seal, never remove. Removing live entries is opt-in: an
+     operator who wants it sets a number of days.
+   - **The API's access audit log: `audit_live_days` defaults to `90`.**
+     Its entries are sealed and archived like the agent's before they are
+     removed (Decision 7).
 
 If an archive file is missing or does not match at removal time, nothing
-is removed, the task fails with a specific error code, and the agent's
-health check reports the audit archive as degraded. The live rows are the
-only good copy in that case and they stay.
+is removed, the task fails with a specific error code, and the health
+check reports the audit archive as degraded. The live rows are the only
+good copy in that case and they stay.
+
+### Membership is by entry ID, not by time
+
+A segment is a **contiguous range of entry IDs**. The ID, assigned by the
+database in insertion order, decides which segment an entry belongs to.
+Timestamps are informational: they choose where a boundary falls and are
+recorded in the header, but they never decide membership. Clock skew, a
+clock stepped backwards, or an entry written while the month turned
+therefore cannot put an entry in two segments, in none, or out of order.
+
+- The segment for month M starts at the ID after the previous segment's
+  last ID (or the first ID in the table) and ends at the highest ID whose
+  `occurred_at` is before the end of M, as found when the seal runs.
+  Every entry inside that range belongs to the segment, whatever its own
+  timestamp says; every entry after it belongs to a later segment.
+- The header records the earliest and latest `occurred_at` in the range,
+  for information. An entry whose timestamp lies outside the month it is
+  labelled with is not an error.
+- The deletion trigger (Decision 4) already works on ID ranges; so does
+  removal, which takes whole segments.
+
+### When sealing is late
+
+The health check reports the audit archive as **degraded** when the
+previous month is still unsealed **7 days into the new month**: for
+example on the 8th, if last month's segment does not exist. Sealing runs
+daily, so this means it has been failing for about a week. It stays
+degraded until the seal succeeds. For the agent's log the agent's health
+check reports it; for the access log, `skep-api` reports it in the health
+document it returns to an authenticated caller.
 
 ### A segment
 
 - A file `audit-<node id>-<YYYY-MM>-<first id>-<last id>.jsonl.gz` in
   `/var/db/skep/agent/audit-archive/` (root, `0700`; files `0400`).
 - The first line is a header: format version, node ID, the month, the
-  first and last entry ID, the number of entries, and the hash of the
-  previous segment. Then one JSON object per entry, in ID order, with a
+  first and last entry ID, the number of entries, the earliest and latest
+  `occurred_at` (informational), and the hash of the previous segment. Then one JSON object per entry, in ID order, with a
   fixed field order.
 - The segment's hash is the SHA-256 of the uncompressed bytes, so it does
   not depend on the compression.
@@ -283,9 +326,22 @@ with unauthenticated traffic, so it needs retention more than the agent's.
 | C. Plain age-based deletion for the access log | Simpler, and gives up the guarantee for the log that records who logged in. |
 
 **Recommendation: A**: migration `api/0003`, archive directory
-`/var/db/skep/api/audit-archive/` owned by `skep`, the same defaults, a
-timer in `skep-api`. `skep-api` has no task engine, so its run is recorded
-as an access audit entry (action `audit.archive`) instead of a task.
+`/var/db/skep/api/audit-archive/` owned by `skep`, a timer in `skep-api`.
+`skep-api` has no task engine, so its run is recorded as an access audit
+entry (action `audit.archive`) instead of a task. Unlike the agent's log,
+**the access log keeps 90 days live** by default: entries older than that
+are removed once their segment is sealed and verified (Decision 3).
+
+**Throttled login attempts are aggregated** (amendment b). A refused
+attempt costs the attacker almost nothing, so one row per attempt would
+let an unauthenticated client grow the log as fast as it can send
+requests. Instead, throttled attempts are written as **one entry per
+source address per minute**, with the number of attempts, the limits that
+refused them, and the distinct well-formed usernames (capped). Failed
+logins that were actually checked, successful logins, and every other
+event are still one entry each. This changes shipped code and was
+implemented on its own, before the rest of this ADR; the details are in
+[ADR 0006's implementation notes](0006-api-split-authentication-tls.md#implementation-notes).
 
 As ADR 0004 already says, a compromised API can damage its own log and its
 own archive. The chain and the syslog anchor make that detectable; they do
@@ -296,20 +352,31 @@ sweep and are not audit data.
 
 ## Configuration (sketch)
 
+`agent.json`:
+
 ```json
 "retention": {
   "tasks_days": 90,
-  "audit_live_days": 400,
+  "audit_live_days": 0,
   "audit_archive": true
 }
 ```
 
-- `tasks_days`: `0` keeps tasks forever; otherwise at least 7.
+`api.json`:
+
+```json
+"retention": {
+  "audit_live_days": 90,
+  "audit_archive": true
+}
+```
+
+- `tasks_days` (agent only): `0` keeps tasks forever; otherwise at least 7.
 - `audit_archive: false`: no segments are sealed and no audit entry is
   ever removed (option A of Decision 3).
-- `audit_live_days`: `0` seals segments but never removes live rows;
-  otherwise at least 35, so a month can always be sealed before it is due
-  for removal.
+- `audit_live_days`: `0` seals segments but never removes live rows (the
+  agent's default); otherwise at least 35, so a month can always be
+  sealed before it is due for removal. The API's default is 90.
 
 ## Alternatives considered for the whole
 
@@ -324,6 +391,9 @@ sweep and are not audit data.
 
 - Two new migrations (`agent/0003`, `api/0003`), one new task type, one new
   table per database, and an `audit` subcommand on each binary.
+- With the default settings the agent's database still grows with its
+  audit log (amendment a); only tasks and events are pruned. Operators
+  who need it bounded opt in to removal.
 - The meaning of "append-only" is redefined in the documentation. The
   unconditional no-delete trigger, which is simple to reason about, is
   replaced by a conditional one. That is the real cost of this ADR, and
@@ -348,13 +418,41 @@ Pending FreeBSD validation, all of it: file creation, sync, and rename
 semantics on UFS and ZFS; ownership and modes of the archive directory
 under rc.d; the retention task under the real service across a restart.
 
-## Questions for review
+## Decisions
 
-1. Decision 1: 90 days for tasks, with a 7-day floor?
-2. Decision 3: 400 days of audit entries in the live database, sealed
-   monthly?
-3. Decision 4: is redefining "append-only" as "live table plus sealed
-   segments" acceptable, with the trigger as proposed?
-4. Decision 5: per-entry hash chaining as a follow-up, or part of this
-   work?
-5. Decision 6: Skep never deletes archive segments?
+Accepted on 2026-11-12 with these answers to the five review questions.
+
+1. **Tasks: 90 days, with a 7-day floor** (Decision 1), as proposed.
+2. **Audit segments are sealed monthly** (Decision 3). Removal of live
+   entries follows amendment (a) instead of the proposed 400 days.
+3. **"Append-only" is redefined** as the live table plus sealed segments,
+   **with the trigger as proposed** (Decision 4).
+4. **Per-entry hash chaining is a follow-up** (Decision 5), not part of
+   this work.
+5. **Skep never deletes archive segments** (Decision 6).
+
+Four amendments were made at acceptance:
+
+- **a. Defaults.** The agent's audit log: `audit_live_days = 0`, so
+  segments are sealed and live entries are never removed; removal is
+  opt-in. The API's access log: 90 days live, sealed and archived before
+  removal. The proposal had 400 days for both.
+- **b. Throttled login attempts are aggregated** into one access audit
+  entry per source address per minute, with a count, not one row per
+  attempt. Recorded in ADR 0006's implementation notes too, and
+  implemented now, separately, because it fixes shipped code.
+- **c. Segment membership is defined by entry ID ranges.** Timestamps are
+  informational, so clock skew cannot misplace an entry.
+- **d. Late sealing is visible.** The health check reports the audit
+  archive as degraded if the previous month is still unsealed 7 days into
+  the new month.
+
+Details filled in while applying the amendments, open to correction:
+
+- How a boundary is chosen with ID ranges: the highest ID whose
+  `occurred_at` is before the end of the month, at the time of sealing;
+  removal works on whole segments, using the segment's month for the age.
+- Where late sealing is reported: the agent's health check for its own
+  log; `skep-api`'s authenticated health document for the access log.
+- What an aggregated entry holds: the count, the limits that refused the
+  attempts, and up to ten distinct well-formed usernames.
