@@ -14,6 +14,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/netip"
@@ -37,6 +38,8 @@ type Backend interface {
 	Hardware(ctx context.Context, nodeID string) (models.Hardware, error)
 	Tasks(ctx context.Context, opts models.TaskListOptions) (models.TaskList, error)
 	Task(ctx context.Context, id string) (models.TaskDetail, error)
+	// CancelTask asks for a task to be cancelled for the caller in ctx.
+	CancelTask(ctx context.Context, id string) (models.Task, error)
 }
 
 // nodeIDRE is the accepted shape of a resource ID in a URL.
@@ -115,6 +118,7 @@ func (h *handler) routes() []route {
 		{http.MethodGet, "/nodes/{id}/hardware", auth.PermNodeRead, h.nodeHardware},
 		{http.MethodGet, "/tasks", auth.PermTaskRead, h.tasks},
 		{http.MethodGet, "/tasks/{id}", auth.PermTaskRead, h.task},
+		{http.MethodPost, "/tasks/{id}/cancel", auth.PermTaskCancel, h.cancelTask},
 
 		{http.MethodGet, "/users", auth.PermUserRead, h.listUsers},
 		{http.MethodPost, "/users", auth.PermUserManage, h.createUser},
@@ -425,4 +429,41 @@ func (h *handler) task(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpkit.WriteJSON(w, r, http.StatusOK, detail)
+}
+
+// ActionTaskCancel is the access audit action of a cancel request. The
+// cancellation itself is recorded by the agent, in its own audit log, with
+// the same request ID.
+const ActionTaskCancel = "task.cancel"
+
+// cancelTask asks the agent to cancel a task on behalf of the caller. It
+// is the first endpoint that changes something on the node. The agent
+// records the caller as the actor of the cancellation.
+func (h *handler) cancelTask(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if !nodeIDRE.MatchString(id) {
+		httpkit.WriteError(w, r, http.StatusBadRequest, httpkit.CodeInvalidRequest, "invalid task ID")
+		return
+	}
+	who, _ := identityFrom(r.Context())
+	entry := audit.AccessEntry{
+		ActorID: who.User.ID, ActorName: who.User.Username, Action: ActionTaskCancel,
+		ResourceType: "task", ResourceID: id, Outcome: audit.Success,
+	}
+	task, err := h.backend.CancelTask(r.Context(), id)
+	if err != nil {
+		entry.Outcome = audit.Failure
+		var me *models.Error
+		if errors.As(err, &me) {
+			entry.Details = map[string]any{"error_code": me.Code}
+		} else if errors.Is(err, models.ErrNotFound) {
+			entry.Details = map[string]any{"error_code": httpkit.CodeNotFound}
+		}
+		h.writeAudit(r, entry)
+		h.fail(w, r, err)
+		return
+	}
+	entry.Details = map[string]any{"task_type": task.Type, "task_status": string(task.Status)}
+	h.writeAudit(r, entry)
+	httpkit.WriteJSON(w, r, http.StatusOK, task)
 }

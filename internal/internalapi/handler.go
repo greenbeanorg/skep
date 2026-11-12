@@ -2,6 +2,9 @@
 // JSON under /internal/v1 on a Unix domain socket, for skep-api only
 // (ADR 0004, ADR 0006 decision 1).
 //
+// It carries the agent's read operations and task cancellation. There is
+// no operation that takes a command, a path, or a shell string.
+//
 // Two checks happen before any handler runs. The listener reads the peer's
 // credentials from the kernel and drops everyone who is not on the
 // allow-list. The handler then requires the actor headers on every request,
@@ -19,6 +22,7 @@ import (
 
 	"github.com/greenbeanorg/skep/internal/agentproto"
 	"github.com/greenbeanorg/skep/internal/httpkit"
+	"github.com/greenbeanorg/skep/internal/tasks"
 	"github.com/greenbeanorg/skep/pkg/models"
 )
 
@@ -32,6 +36,9 @@ type Backend interface {
 	Hardware(ctx context.Context, nodeID string) (models.Hardware, error)
 	Tasks(ctx context.Context, opts models.TaskListOptions) (models.TaskList, error)
 	Task(ctx context.Context, id string) (models.TaskDetail, error)
+	// CancelTask is the one operation so far that changes something. The
+	// request names the actor and the verified peer.
+	CancelTask(ctx context.Context, id string, req tasks.CancelRequest) (models.Task, error)
 }
 
 // Options configures the handler.
@@ -65,6 +72,7 @@ func NewHandler(backend Backend, opts Options) http.Handler {
 	mux.Handle(agentproto.Prefix+"/nodes/{id}/hardware", httpkit.ReadOnly(h.nodeHardware))
 	mux.Handle(agentproto.Prefix+"/tasks", httpkit.ReadOnly(h.tasks))
 	mux.Handle(agentproto.Prefix+"/tasks/{id}", httpkit.ReadOnly(h.task))
+	mux.Handle(agentproto.Prefix+"/tasks/{id}/cancel", httpkit.Methods(h.cancelTask, http.MethodPost))
 	mux.HandleFunc("/", httpkit.NotFound)
 
 	var root http.Handler = mux
@@ -211,4 +219,30 @@ func (h *handler) task(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpkit.WriteJSON(w, r, http.StatusOK, detail)
+}
+
+// cancelTask asks the engine to cancel a task. It validates the ID again:
+// validation in skep-api is for good error messages, validation here is
+// the security control. The actor comes from the request headers, as
+// asserted by skep-api; the peer UID comes from the kernel.
+func (h *handler) cancelTask(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if !idRE.MatchString(id) {
+		httpkit.WriteError(w, r, http.StatusBadRequest, httpkit.CodeInvalidRequest, "invalid task ID")
+		return
+	}
+	// Both were checked by the middleware before any handler ran.
+	caller, _ := agentproto.CallerFrom(r.Context())
+	peer, _ := PeerFrom(r.Context())
+	task, err := h.backend.CancelTask(r.Context(), id, tasks.CancelRequest{
+		Actor:     models.TaskActor{ID: caller.ActorID, Name: caller.ActorName},
+		PeerUID:   peer.UID,
+		RequestID: caller.RequestID,
+		SourceIP:  caller.SourceIP,
+	})
+	if err != nil {
+		httpkit.Fail(h.log, w, r, err)
+		return
+	}
+	httpkit.WriteJSON(w, r, http.StatusOK, task)
 }

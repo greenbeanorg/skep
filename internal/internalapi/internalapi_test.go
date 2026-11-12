@@ -22,6 +22,7 @@ import (
 	"github.com/greenbeanorg/skep/internal/agentproto"
 	"github.com/greenbeanorg/skep/internal/internalapi"
 	"github.com/greenbeanorg/skep/internal/peercred"
+	"github.com/greenbeanorg/skep/internal/tasks"
 	"github.com/greenbeanorg/skep/pkg/models"
 )
 
@@ -33,6 +34,7 @@ type fakeBackend struct {
 	peer     peercred.Cred
 	hadPeer  bool
 	taskOpts models.TaskListOptions
+	cancel   tasks.CancelRequest
 	err      error
 }
 
@@ -85,6 +87,20 @@ func (f *fakeBackend) Task(ctx context.Context, id string) (models.TaskDetail, e
 		return models.TaskDetail{}, models.ErrNotFound
 	}
 	return models.TaskDetail{Task: models.Task{ID: id}, Events: []models.TaskEvent{}}, nil
+}
+
+func (f *fakeBackend) CancelTask(ctx context.Context, id string, req tasks.CancelRequest) (models.Task, error) {
+	f.record(ctx)
+	f.mu.Lock()
+	f.cancel = req
+	f.mu.Unlock()
+	if id != "task-1" {
+		return models.Task{}, models.ErrNotFound
+	}
+	if f.err != nil {
+		return models.Task{}, f.err
+	}
+	return models.Task{ID: id, Status: models.TaskCancelled, Actor: req.Actor}, nil
 }
 
 func quiet() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
@@ -232,7 +248,7 @@ func raw(t *testing.T, path, method, url string, hdr http.Header) (*http.Respons
 func TestEveryRouteRequiresAnActor(t *testing.T) {
 	backend := &fakeBackend{}
 	path := start(t, backend, me())
-	routes := []string{"/health", "/system", "/nodes/node-1/hardware", "/tasks", "/tasks/task-1", "/nope"}
+	routes := []string{"/health", "/system", "/nodes/node-1/hardware", "/tasks", "/tasks/task-1", "/tasks/task-1/cancel", "/nope"}
 	for _, route := range routes {
 		for name, hdr := range map[string]http.Header{
 			"no headers": {},
@@ -417,5 +433,51 @@ func TestConnectionLimit(t *testing.T) {
 		c.Close()
 	case <-time.After(5 * time.Second):
 		t.Fatal("the waiting connection was not accepted after the first closed")
+	}
+}
+
+// TestCancelCarriesTheActorAndThePeer: the cancel request that reaches the
+// service layer names the actor skep-api asserted and the peer the kernel
+// verified.
+func TestCancelCarriesTheActorAndThePeer(t *testing.T) {
+	backend := &fakeBackend{}
+	path := start(t, backend, me())
+	c := newClient(t, path)
+
+	task, err := c.CancelTask(callerCtx(), "task-1")
+	if err != nil || task.ID != "task-1" || task.Status != models.TaskCancelled {
+		t.Fatalf("cancel = %+v, %v", task, err)
+	}
+	want := tasks.CancelRequest{
+		Actor:     models.TaskActor{ID: testCaller.ActorID, Name: testCaller.ActorName},
+		PeerUID:   uint32(os.Geteuid()),
+		RequestID: testCaller.RequestID,
+		SourceIP:  testCaller.SourceIP,
+	}
+	backend.mu.Lock()
+	got := backend.cancel
+	backend.mu.Unlock()
+	if got != want {
+		t.Errorf("cancel request = %+v, want %+v", got, want)
+	}
+
+	if _, err := c.CancelTask(callerCtx(), "nope"); !errors.Is(err, models.ErrNotFound) {
+		t.Errorf("unknown task: %v", err)
+	}
+	backend.err = &models.Error{Code: models.CodeNotCancellable, Message: "a running x.y task cannot be cancelled"}
+	var me *models.Error
+	if _, err := c.CancelTask(callerCtx(), "task-1"); !errors.As(err, &me) || me.Code != models.CodeNotCancellable {
+		t.Errorf("not cancellable: %v", err)
+	}
+
+	// Only POST cancels.
+	hdr := http.Header{agentproto.HeaderActorID: {"user-1"}, agentproto.HeaderActorName: {"andy"}}
+	for _, method := range []string{http.MethodGet, http.MethodPut, http.MethodDelete} {
+		if resp, _ := raw(t, path, method, agentproto.Prefix+"/tasks/task-1/cancel", hdr); resp.StatusCode != http.StatusMethodNotAllowed {
+			t.Errorf("%s on cancel: %d", method, resp.StatusCode)
+		}
+	}
+	if resp, _ := raw(t, path, http.MethodPost, agentproto.Prefix+"/tasks/bad%20id/cancel", hdr); resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("invalid task ID: %d", resp.StatusCode)
 	}
 }

@@ -27,6 +27,8 @@ type fakeBackend struct {
 	hwErr     error
 	panicMsg  string
 	caller    agentproto.Caller
+	cancelled []string
+	cancelErr error
 	tasks     models.TaskList
 	tasksErr  error
 	taskOpts  models.TaskListOptions
@@ -43,6 +45,20 @@ func (f *fakeBackend) Task(_ context.Context, id string) (models.TaskDetail, err
 		return models.TaskDetail{}, fmt.Errorf("task %q: %w", id, models.ErrNotFound)
 	}
 	return f.task, nil
+}
+
+func (f *fakeBackend) CancelTask(ctx context.Context, id string) (models.Task, error) {
+	f.caller, _ = agentproto.CallerFrom(ctx)
+	f.cancelled = append(f.cancelled, id)
+	if f.cancelErr != nil {
+		return models.Task{}, f.cancelErr
+	}
+	if id != f.task.ID {
+		return models.Task{}, fmt.Errorf("task %q: %w", id, models.ErrNotFound)
+	}
+	t := f.task.Task
+	t.Status = models.TaskCancelled
+	return t, nil
 }
 
 func (f *fakeBackend) Health(context.Context) models.Health { return f.health }
@@ -331,15 +347,17 @@ func TestTaskDetail(t *testing.T) {
 	wantError(t, do(t, newBackend(), http.MethodGet, "/api/v1/tasks/bad%20id", nil), http.StatusBadRequest, httpkit.CodeInvalidRequest)
 }
 
-// TestTasksAreReadOnly guards the Milestone 2 rule: nothing can be
-// submitted or cancelled over the unauthenticated API.
-func TestTasksAreReadOnly(t *testing.T) {
+// TestTasksCannotBeSubmitted: cancelling is the only thing the API can do
+// to a task. Nothing can be submitted, replaced, or deleted.
+func TestTasksCannotBeSubmitted(t *testing.T) {
 	for _, method := range []string{http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete} {
 		for _, path := range []string{"/api/v1/tasks", "/api/v1/tasks/task-1"} {
 			wantError(t, do(t, newBackend(), method, path, nil), http.StatusMethodNotAllowed, httpkit.CodeMethodNotAllowed)
 		}
 	}
-	wantError(t, do(t, newBackend(), http.MethodPost, "/api/v1/tasks/task-1/cancel", nil), http.StatusNotFound, httpkit.CodeNotFound)
+	for _, path := range []string{"/api/v1/tasks/task-1/retry", "/api/v1/tasks/task-1/cancel/now"} {
+		wantError(t, do(t, newBackend(), http.MethodPost, path, nil), http.StatusNotFound, httpkit.CodeNotFound)
+	}
 }
 
 // TestDomainErrorMapping checks the HTTP status of each stable error code,

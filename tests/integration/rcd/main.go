@@ -1083,6 +1083,35 @@ func (s *suite) api() error {
 	s.check(status == http.StatusOK && health.Status == models.HealthOK, "health with the agent: status %d, %s", status, health.Status)
 	s.check(readPid(s.apiChildPidfile()) == child, "skep-api was not restarted for any of this")
 
+	step("a user cancels a running task through the API; the agent records who")
+	if sleep, ok := s.waitSleepRunning(""); ok {
+		c, err := s.apiClient()
+		if err != nil {
+			return err
+		}
+		req, _ := http.NewRequest(http.MethodPost, "https://"+s.opts.apiAddr+"/api/v1/tasks/"+sleep.ID+"/cancel", nil)
+		req.Header.Set("Authorization", "Bearer "+s.token)
+		req.Header.Set("X-Request-ID", "rcd-test-cancel")
+		resp, err := c.Do(req)
+		if err == nil {
+			resp.Body.Close()
+		}
+		s.check(err == nil && resp.StatusCode == http.StatusOK, "POST /api/v1/tasks/{id}/cancel: status %v (err=%v)", statusOf(resp), err)
+		s.check(waitFor(15*time.Second, func() bool { t, _ := s.task(sleep.ID); return t.Status == "cancelled" }),
+			"task %s is cancelled", sleep.ID)
+		var actor, requestID string
+		var peer int64
+		if db, err := s.openDB(); err == nil {
+			_ = db.QueryRow(`SELECT actor_name, peer_uid, COALESCE(request_id, '') FROM audit_log
+				WHERE action = 'task.cancel' AND task_id = ?`, sleep.ID).Scan(&actor, &peer, &requestID)
+			db.Close()
+		}
+		// The actor is the user; the peer is skep-api's account, which
+		// the agent read from the socket itself.
+		s.check(actor == testUser && peer == int64(s.uid) && requestID == "rcd-test-cancel",
+			"the agent's audit log: actor %q, peer uid %d (want %d, the %s account), request ID %q", actor, peer, s.uid, s.opts.user, requestID)
+	}
+
 	step("the agent restarts alone; the API recovers by itself")
 	_, code = s.svc("restart")
 	s.check(code == 0, "service restart of the agent succeeds")
@@ -1113,4 +1142,11 @@ func (s *suite) api() error {
 	_, code = s.svc("stop")
 	s.check(code == 0, "service stop of the agent succeeds")
 	return nil
+}
+
+func statusOf(resp *http.Response) int {
+	if resp == nil {
+		return 0
+	}
+	return resp.StatusCode
 }

@@ -1,7 +1,8 @@
 # ADR 0006: API split, authentication, and TLS (Milestone 4)
 
-- Status: **Accepted** (not implemented yet; nothing in this document
-  exists in the code)
+- Status: **Accepted**, implemented in Milestone 4 (see
+  [Implementation notes](#implementation-notes) and
+  [FreeBSD validation required](#freebsd-validation-required))
 - Date: 2026-11-12 (proposed and accepted)
 - Depends on: [ADR 0004](0004-privilege-boundary.md) (accepted), which fixes
   the two-process shape and the socket. This ADR decides how to build it and

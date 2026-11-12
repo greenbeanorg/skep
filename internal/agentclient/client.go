@@ -142,6 +142,14 @@ func (c *Client) Task(ctx context.Context, id string) (models.TaskDetail, error)
 	return detail, err
 }
 
+// CancelTask asks the agent to cancel a task for the caller in ctx and
+// returns the task as it is after the request.
+func (c *Client) CancelTask(ctx context.Context, id string) (models.Task, error) {
+	var task models.Task
+	err := c.do(ctx, http.MethodPost, "/tasks/"+url.PathEscape(id)+"/cancel", nil, &task)
+	return task, err
+}
+
 // do performs one request and decodes the response into out.
 func (c *Client) do(ctx context.Context, method, path string, query url.Values, out any) error {
 	caller, ok := agentproto.CallerFrom(ctx)

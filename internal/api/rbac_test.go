@@ -54,14 +54,13 @@ func TestEveryRouteDeclaresWhatItRequires(t *testing.T) {
 	if strings.Join(public, ", ") != "GET /health, POST /auth/login" {
 		t.Errorf("public routes = %v; only the health status and the login may be public", public)
 	}
-	// Every declared permission is enforced somewhere, except those that
-	// wait for their endpoint.
+	// Every declared permission is enforced somewhere.
 	used := map[string]bool{}
 	for _, rt := range routes {
 		used[rt.requires] = true
 	}
 	for _, p := range auth.Permissions {
-		if !used[p] && p != auth.PermTaskCancel {
+		if !used[p] {
 			t.Errorf("permission %s is declared but no route requires it", p)
 		}
 	}

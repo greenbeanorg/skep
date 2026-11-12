@@ -6,11 +6,11 @@ with QEMU as an optional secondary engine), jails, OpenZFS storage, and
 networking on single hosts and, later, multi-node clusters, through a REST
 API, a web UI, and a CLI.
 
-**Status: 0.1.0, Milestone 4 "API split, authentication, and TLS" in
-progress.** The code contains the host agent, the API server, read-only
-host discovery, a task engine with history and an operation audit log, a
-small read-only API, and the local database schema. It cannot create or
-manage anything yet.
+**Status: 0.1.0, Milestone 4 "API split, authentication, and TLS".** The
+code contains the host agent, the API server with TLS, accounts, sessions,
+and permissions, read-only host discovery, a task engine with history,
+and two audit logs. It cannot create or manage VMs, jails, storage, or
+networks yet.
 
 > **Security notice:** this is pre-release software. `skep-api` listens on
 > loopback by default; opening it to a network is an explicit
@@ -26,7 +26,7 @@ manage anything yet.
 | `skep-api` | Runs unprivileged, serves the public API on loopback over TLS 1.3, and reaches the host only through the agent socket |
 | TLS | Self-signed certificate generated at first start and renewed with the same key, or an operator-supplied certificate reloaded on change and on `SIGHUP`; no plaintext listener |
 | Host discovery | Read-only: CPU, memory, OS, bhyve, QEMU, ZFS (FreeBSD native, Linux dev mode) |
-| Node API | `GET /api/v1/health`, `/system`, `/nodes/{id}/hardware`, `/tasks`, `/tasks/{id}`; nothing in the API changes the host yet |
+| Node API | `GET /api/v1/health`, `/system`, `/nodes/{id}/hardware`, `/tasks`, `/tasks/{id}`; `POST /tasks/{id}/cancel`, the first operation that reaches the agent on behalf of a user |
 | Task engine | Persistent tasks with states, events, idempotency keys, cancellation, and an audit trail; nothing is resumed after a restart |
 | FreeBSD services | rc.d scripts for both processes, supervised, started at boot |
 | Database | SQLite with versioned migrations and a stable node ID; separate databases for the agent and the API |
@@ -275,7 +275,8 @@ internal/sysaccount/   user and group name resolution
 packaging/             rc.d scripts and sample configuration
 scripts/               development helpers
 migrations/sqlite/     versioned SQL migrations, one set per database (agent, api)
-tests/integration/     manual probes that run on a real FreeBSD host
+tests/integration/     native tests that run on a real FreeBSD host
+tests/e2e/             agent and API together in one process
 pkg/models/            public API data types
 pkg/version/           build metadata
 api/openapi.yaml       API description

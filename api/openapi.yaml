@@ -73,8 +73,8 @@ tags:
     description: Node inventory
   - name: tasks
     description: |
-      Asynchronous operations performed by the agent. Tasks cannot be
-      submitted over the API yet.
+      Asynchronous operations performed by the agent. Tasks can be read
+      and cancelled. They cannot be submitted over the API yet.
 paths:
   /health:
     get:
@@ -395,6 +395,54 @@ paths:
           $ref: "#/components/responses/MethodNotAllowed"
         "500":
           $ref: "#/components/responses/InternalError"
+  /tasks/{id}/cancel:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      tags: [tasks]
+      operationId: cancelTask
+      summary: Cancel a task
+      x-skep-permission: task:cancel
+      description: |
+        Requires `task:cancel`. Asks the agent to cancel a task and returns
+        the task as it is after the request. The request has no body.
+
+        A pending task becomes `cancelled` at once. A running task has the
+        request recorded (`cancel_requested_at`) and becomes `cancelled`
+        when it stops; read the task again to see the outcome. A finished
+        task is returned unchanged. Cancellation is cooperative and rolls
+        nothing back.
+
+        The agent records the caller as the actor of the cancellation in
+        its operation audit log; the request ID links that entry to the
+        access audit log.
+      responses:
+        "200":
+          description: The task after the request.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Task"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: A running task of this type cannot be cancelled (`not_cancellable`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          $ref: "#/components/responses/Unavailable"
   /users:
     get:
       tags: [users]
@@ -706,11 +754,9 @@ components:
             code:
               type: string
               description: |
-                Stable, machine-readable error code. The last five are
-                returned by task submission and cancellation, which are not
-                exposed yet: `resource_busy`, `idempotency_key_conflict`,
-                and `not_cancellable` with status 409; `queue_full` and
-                `shutting_down` with status 503.
+                Stable, machine-readable error code. `resource_busy`,
+                `idempotency_key_conflict`, and `queue_full` are returned
+                by task submission, which is not exposed yet.
               enum:
                 - invalid_request
                 - not_found

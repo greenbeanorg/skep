@@ -24,6 +24,7 @@ import (
 
 	"github.com/greenbeanorg/skep/internal/agentproto"
 	"github.com/greenbeanorg/skep/internal/internalapi"
+	"github.com/greenbeanorg/skep/internal/tasks"
 	"github.com/greenbeanorg/skep/pkg/models"
 	"github.com/greenbeanorg/skep/pkg/version"
 )
@@ -134,6 +135,13 @@ func (f *fakeAgent) Task(_ context.Context, id string) (models.TaskDetail, error
 		return models.TaskDetail{}, models.ErrNotFound
 	}
 	return models.TaskDetail{Task: models.Task{ID: id}, Events: []models.TaskEvent{}}, nil
+}
+
+func (f *fakeAgent) CancelTask(_ context.Context, id string, req tasks.CancelRequest) (models.Task, error) {
+	if id != "task-1" {
+		return models.Task{}, models.ErrNotFound
+	}
+	return models.Task{ID: id, Status: models.TaskCancelled, Actor: req.Actor}, nil
 }
 
 // startAgent serves a fake agent on a socket and returns a function that

@@ -334,7 +334,8 @@ accepting this ADR.
 | `skep-api` binary, agent Unix socket, `/internal/v1`, mandatory actor headers | Done (Milestone 4); pending FreeBSD validation |
 | `skep` account, `/var/run/skep` (`root:skep`, `0750`), rc.d service for the agent | Done and validated on FreeBSD (Milestone 3) |
 | rc.d service for `skep-api`, agent socket under `/var/run/skep`, agent as root with no network listener | Done (Milestone 4); pending FreeBSD validation |
-| Authentication, sessions, RBAC, TLS | Milestone 4, in progress ([ADR 0006](0006-api-split-authentication-tls.md)) |
+| Authentication, sessions, RBAC, TLS | Done (Milestone 4, [ADR 0006](0006-api-split-authentication-tls.md)) |
+| First operation that carries a user across the boundary: task cancel, with the actor and the verified peer in the agent's audit log | Done (Milestone 4) |
 | Privileged operations package (`internal/hostops`) and host confinement configuration | With the first privileged operation |
 | Signed per-request tokens | Clustering milestone, before any remote caller |
 

@@ -1,14 +1,15 @@
 # Security overview
 
-This document describes the security posture of Skep 0.1.0 (Foundation). It
-states plainly what is and is not protected.
+This document describes the security posture of Skep 0.1.0 as of
+Milestone 4. It states plainly what is and is not protected.
 
 ## Status
 
 Milestone 4 is in progress
 ([ADR 0006](../decisions/0006-api-split-authentication-tls.md)). The split
 into two processes, TLS, accounts, sessions, and permission checks are
-done. Nothing in the API changes the host yet.
+done. One endpoint acts on the node: cancelling a task. Nothing in the
+API creates or changes host resources yet.
 
 `skep-api` listens on `127.0.0.1:8443` by default. Opening it to a network
 is an explicit change of `listen_address`.
@@ -60,7 +61,7 @@ is an explicit change of `listen_address`.
 - **The agent is told who.** Each request to the agent carries the
   authenticated user as its actor.
 
-## What 0.1.0 does enforce
+## What else is enforced
 
 **No command execution from input.** No API input reaches a command line.
 The only external commands are `zpool list -H -p -o ...` and
@@ -114,12 +115,13 @@ its token.
 **Operation audit.** Every task writes to the agent's audit log when it is
 requested and when it finishes, in the same transaction as the state
 change. A request without an actor is refused before anything is written.
-Refused requests are recorded too. So far the only actor is `system`: the
-agent's own inventory refresh.
+Refused requests are recorded too. The actor is `system` for work the
+agent starts itself, and the authenticated user for a request that came
+through the API.
 
-**No task control over the network.** Tasks can be listed and read, not
-submitted or cancelled. Those operations need an authenticated actor and
-arrive with Milestone 4.
+**Task control.** Tasks can be listed, read, and, with `task:cancel`,
+cancelled. They cannot be submitted over the API; submission arrives with
+the first operation that needs it.
 
 **Task content.** Task payloads are not returned by the API. Results,
 errors, and events are, so handlers must not put secrets in them. Unexpected
@@ -240,8 +242,15 @@ implemented:
   with 400 before any handler runs, reads included. The agent records the
   actor and the verified peer UID. It cannot verify the actor and makes no
   authorization decision from it; that is the API's job.
-- The internal API carries today's read operations only. There is no
-  operation that takes a command, a path, or a shell string.
+- The internal API carries the read operations and one operation that
+  changes something: cancelling a task. There is no operation that takes
+  a command, a path, or a shell string.
+- For a cancellation the agent writes its own audit entry with the actor
+  the API named, the peer UID it read from the kernel, the client's
+  address, and the request ID. That entry is in `agent.db`, which
+  `skep-api` cannot open: a compromised API can add false entries to its
+  own log but cannot remove the agent's record of what it asked for. The
+  request ID is the same in both logs.
 - Each process owns one database the other cannot open:
   `/var/db/skep/agent` is `root`, `0700`; `/var/db/skep/api` is `skep`,
   `0700`.

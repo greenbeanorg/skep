@@ -1,6 +1,6 @@
 # Architecture overview
 
-This document describes Skep as of 0.1.0 (Foundation). It covers what exists
+This document describes Skep as of 0.1.0, Milestone 4. It covers what exists
 now. Planned subsystems are listed in `CLAUDE.md` and are not described here
 until they are built.
 
@@ -137,9 +137,11 @@ implements.
 
 The only task type so far is `discovery.refresh`, which the agent submits
 as `system` once at start. It runs discovery and stores the result in the
-local node's `observed_*` columns. Tasks are read-only over the API:
-submission and cancellation over the network arrive with Milestone 4,
-because an unauthenticated API has no actor to record.
+local node's `observed_*` columns. Over the API tasks can be read and
+cancelled (`POST /tasks/{id}/cancel`, permission `task:cancel`); the agent
+records the authenticated user as the actor of the cancellation.
+Submission over the socket arrives with the first operation that needs
+it.
 
 ## Persistence
 
