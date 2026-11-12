@@ -151,6 +151,14 @@ Adjust the layout when implementation shows a better boundary, and record substa
 
 **Git:** meaningful conventional commits, for example `feat(agent): add FreeBSD host discovery`, `fix(hypervisor): handle missing vmm module`, `docs(architecture): document host agent`. Never commit secrets, credentials, binaries, or local databases.
 
+## Git workflow
+
+- Work on a branch. Never commit or push directly to `main`, and never force-push `main`.
+- When a change is ready: open the PR with `gh`, wait for CI, and squash-merge only if every check passed. Then delete the branch locally and on origin, and pull `main`.
+- If CI fails, fix it on the branch. Never skip, disable, or weaken a check to get green.
+- ADRs: never merge an ADR while its status is Proposed. A design decision needs Andy's answers first. Once he has answered, and the answers are recorded in the ADR and it is marked Accepted, it may be merged.
+- Anything that needs new changes on `hearst` still needs Andy's approval first.
+
 ## Development environment
 
 - Dev machine: **`merrick`** (10.79.20.80, Debian 13 VM on swearengen). Claude Code runs here; all builds, unit tests, and cross-compiles happen here.
