@@ -330,16 +330,16 @@ accepting this ADR.
 |---|---|
 | Separate agent and API schemas, mandatory actor, `peer_uid` in the agent's audit log | Done (0.1.0) |
 | Agent database at `<data_dir>/agent/agent.db`, private directory | Done (0.1.0) |
-| Peer credential reading (`internal/peercred`) | Done and validated on FreeBSD; not yet used by the agent |
-| `skep-api` binary, agent Unix socket, `/internal/v1` | Milestone 4 |
-| `skep` account, `/var/run/skep` (`root:skep`, `0750`), rc.d service for the agent | Done and validated on FreeBSD (Milestone 3). Until Milestone 4 the service runs the agent as `skep`, not root, because the agent still has a network listener; see `docs/installation/freebsd-service.md` |
-| rc.d service for `skep-api`, agent socket under `/var/run/skep`, agent as root | Milestone 4 |
-| Authentication, sessions, RBAC, TLS | Milestone 4 |
+| Peer credential reading (`internal/peercred`) | Done and validated on FreeBSD; used by the agent socket since Milestone 4 |
+| `skep-api` binary, agent Unix socket, `/internal/v1`, mandatory actor headers | Done (Milestone 4); pending FreeBSD validation |
+| `skep` account, `/var/run/skep` (`root:skep`, `0750`), rc.d service for the agent | Done and validated on FreeBSD (Milestone 3) |
+| rc.d service for `skep-api`, agent socket under `/var/run/skep`, agent as root with no network listener | Done (Milestone 4); pending FreeBSD validation |
+| Authentication, sessions, RBAC, TLS | Milestone 4, in progress ([ADR 0006](0006-api-split-authentication-tls.md)) |
 | Privileged operations package (`internal/hostops`) and host confinement configuration | With the first privileged operation |
 | Signed per-request tokens | Clustering milestone, before any remote caller |
 
-Until Milestone 4 lands, the agent still serves the read-only API itself on
-loopback, as described in `docs/security/overview.md`.
+The agent no longer has a network listener. `skep-api` serves the public
+API and reaches the agent through the socket only.
 
 ## Consequences
 

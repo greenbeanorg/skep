@@ -1,11 +1,12 @@
-// Command rcd-test is the native integration test for the skep_agent rc.d
-// service. It runs on a FreeBSD test host, as root, against an installed
-// rc.d script and a TEST BUILD of the agent (build tag skep_testtasks), and
-// checks what cannot be checked on Linux: the service lifecycle, file
-// ownership, privilege drop, crash supervision, and behaviour across a
+// Command rcd-test is the native integration test for the skep_agent and
+// skep_api rc.d services. It runs on a FreeBSD test host, as root, against
+// the installed rc.d scripts and a TEST BUILD of the agent (build tag
+// skep_testtasks), and checks what cannot be checked on Linux: the service
+// lifecycle, file ownership, the agent socket and its peer checks, the
+// privilege drop of skep-api, crash supervision, and behaviour across a
 // reboot.
 //
-// It starts, stops, and kills the skep_agent service and removes its run
+// It starts, stops, and kills the two services and removes their run
 // directory. It changes nothing else on the host. See README.md.
 package main
 
@@ -32,6 +33,7 @@ import (
 
 	_ "modernc.org/sqlite"
 
+	"github.com/greenbeanorg/skep/internal/agentproto"
 	"github.com/greenbeanorg/skep/pkg/models"
 )
 
@@ -41,7 +43,10 @@ type options struct {
 	dataDir      string
 	user         string
 	group        string
-	addr         string
+	socket       string
+	apiService   string
+	apiAddr      string
+	apiBin       string
 	restartDelay time.Duration
 	stateFile    string
 }
@@ -59,13 +64,16 @@ func main() {
 	flag.StringVar(&o.service, "service", "skep_agent", "rc.d service name")
 	flag.StringVar(&o.runDir, "run-dir", "/var/run/skep", "skep_agent_run_dir")
 	flag.StringVar(&o.dataDir, "data-dir", "/var/db/skep", "skep_agent_data_dir")
-	flag.StringVar(&o.user, "user", "skep", "skep_agent_runas")
+	flag.StringVar(&o.user, "user", "skep", "the service account skep-api runs as (skep_api_runas)")
 	flag.StringVar(&o.group, "group", "skep", "skep_agent_rungroup")
-	flag.StringVar(&o.addr, "addr", "127.0.0.1:8765", "the agent's listen address")
+	flag.StringVar(&o.socket, "socket", "/var/run/skep/agent.sock", "the agent's socket")
+	flag.StringVar(&o.apiService, "api-service", "skep_api", "rc.d service name of skep-api")
+	flag.StringVar(&o.apiAddr, "api-addr", "127.0.0.1:8443", "skep-api's listen address")
+	flag.StringVar(&o.apiBin, "api-bin", "/usr/local/sbin/skep-api", "the skep-api binary (skep_api_bin)")
 	flag.DurationVar(&o.restartDelay, "restart-delay", 5*time.Second, "skep_agent_restart_delay")
 	flag.StringVar(&o.stateFile, "state", "", "file that carries state from pre-reboot to post-reboot")
 	flag.Usage = func() {
-		fmt.Fprintln(os.Stderr, "usage: rcd-test [flags] lifecycle | crashloop | norestart | pre-reboot | post-reboot")
+		fmt.Fprintln(os.Stderr, "usage: rcd-test [flags] lifecycle | crashloop | norestart | api | pre-reboot | post-reboot")
 		flag.PrintDefaults()
 	}
 	flag.Parse()
@@ -73,6 +81,11 @@ func main() {
 	if runtime.GOOS != "freebsd" {
 		fmt.Fprintln(os.Stderr, "rcd-test: this test only means something on FreeBSD")
 		os.Exit(2)
+	}
+	if flag.Arg(0) == "probe" {
+		// Run by the test itself under another UID and GID.
+		probe(o.socket, flag.Arg(1))
+		return
 	}
 	if os.Geteuid() != 0 {
 		fmt.Fprintln(os.Stderr, "rcd-test: must run as root (it drives service(8))")
@@ -92,6 +105,8 @@ func main() {
 		err = s.crashLoop()
 	case "norestart":
 		err = s.noRestart()
+	case "api":
+		err = s.api()
 	case "pre-reboot":
 		err = s.preReboot()
 	case "post-reboot":
@@ -160,9 +175,13 @@ func run(timeout time.Duration, name string, args ...string) (string, int) {
 	return strings.TrimSpace(string(out)), code
 }
 
-func (s *suite) svc(verb string) (string, int) {
-	out, code := run(90*time.Second, "/usr/sbin/service", s.opts.service, verb)
-	fmt.Printf("       $ service %s %s -> exit %d: %s\n", s.opts.service, verb, code, strings.ReplaceAll(out, "\n", " | "))
+func (s *suite) svc(verb string) (string, int) { return service(s.opts.service, verb) }
+
+func (s *suite) apiSvc(verb string) (string, int) { return service(s.opts.apiService, verb) }
+
+func service(name, verb string) (string, int) {
+	out, code := run(90*time.Second, "/usr/sbin/service", name, verb)
+	fmt.Printf("       $ service %s %s -> exit %d: %s\n", name, verb, code, strings.ReplaceAll(out, "\n", " | "))
 	return out, code
 }
 
@@ -215,9 +234,29 @@ func waitFor(timeout time.Duration, cond func() bool) bool {
 	}
 }
 
-func (s *suite) getJSON(path string, into any) error {
-	c := http.Client{Timeout: 5 * time.Second}
-	resp, err := c.Get("http://" + s.opts.addr + path)
+// agentClient talks to the agent's internal API over its socket. The test
+// runs as root, which the agent's peer check allows.
+func agentClient(socket string) *http.Client {
+	return &http.Client{
+		Timeout: 5 * time.Second,
+		Transport: &http.Transport{
+			DisableKeepAlives: true,
+			DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+				return (&net.Dialer{}).DialContext(ctx, "unix", socket)
+			},
+		},
+	}
+}
+
+// agentGet reads one document from the internal API, as the actor
+// "rcd-test".
+func agentGet(socket, path string, into any) error {
+	req, err := http.NewRequest(http.MethodGet, "http://agent"+agentproto.Prefix+path, nil)
+	if err != nil {
+		return err
+	}
+	agentproto.Caller{ActorID: "rcd-test", ActorName: "rcd-test"}.SetHeaders(req.Header)
+	resp, err := agentClient(socket).Do(req)
 	if err != nil {
 		return err
 	}
@@ -228,9 +267,95 @@ func (s *suite) getJSON(path string, into any) error {
 	return json.NewDecoder(resp.Body).Decode(into)
 }
 
+func (s *suite) getJSON(path string, into any) error { return agentGet(s.opts.socket, path, into) }
+
 func (s *suite) healthy() bool {
 	var h models.Health
-	return s.getJSON("/api/v1/health", &h) == nil && h.Status == models.HealthOK
+	return s.getJSON("/health", &h) == nil && h.Status == models.HealthOK
+}
+
+// probe is run by the test under another UID and GID. It prints one line:
+// "ok" when the agent answered, "refused-connect" when the socket could not
+// be opened at all (file permissions), and "refused-peer" when it could but
+// the agent dropped the connection (peer credentials).
+func probe(socket, readPath string) {
+	if readPath != "" {
+		// Used to show that an account cannot read another's state.
+		f, err := os.Open(readPath)
+		if err != nil {
+			fmt.Println("refused-open:", err)
+			return
+		}
+		f.Close()
+		fmt.Println("ok")
+		return
+	}
+	conn, err := net.DialTimeout("unix", socket, 3*time.Second)
+	if err != nil {
+		fmt.Println("refused-connect:", err)
+		return
+	}
+	conn.Close()
+	var sys models.System
+	if err := agentGet(socket, "/system", &sys); err != nil {
+		fmt.Println("refused-peer:", err)
+		return
+	}
+	fmt.Println("ok")
+}
+
+// probeAs runs probe as the given user and group, with no supplementary
+// groups.
+func (s *suite) probeAs(uid, gid uint32, readPath string) string {
+	self, err := os.Executable()
+	if err != nil {
+		return "error: " + err.Error()
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, self, "-socket", s.opts.socket, "probe", readPath)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: uid, Gid: gid, Groups: []uint32{gid}}}
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return "error: " + err.Error() + ": " + strings.TrimSpace(string(out))
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// checkSocket checks the two layers that protect the agent socket: file
+// permissions, and the peer credentials the agent reads from the kernel.
+func (s *suite) checkSocket() {
+	fi, err := os.Lstat(s.opts.socket)
+	if err != nil {
+		s.check(false, "%s exists: %v", s.opts.socket, err)
+		return
+	}
+	st := fi.Sys().(*syscall.Stat_t)
+	s.check(fi.Mode()&fs.ModeSocket != 0 && st.Uid == 0 && st.Gid == s.gid && fi.Mode().Perm() == 0o660,
+		"%s is a socket, %d:%d mode %04o (want 0:%d 0660)", s.opts.socket, st.Uid, st.Gid, fi.Mode().Perm(), s.gid)
+
+	const nobody = 65534
+	out := s.probeAs(s.uid, s.gid, "")
+	s.check(out == "ok", "uid %d (%s) gid %d: the agent answers (%s)", s.uid, s.opts.user, s.gid, out)
+	out = s.probeAs(nobody, nobody, "")
+	s.check(strings.HasPrefix(out, "refused-connect"), "uid %d gid %d: file permissions refuse the connection (%s)", nobody, nobody, out)
+	// In the socket's group, so the file permissions allow it, but not on
+	// the agent's allow-list.
+	out = s.probeAs(nobody, s.gid, "")
+	s.check(strings.HasPrefix(out, "refused-peer"), "uid %d gid %d: connects, and the agent's peer check drops it (%s)", nobody, s.gid, out)
+}
+
+// tcpListeners returns the TCP and UDP sockets a process listens on.
+func tcpListeners(pid int) []string {
+	out, _ := run(10*time.Second, "/usr/bin/sockstat", "-l", "-P", "tcp,udp")
+	var found []string
+	for _, line := range strings.Split(out, "\n") {
+		f := strings.Fields(line)
+		if len(f) >= 6 && f[2] == strconv.Itoa(pid) {
+			found = append(found, f[4]+" "+f[5])
+		}
+	}
+	return found
 }
 
 // taskRow is what the test reads from the agent's database.
@@ -371,7 +496,7 @@ func (s *suite) requireTestBuild() error {
 func (s *suite) checkRunning() (supervisor, child int) {
 	s.check(waitFor(20*time.Second, func() bool {
 		return alive(readPid(s.supervisorPidfile())) && alive(readPid(s.childPidfile())) && s.healthy()
-	}), "the supervisor and the agent are running and /api/v1/health is ok")
+	}), "the supervisor and the agent are running and the agent answers on its socket")
 	supervisor, child = readPid(s.supervisorPidfile()), readPid(s.childPidfile())
 
 	_, code := s.svc("status")
@@ -379,28 +504,27 @@ func (s *suite) checkRunning() (supervisor, child int) {
 
 	s.checkPath(s.opts.runDir, 0, s.gid, 0o750)
 	s.checkPath(s.opts.dataDir, 0, 0, 0o755)
-	s.checkPath(filepath.Join(s.opts.dataDir, "agent"), s.uid, s.gid, 0o700)
-	s.checkPath(s.dbPath(), s.uid, s.gid, 0o600)
+	// The agent's state belongs to root; the API account cannot open it.
+	s.checkPath(filepath.Join(s.opts.dataDir, "agent"), 0, 0, 0o700)
+	s.checkPath(s.dbPath(), 0, 0, 0o600)
+	out := s.probeAs(s.uid, s.gid, s.dbPath())
+	s.check(strings.HasPrefix(out, "refused-open"), "uid %d (%s) cannot open the agent's database (%s)", s.uid, s.opts.user, out)
 
 	s.check(psField(supervisor, "user") == "root" && strings.HasPrefix(psField(supervisor, "command"), "daemon:"),
 		"supervisor pid %d is daemon(8) running as root (%s: %s)", supervisor, psField(supervisor, "user"), psField(supervisor, "command"))
-	s.check(psField(child, "user") == s.opts.user && psField(child, "ruser") == s.opts.user,
-		"agent pid %d runs as %s, not root (user=%s ruser=%s)", child, s.opts.user, psField(child, "user"), psField(child, "ruser"))
+	s.check(psField(child, "user") == "root" && psField(child, "ruser") == "root",
+		"agent pid %d runs as root (user=%s ruser=%s)", child, psField(child, "user"), psField(child, "ruser"))
 	s.check(psField(child, "ppid") == strconv.Itoa(supervisor), "the agent's parent is the supervisor")
 
-	// The API must be reachable on loopback only.
-	for _, a := range nonLoopbackAddrs() {
-		_, port, _ := net.SplitHostPort(s.opts.addr)
-		conn, err := net.DialTimeout("tcp", net.JoinHostPort(a, port), 2*time.Second)
-		if err == nil {
-			conn.Close()
-		}
-		s.check(err != nil, "the API is not reachable on %s:%s", a, port)
-	}
+	// The agent has no network listener at all.
+	listeners := tcpListeners(child)
+	s.check(len(listeners) == 0, "the agent listens on no TCP or UDP socket (%v)", listeners)
+	s.checkSocket()
+
 	var sys models.System
-	err := s.getJSON("/api/v1/system", &sys)
+	err := s.getJSON("/system", &sys)
 	s.check(err == nil && sys.Platform == models.PlatformFreeBSD && sys.ProductionHost && !sys.DevMode,
-		"/api/v1/system: platform=%s production_host=%v dev_mode=%v node_id=%s (err=%v)",
+		"system over the socket: platform=%s production_host=%v dev_mode=%v node_id=%s (err=%v)",
 		sys.Platform, sys.ProductionHost, sys.DevMode, sys.NodeID, err)
 	return supervisor, child
 }
@@ -446,9 +570,9 @@ func (s *suite) checkInterrupted(id, wantCode string) {
 		a[0].Phase == "requested" && a[0].Outcome == "success" &&
 		a[1].Phase == "finished" && a[1].Outcome == "failure" && a[1].TaskStatus == "interrupted"
 	for _, e := range a {
-		ok = ok && e.Action == "test.sleep" && e.ActorID == "system" && e.PeerUID == int64(s.uid)
+		ok = ok && e.Action == "test.sleep" && e.ActorID == "system" && e.PeerUID == 0
 	}
-	s.check(ok, "its audit trail is requested/success then finished/failure(interrupted), actor system, peer uid %d: %+v (err=%v)", s.uid, a, err)
+	s.check(ok, "its audit trail is requested/success then finished/failure(interrupted), actor system, peer uid 0: %+v (err=%v)", a, err)
 }
 
 func last(s []string) string {
@@ -465,7 +589,7 @@ func (s *suite) checkRefresh(after string) {
 		t, found = s.latest("discovery.refresh")
 		return found && t.Status == "succeeded" && t.CreatedAt > after
 	})
-	s.check(ok && t.ActorID == "system" && t.PeerUID == int64(s.uid),
+	s.check(ok && t.ActorID == "system" && t.PeerUID == 0,
 		"this start ran discovery.refresh: id=%s status=%s actor=%s peer_uid=%d", t.ID, t.Status, t.ActorID, t.PeerUID)
 }
 
@@ -476,7 +600,9 @@ func (s *suite) checkStopped(supervisor, child int) {
 	s.check(errors.Is(e1, fs.ErrNotExist) && errors.Is(e2, fs.ErrNotExist), "both pid files were removed")
 	_, code := s.svc("status")
 	s.check(code != 0, "service status reports not running")
-	s.check(!s.healthy(), "the API no longer answers")
+	s.check(!s.healthy(), "the agent no longer answers on its socket")
+	_, err := os.Lstat(s.opts.socket)
+	s.check(errors.Is(err, fs.ErrNotExist), "the socket file was removed (%v)", err)
 }
 
 func now() string { return time.Now().UTC().Format("2006-01-02T15:04:05.000Z") }
@@ -594,14 +720,13 @@ func (s *suite) crashLoop() error {
 	s.check(alive(supervisor) && psField(supervisor, "user") == "root", "the supervisor is running (pid %d)", supervisor)
 	out, code = s.svc("status")
 	s.check(code != 0 && strings.Contains(out, "has exited"), "service status does not claim that the agent is running")
-	s.check(!s.healthy(), "the API does not answer")
+	s.check(!s.healthy(), "the agent does not answer")
 
 	step("the supervisor keeps retrying and can be stopped")
 	time.Sleep(2*s.opts.restartDelay + time.Second)
 	s.check(alive(supervisor) && readPid(s.supervisorPidfile()) == supervisor,
 		"the supervisor is still running after two restart delays")
-	out, _ = run(5*time.Second, "/usr/bin/pgrep", "-u", s.opts.user)
-	s.check(out == "", "no process of %s is left running between attempts (%q)", s.opts.user, out)
+	s.check(!alive(readPid(s.childPidfile())), "no agent is left running between attempts")
 	_, code = s.svc("stop")
 	s.check(code == 0, "service stop succeeds")
 	s.checkStopped(supervisor, 0)
@@ -686,7 +811,7 @@ func (s *suite) preReboot() error {
 		return errors.New("no in-flight task")
 	}
 	var sys models.System
-	if err := s.getJSON("/api/v1/system", &sys); err != nil {
+	if err := s.getJSON("/system", &sys); err != nil {
 		return err
 	}
 	all, err := s.tasks()
@@ -724,7 +849,7 @@ func (s *suite) postReboot() error {
 
 	step("state from before the reboot")
 	var sys models.System
-	err = s.getJSON("/api/v1/system", &sys)
+	err = s.getJSON("/system", &sys)
 	s.check(err == nil && sys.NodeID == st.NodeID, "the node ID is unchanged: %s", sys.NodeID)
 	all, err := s.tasks()
 	if err != nil {
@@ -736,5 +861,151 @@ func (s *suite) postReboot() error {
 	s.checkInterrupted(st.SleepTask, "agent_shutdown")
 	s.checkRefresh(st.SavedAt)
 	s.waitSleepRunning(st.SleepTask)
+	return nil
+}
+
+func (s *suite) apiSupervisorPidfile() string {
+	return filepath.Join(s.opts.runDir, "api-supervisor.pid")
+}
+func (s *suite) apiChildPidfile() string { return filepath.Join(s.opts.runDir, "api.pid") }
+
+// apiGet calls the public API and returns the status and the decoded body.
+func (s *suite) apiGet(path string, into any) (int, error) {
+	c := http.Client{Timeout: 10 * time.Second}
+	resp, err := c.Get("http://" + s.opts.apiAddr + path)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+	return resp.StatusCode, json.NewDecoder(resp.Body).Decode(into)
+}
+
+func (s *suite) apiAnswers() bool {
+	var h models.Health
+	code, err := s.apiGet("/api/v1/health", &h)
+	return err == nil && code != 0
+}
+
+// checkAPIRunning checks everything that must hold while skep_api is up,
+// and returns the supervisor and server pids.
+func (s *suite) checkAPIRunning() (supervisor, child int) {
+	s.check(waitFor(20*time.Second, func() bool {
+		return alive(readPid(s.apiSupervisorPidfile())) && alive(readPid(s.apiChildPidfile())) && s.apiAnswers()
+	}), "the supervisor and skep-api are running and the API answers on %s", s.opts.apiAddr)
+	supervisor, child = readPid(s.apiSupervisorPidfile()), readPid(s.apiChildPidfile())
+
+	_, code := s.apiSvc("status")
+	s.check(code == 0, "service status reports running")
+	s.checkPath(s.opts.runDir, 0, s.gid, 0o750)
+	s.checkPath(filepath.Join(s.opts.dataDir, "api"), s.uid, s.gid, 0o700)
+
+	s.check(psField(supervisor, "user") == "root" && strings.HasPrefix(psField(supervisor, "command"), "daemon:"),
+		"supervisor pid %d is daemon(8) running as root (%s: %s)", supervisor, psField(supervisor, "user"), psField(supervisor, "command"))
+	s.check(psField(child, "user") == s.opts.user && psField(child, "ruser") == s.opts.user,
+		"skep-api pid %d runs as %s, not root (user=%s ruser=%s)", child, s.opts.user, psField(child, "user"), psField(child, "ruser"))
+	s.check(psField(child, "ppid") == strconv.Itoa(supervisor), "skep-api's parent is the supervisor")
+
+	listeners := tcpListeners(child)
+	s.check(len(listeners) == 1 && strings.HasSuffix(listeners[0], " "+s.opts.apiAddr),
+		"skep-api listens on %s and nothing else (%v)", s.opts.apiAddr, listeners)
+	_, port, _ := net.SplitHostPort(s.opts.apiAddr)
+	for _, a := range nonLoopbackAddrs() {
+		conn, err := net.DialTimeout("tcp", net.JoinHostPort(a, port), 2*time.Second)
+		if err == nil {
+			conn.Close()
+		}
+		s.check(err != nil, "the API is not reachable on %s:%s", a, port)
+	}
+	return supervisor, child
+}
+
+func (s *suite) checkAPIStopped(supervisor, child int) {
+	s.check(!alive(supervisor) && !alive(child), "the supervisor (%d) and skep-api (%d) are gone", supervisor, child)
+	_, e1 := os.Stat(s.apiSupervisorPidfile())
+	_, e2 := os.Stat(s.apiChildPidfile())
+	s.check(errors.Is(e1, fs.ErrNotExist) && errors.Is(e2, fs.ErrNotExist), "both pid files were removed")
+	_, code := s.apiSvc("status")
+	s.check(code != 0, "service status reports not running")
+	s.check(!s.apiAnswers(), "the API no longer answers")
+}
+
+// api checks the skep_api service together with skep_agent: skep-api runs
+// unprivileged, serves the public API through the agent socket, and each
+// service can start first or restart alone.
+func (s *suite) api() error {
+	step("skep-api refuses to run as root")
+	out, code := run(10*time.Second, s.opts.apiBin, "-data-dir", s.opts.dataDir)
+	s.check(code != 0 && strings.Contains(out, "refusing to run as root"), "started directly as root: exit %d, %q", code, out)
+
+	step("skep_api starts first, with the agent down")
+	s.apiSvc("stop")
+	s.svc("stop")
+	if err := os.RemoveAll(s.opts.runDir); err != nil {
+		return err
+	}
+	_, code = s.apiSvc("start")
+	s.check(code == 0, "service start succeeds")
+	_, child := s.checkAPIRunning()
+	var health models.Health
+	status, err := s.apiGet("/api/v1/health", &health)
+	s.check(err == nil && status == http.StatusServiceUnavailable && health.Checks["agent"].Status == models.HealthDegraded,
+		"health without the agent: status %d, agent check %q (err=%v)", status, health.Checks["agent"].Status, err)
+	var apiErr models.ErrorResponse
+	status, err = s.apiGet("/api/v1/system", &apiErr)
+	s.check(err == nil && status == http.StatusServiceUnavailable && apiErr.Error.Code == models.CodeAgentUnavailable,
+		"system without the agent: status %d, code %q (err=%v)", status, apiErr.Error.Code, err)
+
+	step("the agent starts; the API serves the node through the socket")
+	_, code = s.svc("start")
+	s.check(code == 0, "service start succeeds")
+	s.checkRunning()
+	var sys, direct models.System
+	ok := waitFor(10*time.Second, func() bool {
+		status, err = s.apiGet("/api/v1/system", &sys)
+		return err == nil && status == http.StatusOK
+	})
+	_ = s.getJSON("/system", &direct)
+	s.check(ok && sys.NodeID != "" && sys.NodeID == direct.NodeID && sys.Platform == models.PlatformFreeBSD && sys.ProductionHost,
+		"/api/v1/system: status %d node_id=%s (agent says %s) platform=%s production_host=%v",
+		status, sys.NodeID, direct.NodeID, sys.Platform, sys.ProductionHost)
+	var hw models.Hardware
+	status, err = s.apiGet("/api/v1/nodes/"+sys.NodeID+"/hardware", &hw)
+	s.check(err == nil && status == http.StatusOK && hw.NodeID == sys.NodeID, "/api/v1/nodes/{id}/hardware: status %d (err=%v)", status, err)
+	var list models.TaskList
+	status, err = s.apiGet("/api/v1/tasks", &list)
+	s.check(err == nil && status == http.StatusOK && len(list.Items) > 0, "/api/v1/tasks: status %d, %d tasks (err=%v)", status, len(list.Items), err)
+	status, _ = s.apiGet("/api/v1/health", &health)
+	s.check(status == http.StatusOK && health.Status == models.HealthOK, "health with the agent: status %d, %s", status, health.Status)
+	s.check(readPid(s.apiChildPidfile()) == child, "skep-api was not restarted for any of this")
+
+	step("the agent restarts alone; the API recovers by itself")
+	_, code = s.svc("restart")
+	s.check(code == 0, "service restart of the agent succeeds")
+	ok = waitFor(15*time.Second, func() bool {
+		status, err = s.apiGet("/api/v1/system", &sys)
+		return err == nil && status == http.StatusOK
+	})
+	s.check(ok && readPid(s.apiChildPidfile()) == child, "the same skep-api (pid %d) answers again: status %d", child, status)
+
+	step("kill -9 skep-api: the supervisor starts a new one")
+	if err := syscall.Kill(child, syscall.SIGKILL); err != nil {
+		return fmt.Errorf("kill -9 %d: %w", child, err)
+	}
+	fmt.Printf("       sent SIGKILL to skep-api pid %d\n", child)
+	restarted := waitFor(s.opts.restartDelay+20*time.Second, func() bool {
+		pid := readPid(s.apiChildPidfile())
+		return pid != 0 && pid != child && alive(pid) && s.apiAnswers()
+	})
+	s.check(restarted, "the supervisor started a new skep-api (pid %d, was %d)", readPid(s.apiChildPidfile()), child)
+	s.check(alive(readPid(s.childPidfile())), "the agent kept running")
+	supervisor, child := s.checkAPIRunning()
+
+	step("stop skep_api; the agent keeps running")
+	_, code = s.apiSvc("stop")
+	s.check(code == 0, "service stop succeeds")
+	s.checkAPIStopped(supervisor, child)
+	s.check(s.healthy(), "the agent still answers on its socket")
+	_, code = s.svc("stop")
+	s.check(code == 0, "service stop of the agent succeeds")
 	return nil
 }

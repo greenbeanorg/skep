@@ -6,18 +6,23 @@ info:
     REST API of Skep, a virtualization and infrastructure management platform
     built on the FreeBSD® operating system.
 
-    The API is read-only so far and is served by `skep-agent`.
+    The API is read-only so far. It is served by `skep-api`, an
+    unprivileged process that reads everything about the node from
+    `skep-agent` over a local Unix socket.
 
-    **This release has no authentication and no TLS.** The agent binds to
-    `127.0.0.1` by default and refuses any other address unless
-    `api.allow_insecure_remote` is set. Do not expose it to a network.
+    **There is no authentication and no TLS yet** (Milestone 4, in
+    progress). Until then `skep-api` binds to loopback and refuses any
+    other address. Do not forward the port to a network.
+
+    When the agent cannot be reached, node endpoints answer
+    `503 agent_unavailable`.
 
     Every error response uses the `ErrorResponse` envelope. Every response
     carries an `X-Request-ID` header; a well-formed ID sent by the client is
     echoed back.
 servers:
-  - url: http://127.0.0.1:8765/api/v1
-    description: Local agent (default listen address)
+  - url: http://127.0.0.1:8443/api/v1
+    description: Local skep-api (default listen address)
 tags:
   - name: system
     description: Health and identity of the local node
@@ -33,8 +38,11 @@ paths:
     get:
       tags: [system]
       operationId: getHealth
-      summary: Agent health
-      description: Reports whether the agent and its local database are working.
+      summary: Health
+      description: |
+        Reports whether the agent is reachable and whether it and its local
+        database are working. The `agent` check is `degraded` when skep-api
+        cannot reach the agent.
       responses:
         "200":
           description: Every check passed.
@@ -240,7 +248,9 @@ components:
           schema:
             $ref: "#/components/schemas/ErrorResponse"
     Unavailable:
-      description: The request was cancelled or timed out (`service_unavailable`).
+      description: |
+        The host agent cannot be reached (`agent_unavailable`), or the
+        request was cancelled or timed out (`service_unavailable`).
       content:
         application/json:
           schema:
@@ -268,6 +278,7 @@ components:
                 - method_not_allowed
                 - internal_error
                 - service_unavailable
+                - agent_unavailable
                 - resource_busy
                 - idempotency_key_conflict
                 - not_cancellable

@@ -3,28 +3,29 @@
 This document describes the security posture of Skep 0.1.0 (Foundation). It
 states plainly what is and is not protected.
 
-## The API is unauthenticated in 0.1.0
+## The API is still unauthenticated
 
-The 0.1.0 API has **no authentication, no authorization, and no TLS**. They
-must be in place before any endpoint that changes state is added. Skep's
-standing requirements (TLS everywhere, mutual TLS between nodes, Argon2id,
-RBAC, audit logging) are not met by this release, and the release must not
-be deployed as if they were.
+Milestone 4 is in progress
+([ADR 0006](../decisions/0006-api-split-authentication-tls.md)). The split
+into two processes is done; authentication, authorization, and TLS are
+not. Until they are, Skep's standing requirements (TLS everywhere,
+Argon2id, RBAC) are not met and it must not be deployed as if they were.
 
 What limits the exposure until then:
 
-- **Loopback by default.** The agent listens on `127.0.0.1:8765`.
-- **Remote binding is refused.** A non-loopback listen address, including
-  the "all interfaces" form `:8765`, is a configuration error unless
-  `api.allow_insecure_remote` is `true` in the configuration file. There is
-  deliberately no flag or environment variable for it. When it is set, the
-  agent logs a warning at every start.
-- **Read-only API.** Every endpoint accepts only GET and HEAD. Nothing in
-  0.1.0 changes host state.
+- **Loopback only.** `skep-api` listens on `127.0.0.1:8443` and treats any
+  non-loopback listen address, including the "all interfaces" form
+  `:8443`, as a configuration error. There is no setting that overrides
+  this.
+- **Read-only API.** Every endpoint accepts only GET and HEAD. Nothing
+  changes host state.
+- **The network-facing process is unprivileged.** `skep-api` runs as
+  `skep` and refuses to start as root.
 
 Anyone who can reach the port can read the host's hostname, OS release, CPU
 model, memory size, installed hypervisor binaries, ZFS pool names and
-sizes, and the task history, including task types, times, and actor names. On a multi-user host, "anyone" includes every local user.
+sizes, and the task history, including task types, times, and actor names.
+On a multi-user host, "anyone" includes every local user.
 
 ## What 0.1.0 does enforce
 
@@ -54,8 +55,9 @@ The health endpoint reports that the database is unreachable, not why.
 **Local state permissions.** The directory holding the agent database is
 created `0700` and the database file `0600`.
 
-**The service does not run as root.** Under rc.d the agent runs as the
-unprivileged `skep` account; only the `daemon(8)` supervisor is root. See
+**The process that listens on the network is not root.** `skep-api` runs
+as the unprivileged `skep` account and refuses to start as root. The agent
+runs as root and has no network listener. See
 [the service documentation](../installation/freebsd-service.md).
 
 **Test-only code is not shipped.** The `test.sleep` task type used by the
@@ -63,9 +65,8 @@ native integration tests is compiled only with the `skep_testtasks` build
 tag. CI fails if the shipped FreeBSD binary contains it.
 
 **Separate databases.** Node state (`agent.db`) and identity data (`api.db`)
-are separate databases with separate schemas, so the future unprivileged API
-process never needs to open the agent's state. Only `agent.db` is opened in
-0.1.0.
+are separate databases with separate schemas, so the unprivileged API
+process never opens the agent's state. Only `agent.db` is opened so far.
 
 **Schema-level rules.** `users.password_hash` only accepts Argon2id hashes in
 PHC format, so a plaintext password cannot be stored by mistake. Both
@@ -96,16 +97,29 @@ are set. Responses carry `X-Content-Type-Options: nosniff`,
 
 ## The privilege boundary
 
-[ADR 0004](../decisions/0004-privilege-boundary.md) is accepted. It splits
-the system into an unprivileged `skep-api`, which is the only network
-listener, and a root `skep-agent` that accepts typed operations over a Unix
-socket and checks the caller's UID from the kernel.
+[ADR 0004](../decisions/0004-privilege-boundary.md) splits the system into
+an unprivileged `skep-api`, which is the only network listener, and a root
+`skep-agent` that accepts typed operations over a Unix socket. This is
+implemented:
 
-0.1.0 implements the parts of that decision that concern stored data (the
-database split, the mandatory actor) and the peer-credential code, which
-was validated on FreeBSD. It does **not** yet implement the split itself.
-Until Milestone 4, the agent still serves the read-only API on loopback
-without authentication, exactly as described at the top of this document.
+- The agent listens on `/var/run/skep/agent.sock` (`root:skep`, `0660`, in
+  a `0750` directory) and nowhere else.
+- For every connection the agent reads the peer's credentials from the
+  kernel and drops it unless its UID is on the allow-list (`root` and
+  `skep`). File permissions are the first check, this is the second.
+- Every request must carry the actor it is made for
+  (`Skep-Actor-Id`, `Skep-Actor-Name`); a request without one is refused
+  with 400 before any handler runs, reads included. The agent records the
+  actor and the verified peer UID. It cannot verify the actor and makes no
+  authorization decision from it; that is the API's job.
+- The internal API carries today's read operations only. There is no
+  operation that takes a command, a path, or a shell string.
+- Each process owns one database the other cannot open:
+  `/var/db/skep/agent` is `root`, `0700`; `/var/db/skep/api` is `skep`,
+  `0700`.
+
+Until authentication exists, the actor of every request is `anonymous`.
+The socket and the two rc.d services are pending FreeBSD validation.
 
 ## Open items
 

@@ -4,19 +4,35 @@ This document describes Skep as of 0.1.0 (Foundation). It covers what exists
 now. Planned subsystems are listed in `CLAUDE.md` and are not described here
 until they are built.
 
-## Shape of the system in 0.1.0
+## Shape of the system
 
-One binary, `skep-agent`, runs on a host. It discovers the host read-only,
-keeps local state in SQLite, and serves a small read-only REST API.
+Two binaries run on a host ([ADR 0004](../decisions/0004-privilege-boundary.md),
+[ADR 0006](../decisions/0006-api-split-authentication-tls.md)).
+`skep-api` is the only network listener and runs unprivileged. `skep-agent`
+runs as root, discovers the host, keeps the node's state in SQLite, runs
+tasks, and listens on a Unix socket only.
 
 ```
-            HTTP (loopback only, no auth in 0.1.0)
+            HTTP (loopback only; authentication and TLS: Milestone 4)
                           |
+  skep-api (user skep)    |
         +-----------------v------------------+
-        | internal/api        HTTP layer     |  routing, validation, error
+        | internal/api        public API     |  routing, validation, error
         |                                    |  envelope, request IDs, logging
         +-----------------+------------------+
                           | api.Backend (interface)
+        +-----------------v------------------+
+        | internal/agentclient               |  HTTP+JSON over the socket,
+        +-----------------+------------------+  actor headers on every call
+                          |
+         /var/run/skep/agent.sock  (root:skep 0660, peer UID checked)
+                          |
+  skep-agent (root)       |
+        +-----------------v------------------+
+        | internal/internalapi               |  peer allow-list, mandatory
+        |   /internal/v1                     |  actor, limits
+        +-----------------+------------------+
+                          | internalapi.Backend (interface)
         +-----------------v------------------+
         | internal/agent      service layer  |  node identity, caching,
         |                                    |  health, system document
@@ -31,24 +47,32 @@ keeps local state in SQLite, and serves a small read-only REST API.
    +-------------------+   +---------------------+
 ```
 
-`cmd/skep-agent` is the only place that knows about all of these packages. It
-loads the configuration, builds the logger, opens and migrates the database,
-resolves the node ID, and wires the layers together.
+`cmd/skep-agent` and `cmd/skep-api` are the only places that know about
+all of the packages on their side. Each loads its configuration, builds the
+logger, and wires its layers together.
 
 ### Layer rules
 
 - **`internal/api`** translates HTTP to calls on the `api.Backend` interface
   and back. It holds no business logic and imports neither `internal/agent`
   nor `internal/hardware`.
+- **`internal/agentclient`** implements `api.Backend` by calling the agent.
+  An unreachable agent becomes `503 agent_unavailable`; service errors
+  cross the socket with their codes intact.
+- **`internal/internalapi`** is the agent's listener and handlers. It
+  refuses peers outside the allow-list and requests without an actor
+  before any handler runs.
 - **`internal/agent`** holds the logic. It knows nothing about HTTP.
 - **`internal/hardware`** talks to the operating system. It knows nothing
   about the API or the database.
 
-Because the HTTP layer depends only on `api.Backend`, moving the API into a
-separate `skep-api` process means writing a new `Backend` that calls the
-agent over its Unix socket. The handlers do not change. That split is
-decided in [ADR 0004](../decisions/0004-privilege-boundary.md) and is
-Milestone 4; until then the agent serves the read-only API itself.
+The public API and the internal API are separate interfaces with separate
+versions (`/api/v1`, `/internal/v1`). Shared types live in `pkg/models`;
+the error envelope and middleware they have in common live in
+`internal/httpkit`.
+
+Either process can start first or restart alone. In development,
+`make run-dev` starts both, exactly as in production but as the developer.
 
 ## Host discovery
 
@@ -131,9 +155,8 @@ There are two databases, each owned by one process and closed to the other
 | `<data_dir>/agent/agent.db` | `skep-agent` | `migrations/sqlite/agent` | Node identity, VMs, disks, networks, containers, storage, interfaces, tasks, task events, operation audit |
 | `<data_dir>/api/api.db` | `skep-api` | `migrations/sqlite/api` | Users, roles, access audit |
 
-In 0.1.0 only the agent database is opened. `skep-api` does not exist yet;
-its schema is defined and tested so that the split is in place from the
-first release.
+Only the agent database is opened so far. `skep-api` starts using its
+database with the authentication steps of Milestone 4.
 
 - Migrations are plain SQL files named `NNNN_name.sql`, embedded in the
   binary, and applied at startup, each in its own transaction. Applied
@@ -206,7 +229,8 @@ imported, both as an unprivileged user and as root.
 | Running under rc.d as a service: start, stop, restart, status, crash supervision, start at boot, as the `skep` account | Validated (2026-11-12, see `tests/integration/rcd`) |
 | A crash loop (agent exits at every start) and `skep_agent_restart_delay=0` under rc.d | Validated (2026-11-12, see `tests/integration/rcd`) |
 | A tmpfs `/var/run` | **Pending FreeBSD validation** |
-| Agent socket with the `skep` account, under `/var/run/skep` | **Pending FreeBSD validation** (Milestone 4; the account and the directory exist and are validated, the socket does not exist yet) |
+| Agent socket under `/var/run/skep` with a root agent and the `skep` account; ownership change of `/var/db/skep/agent` from `skep` to root | **Pending FreeBSD validation** (Milestone 4) |
+| `skep-api` under rc.d as `skep`, binding its port without privileges, serving the API through the socket | **Pending FreeBSD validation** (Milestone 4) |
 | ZFS-root host | **Pending FreeBSD validation** (the lab VM is UFS-root) |
 | arm64 | Not a target yet |
 

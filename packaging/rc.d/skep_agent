@@ -14,18 +14,21 @@
 #
 #   skep_agent_bin="/usr/local/sbin/skep-agent"
 #       The agent binary.
-#   skep_agent_runas="skep"
 #   skep_agent_rungroup="skep"
-#       The account and group the agent runs as. The account must exist;
-#       this script never creates it. The agent serves a read-only API on
-#       loopback and needs no privileges, so it does not run as root.
-#       (ADR 0004 moves it to root only once it has no network listener.)
+#       The group of the run directory and of the agent socket. Members of
+#       this group (the skep-api service account) can reach the socket; the
+#       agent additionally checks the peer's UID on every connection. The
+#       group must exist; this script never creates it.
+#
+#       The agent itself runs as root: it has no network listener, and it
+#       is the process that will perform privileged host operations
+#       (ADR 0004). skep-api, the network-facing process, runs as skep.
 #   skep_agent_data_dir="/var/db/skep"
 #       State directory, passed to the agent as -data-dir. The agent keeps
-#       its database in the private subdirectory "agent".
+#       its database in the subdirectory "agent", which only root can open.
 #   skep_agent_run_dir="/var/run/skep"
-#       Holds the pid files. Recreated at every start, because /var/run is
-#       cleared at boot.
+#       Holds the agent socket and the pid files. Recreated at every
+#       start, because /var/run is cleared at boot.
 #   skep_agent_config=""
 #       Configuration file, passed as -config. When empty the agent reads
 #       /usr/local/etc/skep/agent.json if that file exists.
@@ -56,7 +59,6 @@ load_rc_config "${name}"
 
 : "${skep_agent_enable:=NO}"
 : "${skep_agent_bin:=/usr/local/sbin/skep-agent}"
-: "${skep_agent_runas:=skep}"
 : "${skep_agent_rungroup:=skep}"
 : "${skep_agent_data_dir:=/var/db/skep}"
 : "${skep_agent_run_dir:=/var/run/skep}"
@@ -103,16 +105,12 @@ command_args="-f \
 	-S -l ${skep_agent_syslog_facility} -s ${skep_agent_syslog_priority} -T ${skep_agent_syslog_tag} \
 	-P ${pidfile} -p ${skep_agent_child_pidfile} \
 	${skep_agent_restart_args} \
-	-u ${skep_agent_runas} \
 	${skep_agent_bin} -data-dir ${skep_agent_data_dir} ${skep_agent_config_args} ${skep_agent_args}"
 
 skep_agent_precmd()
 {
 	if [ ! -x "${skep_agent_bin}" ]; then
 		err 1 "${skep_agent_bin} is missing or not executable"
-	fi
-	if ! /usr/bin/id -u "${skep_agent_runas}" >/dev/null 2>&1; then
-		err 1 "user ${skep_agent_runas} does not exist; create the service account first"
 	fi
 	if ! /usr/sbin/pw groupshow "${skep_agent_rungroup}" >/dev/null 2>&1; then
 		err 1 "group ${skep_agent_rungroup} does not exist; create the service account first"
@@ -123,13 +121,24 @@ skep_agent_precmd()
 	/usr/bin/install -d -o root -g "${skep_agent_rungroup}" -m 0750 "${skep_agent_run_dir}" ||
 		err 1 "cannot create ${skep_agent_run_dir}"
 
-	# The data directory is shared with skep-api later; each process keeps
-	# a private subdirectory that the other cannot open.
+	# The data directory is shared with skep-api; each process keeps a
+	# private subdirectory that the other cannot open.
 	/usr/bin/install -d -o root -g wheel -m 0755 "${skep_agent_data_dir}" ||
 		err 1 "cannot create ${skep_agent_data_dir}"
-	/usr/bin/install -d -o "${skep_agent_runas}" -g "${skep_agent_rungroup}" -m 0700 \
-		"${skep_agent_data_dir}/agent" ||
-		err 1 "cannot create ${skep_agent_data_dir}/agent"
+
+	# One-time migration from Milestone 3, when the agent ran as skep and
+	# owned its directory. Everything in it becomes root's, so that the
+	# API account can no longer open the agent's database or audit log.
+	# -P: symbolic links are changed themselves, never followed.
+	_skep_agent_dir="${skep_agent_data_dir}/agent"
+	if [ -d "${_skep_agent_dir}" ] && [ ! -L "${_skep_agent_dir}" ] &&
+		[ "$(/usr/bin/stat -f %u "${_skep_agent_dir}")" != "0" ]; then
+		info "changing the owner of ${_skep_agent_dir} to root: the agent no longer runs as an unprivileged user"
+		/usr/sbin/chown -R -P root:wheel "${_skep_agent_dir}" ||
+			err 1 "cannot change the owner of ${_skep_agent_dir}"
+	fi
+	/usr/bin/install -d -o root -g wheel -m 0700 "${_skep_agent_dir}" ||
+		err 1 "cannot create ${_skep_agent_dir}"
 }
 
 # Prints the pid of the agent itself, or nothing when it is not running.

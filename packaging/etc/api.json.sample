@@ -1,0 +1,13 @@
+{
+  "dev_mode": false,
+  "data_dir": "/var/db/skep",
+  "listen_address": "127.0.0.1:8443",
+  "agent_socket": "/var/run/skep/agent.sock",
+  "read_timeout": "15s",
+  "write_timeout": "1m0s",
+  "shutdown_timeout": "10s",
+  "log": {
+    "level": "info",
+    "format": "json"
+  }
+}

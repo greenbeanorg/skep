@@ -36,11 +36,8 @@ func TestLoadProductionDefaults(t *testing.T) {
 	if cfg.DevMode {
 		t.Error("dev mode must be off by default")
 	}
-	if cfg.API.ListenAddress != DefaultListenAddress {
-		t.Errorf("listen = %q", cfg.API.ListenAddress)
-	}
-	if cfg.API.AllowInsecureRemote {
-		t.Error("remote binding must be off by default")
+	if cfg.ShutdownTimeout.Std() != 10*time.Second {
+		t.Errorf("shutdown timeout = %v", cfg.ShutdownTimeout.Std())
 	}
 	if cfg.DataDir != DefaultDataDir {
 		t.Errorf("data dir = %q", cfg.DataDir)
@@ -71,31 +68,29 @@ func TestLoadDevDefaults(t *testing.T) {
 	if cfg.Log.Level != "debug" || cfg.Log.Format != "text" {
 		t.Errorf("log = %+v", cfg.Log)
 	}
-	if cfg.API.ListenAddress != DefaultListenAddress {
-		t.Errorf("dev mode must still bind to loopback, got %q", cfg.API.ListenAddress)
-	}
 }
 
 func TestPrecedenceFileEnvOverrides(t *testing.T) {
 	path := writeFile(t, `{
 		"data_dir": "/from/file",
-		"api": {"listen_address": "127.0.0.1:1111", "read_timeout": "3s"},
+		"socket": {"path": "/from/file.sock"},
+		"shutdown_timeout": "3s",
 		"log": {"level": "warn", "format": "text"},
 		"discovery": {"cache_ttl": "1m"}
 	}`)
 	cfg, err := Load(LoadOptions{
 		Path: path,
 		LookupEnv: envMap(map[string]string{
-			EnvListen:   "127.0.0.1:2222",
+			EnvSocket:   "/from/env.sock",
 			EnvLogLevel: "ERROR",
 		}),
-		Overrides: Overrides{ListenAddress: "[::1]:3333"},
+		Overrides: Overrides{SocketPath: "/from/flag.sock"},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.API.ListenAddress != "[::1]:3333" {
-		t.Errorf("override must win, got %q", cfg.API.ListenAddress)
+	if cfg.Socket.Path != "/from/flag.sock" {
+		t.Errorf("override must win, got %q", cfg.Socket.Path)
 	}
 	if cfg.Log.Level != "error" {
 		t.Errorf("env must beat file and be lower-cased, got %q", cfg.Log.Level)
@@ -103,7 +98,7 @@ func TestPrecedenceFileEnvOverrides(t *testing.T) {
 	if cfg.Log.Format != "text" || cfg.DataDir != "/from/file" {
 		t.Errorf("file values lost: %+v", cfg)
 	}
-	if cfg.API.ReadTimeout.Std() != 3*time.Second || cfg.Discovery.CacheTTL.Std() != time.Minute {
+	if cfg.ShutdownTimeout.Std() != 3*time.Second || cfg.Discovery.CacheTTL.Std() != time.Minute {
 		t.Errorf("durations not parsed: %+v", cfg)
 	}
 	if cfg.Database.Path != filepath.Join("/from/file", "agent", "agent.db") {
@@ -132,14 +127,11 @@ func TestLoadErrors(t *testing.T) {
 		{"unknown field", LoadOptions{Path: writeFile(t, `{"nope": 1}`)}, "unknown field"},
 		{"bad json", LoadOptions{Path: writeFile(t, `{`)}, "parse"},
 		{"trailing data", LoadOptions{Path: writeFile(t, `{} {}`)}, "unexpected data"},
-		{"bad duration", LoadOptions{Path: writeFile(t, `{"api":{"read_timeout":"soon"}}`)}, "invalid duration"},
-		{"negative duration", LoadOptions{Path: writeFile(t, `{"api":{"read_timeout":"-1s"}}`)}, "must be positive"},
+		{"bad duration", LoadOptions{Path: writeFile(t, `{"shutdown_timeout":"soon"}`)}, "invalid duration"},
+		{"negative duration", LoadOptions{Path: writeFile(t, `{"shutdown_timeout":"-1s"}`)}, "must be positive"},
+		{"the old api section", LoadOptions{Path: writeFile(t, `{"api":{"listen_address":"127.0.0.1:8765"}}`)}, "unknown field"},
 		{"bad level", LoadOptions{Overrides: Overrides{LogLevel: "loud"}}, "log.level"},
 		{"bad format", LoadOptions{Overrides: Overrides{LogFormat: "xml"}}, "log.format"},
-		{"bad listen", LoadOptions{Overrides: Overrides{ListenAddress: "nope"}}, "host:port"},
-		{"bad port", LoadOptions{Overrides: Overrides{ListenAddress: "127.0.0.1:99999"}}, "invalid port"},
-		{"all interfaces", LoadOptions{Overrides: Overrides{ListenAddress: ":8765"}}, "not a loopback"},
-		{"remote address", LoadOptions{Overrides: Overrides{ListenAddress: "10.79.20.80:8765"}}, "not a loopback"},
 		{"too many workers", LoadOptions{Path: writeFile(t, `{"tasks":{"workers":65}}`)}, "tasks.workers"},
 		{"negative workers", LoadOptions{Path: writeFile(t, `{"tasks":{"workers":-1}}`)}, "tasks.workers"},
 		{"huge queue", LoadOptions{Path: writeFile(t, `{"tasks":{"queue_size":5000}}`)}, "tasks.queue_size"},
@@ -156,17 +148,6 @@ func TestLoadErrors(t *testing.T) {
 				t.Fatalf("error = %v, want it to contain %q", err, tt.want)
 			}
 		})
-	}
-}
-
-func TestRemoteBindRequiresOptIn(t *testing.T) {
-	path := writeFile(t, `{"api": {"listen_address": "0.0.0.0:8765", "allow_insecure_remote": true}}`)
-	cfg, err := Load(LoadOptions{Path: path, LookupEnv: noEnv})
-	if err != nil {
-		t.Fatalf("explicit opt-in must be accepted: %v", err)
-	}
-	if cfg.API.ListenAddress != "0.0.0.0:8765" {
-		t.Errorf("listen = %q", cfg.API.ListenAddress)
 	}
 }
 
@@ -271,5 +252,95 @@ func TestSocketOverridesAndErrors(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), tt.want) {
 			t.Errorf("%s: error = %v, want it to contain %q", name, err, tt.want)
 		}
+	}
+}
+
+func loadAPI(t *testing.T, opts APILoadOptions) (API, error) {
+	t.Helper()
+	if opts.LookupEnv == nil {
+		opts.LookupEnv = noEnv
+	}
+	if opts.DefaultPath == "" {
+		opts.DefaultPath = noDefault
+	}
+	return LoadAPI(opts)
+}
+
+func TestAPIDefaults(t *testing.T) {
+	cfg, err := loadAPI(t, APILoadOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.DevMode || cfg.DataDir != DefaultDataDir || cfg.ListenAddress != "127.0.0.1:8443" ||
+		cfg.AgentSocket != DefaultSocketPath || cfg.Log.Level != "info" || cfg.Log.Format != "json" {
+		t.Errorf("production defaults = %+v", cfg)
+	}
+
+	dev := true
+	cfg, err = loadAPI(t, APILoadOptions{Overrides: APIOverrides{DevMode: &dev, DataDir: "/tmp/skep-dev"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Dev mode finds the dev agent's socket and still binds to loopback.
+	if cfg.AgentSocket != "/tmp/skep-dev/run/agent.sock" || cfg.ListenAddress != "127.0.0.1:8443" || cfg.Log.Format != "text" {
+		t.Errorf("dev defaults = %+v", cfg)
+	}
+}
+
+func TestAPIPrecedence(t *testing.T) {
+	path := writeFile(t, `{"listen_address": "127.0.0.1:1111", "agent_socket": "/file.sock", "read_timeout": "3s", "log": {"level": "warn"}}`)
+	cfg, err := loadAPI(t, APILoadOptions{
+		Path:      path,
+		LookupEnv: envMap(map[string]string{EnvAPIListen: "127.0.0.1:2222", EnvSocket: "/env.sock", EnvLogLevel: "ERROR"}),
+		Overrides: APIOverrides{ListenAddress: "[::1]:3333"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.ListenAddress != "[::1]:3333" || cfg.AgentSocket != "/env.sock" || cfg.Log.Level != "error" ||
+		cfg.ReadTimeout.Std() != 3*time.Second {
+		t.Errorf("precedence: %+v", cfg)
+	}
+
+	cfg, err = loadAPI(t, APILoadOptions{LookupEnv: envMap(map[string]string{EnvAPIConfig: writeFile(t, `{"dev_mode": true}`)})})
+	if err != nil || !cfg.DevMode {
+		t.Errorf("SKEP_API_CONFIG: %+v, %v", cfg, err)
+	}
+}
+
+func TestAPIErrors(t *testing.T) {
+	for name, tt := range map[string]struct {
+		opts APILoadOptions
+		want string
+	}{
+		"missing file":   {APILoadOptions{Path: "/nonexistent/api.json"}, "open"},
+		"unknown field":  {APILoadOptions{Path: writeFile(t, `{"socket": {}}`)}, "unknown field"},
+		"bad listen":     {APILoadOptions{Overrides: APIOverrides{ListenAddress: "nope"}}, "host:port"},
+		"bad port":       {APILoadOptions{Overrides: APIOverrides{ListenAddress: "127.0.0.1:99999"}}, "invalid port"},
+		"all interfaces": {APILoadOptions{Overrides: APIOverrides{ListenAddress: ":8443"}}, "not a loopback"},
+		"remote address": {APILoadOptions{Overrides: APIOverrides{ListenAddress: "10.79.20.80:8443"}}, "not a loopback"},
+		"bad timeout":    {APILoadOptions{Path: writeFile(t, `{"write_timeout": "-1s"}`)}, "must be positive"},
+		"bad level":      {APILoadOptions{Overrides: APIOverrides{LogLevel: "loud"}}, "log.level"},
+		"bad dev env":    {APILoadOptions{LookupEnv: envMap(map[string]string{EnvDev: "maybe"})}, "not a boolean"},
+	} {
+		if _, err := loadAPI(t, tt.opts); err == nil || !strings.Contains(err.Error(), tt.want) {
+			t.Errorf("%s: error = %v, want it to contain %q", name, err, tt.want)
+		}
+	}
+}
+
+// TestAPISampleConfigMatchesDefaults keeps the shipped sample loadable and
+// in step with the built-in production defaults.
+func TestAPISampleConfigMatchesDefaults(t *testing.T) {
+	sample, err := loadAPI(t, APILoadOptions{Path: "../../packaging/etc/api.json.sample"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defaults, err := loadAPI(t, APILoadOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(sample, defaults) {
+		t.Errorf("sample config differs from the defaults:\nsample   %+v\ndefaults %+v", sample, defaults)
 	}
 }

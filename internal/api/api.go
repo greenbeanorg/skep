@@ -1,18 +1,20 @@
 // Package api is the HTTP layer of the Skep REST API under /api/v1.
 //
 // Handlers translate between HTTP and the Backend interface and contain no
-// business logic. In 0.1.0 the agent serves this API itself; because the
-// package depends only on Backend, it can be mounted in skep-api later
-// without changes.
+// business logic. skep-api serves this API; its Backend is the client for
+// the agent's socket (internal/agentclient), so nothing here touches the
+// host.
 package api
 
 import (
 	"context"
 	"log/slog"
 	"net/http"
+	"net/netip"
 	"regexp"
 	"strconv"
 
+	"github.com/greenbeanorg/skep/internal/agentproto"
 	"github.com/greenbeanorg/skep/internal/httpkit"
 	"github.com/greenbeanorg/skep/pkg/models"
 )
@@ -54,11 +56,40 @@ func NewHandler(backend Backend, log *slog.Logger) http.Handler {
 	mux.HandleFunc("/", httpkit.NotFound)
 
 	var root http.Handler = mux
+	root = withCaller(root)
 	root = httpkit.WithRecovery(log, root)
 	root = httpkit.WithAccessLog(log, root)
 	root = httpkit.WithSecurityHeaders(root)
 	root = httpkit.WithRequestID(root)
 	return root
+}
+
+// AnonymousActor is the actor of every request until the API has
+// authentication. The API is loopback-only and read-only while it is used.
+const AnonymousActor = "anonymous"
+
+// withCaller attaches the request metadata the agent requires to the
+// request context: the actor, the request ID, and the client's address.
+func withCaller(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		caller := agentproto.Caller{
+			ActorID:   AnonymousActor,
+			ActorName: AnonymousActor,
+			RequestID: httpkit.RequestID(r.Context()),
+			SourceIP:  sourceIP(r),
+		}
+		next.ServeHTTP(w, r.WithContext(agentproto.WithCaller(r.Context(), caller)))
+	})
+}
+
+// sourceIP is the address of the TCP peer. Forwarding headers are not
+// trusted.
+func sourceIP(r *http.Request) string {
+	ap, err := netip.ParseAddrPort(r.RemoteAddr)
+	if err != nil {
+		return ""
+	}
+	return ap.Addr().Unmap().WithZone("").String()
 }
 
 func (h *handler) health(w http.ResponseWriter, r *http.Request) {

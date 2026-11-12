@@ -21,8 +21,6 @@ import (
 const (
 	// DefaultConfigPath is read when no path is given and the file exists.
 	DefaultConfigPath = "/usr/local/etc/skep/agent.json"
-	// DefaultListenAddress binds to loopback: the 0.1.0 API has no auth.
-	DefaultListenAddress = "127.0.0.1:8765"
 	// DefaultDataDir is the production state directory.
 	DefaultDataDir = "/var/db/skep"
 	// DefaultDevDataDir is the state directory in dev mode.
@@ -45,7 +43,6 @@ const (
 const (
 	EnvConfig    = "SKEP_CONFIG"
 	EnvDev       = "SKEP_DEV"
-	EnvListen    = "SKEP_LISTEN"
 	EnvSocket    = "SKEP_SOCKET"
 	EnvDataDir   = "SKEP_DATA_DIR"
 	EnvLogLevel  = "SKEP_LOG_LEVEL"
@@ -78,18 +75,21 @@ func (d *Duration) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
-// Config is the complete agent configuration.
+// Config is the complete agent configuration. The agent has no network
+// listener: skep-api reaches it through the Unix socket only (ADR 0004).
 type Config struct {
 	// DevMode enables development defaults: a local data directory, text
 	// logs, and debug logging. It never enables anything privileged.
-	DevMode   bool            `json:"dev_mode"`
-	DataDir   string          `json:"data_dir"`
-	API       APIConfig       `json:"api"`
-	Socket    SocketConfig    `json:"socket"`
-	Log       LogConfig       `json:"log"`
-	Database  DatabaseConfig  `json:"database"`
-	Discovery DiscoveryConfig `json:"discovery"`
-	Tasks     TasksConfig     `json:"tasks"`
+	DevMode bool         `json:"dev_mode"`
+	DataDir string       `json:"data_dir"`
+	Socket  SocketConfig `json:"socket"`
+	// ShutdownTimeout bounds a graceful stop: open requests and running
+	// tasks get this long to finish.
+	ShutdownTimeout Duration        `json:"shutdown_timeout"`
+	Log             LogConfig       `json:"log"`
+	Database        DatabaseConfig  `json:"database"`
+	Discovery       DiscoveryConfig `json:"discovery"`
+	Tasks           TasksConfig     `json:"tasks"`
 }
 
 // TasksConfig configures the task engine.
@@ -99,18 +99,6 @@ type TasksConfig struct {
 	// QueueSize is the number of accepted tasks that may wait for a worker.
 	// Further submissions are refused until there is room.
 	QueueSize int `json:"queue_size"`
-}
-
-// APIConfig configures the HTTP API listener.
-type APIConfig struct {
-	ListenAddress string `json:"listen_address"`
-	// AllowInsecureRemote permits binding to a non-loopback address. The
-	// 0.1.0 API is unauthenticated and unencrypted, so this is off by
-	// default and must be an explicit, deliberate choice.
-	AllowInsecureRemote bool     `json:"allow_insecure_remote"`
-	ReadTimeout         Duration `json:"read_timeout"`
-	WriteTimeout        Duration `json:"write_timeout"`
-	ShutdownTimeout     Duration `json:"shutdown_timeout"`
 }
 
 // SocketConfig configures the Unix socket of the internal API, the only
@@ -155,14 +143,46 @@ type DiscoveryConfig struct {
 	CacheTTL Duration `json:"cache_ttl"`
 }
 
+// applyDefaults fills in the level and format, which depend on dev mode.
+func (l *LogConfig) applyDefaults(devMode bool) {
+	if l.Level == "" {
+		l.Level = "info"
+		if devMode {
+			l.Level = "debug"
+		}
+	}
+	if l.Format == "" {
+		l.Format = "json"
+		if devMode {
+			l.Format = "text"
+		}
+	}
+	l.Level = strings.ToLower(l.Level)
+	l.Format = strings.ToLower(l.Format)
+}
+
+func (l LogConfig) validate() []error {
+	var errs []error
+	switch l.Level {
+	case "debug", "info", "warn", "error":
+	default:
+		errs = append(errs, fmt.Errorf("log.level %q must be one of debug, info, warn, error", l.Level))
+	}
+	switch l.Format {
+	case "json", "text":
+	default:
+		errs = append(errs, fmt.Errorf("log.format %q must be json or text", l.Format))
+	}
+	return errs
+}
+
 // Overrides are values set on the command line. Zero values mean "not set".
 type Overrides struct {
-	DevMode       *bool
-	ListenAddress string
-	SocketPath    string
-	DataDir       string
-	LogLevel      string
-	LogFormat     string
+	DevMode    *bool
+	SocketPath string
+	DataDir    string
+	LogLevel   string
+	LogFormat  string
 }
 
 // LoadOptions controls Load.
@@ -183,7 +203,7 @@ type LoadOptions struct {
 func Load(opts LoadOptions) (Config, error) {
 	lookup := opts.LookupEnv
 	if lookup == nil {
-		lookup = os.LookupEnv
+		lookup = osLookupEnv
 	}
 
 	var cfg Config
@@ -209,7 +229,7 @@ func Load(opts LoadOptions) (Config, error) {
 	return cfg, nil
 }
 
-func loadFile(path string, explicit bool, cfg *Config) error {
+func loadFile(path string, explicit bool, cfg any) error {
 	f, err := os.Open(path)
 	if err != nil {
 		if !explicit && errors.Is(err, fs.ErrNotExist) {
@@ -242,9 +262,6 @@ func applyEnv(lookup func(string) (string, bool), cfg *Config) error {
 		}
 		cfg.DevMode = b
 	}
-	if v := get(EnvListen); v != "" {
-		cfg.API.ListenAddress = v
-	}
 	if v := get(EnvSocket); v != "" {
 		cfg.Socket.Path = v
 	}
@@ -263,9 +280,6 @@ func applyEnv(lookup func(string) (string, bool), cfg *Config) error {
 func applyOverrides(o Overrides, cfg *Config) {
 	if o.DevMode != nil {
 		cfg.DevMode = *o.DevMode
-	}
-	if o.ListenAddress != "" {
-		cfg.API.ListenAddress = o.ListenAddress
 	}
 	if o.SocketPath != "" {
 		cfg.Socket.Path = o.SocketPath
@@ -290,17 +304,8 @@ func (c *Config) applyDefaults() {
 			c.DataDir = DefaultDataDir
 		}
 	}
-	if c.API.ListenAddress == "" {
-		c.API.ListenAddress = DefaultListenAddress
-	}
-	if c.API.ReadTimeout == 0 {
-		c.API.ReadTimeout = Duration(15 * time.Second)
-	}
-	if c.API.WriteTimeout == 0 {
-		c.API.WriteTimeout = Duration(30 * time.Second)
-	}
-	if c.API.ShutdownTimeout == 0 {
-		c.API.ShutdownTimeout = Duration(10 * time.Second)
+	if c.ShutdownTimeout == 0 {
+		c.ShutdownTimeout = Duration(10 * time.Second)
 	}
 	if c.Socket.Path == "" {
 		if c.DevMode {
@@ -325,22 +330,7 @@ func (c *Config) applyDefaults() {
 	if c.Socket.MaxConnections == 0 {
 		c.Socket.MaxConnections = 64
 	}
-	if c.Log.Level == "" {
-		if c.DevMode {
-			c.Log.Level = "debug"
-		} else {
-			c.Log.Level = "info"
-		}
-	}
-	if c.Log.Format == "" {
-		if c.DevMode {
-			c.Log.Format = "text"
-		} else {
-			c.Log.Format = "json"
-		}
-	}
-	c.Log.Level = strings.ToLower(c.Log.Level)
-	c.Log.Format = strings.ToLower(c.Log.Format)
+	c.Log.applyDefaults(c.DevMode)
 	if c.Database.Path == "" {
 		c.Database.Path = filepath.Join(c.DataDir, filepath.FromSlash(AgentDatabasePath))
 	}
@@ -371,23 +361,9 @@ func (c Config) Validate() error {
 	if c.Database.Path == "" {
 		add("database.path must not be empty")
 	}
-	if err := validateListen(c.API.ListenAddress, c.API.AllowInsecureRemote); err != nil {
-		errs = append(errs, err)
-	}
-	switch c.Log.Level {
-	case "debug", "info", "warn", "error":
-	default:
-		add("log.level %q must be one of debug, info, warn, error", c.Log.Level)
-	}
-	switch c.Log.Format {
-	case "json", "text":
-	default:
-		add("log.format %q must be json or text", c.Log.Format)
-	}
+	errs = append(errs, c.Log.validate()...)
 	for name, d := range map[string]Duration{
-		"api.read_timeout":          c.API.ReadTimeout,
-		"api.write_timeout":         c.API.WriteTimeout,
-		"api.shutdown_timeout":      c.API.ShutdownTimeout,
+		"shutdown_timeout":          c.ShutdownTimeout,
 		"socket.request_timeout":    c.Socket.RequestTimeout,
 		"discovery.command_timeout": c.Discovery.CommandTimeout,
 		"discovery.cache_ttl":       c.Discovery.CacheTTL,
@@ -434,22 +410,6 @@ const MaxSocketPath = 88
 // accountRE is the accepted shape of a user or group name, or a numeric ID.
 var accountRE = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_.-]{0,31}$`)
 
-func validateListen(addr string, allowRemote bool) error {
-	host, port, err := net.SplitHostPort(addr)
-	if err != nil {
-		return fmt.Errorf("api.listen_address %q is not host:port: %w", addr, err)
-	}
-	if n, err := strconv.Atoi(port); err != nil || n < 0 || n > 65535 {
-		return fmt.Errorf("api.listen_address %q has an invalid port", addr)
-	}
-	if allowRemote || IsLoopbackHost(host) {
-		return nil
-	}
-	return fmt.Errorf("api.listen_address %q is not a loopback address; the API is "+
-		"unauthenticated in this release, so binding elsewhere requires "+
-		"api.allow_insecure_remote=true", addr)
-}
-
 // IsLoopbackHost reports whether host is "localhost" or a loopback IP
 // literal. An empty host means "all interfaces" and is not loopback.
 func IsLoopbackHost(host string) bool {
@@ -459,3 +419,6 @@ func IsLoopbackHost(host string) bool {
 	ip := net.ParseIP(host)
 	return ip != nil && ip.IsLoopback()
 }
+
+// osLookupEnv is os.LookupEnv; a variable so both loaders share it.
+var osLookupEnv = os.LookupEnv

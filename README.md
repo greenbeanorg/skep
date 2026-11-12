@@ -6,26 +6,29 @@ with QEMU as an optional secondary engine), jails, OpenZFS storage, and
 networking on single hosts and, later, multi-node clusters, through a REST
 API, a web UI, and a CLI.
 
-**Status: 0.1.0, Milestone 3 "Native FreeBSD integration" in progress.** The code contains
-the host agent, read-only host discovery, a task engine with history and an
-operation audit log, a small read-only API, and the local database schema.
-It cannot create or manage anything yet.
+**Status: 0.1.0, Milestone 4 "API split, authentication, and TLS" in
+progress.** The code contains the host agent, the API server, read-only
+host discovery, a task engine with history and an operation audit log, a
+small read-only API, and the local database schema. It cannot create or
+manage anything yet.
 
-> **Security notice for 0.1.0:** the API has **no authentication and no TLS**.
-> The agent binds to `127.0.0.1` by default and refuses to start on any other
-> address unless you explicitly set `api.allow_insecure_remote`. Do not expose
-> it to a network. See [docs/security/overview.md](docs/security/overview.md).
+> **Security notice:** the API has **no authentication and no TLS yet**;
+> both arrive with the remaining steps of Milestone 4. Until then
+> `skep-api` binds to loopback and refuses any other address, and every
+> endpoint is read-only. Do not forward the port to a network. See
+> [docs/security/overview.md](docs/security/overview.md).
 
 ## What works today
 
 | Area | State |
 |---|---|
-| `skep-agent` | Starts, discovers the host, serves the API, shuts down cleanly |
+| `skep-agent` | Runs as root with no network listener; discovers the host, runs tasks, and serves the internal API on a Unix socket to `skep-api` only |
+| `skep-api` | Runs unprivileged, serves the public API on loopback, and reaches the host only through the agent socket |
 | Host discovery | Read-only: CPU, memory, OS, bhyve, QEMU, ZFS (FreeBSD native, Linux dev mode) |
 | API | `GET /api/v1/health`, `/system`, `/nodes/{id}/hardware`, `/tasks`, `/tasks/{id}`; all read-only |
 | Task engine | Persistent tasks with states, events, idempotency keys, cancellation, and an audit trail; nothing is resumed after a restart |
-| FreeBSD service | rc.d script; the agent runs supervised as the unprivileged `skep` account and starts at boot |
-| Database | SQLite with versioned migrations and a stable node ID; separate schemas for the agent and the future API |
+| FreeBSD services | rc.d scripts for both processes, supervised, started at boot |
+| Database | SQLite with versioned migrations and a stable node ID; separate databases for the agent and the API |
 | Not yet | VM or jail management, storage or network changes, authentication, TLS, UI, CLI, clustering |
 
 ## Platforms
@@ -46,8 +49,8 @@ It cannot create or manage anything yet.
 ## Build
 
 ```sh
-make build          # development binary for this machine: bin/skep-agent
-make build-freebsd  # FreeBSD amd64 binary: bin/freebsd-amd64/skep-agent
+make build          # development binaries for this machine: bin/skep-agent, bin/skep-api
+make build-freebsd  # FreeBSD amd64 binaries in bin/freebsd-amd64/
 ```
 
 The version, commit, and build date are injected with `-ldflags`:
@@ -65,23 +68,26 @@ Override the version with `make build VERSION=0.1.1`.
 make run-dev
 ```
 
-This runs the agent with `-dev`: state goes to `./.skep-dev/`, logs are
-human-readable text at debug level, and the API listens on
-`127.0.0.1:8765`. Then, in another terminal:
+This builds and starts both processes with `-dev`, as you: state goes to
+`./.skep-dev/`, logs are human-readable text at debug level, the agent
+listens on the Unix socket `.skep-dev/run/agent.sock` (which only your own
+UID may open), and the API listens on `127.0.0.1:8443`. There is no
+combined binary and no flag that turns a security control off. Then, in
+another terminal:
 
 ```sh
-curl -s http://127.0.0.1:8765/api/v1/health
-curl -s http://127.0.0.1:8765/api/v1/system
+curl -s http://127.0.0.1:8443/api/v1/health
+curl -s http://127.0.0.1:8443/api/v1/system
 
 # The hardware endpoint takes the node_id reported by /system.
-ID=$(curl -s http://127.0.0.1:8765/api/v1/system | sed -E 's/.*"node_id":"([^"]+)".*/\1/')
-curl -s http://127.0.0.1:8765/api/v1/nodes/$ID/hardware
+ID=$(curl -s http://127.0.0.1:8443/api/v1/system | sed -E 's/.*"node_id":"([^"]+)".*/\1/')
+curl -s http://127.0.0.1:8443/api/v1/nodes/$ID/hardware
 
 # The agent refreshes its inventory at start, as a task.
-curl -s 'http://127.0.0.1:8765/api/v1/tasks?limit=5'
+curl -s 'http://127.0.0.1:8443/api/v1/tasks?limit=5'
 ```
 
-Stop the agent with Ctrl-C. `make clean` removes `bin/` and `.skep-dev/`.
+Stop both with Ctrl-C. `make clean` removes `bin/` and `.skep-dev/`.
 
 ## Test
 
@@ -99,8 +105,8 @@ decision logic. It does not prove runtime behaviour on FreeBSD; see below.
 
 ```sh
 make build-freebsd
-scp bin/freebsd-amd64/skep-agent hearst:/tmp/skep-agent
-ssh hearst '/tmp/skep-agent -data-dir /tmp/skep-data'
+scp bin/freebsd-amd64/skep-agent bin/freebsd-amd64/skep-api hearst:skep-m4/
+ssh hearst '~/skep-m4/skep-agent -dev -data-dir ~/skep-m4/data'
 ```
 
 A successful cross-compile proves that the code compiles for FreeBSD and
@@ -108,7 +114,7 @@ nothing more. FreeBSD behaviour counts as validated only after it has run on
 FreeBSD. The current validation state is tracked in
 [docs/architecture/overview.md](docs/architecture/overview.md#freebsd-validation-status).
 
-To run the agent as a service, see
+To run Skep as services, see
 [docs/installation/freebsd-service.md](docs/installation/freebsd-service.md).
 The native service test is in
 [tests/integration/rcd](tests/integration/rcd/README.md).
@@ -118,12 +124,18 @@ The native service test is in
 Configuration is layered, lowest precedence first: built-in defaults, a JSON
 file, environment variables, command-line flags.
 
+`skep-agent` (`/usr/local/etc/skep/agent.json`):
+
 | Setting | JSON key | Environment | Flag | Default (production / dev) |
 |---|---|---|---|---|
 | Config file | | `SKEP_CONFIG` | `-config` | `/usr/local/etc/skep/agent.json` if present |
 | Dev mode | `dev_mode` | `SKEP_DEV` | `-dev` | `false` |
-| Listen address | `api.listen_address` | `SKEP_LISTEN` | `-listen` | `127.0.0.1:8765` |
-| Allow non-loopback bind | `api.allow_insecure_remote` | | | `false` |
+| Socket path | `socket.path` | `SKEP_SOCKET` | `-socket` | `/var/run/skep/agent.sock` / `<data_dir>/run/agent.sock` |
+| Socket group | `socket.group` | | | `skep` (mode `0660`) / none (mode `0600`) |
+| Peers allowed to connect | `socket.allowed_users` | | | `["root", "skep"]` / your own UID |
+| Request time limit | `socket.request_timeout` | | | `30s` |
+| Connection limit | `socket.max_connections` | | | `64` |
+| Shutdown time limit | `shutdown_timeout` | | | `10s` |
 | State directory | `data_dir` | `SKEP_DATA_DIR` | `-data-dir` | `/var/db/skep` / `./.skep-dev` |
 | Agent database file | `database.path` | | | `<data_dir>/agent/agent.db` |
 | Log level | `log.level` | `SKEP_LOG_LEVEL` | `-log-level` | `info` / `debug` |
@@ -133,9 +145,21 @@ file, environment variables, command-line flags.
 | Task workers | `tasks.workers` | | | `4` |
 | Task queue size | `tasks.queue_size` | | | `64` |
 
-A complete example with every key at its production default is in
-[packaging/etc/agent.json.sample](packaging/etc/agent.json.sample). Unknown
-keys in the file are rejected.
+`skep-api` (`/usr/local/etc/skep/api.json`):
+
+| Setting | JSON key | Environment | Flag | Default (production / dev) |
+|---|---|---|---|---|
+| Config file | | `SKEP_API_CONFIG` | `-config` | `/usr/local/etc/skep/api.json` if present |
+| Dev mode | `dev_mode` | `SKEP_DEV` | `-dev` | `false` |
+| Listen address | `listen_address` | `SKEP_API_LISTEN` | `-listen` | `127.0.0.1:8443` (loopback only for now) |
+| Agent socket | `agent_socket` | `SKEP_SOCKET` | `-agent-socket` | `/var/run/skep/agent.sock` / `<data_dir>/run/agent.sock` |
+| State directory | `data_dir` | `SKEP_DATA_DIR` | `-data-dir` | `/var/db/skep` / `./.skep-dev` |
+| Timeouts | `read_timeout`, `write_timeout`, `shutdown_timeout` | | | `15s`, `1m`, `10s` |
+| Log level | `log.level` | `SKEP_LOG_LEVEL` | `-log-level` | `info` / `debug` |
+| Log format | `log.format` | `SKEP_LOG_FORMAT` | `-log-format` | `json` / `text` |
+
+Complete examples with every key at its production default are in
+[packaging/etc](packaging/etc). Unknown keys in a file are rejected.
 
 ## API
 
@@ -149,16 +173,24 @@ The API lives under `/api/v1` and is documented in
 ## Repository layout
 
 ```
-cmd/skep-agent/        the host agent binary
-internal/agent/        service layer (business logic, no HTTP)
-internal/api/          HTTP handlers and middleware (no business logic)
+cmd/skep-agent/        the host agent binary (root, Unix socket only)
+cmd/skep-api/          the API server binary (unprivileged, the only network listener)
+internal/agent/        the agent's service layer (business logic, no HTTP)
+internal/api/          public API handlers (no business logic)
+internal/internalapi/  the agent's internal API: socket listener, peer check, handlers
+internal/agentclient/  skep-api's client for the agent socket
+internal/agentproto/   what both sides share about the internal API (actor headers)
+internal/httpkit/      error envelope, request IDs, access log, recovery
 internal/hardware/     read-only host discovery (FreeBSD native, Linux dev)
 internal/database/     SQLite access, migration runner, node identity
 internal/config/       typed configuration
 internal/logging/      log/slog setup
 internal/tasks/        task engine (states, cancellation, idempotency, restart rules)
 internal/audit/        operation audit entries
-internal/peercred/     Unix socket peer credentials (for the agent socket; not used yet)
+internal/peercred/     Unix socket peer credentials, read from the kernel
+internal/sysaccount/   user and group name resolution
+packaging/             rc.d scripts and sample configuration
+scripts/               development helpers
 migrations/sqlite/     versioned SQL migrations, one set per database (agent, api)
 tests/integration/     manual probes that run on a real FreeBSD host
 pkg/models/            public API data types
@@ -171,7 +203,7 @@ docs/                  architecture, security, and decision records
 
 - [Architecture overview](docs/architecture/overview.md)
 - [Security overview](docs/security/overview.md)
-- [Running the agent as a FreeBSD service](docs/installation/freebsd-service.md)
+- [Running Skep as FreeBSD services](docs/installation/freebsd-service.md)
 - Decision records:
   [0001 Go toolchain and SQLite driver](docs/decisions/0001-go-toolchain-and-sqlite-driver.md),
   [0002 Discovery abstraction](docs/decisions/0002-discovery-abstraction.md),

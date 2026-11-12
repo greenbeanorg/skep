@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/greenbeanorg/skep/internal/agentproto"
 	"github.com/greenbeanorg/skep/internal/httpkit"
 	"github.com/greenbeanorg/skep/pkg/models"
 )
@@ -23,6 +24,7 @@ type fakeBackend struct {
 	hardware  models.Hardware
 	hwErr     error
 	panicMsg  string
+	caller    agentproto.Caller
 	tasks     models.TaskList
 	tasksErr  error
 	taskOpts  models.TaskListOptions
@@ -43,7 +45,8 @@ func (f *fakeBackend) Task(_ context.Context, id string) (models.TaskDetail, err
 
 func (f *fakeBackend) Health(context.Context) models.Health { return f.health }
 
-func (f *fakeBackend) System(context.Context) (models.System, error) {
+func (f *fakeBackend) System(ctx context.Context) (models.System, error) {
+	f.caller, _ = agentproto.CallerFrom(ctx)
 	if f.panicMsg != "" {
 		panic(f.panicMsg)
 	}
@@ -370,4 +373,31 @@ func TestDomainErrorMapping(t *testing.T) {
 	if strings.Contains(body.Message, "internal detail") {
 		t.Errorf("message leaked: %q", body.Message)
 	}
+}
+
+// TestBackendCallsCarryACaller checks that every backend call is made for
+// an actor, with the request ID and the client's address: the agent refuses
+// anything else.
+func TestBackendCallsCarryACaller(t *testing.T) {
+	b := newBackend()
+	h := NewHandler(b, slog.New(slog.NewJSONHandler(&bytes.Buffer{}, nil)))
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/system", nil)
+	req.RemoteAddr = "[::ffff:192.0.2.7]:51234"
+	req.Header.Set(httpkit.RequestIDHeader, "req-7")
+	req.Header.Set("X-Forwarded-For", "203.0.113.9")
+	h.ServeHTTP(httptest.NewRecorder(), req)
+
+	want := agentproto.Caller{ActorID: AnonymousActor, ActorName: AnonymousActor, RequestID: "req-7", SourceIP: "192.0.2.7"}
+	if b.caller != want {
+		t.Errorf("caller = %+v, want %+v", b.caller, want)
+	}
+	if err := b.caller.Validate(); err != nil {
+		t.Errorf("the caller would be refused by the agent: %v", err)
+	}
+}
+
+func TestAgentUnavailableIs503(t *testing.T) {
+	b := newBackend()
+	b.systemErr = fmt.Errorf("wrapped: %w", &models.Error{Code: models.CodeAgentUnavailable, Message: "the host agent is not reachable"})
+	wantError(t, do(t, b, http.MethodGet, "/api/v1/system", nil), http.StatusServiceUnavailable, models.CodeAgentUnavailable)
 }

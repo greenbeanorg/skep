@@ -7,7 +7,7 @@ BUILD_DATE := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 GO      ?= go
 PKG     := github.com/greenbeanorg/skep
 BIN_DIR := bin
-CMDS    := skep-agent
+CMDS    := skep-agent skep-api
 
 LDFLAGS := -s -w \
 	-X $(PKG)/pkg/version.Version=$(VERSION) \
@@ -73,8 +73,8 @@ lint: vet ## Check formatting, vet, and run staticcheck when it is installed
 fmt: ## Format the Go sources
 	gofmt -w .
 
-run-dev: ## Run the agent in development mode on 127.0.0.1:8765
-	$(GO) run -ldflags '$(LDFLAGS)' ./cmd/skep-agent -dev
+run-dev: build ## Run skep-agent and skep-api in development mode (API on 127.0.0.1:8443)
+	./scripts/run-dev.sh
 
 clean: ## Remove build output and the development data directory
 	rm -rf $(BIN_DIR) .skep-dev

@@ -1,21 +1,23 @@
 # rc.d service integration test
 
-`rcd-test` checks the `skep_agent` rc.d service on a real FreeBSD host. It
-runs as root, drives `service(8)`, and reads the agent's database read-only.
-It needs a **test build** of the agent (build tag `skep_testtasks`), whose
-`test.sleep` task gives it something in flight to interrupt. Neither the
-test build nor `rcd-test` is ever installed with Skep.
+`rcd-test` checks the `skep_agent` and `skep_api` rc.d services on a real
+FreeBSD host. It runs as root, drives `service(8)`, talks to the agent over
+its socket, and reads the agent's database read-only. It needs a **test
+build** of the agent (build tag `skep_testtasks`), whose `test.sleep` task
+gives it something in flight to interrupt. Neither the test build nor
+`rcd-test` is ever installed with Skep.
 
-It starts, stops, and kills the service and removes `/var/run/skep`. It
-changes nothing else. The account, the rc.d script, and the rc.conf
+It starts, stops, and kills the two services and removes `/var/run/skep`.
+It changes nothing else. The account, the rc.d scripts, and the rc.conf
 variables are set up by the operator beforehand.
 
 | Phase | What it checks |
 |---|---|
-| `lifecycle` | Start with the run directory missing; ownership and modes; the agent runs as `skep` under a root `daemon(8)`; loopback only; `kill -9` of the agent with a task in flight (supervisor restarts it, the task is `interrupted`/`agent_restart`, not resumed, audit trail complete); `stop` with a task in flight (`agent_shutdown`); `restart`; no task left unfinished |
+| `lifecycle` | Start with the run directory missing; ownership and modes, including the agent's directory and database owned by root and closed to `skep`; the agent runs as root under `daemon(8)` and has no TCP or UDP listener; the socket is `root:skep 0660`; a peer with UID `skep` is answered, a peer outside the group is refused by file permissions, and a peer inside the group but outside the allow-list is dropped by the agent's peer-credential check; `kill -9` of the agent with a task in flight (supervisor restarts it, the task is `interrupted`/`agent_restart`, not resumed, audit trail complete); `stop` with a task in flight (`agent_shutdown`); `restart`; no task left unfinished |
 | `crashloop` | With `skep_agent_args="-no-such-flag"`, so that the agent exits at every start: `start` fails with a warning, `status` says the agent is not running although the supervisor is, the supervisor keeps retrying, `stop` cleans up |
 | `norestart` | With `skep_agent_restart_delay=0`: a killed agent stays down, the supervisor exits, the pid files go; the next start marks the task `interrupted`/`agent_restart` |
-| `pre-reboot` | Leaves the service running with a task in flight and saves the boot time, node ID, and task ID |
+| `api` | `skep-api` refuses to run as root; `skep_api` starts before the agent and answers `503 agent_unavailable`; it runs as `skep` under a root `daemon(8)`, listens on its loopback port and nothing else; once the agent is up the public API serves the node through the socket; the agent restarts alone and the same API process recovers; `kill -9` of `skep-api` is supervised; `stop` leaves the agent running |
+| `pre-reboot` | Leaves the agent service running with a task in flight and saves the boot time, node ID, and task ID |
 | `post-reboot` | Starts nothing. The service came up at boot; node ID unchanged; history kept; the in-flight task was recorded `interrupted`/`agent_shutdown` by the agent during shutdown |
 
 ## Run it
@@ -24,30 +26,43 @@ variables are set up by the operator beforehand.
 # On merrick
 make build-freebsd build-freebsd-test
 scp bin/freebsd-amd64-test/skep-agent-testbuild bin/freebsd-amd64-test/rcd-test \
-    packaging/rc.d/skep_agent hearst:skep-m3/
+    bin/freebsd-amd64/skep-api packaging/rc.d/skep_agent packaging/rc.d/skep_api hearst:skep-m4/
 
 # On hearst (see docs/installation/freebsd-service.md for the account)
-sudo install -o root -g wheel -m 0555 ~/skep-m3/skep_agent /usr/local/etc/rc.d/skep_agent
+sudo install -o root -g wheel -m 0555 ~/skep-m4/skep_agent ~/skep-m4/skep_api /usr/local/etc/rc.d/
 sudo sysrc skep_agent_enable=YES \
-    skep_agent_bin=/home/aba/skep-m3/skep-agent-testbuild \
-    skep_agent_env="SKEP_TEST_SLEEP=5m"
+    skep_agent_bin=/home/aba/skep-m4/skep-agent-testbuild \
+    skep_agent_env="SKEP_TEST_SLEEP=5m" \
+    skep_api_enable=YES \
+    skep_api_bin=/home/aba/skep-m4/skep-api
 
-sudo ~/skep-m3/rcd-test lifecycle
+sudo ~/skep-m4/rcd-test lifecycle
+sudo ~/skep-m4/rcd-test -api-bin /home/aba/skep-m4/skep-api api
 
 sudo sysrc skep_agent_args="-no-such-flag"
-sudo ~/skep-m3/rcd-test crashloop
+sudo ~/skep-m4/rcd-test crashloop
 sudo sysrc -x skep_agent_args
 
 sudo sysrc skep_agent_restart_delay=0
-sudo ~/skep-m3/rcd-test -restart-delay 0s norestart
+sudo ~/skep-m4/rcd-test -restart-delay 0s norestart
 sudo sysrc -x skep_agent_restart_delay
 
-sudo ~/skep-m3/rcd-test -state ~/skep-m3/reboot-state.json pre-reboot
+sudo ~/skep-m4/rcd-test -state ~/skep-m4/reboot-state.json pre-reboot
 sudo shutdown -r now
-sudo ~/skep-m3/rcd-test -state ~/skep-m3/reboot-state.json post-reboot
+sudo ~/skep-m4/rcd-test -state ~/skep-m4/reboot-state.json post-reboot
 ```
 
-## Result on FreeBSD 15.1-RELEASE-p6 (hearst, 2026-11-12)
+## Milestone 4 result
+
+**Pending FreeBSD validation.** The phases above were rewritten for the
+split into `skep-agent` (root, socket only) and `skep-api` (`skep`, TCP).
+They have not been run yet; this section is replaced by the recorded run.
+
+## Milestone 3 result on FreeBSD 15.1-RELEASE-p6 (hearst, 2026-11-12)
+
+This run predates the split: the agent still ran as `skep` and served the
+API on loopback TCP. It is kept as the record of what the service
+lifecycle, crash supervision, and reboot behaviour were validated with.
 
 Account `skep` uid 1002, gid 1002. Every phase was run with the rc.d
 script as committed here; the agent test build was at `7bfb32c` (the agent
