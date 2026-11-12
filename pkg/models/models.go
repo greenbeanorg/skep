@@ -222,3 +222,140 @@ type ErrorBody struct {
 type ErrorResponse struct {
 	Error ErrorBody `json:"error"`
 }
+
+// Error is an error that is safe to show to an API client: a stable code
+// and a message written for the caller. The HTTP layer maps the code to a
+// status. Two Errors match with errors.Is when their codes are equal.
+type Error struct {
+	Code    string
+	Message string
+	// Details carries optional structured context for the client.
+	Details map[string]any
+}
+
+// Error implements error.
+func (e *Error) Error() string { return e.Code + ": " + e.Message }
+
+// Is reports whether target is an *Error with the same code.
+func (e *Error) Is(target error) bool {
+	t, ok := target.(*Error)
+	return ok && t.Code == e.Code
+}
+
+// Error codes shared by the service layer and the API.
+const (
+	CodeInvalidRequest      = "invalid_request"
+	CodeResourceBusy        = "resource_busy"
+	CodeIdempotencyConflict = "idempotency_key_conflict"
+	CodeNotCancellable      = "not_cancellable"
+	CodeQueueFull           = "queue_full"
+	CodeShuttingDown        = "shutting_down"
+)
+
+// Invalid returns an invalid_request Error with the given message.
+func Invalid(message string) *Error {
+	return &Error{Code: CodeInvalidRequest, Message: message}
+}
+
+// TaskStatus is the state of a task.
+type TaskStatus string
+
+// Task statuses. Succeeded, failed, cancelled, and interrupted are terminal.
+const (
+	TaskPending     TaskStatus = "pending"
+	TaskRunning     TaskStatus = "running"
+	TaskSucceeded   TaskStatus = "succeeded"
+	TaskFailed      TaskStatus = "failed"
+	TaskCancelled   TaskStatus = "cancelled"
+	TaskInterrupted TaskStatus = "interrupted"
+)
+
+// Terminal reports whether a task in this status will never change again.
+func (s TaskStatus) Terminal() bool {
+	switch s {
+	case TaskSucceeded, TaskFailed, TaskCancelled, TaskInterrupted:
+		return true
+	}
+	return false
+}
+
+// Valid reports whether s is one of the six task statuses.
+func (s TaskStatus) Valid() bool {
+	return s == TaskPending || s == TaskRunning || s.Terminal()
+}
+
+// TaskActor is who a task was requested for.
+type TaskActor struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+// TaskError explains why a task did not succeed.
+type TaskError struct {
+	// Code is stable and machine-readable, for example "timeout".
+	Code    string `json:"code"`
+	Message string `json:"message"`
+}
+
+// Task is one asynchronous operation performed by the agent.
+type Task struct {
+	ID           string     `json:"id"`
+	NodeID       string     `json:"node_id"`
+	Type         string     `json:"type"`
+	Status       TaskStatus `json:"status"`
+	ResourceType string     `json:"resource_type,omitempty"`
+	ResourceID   string     `json:"resource_id,omitempty"`
+	Actor        TaskActor  `json:"actor"`
+	RequestID    string     `json:"request_id,omitempty"`
+	// Cancellable says whether this task can be cancelled while running.
+	Cancellable       bool       `json:"cancellable"`
+	CancelRequestedAt *time.Time `json:"cancel_requested_at,omitempty"`
+	// Result is the JSON result of a succeeded task.
+	Result     any        `json:"result,omitempty"`
+	Error      *TaskError `json:"error,omitempty"`
+	CreatedAt  time.Time  `json:"created_at"`
+	StartedAt  *time.Time `json:"started_at,omitempty"`
+	FinishedAt *time.Time `json:"finished_at,omitempty"`
+}
+
+// Task event kinds.
+const (
+	// TaskEventState is a state change, written by the task engine.
+	TaskEventState = "state"
+	// TaskEventProgress is a progress message, written by the task itself.
+	TaskEventProgress = "progress"
+)
+
+// TaskEvent is one entry in a task's history.
+type TaskEvent struct {
+	ID        int64     `json:"id"`
+	Kind      string    `json:"kind"`
+	Level     string    `json:"level"`
+	Message   string    `json:"message"`
+	Data      any       `json:"data,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// TaskDetail is a task together with its event history.
+type TaskDetail struct {
+	Task
+	Events []TaskEvent `json:"events"`
+}
+
+// TaskList is one page of tasks, newest first.
+type TaskList struct {
+	Items []Task `json:"items"`
+	// NextCursor is passed back as the cursor parameter to get the next
+	// page. It is empty on the last page.
+	NextCursor string `json:"next_cursor,omitempty"`
+}
+
+// TaskListOptions selects a page of tasks.
+type TaskListOptions struct {
+	// Status filters by status when not empty.
+	Status TaskStatus
+	// Limit is the page size. Zero means the default.
+	Limit int
+	// Cursor is the NextCursor of the previous page.
+	Cursor string
+}
