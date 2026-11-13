@@ -214,12 +214,24 @@ func (h *handler) serve(rt route, w http.ResponseWriter, r *http.Request) {
 	ctx = context.WithValue(ctx, sourceIPKey{}, ip)
 
 	id, err := h.identify(r)
+	// Any request that names an origin must name this one, whatever the
+	// route, the method, or the credentials: also the login, the logout,
+	// and bearer requests. Requests without Origin (skepctl, curl) are
+	// not affected; for cookie writes, the check below requires one.
+	if r.Header.Get("Origin") != "" && !sameOrigin(r) {
+		var who *auth.Identity
+		if err == nil {
+			who = &id
+		}
+		h.denyOrigin(w, r.WithContext(ctx), who)
+		return
+	}
 	switch {
 	case err == nil:
 		// A request authenticated by cookie that changes something
 		// must come from this site.
 		if id.Session.Kind == auth.CookieSession && !safeMethod(r.Method) && !sameOrigin(r) {
-			h.denyCSRF(w, r.WithContext(ctx), id)
+			h.denyOrigin(w, r.WithContext(ctx), &id)
 			return
 		}
 		ctx = context.WithValue(ctx, identityKey{}, id)

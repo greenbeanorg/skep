@@ -101,13 +101,27 @@ func sameOrigin(r *http.Request) bool {
 // ActionCSRF is the audit action of a request refused by the origin check.
 const ActionCSRF = "auth.origin_check"
 
-func (h *handler) denyCSRF(w http.ResponseWriter, r *http.Request, id auth.Identity) {
-	h.writeAudit(r, audit.AccessEntry{
-		ActorID: id.User.ID, ActorName: id.User.Username, Action: ActionCSRF, Outcome: audit.Denied,
-		Details: map[string]any{"method": r.Method, "route": r.URL.Path, "origin_present": r.Header.Get("Origin") != ""},
-	})
-	httpkit.WriteError(w, r, http.StatusForbidden, auth.CodeForbidden,
-		"a request that is authenticated by cookie and changes something must carry an Origin header that matches this host")
+// denyOrigin refuses a request whose Origin header does not match this
+// host, or a cookie-authenticated write without one. A refusal of a
+// request with a valid session is audited under its user. One without a
+// session is only logged: like other unauthenticated rejections, it has
+// no actor, and auditing it would let any web page fill the audit log.
+func (h *handler) denyOrigin(w http.ResponseWriter, r *http.Request, id *auth.Identity) {
+	origin := r.Header.Get("Origin")
+	if id != nil {
+		h.writeAudit(r, audit.AccessEntry{
+			ActorID: id.User.ID, ActorName: id.User.Username, Action: ActionCSRF, Outcome: audit.Denied,
+			Details: map[string]any{"method": r.Method, "route": r.URL.Path, "origin_present": origin != ""},
+		})
+	} else {
+		h.log.InfoContext(r.Context(), "refused a request from another origin",
+			"method", r.Method, "route", r.URL.Path, "source_ip", sourceIPFrom(r.Context()))
+	}
+	message := "the Origin header does not match this host"
+	if origin == "" {
+		message = "a request that is authenticated by cookie and changes something must carry an Origin header that matches this host"
+	}
+	httpkit.WriteError(w, r, http.StatusForbidden, auth.CodeForbidden, message)
 }
 
 // writeAudit appends to the access audit log with the request's address and
@@ -186,11 +200,6 @@ func clearSessionCookie(w http.ResponseWriter) {
 // (the default), whose token is set in the cookie and is not in the body,
 // or a bearer session, whose token is in the body and sets no cookie.
 func (h *handler) login(w http.ResponseWriter, r *http.Request) {
-	// A login from a browser must come from this site.
-	if r.Header.Get("Origin") != "" && !sameOrigin(r) {
-		httpkit.WriteError(w, r, http.StatusForbidden, auth.CodeForbidden, "the Origin header does not match this host")
-		return
-	}
 	var req models.LoginRequest
 	if !decodeBody(w, r, &req) {
 		return

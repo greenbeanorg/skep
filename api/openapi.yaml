@@ -25,9 +25,12 @@ info:
     (both configurable), at logout, and when the user's password or role
     changes or the user is disabled.
 
-    A request that is authenticated by cookie and is not a GET or HEAD
-    must carry an `Origin` header that matches the request host, or it is
-    refused with `403 forbidden`. Bearer requests are exempt.
+    Any request that carries an `Origin` header, on any endpoint and with
+    any credentials or none, must name the request host over HTTPS
+    (`https://` plus `Host`), or it is refused with `403 forbidden`.
+    Requests without `Origin`, as `skepctl` and `curl` send them, are not
+    affected, except that a request authenticated by cookie that is not a
+    GET or HEAD must carry a matching `Origin`.
 
     There are no default credentials. The first administrator is created
     on the host with `skep-api admin create`; until one exists, login
@@ -144,7 +147,7 @@ paths:
       description: |
         Checks a username and password and starts a new session. The body
         must be `application/json`. If the request has an `Origin` header
-        it must match the request host.
+        it must name the request host over HTTPS, as for every endpoint.
 
         Every failed login answers the same `401 invalid_credentials`,
         whether the username exists or not, and takes the same time.
@@ -727,9 +730,10 @@ components:
             $ref: "#/components/schemas/ErrorResponse"
     Forbidden:
       description: |
-        The request is not allowed (`forbidden`): the `Origin` header is
-        missing or does not match the host on a cookie-authenticated
-        request that changes something, or the caller's role lacks the
+        The request is not allowed (`forbidden`): the request has an
+        `Origin` header that does not name this host over HTTPS, a
+        cookie-authenticated request that changes something has no
+        `Origin` header, or the caller's role lacks the
         permission the endpoint requires (named in `details.permission`).
       content:
         application/json:

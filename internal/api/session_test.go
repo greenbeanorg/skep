@@ -393,6 +393,90 @@ func TestOriginCheck(t *testing.T) {
 	}
 }
 
+// TestOriginCheckCoversEveryRequest (ADR 0008 amendment): any request that
+// carries an Origin header must name this host over HTTPS, whatever the
+// route, method, or credentials, including the login and the logout and
+// bearer requests. Requests without Origin, as skepctl sends them, are
+// unaffected.
+func TestOriginCheckCoversEveryRequest(t *testing.T) {
+	e := freshEnv(t)
+	h := e.handler(newBackend(), nil)
+	foreign := map[string]string{
+		"another site":   "https://evil.example",
+		"same host http": "http://example.com",
+		"null":           "null",
+		"other port":     "https://example.com:8443",
+	}
+
+	// A bearer session, as skepctl gets it: no Origin.
+	rec := e.serve(h, request{method: http.MethodPost, path: "/api/v1/auth/login", body: loginBody("test-admin", testPassword, "bearer")})
+	login := decode[models.SessionResponse](t, rec)
+	if rec.Code != http.StatusOK || login.Token == "" {
+		t.Fatalf("bearer login without Origin: %d %s", rec.Code, rec.Body)
+	}
+	bearer := map[string]string{"Authorization": "Bearer " + login.Token}
+	with := func(origin string, base map[string]string) map[string]string {
+		m := map[string]string{"Origin": origin}
+		for k, v := range base {
+			m[k] = v
+		}
+		return m
+	}
+
+	before := e.auditCount(t, `action = 'auth.origin_check'`)
+	for name, o := range foreign {
+		// Without a session: the login, the health status, the logout.
+		rec := e.serve(h, request{method: http.MethodPost, path: "/api/v1/auth/login",
+			body: loginBody("test-admin", testPassword, ""), headers: with(o, nil)})
+		wantError(t, rec, http.StatusForbidden, auth.CodeForbidden)
+		if sessionCookie(t, rec) != nil {
+			t.Errorf("%s: a refused login set a cookie", name)
+		}
+		rec = e.serve(h, request{method: http.MethodPost, path: "/api/v1/auth/login",
+			body: loginBody("test-admin", testPassword, "bearer"), headers: with(o, nil)})
+		wantError(t, rec, http.StatusForbidden, auth.CodeForbidden)
+		wantError(t, e.serve(h, request{method: http.MethodGet, path: "/api/v1/health", headers: with(o, nil)}),
+			http.StatusForbidden, auth.CodeForbidden)
+		wantError(t, e.serve(h, request{method: http.MethodPost, path: "/api/v1/auth/logout", headers: with(o, nil)}),
+			http.StatusForbidden, auth.CodeForbidden)
+
+		// With a bearer session: reads and writes alike.
+		wantError(t, e.serve(h, request{method: http.MethodGet, path: "/api/v1/system", headers: with(o, bearer)}),
+			http.StatusForbidden, auth.CodeForbidden)
+		wantError(t, e.serve(h, request{method: http.MethodPost, path: "/api/v1/auth/logout", headers: with(o, bearer)}),
+			http.StatusForbidden, auth.CodeForbidden)
+	}
+	// Refusals with a session are audited under its user (two per
+	// origin); those without one are not, so no web page can fill the
+	// audit log.
+	if n := e.auditCount(t, `action = 'auth.origin_check' AND outcome = 'denied' AND actor_name = 'test-admin'`) - before; n != 2*len(foreign) {
+		t.Errorf("%d refusals audited under the user, want %d", n, 2*len(foreign))
+	}
+	if n := e.auditCount(t, `action = 'auth.origin_check' AND actor_name <> 'test-admin'`); n != 0 {
+		t.Errorf("%d refusals without a session were audited", n)
+	}
+
+	// The bearer session survived every refused logout, and requests
+	// without Origin, or with this host's, are served.
+	if rec := e.serve(h, request{method: http.MethodGet, path: "/api/v1/system", headers: bearer}); rec.Code != http.StatusOK {
+		t.Errorf("bearer GET without Origin: %d", rec.Code)
+	}
+	if rec := e.serve(h, request{method: http.MethodGet, path: "/api/v1/system", headers: with(origin, bearer)}); rec.Code != http.StatusOK {
+		t.Errorf("bearer GET with this host's Origin: %d", rec.Code)
+	}
+	if rec := e.serve(h, request{method: http.MethodGet, path: "/api/v1/health", headers: with(origin, nil)}); rec.Code != http.StatusOK {
+		t.Errorf("health with this host's Origin: %d", rec.Code)
+	}
+	rec = e.serve(h, request{method: http.MethodPost, path: "/api/v1/auth/login",
+		body: loginBody("test-admin", testPassword, ""), headers: with(origin, nil)})
+	if rec.Code != http.StatusOK || sessionCookie(t, rec) == nil {
+		t.Errorf("cookie login with this host's Origin: %d", rec.Code)
+	}
+	if rec := e.serve(h, request{method: http.MethodPost, path: "/api/v1/auth/logout", headers: with(origin, bearer)}); rec.Code != http.StatusNoContent {
+		t.Errorf("bearer logout with this host's Origin: %d", rec.Code)
+	}
+}
+
 func TestLogout(t *testing.T) {
 	e := freshEnv(t)
 	h := e.handler(newBackend(), nil)
