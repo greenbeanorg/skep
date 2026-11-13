@@ -42,7 +42,7 @@ describe("formatAgo", () => {
   it("is relative to the given time", () => {
     const now = Date.parse("2026-11-12T06:30:00.000Z");
     expect(formatAgo("2026-11-12T06:29:58.000Z", now)).toBe("just now");
-    expect(formatAgo("2026-11-12T06:25:00.000Z", now)).toBe("5m 0s ago");
+    expect(formatAgo("2026-11-12T06:25:00.000Z", now)).toBe("5m ago");
   });
 });
 
