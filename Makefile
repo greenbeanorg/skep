@@ -18,7 +18,7 @@ LDFLAGS := -s -w \
 # cross-compile needs no C toolchain.
 export CGO_ENABLED := 0
 
-.PHONY: all build build-freebsd build-freebsd-test test vet lint fmt run-dev clean help
+.PHONY: all build build-freebsd build-freebsd-test test vet lint fmt install-hooks run-dev clean help
 
 all: vet test build build-freebsd
 
@@ -75,6 +75,11 @@ lint: vet ## Check formatting, vet, and run staticcheck when it is installed
 	else \
 		echo "staticcheck is not installed; skipped (CI runs it)."; \
 	fi
+
+# The hook is linked, not copied, so it follows the repository. It lints
+# the commits being pushed (see scripts/hooks/pre-push).
+install-hooks: ## Install the git pre-push hook, which runs "make lint" on pushed commits
+	@./scripts/install-hooks.sh
 
 fmt: ## Format the Go sources
 	gofmt -w .
