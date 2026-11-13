@@ -325,7 +325,8 @@ docs/                  architecture, security, and decision records
   [0003 Read-only discovery](docs/decisions/0003-read-only-discovery.md),
   [0004 Privilege boundary](docs/decisions/0004-privilege-boundary.md),
   [0005 Agent task engine](docs/decisions/0005-agent-task-engine.md),
-  [0006 API split, authentication, and TLS](docs/decisions/0006-api-split-authentication-tls.md)
+  [0006 API split, authentication, and TLS](docs/decisions/0006-api-split-authentication-tls.md),
+  [0007 Retention](docs/decisions/0007-retention.md)
 
 ## Trademarks
 
