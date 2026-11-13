@@ -31,7 +31,7 @@ func TestAgentDownIsUnavailable(t *testing.T) {
 		t.Fatalf("error = %v, want agent_unavailable", err)
 	}
 	h := c.Health(ctx)
-	if h.Status != models.HealthDegraded || h.Checks["agent"].Status != models.HealthDegraded {
+	if h.Status != models.HealthUnavailable || h.Checks["agent"].Status != models.HealthUnavailable || !h.Checks["agent"].Critical {
 		t.Errorf("health = %+v", h)
 	}
 }

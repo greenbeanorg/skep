@@ -211,7 +211,10 @@ The agent does this in a daily task, `maintenance.retention`, whose own
 audit entry records what was removed. `skep-api` has no task engine; a
 timer does the same for the access log and records each run as an access
 audit entry (`audit.archive`). Both report a broken archive, or a month
-still unsealed 7 days into the next, through the health check.
+still unsealed 7 days into the next, through the health check. The check
+is not critical: health becomes `degraded`, not `unavailable`, and the
+health endpoint still answers `200` (only a failed critical check, the
+agent or its database unreachable, answers `503`).
 
 So far the agent writes `schema_migrations`, the local row in `nodes`,
 `tasks`, `task_events`, and `audit_log`. The other tables define the schema

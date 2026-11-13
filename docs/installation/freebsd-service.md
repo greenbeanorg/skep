@@ -216,11 +216,13 @@ Each does its work once after start and then once a day.
   and `skep-api`. With the stock `syslog.conf` these lines are in
   `/var/log/messages`. If you forward syslog to another host, they are an
   independent record of the hashes.
-- **Health.** `GET /api/v1/health` (with a session) has the checks
-  `audit_archive` and `access_audit_archive`. One is `degraded`, and the
-  endpoint answers `503`, when an archive failed verification, when a
-  segment that is needed is missing, and when last month is still
-  unsealed on the 8th. The cause is in the service's log.
+- **Health.** `GET /api/v1/health` (with a session) and the `health`
+  field of `GET /api/v1/system` have the checks `audit_archive` and
+  `access_audit_archive`. One is `degraded` when an archive failed
+  verification, when a segment that is needed is missing, and when last
+  month is still unsealed on the 8th. The cause is in the service's log.
+  A degraded archive does not stop the service, so the endpoint still
+  answers `200`; see [Monitoring health](#monitoring-health).
 - **The agent's run is a task**, `maintenance.retention`, visible with
   `skepctl tasks list`. Its result says what was deleted and sealed. A
   failed run loses nothing; the next one starts over.
@@ -246,6 +248,29 @@ refuses it.
 The database files do not shrink when rows are removed; SQLite reuses the
 space, so they stop growing. To shrink one, stop its service and run
 `VACUUM` on it with `sqlite3(1)`.
+
+## Monitoring health
+
+`GET /api/v1/health` needs no session. Without one it answers only the
+status:
+
+| Status | HTTP | Meaning |
+|---|---|---|
+| `ok` | 200 | Every check passed. |
+| `degraded` | 200 | A non-critical check failed, for example an audit archive. The service serves requests, but needs an operator. |
+| `unavailable` | 503 | A critical check failed: `skep-api` cannot reach the agent, or the agent cannot reach its database. The service cannot serve requests. |
+
+Use the HTTP status for a load balancer or a supervisor, which should act
+only when the service cannot serve. Use the `status` field for alerting,
+which should also notice a degraded component:
+
+```sh
+curl -s --cacert $CA https://hearst:8443/api/v1/health | grep -q '"status":"ok"' || echo "attention"
+```
+
+Which check failed is shown only with a session: in the full health
+document, where each check says whether it is `critical`, and in the
+`health` field of `GET /api/v1/system`.
 
 ## Talking to the agent directly
 

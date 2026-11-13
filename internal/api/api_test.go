@@ -158,15 +158,31 @@ func TestHealth(t *testing.T) {
 	}
 }
 
-func TestHealthDegradedIs503(t *testing.T) {
-	b := newBackend()
-	b.health.Status = models.HealthDegraded
-	rec := do(t, b, http.MethodGet, "/api/v1/health", nil)
-	if rec.Code != http.StatusServiceUnavailable {
-		t.Errorf("status = %d, want 503", rec.Code)
-	}
-	if got := decode[models.Health](t, rec); got.Status != models.HealthDegraded {
-		t.Errorf("health = %+v", got)
+// TestHealthStatusCodes: only an unavailable service answers 503. A
+// degraded one keeps serving and answers 200, saying so in the body.
+func TestHealthStatusCodes(t *testing.T) {
+	for _, tc := range []struct {
+		status string
+		code   int
+	}{
+		{models.HealthOK, http.StatusOK},
+		{"", http.StatusOK},
+		{models.HealthDegraded, http.StatusOK},
+		{models.HealthUnavailable, http.StatusServiceUnavailable},
+	} {
+		b := newBackend()
+		b.health.Status = tc.status
+		rec := do(t, b, http.MethodGet, "/api/v1/health", nil)
+		if rec.Code != tc.code {
+			t.Errorf("%q: status = %d, want %d", tc.status, rec.Code, tc.code)
+		}
+		want := tc.status
+		if want == "" {
+			want = models.HealthOK
+		}
+		if got := decode[models.Health](t, rec); got.Status != want {
+			t.Errorf("%q: health = %+v", tc.status, got)
+		}
 	}
 }
 

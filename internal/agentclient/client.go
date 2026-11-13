@@ -86,21 +86,17 @@ func New(opts Options) (*Client, error) {
 func (c *Client) Close() { c.http.CloseIdleConnections() }
 
 // Health returns the agent's health document. When the agent cannot be
-// reached the result is a degraded document saying so; it never fails.
+// reached the result is an unavailable document saying so; it never fails.
 func (c *Client) Health(ctx context.Context) models.Health {
 	var h models.Health
 	if err := c.do(ctx, http.MethodGet, "/health", nil, &h); err != nil {
-		return models.Health{
-			Status: models.HealthDegraded,
-			Checks: map[string]models.HealthCheck{
-				"agent": {Status: models.HealthDegraded, Error: "the host agent is not reachable"},
-			},
-		}
+		// Critical: without the agent nothing about the node can be
+		// answered.
+		h = models.Health{}
+		h.Record("agent", true, "the host agent is not reachable")
+		return h
 	}
-	if h.Checks == nil {
-		h.Checks = map[string]models.HealthCheck{}
-	}
-	h.Checks["agent"] = models.HealthCheck{Status: models.HealthOK}
+	h.Record("agent", true, "")
 	return h
 }
 

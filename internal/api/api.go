@@ -59,7 +59,9 @@ type Options struct {
 	AuditLog AuditReader
 	// Checks are skep-api's own health checks, by name, for example the
 	// access audit archive's. They are merged into the health document,
-	// whose detail only an authenticated caller sees. Optional.
+	// whose detail only an authenticated caller sees, and into the system
+	// document. They are not critical: a failure degrades the document
+	// but never makes the health endpoint answer 503. Optional.
 	Checks map[string]models.HealthProbe
 	// Logger defaults to slog.Default().
 	Logger *slog.Logger
@@ -358,22 +360,29 @@ func (h *handler) trusted(addr netip.Addr) bool {
 	return false
 }
 
-func (h *handler) health(w http.ResponseWriter, r *http.Request) {
-	health := h.backend.Health(r.Context())
-	// skep-api's own checks, next to the agent's.
+// healthDocument is the agent's health document with skep-api's own
+// checks merged in.
+func (h *handler) healthDocument(ctx context.Context) models.Health {
+	health := h.backend.Health(ctx)
+	// Normalise what the agent said, so an empty status reads as ok.
+	health.Status = models.WorseHealth(health.Status, models.HealthOK)
+	// skep-api's own checks, next to the agent's. None of them is
+	// critical: skep-api serves requests while they fail.
 	for name, probe := range h.checks {
-		if health.Checks == nil {
-			health.Checks = map[string]models.HealthCheck{}
-		}
-		check := models.HealthCheck{Status: models.HealthOK}
-		if problem := probe(r.Context()); problem != "" {
-			check = models.HealthCheck{Status: models.HealthDegraded, Error: problem}
-			health.Status = models.HealthDegraded
-		}
-		health.Checks[name] = check
+		health.Record(name, false, probe(ctx))
 	}
+	return health
+}
+
+// health answers 503 only when the service cannot serve requests: when a
+// critical check failed. A degraded component, such as a late audit
+// archive, is reported in the body, which monitoring checks deliberately,
+// and in the system document; the endpoint stays at 200 so that a load
+// balancer or a supervisor does not take a working service away.
+func (h *handler) health(w http.ResponseWriter, r *http.Request) {
+	health := h.healthDocument(r.Context())
 	status := http.StatusOK
-	if health.Status != models.HealthOK {
+	if health.Status == models.HealthUnavailable {
 		status = http.StatusServiceUnavailable
 	}
 	// Without a session: the status only. No version, no uptime, no
@@ -394,6 +403,8 @@ func (h *handler) system(w http.ResponseWriter, r *http.Request) {
 	if h.tls != nil {
 		sys.API = &models.APIInfo{TLS: h.tls()}
 	}
+	health := h.healthDocument(r.Context())
+	sys.Health = &health
 	httpkit.WriteJSON(w, r, http.StatusOK, sys)
 }
 

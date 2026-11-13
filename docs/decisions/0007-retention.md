@@ -550,9 +550,18 @@ The daily run verifies every segment first.
   exists for the previous month or later and an unsealed entry is stamped
   before the current month. An entry written after its month was sealed,
   with an old stamp, belongs to the next segment and does not count.
-- **Health and HTTP.** As with the other checks, a degraded audit archive
-  makes `GET /api/v1/health` answer `503`. The agent's check is
-  `audit_archive`; skep-api's is `access_audit_archive`.
+- **Health and HTTP.** The agent's check is `audit_archive`; skep-api's
+  is `access_audit_archive`. Neither is critical: a degraded audit archive
+  makes the health status `degraded` and `GET /api/v1/health` still
+  answers `200`, because the service still serves requests. Only a
+  critical check (the agent or its database unreachable) makes the status
+  `unavailable` and the answer `503`. Monitoring notices a degraded
+  archive by checking the `status` field of the health endpoint, which is
+  readable without a session; the authenticated health document and the
+  system document's `health` field say which check failed. (The first
+  implementation answered `503` for a degraded archive too, which would
+  have let a load balancer or supervisor take a working API away over a
+  late seal. Changed in a follow-up fix.)
 - **The retention task** uses the resource `maintenance/retention`, so two
   runs never overlap and, by the "newest task of each resource" rule, the
   last run is always on record. It is submitted after the startup
