@@ -300,7 +300,8 @@ imported, both as an unprivileged user and as root.
 | `skepctl` chain verification of an operator-supplied certificate (`--ca-file`), a renewal with a new key without a new login, refusal of another CA | Validated as an ordinary user (see `tests/integration/skepctl`) |
 | Retention under rc.d on UFS: archive directories `root:wheel 0700` and `skep:skep 0700` with `0400` files, seal (write, sync, rename, read back), task pruning, removal of old access audit entries, `audit verify` and `audit export`, the syslog notice of each seal, a restart, an altered segment | Validated (2026-11-12, see `tests/integration/retention`) |
 | Retention with the data directory on a ZFS dataset (file-backed test pool): the same checks | Validated (2026-11-13, same) |
-| `skep-api` from the FreeBSD build serving the web interface under rc.d to a browser on the lab network: login, every page, task cancel, logout; back to loopback afterwards | **Pending FreeBSD validation** |
+| `skep-api` from the FreeBSD build (`make build-freebsd`) serving the web interface under rc.d on the management address, with a scratch state directory: the headers, login (a wrong password first), every page in both themes, a viewer refused Users, a session ended underneath an open page and the return to the same address, task cancel, logout, no CSP violation; the Playwright suite run from merrick against hearst; back to loopback and stopped afterwards | Validated (2026-11-13, `web/e2e`, 5 tests) |
+| The rc.d harness `api` phase with the health statuses of #15 (`unavailable` with the agent down) | Validated (2026-11-13, 71 checks, see `tests/integration/rcd`) |
 | ZFS-root host | **Pending FreeBSD validation** (the lab VM is UFS-root) |
 | arm64 | Not a target yet |
 

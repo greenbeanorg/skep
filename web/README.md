@@ -125,6 +125,6 @@ install-script allow-list). The build and the tests work without it.
   a goal of this milestone.
 - The access audit log is the live table only; archived entries are read
   on the host (`skep-api audit export`).
-- The interface has been opened in Chromium (the Playwright tests and
-  their screenshots) and in a browser on the lab network against
-  `hearst`; other browsers have not been checked.
+- The interface has been checked in Chromium only (the Playwright tests
+  and their screenshots, on the development machine and against the
+  FreeBSD build on `hearst`); other browsers have not been checked.

@@ -8,6 +8,10 @@ import { defineConfig, devices } from "@playwright/test";
 // the interface, not of the trust decision an operator makes.
 const listen = process.env.SKEP_E2E_LISTEN ?? "127.0.0.1:8443";
 const baseURL = `https://${listen}`;
+// SKEP_E2E_EXTERNAL=1 runs the tests against a skep-api that is already
+// running at SKEP_E2E_LISTEN (for example on the FreeBSD test host, with
+// the agent's test build behind it) instead of starting the local stack.
+const external = process.env.SKEP_E2E_EXTERNAL === "1";
 
 export default defineConfig({
   testDir: "./e2e",
@@ -26,13 +30,15 @@ export default defineConfig({
     ...devices["Desktop Chrome"],
   },
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
-  webServer: {
-    command: "../scripts/e2e-stack.sh",
-    url: `${baseURL}/api/v1/health`,
-    ignoreHTTPSErrors: true,
-    reuseExistingServer: false,
-    timeout: 90_000,
-    stdout: "pipe",
-    stderr: "pipe",
-  },
+  webServer: external
+    ? undefined
+    : {
+        command: "../scripts/e2e-stack.sh",
+        url: `${baseURL}/api/v1/health`,
+        ignoreHTTPSErrors: true,
+        reuseExistingServer: false,
+        timeout: 90_000,
+        stdout: "pipe",
+        stderr: "pipe",
+      },
 });
