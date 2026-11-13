@@ -161,6 +161,13 @@ a working pair (the host stopped before anything was moved) are ignored
 and replaced by the next regenerate. Skep never moves a pending key
 whose certificate does not match it.
 
+Each regenerate is two entries in the access audit log, action
+`tls.key.regenerate`: the intent (`"phase":"requested"`), written before
+anything on disk changes, and the outcome (`"phase":"finished"`, success
+or failure), joined by `operation_id`. An intent without an outcome means
+the command was interrupted. Compare its `new_public_key_sha256` with
+`skep-api tls fingerprint` to see whether the new key was installed.
+
 To use your own certificate, set `tls.cert_file` and `tls.key_file` in
 `/usr/local/etc/skep/api.json`. The files must be readable by `skep`. After
 replacing them, the server reloads them within a minute or on `SIGHUP`.

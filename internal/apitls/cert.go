@@ -308,9 +308,22 @@ func ensureDir(dir string) error {
 // reload landing there gets the new pair, and a crash there is repaired
 // at the next start.
 func generate(dir string, now time.Time) (*loaded, error) {
-	if err := ensureDir(dir); err != nil {
+	p, err := newPair(now)
+	if err != nil {
 		return nil, err
 	}
+	return install(dir, p)
+}
+
+// pair is a new key and certificate, in memory only.
+type pair struct {
+	keyPEM, certPEM []byte
+	leaf            *x509.Certificate
+}
+
+// newPair creates a key and a self-signed certificate for the host's
+// current names and addresses, without writing anything.
+func newPair(now time.Time) (*pair, error) {
 	key, err := newKey()
 	if err != nil {
 		return nil, fmt.Errorf("apitls: generate key: %w", err)
@@ -324,7 +337,20 @@ func generate(dir string, now time.Time) (*loaded, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := writePending(dir, keyPEM, encodeCert(der)); err != nil {
+	leaf, err := x509.ParseCertificate(der)
+	if err != nil {
+		return nil, err
+	}
+	return &pair{keyPEM: keyPEM, certPEM: encodeCert(der), leaf: leaf}, nil
+}
+
+// install writes p as the pending pair and swaps it into place; see
+// generate.
+func install(dir string, p *pair) (*loaded, error) {
+	if err := ensureDir(dir); err != nil {
+		return nil, err
+	}
+	if err := writePending(dir, p.keyPEM, p.certPEM); err != nil {
 		return nil, err
 	}
 	if err := finishSwap(dir); err != nil {

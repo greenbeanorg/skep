@@ -501,13 +501,135 @@ func TestRunTLS(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	var actor, details string
-	if err := db.QueryRow(`SELECT actor_name, details FROM audit_log WHERE action = 'tls.key.regenerate'`).Scan(&actor, &details); err != nil {
+	wantRegeneratePair(t, db, "local:4242", sys.API.TLS.PublicKeySHA256, after.API.TLS.PublicKeySHA256)
+}
+
+// regenerateEntry is one tls.key.regenerate row of the access audit log.
+type regenerateEntry struct {
+	Actor, Outcome string
+	Details        struct {
+		Phase       string `json:"phase"`
+		OperationID string `json:"operation_id"`
+		OldPin      string `json:"old_public_key_sha256"`
+		NewPin      string `json:"new_public_key_sha256"`
+		Error       string `json:"error"`
+	}
+}
+
+func regenerateEntries(t *testing.T, db *sql.DB) []regenerateEntry {
+	t.Helper()
+	rows, err := db.Query(`SELECT actor_name, outcome, details FROM audit_log WHERE action = 'tls.key.regenerate' ORDER BY id`)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if actor != "local:4242" || !strings.Contains(details, sys.API.TLS.PublicKeySHA256) || !strings.Contains(details, after.API.TLS.PublicKeySHA256) {
-		t.Errorf("audit entry: actor %q, details %s", actor, details)
+	defer rows.Close()
+	var out []regenerateEntry
+	for rows.Next() {
+		var e regenerateEntry
+		var details string
+		if err := rows.Scan(&e.Actor, &e.Outcome, &details); err != nil {
+			t.Fatal(err)
+		}
+		if err := json.Unmarshal([]byte(details), &e.Details); err != nil {
+			t.Fatal(err)
+		}
+		out = append(out, e)
 	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+// wantRegeneratePair checks that the last two tls.key.regenerate entries
+// are one key change: the intent, then its successful outcome, joined by
+// operation_id, both naming the old and the new key.
+func wantRegeneratePair(t *testing.T, db *sql.DB, actor, oldPin, newPin string) {
+	t.Helper()
+	all := regenerateEntries(t, db)
+	if len(all) < 2 {
+		t.Fatalf("%d tls.key.regenerate entries, want a requested and finished pair: %+v", len(all), all)
+	}
+	req, fin := all[len(all)-2], all[len(all)-1]
+	if req.Details.Phase != "requested" || fin.Details.Phase != "finished" ||
+		req.Outcome != "success" || fin.Outcome != "success" {
+		t.Errorf("entries are not requested then finished, both successful: %+v / %+v", req, fin)
+	}
+	if req.Details.OperationID == "" || req.Details.OperationID != fin.Details.OperationID {
+		t.Errorf("operation IDs %q and %q do not join the pair", req.Details.OperationID, fin.Details.OperationID)
+	}
+	for _, e := range []regenerateEntry{req, fin} {
+		if e.Actor != actor || e.Details.OldPin != oldPin || e.Details.NewPin != newPin {
+			t.Errorf("%s entry: actor %q, old %s, new %s; want %q, %s, %s",
+				e.Details.Phase, e.Actor, e.Details.OldPin, e.Details.NewPin, actor, oldPin, newPin)
+		}
+	}
+}
+
+// TestTLSRegenerateRecordsIntentFirst: without a recorded intent the key
+// does not change; with one, the outcome follows.
+func TestTLSRegenerateRecordsIntentFirst(t *testing.T) {
+	dataDir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dataDir, "api"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	regenerate := func() (string, error) {
+		var out bytes.Buffer
+		err := run(context.Background(), []string{"tls", "regenerate", "-dev", "-data-dir", dataDir}, testEnv(&out, io.Discard))
+		return out.String(), err
+	}
+	if _, err := regenerate(); err != nil {
+		t.Fatal(err)
+	}
+	dbFile := filepath.Join(dataDir, "api", "api.db")
+	db, err := sql.Open("sqlite", "file:"+dbFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	first := regenerateEntries(t, db)
+	if len(first) != 2 || first[0].Details.OldPin != "" || first[0].Details.NewPin == "" {
+		t.Fatalf("first key: %+v", first)
+	}
+	wantRegeneratePair(t, db, first[0].Actor, "", first[0].Details.NewPin)
+
+	// The audit log refuses the entry: the key must not change, and
+	// nothing may be left pending.
+	if _, err := db.Exec(`CREATE TRIGGER refuse_regenerate BEFORE INSERT ON audit_log
+		WHEN NEW.action = 'tls.key.regenerate'
+		BEGIN SELECT RAISE(ABORT, 'refused by the test'); END`); err != nil {
+		t.Fatal(err)
+	}
+	keyFile := filepath.Join(dataDir, "api", "tls", "key.pem")
+	keyBefore, _ := os.ReadFile(keyFile)
+	if _, err := regenerate(); err == nil || !strings.Contains(err.Error(), "nothing was changed") {
+		t.Errorf("regenerate with an unwritable audit log: %v", err)
+	}
+	if k, _ := os.ReadFile(keyFile); string(k) != string(keyBefore) {
+		t.Error("the key changed although its intent could not be recorded")
+	}
+	for _, name := range []string{"key.pem.next", "cert.pem.next"} {
+		if _, err := os.Stat(filepath.Join(dataDir, "api", "tls", name)); err == nil {
+			t.Errorf("%s left behind", name)
+		}
+	}
+	if n := len(regenerateEntries(t, db)); n != 2 {
+		t.Errorf("%d entries after the refused attempt, want 2", n)
+	}
+
+	// Recorded again: the next change is a pair naming both keys.
+	if _, err := db.Exec(`DROP TRIGGER refuse_regenerate`); err != nil {
+		t.Fatal(err)
+	}
+	out, err := regenerate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	second := regenerateEntries(t, db)
+	if len(second) != 4 || !strings.Contains(out, second[3].Details.NewPin) {
+		t.Fatalf("second key: %+v\n%s", second, out)
+	}
+	wantRegeneratePair(t, db, first[0].Actor, first[0].Details.NewPin, second[3].Details.NewPin)
 }
 
 func TestTLSCommandErrors(t *testing.T) {
