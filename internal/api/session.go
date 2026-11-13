@@ -63,21 +63,32 @@ func (h *handler) fail(w http.ResponseWriter, r *http.Request, err error) {
 	httpkit.Fail(h.log, w, r, err)
 }
 
+// BackgroundHeader marks a request the client made by itself (a timer, a
+// refetch on focus) rather than for something the user did. Such a request
+// is authenticated like any other, the idle check included, but it does
+// not count as use of the session, so an unattended page idles out (ADR
+// 0008, decision 3). Any non-empty value marks the request.
+const BackgroundHeader = "X-Skep-Background"
+
 // identify returns the identity behind the credentials of a request. A
 // token is accepted only through the channel it was issued for: an
 // Authorization header is a bearer token, the session cookie is a cookie
 // session, and a request that sends an Authorization header is judged by
 // that alone.
 func (h *handler) identify(r *http.Request) (auth.Identity, error) {
+	authenticate := h.auth.Authenticate
+	if r.Header.Get(BackgroundHeader) != "" {
+		authenticate = h.auth.AuthenticateBackground
+	}
 	if authz := r.Header.Get("Authorization"); authz != "" {
 		scheme, token, ok := strings.Cut(authz, " ")
 		if !ok || !strings.EqualFold(scheme, "Bearer") {
 			return auth.Identity{}, auth.ErrUnauthenticated
 		}
-		return h.auth.Authenticate(r.Context(), strings.TrimSpace(token), auth.BearerSession)
+		return authenticate(r.Context(), strings.TrimSpace(token), auth.BearerSession)
 	}
 	if c, err := r.Cookie(SessionCookie); err == nil {
-		return h.auth.Authenticate(r.Context(), c.Value, auth.CookieSession)
+		return authenticate(r.Context(), c.Value, auth.CookieSession)
 	}
 	return auth.Identity{}, auth.ErrUnauthenticated
 }

@@ -32,6 +32,14 @@ info:
     affected, except that a request authenticated by cookie that is not a
     GET or HEAD must carry a matching `Origin`.
 
+    **Background requests.** A request the client makes by itself, such
+    as a timer-driven refresh, may carry the header `X-Skep-Background`
+    (any non-empty value). It is authenticated like any other request,
+    the idle timeout included, but it does not count as use of the
+    session: it does not extend the idle timeout, so an unattended page
+    idles out. A client can only shorten its own session with it, never
+    lengthen it. Requests the user caused should not carry it.
+
     There are no default credentials. The first administrator is created
     on the host with `skep-api admin create`; until one exists, login
     answers `503 setup_required`. Logins are rate limited (`429
@@ -85,6 +93,8 @@ paths:
       operationId: getHealth
       summary: Health
       security: [{}, {bearer: []}, {cookie: []}]
+      parameters:
+        - $ref: "#/components/parameters/Background"
       description: |
         Reports whether the service can serve requests, and whether any
         component needs attention.
@@ -216,6 +226,8 @@ paths:
       tags: [auth]
       operationId: getSession
       summary: The caller and the session in use
+      parameters:
+        - $ref: "#/components/parameters/Background"
       responses:
         "200":
           description: The user, the session, and the permissions of the user's role. Never the token.
@@ -262,6 +274,8 @@ paths:
       operationId: getSystem
       summary: Local node description
       x-skep-permission: system:read
+      parameters:
+        - $ref: "#/components/parameters/Background"
       description: |
         Identity of the local node, its operating system, the Skep build, and
         a capability summary. The `node_id` is generated on first start and
@@ -301,6 +315,7 @@ paths:
         reported as `unknown` or `unavailable` with a reason, and missing
         facts are listed in `warnings`.
       parameters:
+        - $ref: "#/components/parameters/Background"
         - name: id
           in: path
           required: true
@@ -345,6 +360,7 @@ paths:
         Collections are paginated with a cursor. Pass the `next_cursor` of
         one page as `cursor` to get the next; it is absent on the last page.
       parameters:
+        - $ref: "#/components/parameters/Background"
         - name: status
           in: query
           description: Only return tasks in this status.
@@ -396,6 +412,7 @@ paths:
         log.
       x-skep-permission: task:read
       parameters:
+        - $ref: "#/components/parameters/Background"
         - name: id
           in: path
           required: true
@@ -678,6 +695,19 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
 components:
+  parameters:
+    Background:
+      name: X-Skep-Background
+      in: header
+      required: false
+      description: |
+        Marks a request the client made by itself (a timer, a refetch on
+        focus). Any non-empty value. The request is authenticated as any
+        other, the idle timeout included, but does not extend the idle
+        timeout.
+      schema:
+        type: string
+        example: "1"
   securitySchemes:
     bearer:
       type: http
