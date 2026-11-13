@@ -50,6 +50,10 @@ type API struct {
 	Database DatabaseConfig `json:"database"`
 	TLS      TLSConfig      `json:"tls"`
 	Auth     AuthConfig     `json:"auth"`
+	// Retention configures the archive of the access audit log (ADR 0007,
+	// decision 7). tasks_days is a setting of the agent and is refused
+	// here.
+	Retention RetentionConfig `json:"retention"`
 }
 
 // AuthConfig configures authentication.
@@ -138,6 +142,13 @@ const APIStateDir = "api"
 
 // StateDir returns skep-api's private state directory.
 func (c API) StateDir() string { return filepath.Join(c.DataDir, APIStateDir) }
+
+// AuditArchiveDir returns the directory of the access audit log's archive
+// segments: next to api.db, in the directory only the service account can
+// open.
+func (c API) AuditArchiveDir() string {
+	return filepath.Join(filepath.Dir(c.Database.Path), AuditArchiveDirName)
+}
 
 // TLSDir returns the directory of the generated key and certificate.
 func (c API) TLSDir() string { return filepath.Join(c.StateDir(), "tls") }
@@ -288,6 +299,9 @@ func (c *API) applyDefaults() {
 	if c.Auth.TrustedProxies == nil {
 		c.Auth.TrustedProxies = []string{}
 	}
+	// The access log grows with unauthenticated traffic: its entries are
+	// removed 90 days after their month, once sealed and verified.
+	c.Retention.applyDefaults(nil, DefaultAccessAuditLiveDays)
 }
 
 // TrustedProxyPrefixes parses auth.trusted_proxies. A bare address is a
@@ -362,6 +376,10 @@ func (c API) Validate() error {
 	if _, err := c.TrustedProxyPrefixes(); err != nil {
 		errs = append(errs, err)
 	}
+	if c.Retention.TasksDays != nil {
+		add("retention.tasks_days is a setting of skep-agent (agent.json): skep-api has no tasks")
+	}
+	errs = append(errs, c.Retention.validate()...)
 	errs = append(errs, c.Log.validate()...)
 	for name, d := range map[string]Duration{
 		"read_timeout":     c.ReadTimeout,

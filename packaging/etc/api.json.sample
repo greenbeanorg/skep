@@ -33,5 +33,9 @@
       "per_username_failures": 50
     },
     "trusted_proxies": []
+  },
+  "retention": {
+    "audit_live_days": 90,
+    "audit_archive": true
   }
 }

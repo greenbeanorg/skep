@@ -161,8 +161,9 @@ and a request body limit are set. Responses carry `X-Content-Type-Options: nosni
 - **The agent makes no authorization decision** (ADR 0004). It records
   the actor the API names.
 - **The audit log is readable through the API** by roles with
-  `audit:read`. It is append-only and holds no passwords, tokens, or
-  hashes.
+  `audit:read`. It holds no passwords, tokens, or hashes. The API serves
+  the live table; entries older than the retention time are in the
+  archive (see [Audit logs and retention](#audit-logs-and-retention)).
 
 ## Accounts and passwords
 
@@ -296,6 +297,51 @@ The actor of a request is the authenticated user. The health check that
 `skep-api` makes without a user carries the actor `skep-api`. The socket
 and the two rc.d services are pending FreeBSD validation.
 
+## Audit logs and retention
+
+There are two audit logs: the agent's operation audit in `agent.db` and
+skep-api's access audit in `api.db`. Each process keeps custody of its
+own. What they promise ([ADR 0007](../decisions/0007-retention.md)):
+
+1. An entry is never modified.
+2. An entry is never removed from the live table unless it is inside a
+   sealed archive segment. The database enforces this with a trigger,
+   whoever asks; there is no window in which the rule is switched off.
+3. The index of sealed segments is never modified or shortened.
+4. The segments form a SHA-256 hash chain, so a missing, reordered, or
+   altered segment is detectable.
+
+"Append-only" therefore describes the record as a whole, the live table
+plus the sealed segments, and no longer the table alone.
+
+- **Sealing** happens after each calendar month (UTC): its entries are
+  written to `audit-archive/` next to the database (`0700`, files `0400`,
+  owned by the process that owns the log) and the segment is recorded.
+  Which segment an entry belongs to is decided by its ID, never by its
+  timestamp, so a skewed clock cannot misplace one.
+- **Removal** of live entries is separate and later. The agent's log:
+  never, unless the operator sets `retention.audit_live_days`. The access
+  log: 90 days after the end of the month, by default. Before live
+  entries go, their segment file is read again and must match its
+  recorded hash; if it is missing or altered nothing is removed, the run
+  fails, and health is degraded.
+- **Each seal is also written to syslog** at `daemon.notice` with the
+  month, the ID range, the count, and the hash. On a host that forwards
+  syslog, that is an off-host anchor for the chain.
+- **Skep never deletes a segment file.** How long they are kept, and
+  where, is the operator's decision.
+- **Tasks and task events** are operational history, not the record, and
+  are deleted by age (90 days by default). What happened stays in the
+  audit log, including what each retention run removed.
+- `skep-agent audit verify` and `skep-api audit verify` check the index
+  and every file and report the first break.
+
+The limit: none of this holds against root on the host, who can rewrite
+the database, the files, and the index together. It detects accidents,
+bugs, and partial tampering, and with an off-host copy of the latest hash
+it detects complete tampering too. A compromised `skep-api` can damage
+its own log and archive, detectably; the agent's are out of its reach.
+
 ## Open items
 
 - **Scoped permissions** (per VM, pool, or tenant) and **custom roles**:
@@ -310,9 +356,9 @@ and the two rc.d services are pending FreeBSD validation.
   is revisited before 1.0.
 - **Signed per-request tokens** replace the API-asserted identity before
   any agent accepts requests from another node.
-- **Retention.** Both audit logs are strictly append-only, and tasks and
-  task events are never removed. Retention and archiving need a design
-  that does not weaken the audit guarantee.
+- **Per-entry hash chaining** of the audit logs, which would make
+  tampering inside the live table detectable too, and **signed segments**,
+  which wait for node keys (ADR 0007, decision 5).
 - **Secrets storage.** Nothing secret is stored yet. Secret encryption is
   required before anything is.
 

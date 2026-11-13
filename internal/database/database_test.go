@@ -144,11 +144,11 @@ func TestMigrateCreatesAgentSchema(t *testing.T) {
 		t.Fatalf("applied = %+v", applied)
 	}
 	got := tableNames(t, db)
-	if len(applied) != 2 || applied[1].Name != "task_engine" {
+	if len(applied) != 3 || applied[1].Name != "task_engine" || applied[2].Name != "retention" {
 		t.Fatalf("applied = %+v", applied)
 	}
 	want := []string{
-		"audit_log", "containers", "network_interfaces", "nodes", "schema_migrations",
+		"audit_log", "audit_segments", "containers", "network_interfaces", "nodes", "schema_migrations",
 		"storage_pools", "storage_volumes", "system_config", "task_events", "tasks",
 		"virtual_machines", "vm_disks", "vm_networks",
 	}
@@ -162,7 +162,7 @@ func TestMigrateCreatesAgentSchema(t *testing.T) {
 
 func TestMigrateCreatesAPISchema(t *testing.T) {
 	got := tableNames(t, migratedAPIDB(t))
-	want := []string{"audit_log", "roles", "schema_migrations", "sessions", "users"}
+	want := []string{"audit_log", "audit_segments", "roles", "schema_migrations", "sessions", "users"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Errorf("tables = %v\nwant     %v", got, want)
 	}
@@ -174,7 +174,7 @@ func TestMigrateCreatesAPISchema(t *testing.T) {
 func TestDatabasesDoNotOverlap(t *testing.T) {
 	agent := tableNames(t, migratedDB(t))
 	api := tableNames(t, migratedAPIDB(t))
-	shared := map[string]bool{"schema_migrations": true, "audit_log": true}
+	shared := map[string]bool{"schema_migrations": true, "audit_log": true, "audit_segments": true}
 
 	inAPI := map[string]bool{}
 	for _, name := range api {
@@ -329,7 +329,8 @@ func TestAgentSchemaConstraints(t *testing.T) {
 	}
 
 	// The operation audit needs both the asserted actor and the verified
-	// peer UID, and is append-only.
+	// peer UID. An entry is never changed, and never removed unless it is
+	// archived (retentionschema_test.go).
 	mustExec(t, db,
 		`INSERT INTO audit_log (actor_id, actor_name, peer_uid, action, outcome) VALUES ('u1', 'andy', 1001, 'vm.start', 'success')`)
 	wantConstraintError(t, db, "audit without actor",

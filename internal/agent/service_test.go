@@ -192,6 +192,31 @@ func TestHealth(t *testing.T) {
 		t.Errorf("health must not leak internal error text, got %q", got)
 	}
 
+	// Additional checks, such as the audit archive's: a problem degrades
+	// the whole document and is reported under the check's name.
+	problem := ""
+	withChecks := newTestService(t, Options{
+		Discoverer: &fakeDiscoverer{}, Database: fakePinger{},
+		Checks: map[string]models.HealthProbe{
+			models.CheckAuditArchive: func(context.Context) string { return problem },
+		},
+	})
+	if h := withChecks.Health(ctx); h.Status != models.HealthOK || h.Checks[models.CheckAuditArchive].Status != models.HealthOK ||
+		h.Checks[models.CheckAuditArchive].Error != "" {
+		t.Errorf("health with a passing check = %+v", h)
+	}
+	problem = "last month's audit entries are not sealed yet"
+	if h := withChecks.Health(ctx); h.Status != models.HealthDegraded ||
+		h.Checks[models.CheckAuditArchive] != (models.HealthCheck{Status: models.HealthDegraded, Error: problem}) ||
+		h.Checks["database"].Status != models.HealthOK {
+		t.Errorf("health with a failing check = %+v", h)
+	}
+	// It stays degraded until the check passes again.
+	problem = ""
+	if h := withChecks.Health(ctx); h.Status != models.HealthOK {
+		t.Errorf("health after recovery = %+v", h)
+	}
+
 	none := newTestService(t, Options{Discoverer: &fakeDiscoverer{}}).Health(ctx)
 	if none.Status != models.HealthOK || len(none.Checks) != 0 || none.Checks == nil {
 		t.Errorf("health without database = %+v", none)

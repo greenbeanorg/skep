@@ -40,6 +40,14 @@ is not a problem:
 | `/var/db/skep/agent` | `root:wheel` | `0700` | The agent's database; closed to `skep` |
 | `/var/db/skep/api` | `skep:skep` | `0700` | The API server's state |
 
+Each program creates its audit archive itself, when it first seals a
+segment:
+
+| Path | Owner | Mode | Purpose |
+|---|---|---|---|
+| `/var/db/skep/agent/audit-archive` | `root:wheel` | `0700`, files `0400` | Sealed segments of the agent's operation audit log |
+| `/var/db/skep/api/audit-archive` | `skep:skep` | `0700`, files `0400` | Sealed segments of the access audit log |
+
 The agent checks the peer of every socket connection against an allow-list
 of UIDs (`root` and `skep` by default), using credentials reported by the
 kernel. File permissions are the first check; this is the second.
@@ -184,6 +192,61 @@ If the agent's socket path or run directory is changed, change
 `agent_socket` in `api.json` (or `skep_api_args="-agent-socket ..."`) to
 match.
 
+## Retention and the audit archive
+
+Both services clean up after themselves ([ADR 0007](../decisions/0007-retention.md)).
+Each does its work once after start and then once a day.
+
+| What | Default | Setting |
+|---|---|---|
+| Finished tasks and their events | deleted 90 days after the task finished | `retention.tasks_days` in `agent.json` (`0` keeps them; otherwise at least 7) |
+| The agent's operation audit log | sealed monthly; entries are never removed from the database | `retention.audit_live_days` in `agent.json` (`0`, or at least 35) |
+| The access audit log | sealed monthly; entries are removed 90 days after the end of their month | `retention.audit_live_days` in `api.json` (`0` never removes; otherwise at least 35) |
+| Sealing itself | on | `retention.audit_archive` in either file; `false` seals nothing and never removes an audit entry |
+
+- **A segment** is one month of one audit log, as a file
+  `audit-<node id>-<YYYY-MM>-<first id>-<last id>.jsonl.gz`. Segments are
+  chained by their SHA-256 hashes. Skep never deletes or rewrites one.
+  You may copy them elsewhere at any time, and move old ones away if you
+  must; a segment that is gone is reported by every run and by `audit
+  verify`.
+- **Back up the two `audit-archive` directories** with the databases.
+  After live entries are removed, the segment is the only copy.
+- **Each seal is logged to syslog** at `daemon.notice`, tags `skep-agent`
+  and `skep-api`. With the stock `syslog.conf` these lines are in
+  `/var/log/messages`. If you forward syslog to another host, they are an
+  independent record of the hashes.
+- **Health.** `GET /api/v1/health` (with a session) has the checks
+  `audit_archive` and `access_audit_archive`. One is `degraded`, and the
+  endpoint answers `503`, when an archive failed verification, when a
+  segment that is needed is missing, and when last month is still
+  unsealed on the 8th. The cause is in the service's log.
+- **The agent's run is a task**, `maintenance.retention`, visible with
+  `skepctl tasks list`. Its result says what was deleted and sealed. A
+  failed run loses nothing; the next one starts over.
+
+Check and read the archive on the host, whether or not the services run:
+
+```sh
+skep-agent audit verify                  # as root
+skep-agent audit export --month 2026-10  # archived entries, one JSON object per line
+skep-api audit verify                    # as root (it switches to skep) or as skep
+skep-api audit export
+```
+
+`audit verify` prints one line per segment and the hash at the head of the
+chain, and exits non-zero at the first break. Use `--allow-missing` if you
+moved segments away on purpose.
+
+If `audit verify` reports an altered or missing segment whose entries are
+still in the database, nothing has been lost: the entries stay until the
+file is restored from a copy. Do not edit `audit_segments`; the database
+refuses it.
+
+The database files do not shrink when rows are removed; SQLite reuses the
+space, so they stop growing. To shrink one, stop its service and run
+`VACUUM` on it with `sqlite3(1)`.
+
 ## Talking to the agent directly
 
 The agent has no TCP port. For debugging, as root or `skep`:
@@ -213,7 +276,8 @@ pw userdel skep             # also removes the skep group
 ## Limits
 
 - Validated on a UFS-root host only. A ZFS-root host is pending FreeBSD
-  validation.
+  validation. The audit archive and retention were also validated with
+  the data directory on a ZFS dataset.
 - Logging to a file with rotation is not offered; use syslog and
   `newsyslog(8)`.
 - The account's UID and GID are whatever `pw` assigns. A fixed, registered

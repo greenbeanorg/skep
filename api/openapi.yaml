@@ -90,6 +90,13 @@ paths:
         (`HealthStatus`). With a session it is the full `Health` document;
         its `agent` check is `degraded` when skep-api cannot reach the
         agent.
+
+        Two checks concern the audit archives: `audit_archive` (the
+        agent's operation audit log) and `access_audit_archive`
+        (skep-api's access audit log). Each is `degraded` when the
+        archive failed verification or a needed segment is missing, and
+        when the previous month is still unsealed 7 days into the new
+        one. A check is absent when archiving is turned off.
       responses:
         "200":
           description: Every check passed.
@@ -365,6 +372,12 @@ paths:
       tags: [tasks]
       operationId: getTask
       summary: One task with its event history
+      description: |
+        A finished task is deleted, with its events, once it is older than
+        the agent's task retention (90 days by default); the newest
+        finished task of each resource is kept. After that this endpoint
+        answers `404`, and what the task did remains in the agent's audit
+        log.
       x-skep-permission: task:read
       parameters:
         - name: id
@@ -606,10 +619,13 @@ paths:
       summary: Read the access audit log
       description: |
         Requires `audit:read`. Returns authentication events, authorization
-        denials, and administrative changes, newest first. The log is
-        append-only. It never contains passwords, session tokens, or their
-        hashes. Operations performed on the host are recorded separately
-        by the agent.
+        denials, and administrative changes, newest first. An entry is
+        never changed. Entries are served from the live table: by default
+        they are removed from it 90 days after the end of their month,
+        once they are in a sealed archive segment, and are then read on
+        the host with `skep-api audit export`. The log never contains
+        passwords, session tokens, or their hashes. Operations performed
+        on the host are recorded separately by the agent.
       parameters:
         - name: limit
           in: query

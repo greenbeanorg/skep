@@ -23,5 +23,10 @@
   "tasks": {
     "workers": 4,
     "queue_size": 64
+  },
+  "retention": {
+    "tasks_days": 90,
+    "audit_live_days": 0,
+    "audit_archive": true
   }
 }

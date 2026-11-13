@@ -4,6 +4,7 @@
 package models
 
 import (
+	"context"
 	"errors"
 	"time"
 
@@ -219,6 +220,21 @@ type HealthCheck struct {
 	Status string `json:"status"`
 	Error  string `json:"error,omitempty"`
 }
+
+// HealthProbe is one additional health check of a service: it returns ""
+// when all is well, or a short description of the problem that is safe to
+// show to an authenticated caller. Causes belong in the log.
+type HealthProbe func(ctx context.Context) string
+
+// Names of the audit archive health checks (ADR 0007, amendment d).
+const (
+	// CheckAuditArchive is the agent's check of its operation audit log's
+	// archive.
+	CheckAuditArchive = "audit_archive"
+	// CheckAccessAuditArchive is skep-api's check of its access audit
+	// log's archive.
+	CheckAccessAuditArchive = "access_audit_archive"
+)
 
 // Health is the agent health document.
 type Health struct {

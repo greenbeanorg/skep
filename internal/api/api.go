@@ -57,6 +57,10 @@ type Options struct {
 	Audit auth.AuditWriter
 	// AuditLog reads the access audit log.
 	AuditLog AuditReader
+	// Checks are skep-api's own health checks, by name, for example the
+	// access audit archive's. They are merged into the health document,
+	// whose detail only an authenticated caller sees. Optional.
+	Checks map[string]models.HealthProbe
 	// Logger defaults to slog.Default().
 	Logger *slog.Logger
 	// TLS describes the certificate in use. It is reported in the system
@@ -75,6 +79,7 @@ type handler struct {
 	users   *auth.Users
 	audit   auth.AuditWriter
 	history AuditReader
+	checks  map[string]models.HealthProbe
 	log     *slog.Logger
 	tls     func() models.TLSInfo
 	proxies []netip.Prefix
@@ -139,7 +144,7 @@ func NewHandler(opts Options) http.Handler {
 	}
 	h := &handler{
 		backend: opts.Backend, auth: opts.Auth, users: opts.Users, audit: opts.Audit, history: opts.AuditLog,
-		log: log, tls: opts.TLS, proxies: opts.TrustedProxies,
+		checks: opts.Checks, log: log, tls: opts.TLS, proxies: opts.TrustedProxies,
 	}
 
 	// Routes are grouped by path, and the method is checked by the
@@ -355,6 +360,18 @@ func (h *handler) trusted(addr netip.Addr) bool {
 
 func (h *handler) health(w http.ResponseWriter, r *http.Request) {
 	health := h.backend.Health(r.Context())
+	// skep-api's own checks, next to the agent's.
+	for name, probe := range h.checks {
+		if health.Checks == nil {
+			health.Checks = map[string]models.HealthCheck{}
+		}
+		check := models.HealthCheck{Status: models.HealthOK}
+		if problem := probe(r.Context()); problem != "" {
+			check = models.HealthCheck{Status: models.HealthDegraded, Error: problem}
+			health.Status = models.HealthDegraded
+		}
+		health.Checks[name] = check
+	}
 	status := http.StatusOK
 	if health.Status != models.HealthOK {
 		status = http.StatusServiceUnavailable

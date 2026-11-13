@@ -18,7 +18,7 @@ LDFLAGS := -s -w \
 # cross-compile needs no C toolchain.
 export CGO_ENABLED := 0
 
-.PHONY: all build build-freebsd build-freebsd-test test vet lint fmt run-dev clean help
+.PHONY: all build build-freebsd build-freebsd-test test vet lint fmt install-hooks run-dev clean help
 
 all: vet test build build-freebsd
 
@@ -55,6 +55,8 @@ build-freebsd-test: ## Cross-compile the FreeBSD test agent and integration test
 		-o $(BIN_DIR)/freebsd-amd64-test/adminprompt-test ./tests/integration/adminprompt
 	GOOS=freebsd GOARCH=amd64 $(GO) build -trimpath \
 		-o $(BIN_DIR)/freebsd-amd64-test/skepctl-test ./tests/integration/skepctl
+	GOOS=freebsd GOARCH=amd64 $(GO) build -trimpath \
+		-o $(BIN_DIR)/freebsd-amd64-test/retention-test ./tests/integration/retention
 
 test: ## Run the unit tests, with the race detector (needs a C compiler)
 	CGO_ENABLED=1 $(GO) test -race -count=1 ./...
@@ -75,6 +77,11 @@ lint: vet ## Check formatting, vet, and run staticcheck when it is installed
 	else \
 		echo "staticcheck is not installed; skipped (CI runs it)."; \
 	fi
+
+# The hook is linked, not copied, so it follows the repository. It lints
+# the commits being pushed (see scripts/hooks/pre-push).
+install-hooks: ## Install the git pre-push hook, which runs "make lint" on pushed commits
+	@./scripts/install-hooks.sh
 
 fmt: ## Format the Go sources
 	gofmt -w .

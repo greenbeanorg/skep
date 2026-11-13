@@ -342,7 +342,8 @@ func TestRunServesAPIThroughTheSocket(t *testing.T) {
 	stopAgent := startAgent(t, socket, agent)
 	get(t, c, base+"/api/v1/health", http.StatusOK, &health)
 	if health.Status != models.HealthOK || health.Checks["agent"].Status != models.HealthOK ||
-		health.Checks["database"].Status != models.HealthOK {
+		health.Checks["database"].Status != models.HealthOK ||
+		health.Checks[models.CheckAccessAuditArchive].Status != models.HealthOK {
 		t.Errorf("health = %+v", health)
 	}
 	var sys models.System
@@ -558,6 +559,25 @@ func TestLocalCommandsDropRoot(t *testing.T) {
 	}
 	if entries, _ := os.ReadDir(filepath.Join(other, "api")); len(entries) != 0 {
 		t.Errorf("files were created as root: %v", entries)
+	}
+
+	// The audit commands follow the same rule: root is given up before the
+	// database or the archive is opened.
+	for _, command := range []string{"verify", "export"} {
+		err = run(context.Background(), []string{"audit", command, "-dev", "-data-dir", other}, e)
+		if err == nil || !strings.Contains(err.Error(), "cannot give up root") {
+			t.Errorf("audit %s with a failed drop: %v", command, err)
+		}
+		dropped = false
+		e2 := e
+		e2.drop = func(uint32, uint32) error { dropped = true; return nil }
+		err = run(context.Background(), []string{"audit", command, "-dev", "-data-dir", other}, e2)
+		if !dropped || err == nil || !strings.Contains(err.Error(), "no database") {
+			t.Errorf("audit %s as root: dropped=%v, %v; want the drop, then no database found", command, dropped, err)
+		}
+	}
+	if entries, _ := os.ReadDir(filepath.Join(other, "api")); len(entries) != 0 {
+		t.Errorf("an audit command created files: %v", entries)
 	}
 }
 

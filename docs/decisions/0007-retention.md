@@ -1,10 +1,9 @@
 # ADR 0007: Retention of tasks, task events, and audit entries
 
-- Status: **Accepted** (not implemented yet; implementation is the
-  milestone after `skepctl`). The review answers and four amendments are
-  under [Decisions](#decisions) and are worked into the text, except
-  amendment (b), which changes shipped code and was implemented on its
-  own (see ADR 0006's implementation notes).
+- Status: **Accepted and implemented** (Milestone 4c). The review answers
+  and four amendments are under [Decisions](#decisions) and are worked
+  into the text. What the implementation added or decided beyond the text
+  is under [Implementation notes](#implementation-notes).
 - Date: 2026-11-12 (proposed and accepted)
 - Depends on: [ADR 0004](0004-privilege-boundary.md) (two audit logs, each
   append-only), [ADR 0005](0005-agent-task-engine.md) (tasks, events, and
@@ -414,9 +413,8 @@ refuses a missing or altered file; pruning never touches unfinished tasks
 or the newest task of a resource; a replayed idempotency key behaves as
 documented before and after its task is deleted.
 
-Pending FreeBSD validation, all of it: file creation, sync, and rename
-semantics on UFS and ZFS; ownership and modes of the archive directory
-under rc.d; the retention task under the real service across a restart.
+FreeBSD validation: see [Implementation notes](#implementation-notes) for
+what ran on a real host and what is still pending.
 
 ## Decisions
 
@@ -456,3 +454,162 @@ Details filled in while applying the amendments, open to correction:
   log; `skep-api`'s authenticated health document for the access log.
 - What an aggregated entry holds: the count, the limits that refused the
   attempts, and up to ten distinct well-formed usernames.
+
+## Implementation notes
+
+Implemented in Milestone 4c. This section records what the code does where
+the text above left room, and what was added. Each point is open to
+correction like the details listed under Decisions.
+
+### Where things are
+
+| Part | Location |
+|---|---|
+| Schema: `audit_segments`, the conditional delete trigger, the task delete rules | `migrations/sqlite/agent/0003_retention.sql`, `migrations/sqlite/api/0003_retention.sql` |
+| Segment format, seal, verify, remove, health | `internal/auditarchive` |
+| Task pruning | `database.TaskStore.PruneFinished` |
+| The `maintenance.retention` task and its timer | `internal/retention`, wired in `cmd/skep-agent` |
+| The access log's daily run | `cmd/skep-api/retention.go` |
+| `audit verify`, `audit export` | `internal/auditcmd`, both commands |
+| Native test | `tests/integration/retention` |
+
+### The schema enforces more than the sketch
+
+- **Events leave only with their task.** The ADR asked for a trigger that
+  protects the events of an unfinished task. The trigger refuses every
+  direct delete of an event whose task still exists, finished or not; the
+  cascade works because the task row is gone by then.
+- **Nothing is inserted into a sealed range.** A row inserted with an
+  explicit old ID would count as archived, and be removable, without
+  being in any file. A trigger refuses it.
+- **A segment must match the live table when it is sealed**: its last
+  entry exists and its count equals the number of entries in its range.
+  Together with "starts right after the previous one" this is checked by
+  the database at the moment of the insert, not only by the code.
+- **One segment per month, months strictly increasing**, and each row
+  carries the previous row's hash; the database refuses a row that does
+  not. `audit_segments` also records the node ID and a sequence number.
+
+One consequence of "months strictly increasing": if the clock runs far
+ahead, a segment is sealed for a future month, and after the clock is
+corrected nothing more is sealed until that month has passed. Nothing is
+lost, since unsealed entries cannot be removed, and the health check
+reports it after 7 days. The alternative, month labels that go backwards,
+was judged worse for whoever reads the archive.
+
+### The segment file
+
+- Line 1 is the header: `format` (1), `log` (`agent` or `api`), `node_id`,
+  `month`, `first_id`, `last_id`, `entries`, `earliest_occurred_at`,
+  `latest_occurred_at`, `previous_hash`.
+- Every further line is one entry: all columns of `audit_log` in a fixed
+  order, `NULL` as `null`, and `details` as JSON, not as a string.
+- The hash is the SHA-256 of these uncompressed bytes. The file is one
+  gzip stream; anything appended to it changes the hash or fails to
+  decompress.
+- Written as `.tmp-<name>` with mode `0400`, synced, renamed, the
+  directory synced, then read back.
+
+### Interruptions
+
+| Stopped after | State | Next run |
+|---|---|---|
+| the temporary file is written | `.tmp-` file, no seal | removes the temporary file and writes the segment again |
+| the rename | a file with the final name, no seal | writes the segment again over it: a file that is not in the index is not a segment |
+| the seal row | sealed | nothing to do |
+| a removal batch | the segment is partly removed from the live table | removes the rest |
+
+In one case the unrecorded file is not overwritten: an entry with an old
+timestamp arrived before the next run, so the range and with it the file
+name grew. The old file stays, is never deleted by Skep, and `audit
+verify` lists it as a stray file.
+
+### What a run does when the archive is not intact
+
+The daily run verifies every segment first.
+
+- **A file that does not match the index, or a broken chain:** the run
+  fails (`audit_archive_invalid`), seals nothing, removes nothing, and
+  health is degraded until a run succeeds.
+- **A file that is absent:** always reported in the run's result and in
+  the log. It fails the run (`audit_archive_missing`) only when that
+  segment's live entries are due for removal; they are then kept. Reason:
+  decision 6 lets the operator move segments to other storage. With the
+  agent's default, which never removes, moving old files must not turn
+  every daily run into a failure. `audit verify` on the command line is
+  strict and needs `--allow-missing`.
+- Tasks are pruned in the same run regardless: they do not depend on the
+  archive.
+
+### Other details
+
+- **Removal age.** A segment's live entries are removed when the end of
+  its month plus `audit_live_days` has passed, in batches of 500 entries
+  per transaction.
+- **Late sealing.** Degraded from the 8th day of a month when no segment
+  exists for the previous month or later and an unsealed entry is stamped
+  before the current month. An entry written after its month was sealed,
+  with an old stamp, belongs to the next segment and does not count.
+- **Health and HTTP.** As with the other checks, a degraded audit archive
+  makes `GET /api/v1/health` answer `503`. The agent's check is
+  `audit_archive`; skep-api's is `access_audit_archive`.
+- **The retention task** uses the resource `maintenance/retention`, so two
+  runs never overlap and, by the "newest task of each resource" rule, the
+  last run is always on record. It is submitted after the startup
+  discovery task and then every 24 hours. What it removed is in its
+  result and, through `tasks.Audited`, in its `finished` audit entry,
+  also when it fails.
+- **The `finished` audit entry already carried the error code**
+  (`details.error_code`); the check asked for in decision 1 found nothing
+  missing.
+- **The node ID in skep-api's segments** comes from the agent, asked as
+  the actor `skep-api`. When the agent is down, the ID recorded with the
+  previous segment is used; with no previous segment the run fails and is
+  tried again after an hour.
+- **Each skep-api run is one access audit entry** (`audit.archive`), also
+  when it had nothing to do: about one a day and one per start.
+- **Syslog.** Each service writes its seals itself at `daemon.notice`
+  (`audit segment sealed: log=... month=... first_id=... last_id=...
+  entries=... sha256=... previous=...`), separately from its JSON log,
+  which `daemon(8)` forwards at `info`. Not in dev mode.
+- **Configuration.** The archive directory is `audit-archive` next to the
+  database file and is not a setting. `retention.tasks_days` in
+  `api.json` is refused.
+- **The audit commands do not migrate.** On a database from before this
+  milestone they say that nothing is archived yet, and change nothing.
+- **The clock** is injected everywhere (`Now`); nothing in retention reads
+  the system clock directly, and no test changes it.
+
+### Not done
+
+- `VACUUM` is not run; shrinking a database file is a manual step
+  (documented in the service guide).
+- Per-entry hash chaining (decision 5, option C) and an API for archived
+  entries remain follow-ups.
+- The archive directories are not yet part of a backup design.
+
+### Validation
+
+Unit tests (Linux, with the race detector), for both logs where it
+applies: every delete the triggers must refuse, with the reason checked;
+overlapping, non-contiguous, out-of-order, and chain-breaking segments;
+an upgrade of a database that already holds entries; month and year
+boundaries to the millisecond with an injected clock; skewed timestamps;
+an interruption after the file write, after the rename, after the seal
+row, and between removal batches; ten ways a segment file can stop
+matching the index; pruning that never touches unfinished tasks or the
+newest task of a resource; a replayed idempotency key before and after
+its task is deleted; the task run through the real engine on both sides
+of a month boundary.
+
+FreeBSD 15.1-RELEASE-p6 (hearst), under the rc.d services, see
+[tests/integration/retention](../../tests/integration/retention/README.md):
+
+| What | State |
+|---|---|
+| Archive directory ownership and modes (`root:wheel 0700` and `skep:skep 0700`, files `0400`), closed to the other account | Validated on UFS (2026-11-12) |
+| Seal: create, write, sync, rename, directory sync, read back | Validated on UFS (2026-11-12) |
+| The retention task under the real service, across a restart; an altered segment | Validated on UFS (2026-11-12) |
+| Syslog notice of each seal, from root and from the unprivileged account | Validated (2026-11-12) |
+| The same with the data directory on a ZFS dataset (in the file-backed test pool `skeptest`) | Validated (2026-11-13) |
+| A ZFS-root host | **Pending FreeBSD validation** (the lab VM is UFS-root) |

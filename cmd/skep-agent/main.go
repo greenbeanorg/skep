@@ -8,6 +8,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"flag"
 	"fmt"
@@ -24,11 +25,13 @@ import (
 	"github.com/greenbeanorg/skep/internal/agent"
 	"github.com/greenbeanorg/skep/internal/agentproto"
 	"github.com/greenbeanorg/skep/internal/audit"
+	"github.com/greenbeanorg/skep/internal/auditarchive"
 	"github.com/greenbeanorg/skep/internal/config"
 	"github.com/greenbeanorg/skep/internal/database"
 	"github.com/greenbeanorg/skep/internal/hardware"
 	"github.com/greenbeanorg/skep/internal/internalapi"
 	"github.com/greenbeanorg/skep/internal/logging"
+	"github.com/greenbeanorg/skep/internal/retention"
 	"github.com/greenbeanorg/skep/internal/sysaccount"
 	"github.com/greenbeanorg/skep/internal/tasks"
 	"github.com/greenbeanorg/skep/migrations"
@@ -52,7 +55,12 @@ func main() {
 }
 
 // run is the whole program; main only maps its error to an exit code.
+// Without a command it runs the agent; "audit" is a local command for the
+// host's administrator.
 func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
+	if len(args) > 0 && args[0] == "audit" {
+		return runAudit(ctx, args[1:], stdout, stderr)
+	}
 	flags := flag.NewFlagSet("skep-agent", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	var (
@@ -130,8 +138,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		log.Warn("this is not a FreeBSD host: running as a development build only, never as a production host")
 	}
 
+	taskStore := database.NewTaskStore(db)
 	engine, err := tasks.New(tasks.Options{
-		Store:     database.NewTaskStore(db),
+		Store:     taskStore,
 		Audit:     database.NewAuditLog(db),
 		NodeID:    nodeID,
 		Workers:   cfg.Tasks.Workers,
@@ -141,6 +150,18 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
+	// Retention (ADR 0007): the audit archive, its health check, and the
+	// task that maintains it and deletes old tasks.
+	archive, err := newArchive(db, cfg, nodeID, log)
+	if err != nil {
+		return err
+	}
+	checks := map[string]models.HealthProbe{}
+	if archive != nil {
+		// Degraded when the archive fails verification, and when last
+		// month is still unsealed 7 days into this one.
+		checks[models.CheckAuditArchive] = archive.Health
+	}
 	svc, err := agent.NewService(agent.Options{
 		NodeID:     nodeID,
 		DevMode:    cfg.DevMode,
@@ -148,6 +169,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		Database:   db,
 		Nodes:      database.NewNodeStore(db),
 		Tasks:      engine,
+		Checks:     checks,
 		CacheTTL:   cfg.Discovery.CacheTTL.Std(),
 		Logger:     log,
 	})
@@ -155,6 +177,19 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 	if err := engine.Register(svc.RefreshDefinition()); err != nil {
+		return err
+	}
+	keeper, err := retention.New(retention.Options{
+		Tasks:         taskStore,
+		TasksDays:     *cfg.Retention.TasksDays,
+		Archive:       archive,
+		AuditLiveDays: cfg.Retention.AuditLiveDaysOrZero(),
+		Logger:        log,
+	})
+	if err != nil {
+		return err
+	}
+	if err := engine.Register(keeper.Definition()); err != nil {
 		return err
 	}
 	// Nothing in a shipped build; see testtasks.go.
@@ -182,6 +217,22 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	}
 	submitTestTasks(ctx, engine, log)
 
+	// Retention runs once now, after the startup sweep above, and then
+	// once a day. It is a plain timer; the work itself is a task.
+	log.Info("retention configured", "tasks_days", *cfg.Retention.TasksDays,
+		"audit_archive", cfg.Retention.ArchiveEnabled(), "audit_live_days", cfg.Retention.AuditLiveDaysOrZero(),
+		"audit_archive_dir", cfg.AuditArchiveDir())
+	go retention.Schedule(ctx, retention.Interval, func(ctx context.Context) error {
+		_, _, err := engine.Submit(ctx, tasks.Request{
+			Type:         retention.TaskType,
+			ResourceType: retention.ResourceType,
+			ResourceID:   retention.ResourceID,
+			Actor:        models.TaskActor{ID: audit.System, Name: audit.System},
+			PeerUID:      uint32(os.Geteuid()),
+		})
+		return err
+	}, log)
+
 	// The internal API on the Unix socket is the agent's only listener:
 	// skep-api reaches the agent through it, and nothing else does.
 	socket, err := listenSocket(cfg, log)
@@ -205,6 +256,36 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		log.Info("stopped")
 	}
 	return serveErr
+}
+
+// quietLogger is the logger of local commands: they report on stdout and
+// stderr themselves, and only problems are logged.
+func quietLogger(stderr io.Writer) *slog.Logger {
+	return slog.New(slog.NewTextHandler(stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
+}
+
+// syslogTag is the tag of the agent's own syslog lines.
+const syslogTag = "skep-agent"
+
+// newArchive returns the agent's audit archive, or nil when archiving is
+// turned off: then nothing is sealed and no audit entry is ever removed.
+func newArchive(db *sql.DB, cfg config.Config, nodeID string, log *slog.Logger) (*auditarchive.Archiver, error) {
+	if !cfg.Retention.ArchiveEnabled() {
+		return nil, nil
+	}
+	opts := auditarchive.Options{
+		DB:     db,
+		Log:    auditarchive.AgentLog,
+		Dir:    cfg.AuditArchiveDir(),
+		NodeID: func(context.Context) (string, error) { return nodeID, nil },
+		Logger: log,
+	}
+	if !cfg.DevMode {
+		// Each seal also goes to syslog at notice: on a host that forwards
+		// syslog that is an off-host anchor for the hash chain.
+		opts.Notify = auditarchive.SyslogNotifier(syslogTag, auditarchive.AgentLog.Name, log)
+	}
+	return auditarchive.New(opts)
 }
 
 // listenSocket creates the agent socket with the configured group and

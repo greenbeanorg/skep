@@ -432,7 +432,7 @@ skep-agent (root) actor present? -> validate again -> execute or enqueue
 - `users`: `password_changed_at`.
 - `roles`: the three built-in rows.
 - The access `audit_log` is unchanged. Its retention is the subject of
-  ADR 0007.
+  ADR 0007, implemented in migration `api/0003`.
 
 `agent.db` needs no schema change.
 

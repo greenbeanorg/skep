@@ -1,0 +1,64 @@
+#!/bin/sh
+#
+# pre-push hook for Skep: runs "make lint" on every commit that is about to
+# be pushed, and refuses the push if any of them fails.
+#
+# It lints the commits, not the working tree: each pushed tip is exported
+# into a temporary directory and linted there, so uncommitted changes can
+# neither hide a problem nor cause one.
+#
+# Install it with "make install-hooks". CI runs the same checks; this only
+# moves the failure to before the push.
+
+set -u
+
+zero=0000000000000000000000000000000000000000
+top=$(git rev-parse --show-toplevel) || exit 1
+
+# The commits to check: the tip of every ref being pushed, once each.
+# Deleting a remote ref pushes nothing.
+tips=""
+while read -r _local_ref local_sha _remote_ref _remote_sha; do
+	[ "${local_sha}" = "${zero}" ] && continue
+	case " ${tips} " in
+	*" ${local_sha} "*) ;;
+	*) tips="${tips} ${local_sha}" ;;
+	esac
+done
+
+[ -z "${tips}" ] && exit 0
+
+work=$(mktemp -d "${TMPDIR:-/tmp}/skep-pre-push.XXXXXX") || exit 1
+
+# Removes the directory mktemp made above, and nothing else: the name is
+# checked before anything is deleted.
+cleanup()
+{
+	case "${work}" in
+	*/skep-pre-push.??????)
+		[ -d "${work}" ] && rm -rf -- "${work}"
+		;;
+	esac
+}
+trap cleanup EXIT
+trap 'exit 1' INT TERM
+
+for sha in ${tips}; do
+	short=$(git rev-parse --short "${sha}")
+	tree="${work}/${short}"
+	mkdir "${tree}" || exit 1
+	if ! git -C "${top}" archive --format=tar "${sha}" | tar -x -C "${tree}"; then
+		echo "pre-push: cannot export ${short}" >&2
+		exit 1
+	fi
+	echo "pre-push: make lint on ${short}"
+	# The hook's git environment points at this repository; the exported
+	# tree is not one, and make must not be told otherwise.
+	if ! (unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE; make -C "${tree}" --no-print-directory lint); then
+		echo "" >&2
+		echo "pre-push: make lint failed on ${short}; the push was refused." >&2
+		echo "pre-push: fix it in a new commit (make fmt, go vet, staticcheck) and push again." >&2
+		exit 1
+	fi
+done
+exit 0
