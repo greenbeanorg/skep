@@ -34,6 +34,7 @@ networks yet.
 | Sessions | Login with a cookie session (browsers) or a bearer session (scripts), never both; idle and absolute timeouts; logout; login rate limits that never lock an account; every endpoint except the health status and the login needs a session |
 | Permissions | One role per user; every endpoint requires a permission and is denied by default; `admin`, `operator`, and `viewer` are built in; every denial is audited |
 | User management | `GET/POST /users`, `GET/PUT/DELETE /users/{id}`, `GET /roles`, `GET /audit`; the last administrator cannot be removed |
+| Retention | Finished tasks are deleted after 90 days; both audit logs are sealed monthly into hash-chained archive segments, and an entry leaves the live table only when it is in one (never by default for the agent's log, after 90 days for the access log); `audit verify` and `audit export` on the host |
 | `skepctl` | Command-line client on the public API: bearer-session login with the token in a `0600` file, the server's public key pinned on first use and never skipped, logout, and read-only `system`, `hardware`, `tasks`, and `audit` commands |
 | Not yet | VM or jail management, storage or network changes, UI, clustering |
 
@@ -122,7 +123,14 @@ Stop both with Ctrl-C. `make clean` removes `bin/` and `.skep-dev/`.
 make test   # unit tests with the race detector (needs a C compiler)
 make vet    # go vet for Linux and for the FreeBSD target
 make lint   # gofmt check, vet, and staticcheck if it is installed
+make install-hooks   # once per clone: a pre-push hook that runs make lint
 ```
+
+The pre-push hook lints the commits being pushed, not the working tree,
+and refuses the push if `make lint` fails on any of them. Install
+`staticcheck` (`go install honnef.co/go/tools/cmd/staticcheck@latest`) so
+that the hook checks what CI checks; without it that part is skipped with
+a message.
 
 The unit tests replay fixtures captured from a real FreeBSD 15.1 host, so the
 FreeBSD discovery logic is tested on Linux. That tests the parsing and
@@ -144,7 +152,9 @@ FreeBSD. The current validation state is tracked in
 To run Skep as services, see
 [docs/installation/freebsd-service.md](docs/installation/freebsd-service.md).
 The native service test is in
-[tests/integration/rcd](tests/integration/rcd/README.md).
+[tests/integration/rcd](tests/integration/rcd/README.md), and the native
+retention test in
+[tests/integration/retention](tests/integration/retention/README.md).
 
 ## Configuration
 
@@ -171,6 +181,9 @@ file, environment variables, command-line flags.
 | Discovery cache | `discovery.cache_ttl` | | | `10s` |
 | Task workers | `tasks.workers` | | | `4` |
 | Task queue size | `tasks.queue_size` | | | `64` |
+| Task retention | `retention.tasks_days` | | | `90` days after a task finished; `0` keeps tasks forever, otherwise at least `7` |
+| Audit entries kept in the database | `retention.audit_live_days` | | | `0`: sealed, never removed; otherwise at least `35` days after the end of their month |
+| Audit archive | `retention.audit_archive` | | | `true`; `false` seals nothing and never removes an audit entry |
 
 `skep-api` (`/usr/local/etc/skep/api.json`):
 
@@ -193,11 +206,29 @@ file, environment variables, command-line flags.
 | Longest login delay | `auth.login.max_delay` | | | `1m` |
 | Failures per username | `auth.login.per_username_failures` | | | `50` in 15 minutes, across all addresses |
 | Trusted reverse proxies | `auth.trusted_proxies` | | | none: `X-Forwarded-For` is ignored |
+| Access audit entries kept in the database | `retention.audit_live_days` | | | `90` days after the end of their month, once sealed; `0` never removes; otherwise at least `35` |
+| Access audit archive | `retention.audit_archive` | | | `true`; `false` seals nothing and never removes an entry |
 | Log level | `log.level` | `SKEP_LOG_LEVEL` | `-log-level` | `info` / `debug` |
 | Log format | `log.format` | `SKEP_LOG_FORMAT` | `-log-format` | `json` / `text` |
 
 Complete examples with every key at its production default are in
 [packaging/etc](packaging/etc). Unknown keys in a file are rejected.
+
+### Retention
+
+Finished tasks are deleted with their events after 90 days. Audit entries
+are different: every month each process seals the previous month of its
+audit log into an archive segment in `audit-archive/` next to its
+database, and an entry is removed from the database only when it is in a
+sealed, verified segment. Skep never deletes a segment file. See
+[ADR 0007](docs/decisions/0007-retention.md) and the
+[service guide](docs/installation/freebsd-service.md#retention-and-the-audit-archive).
+
+```sh
+skep-agent audit verify            # check the index and every segment file
+skep-agent audit export --month 2026-10   # archived entries as JSON Lines
+skep-api audit verify              # the same for the access audit log
+```
 
 ### TLS
 
@@ -298,6 +329,9 @@ internal/config/       typed configuration
 internal/logging/      log/slog setup
 internal/tasks/        task engine (states, cancellation, idempotency, restart rules)
 internal/audit/        operation audit entries
+internal/auditarchive/ audit archive segments: seal, verify, remove
+internal/auditcmd/     the audit verify and audit export commands
+internal/retention/    the maintenance.retention task
 internal/peercred/     Unix socket peer credentials, read from the kernel
 internal/sysaccount/   user and group name resolution
 internal/ctlstate/     skepctl's pins and session tokens on disk

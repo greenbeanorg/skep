@@ -188,7 +188,30 @@ Desired state and observed state never share a column. In every table,
 `desired_*` columns and configuration columns hold what an administrator
 asked for; `observed_*` columns hold what the agent last saw, with
 `observed_at` recording when. History is kept separately in `task_events`
-and the append-only `audit_log` tables.
+and the `audit_log` tables.
+
+### Retention
+
+Nothing grows without bound except what the operator chooses to keep
+([ADR 0007](../decisions/0007-retention.md)).
+
+| Data | Rule | Default |
+|---|---|---|
+| Finished tasks and their events | Deleted by age; the newest finished task of each resource is kept | 90 days (`retention.tasks_days`, floor 7, `0` keeps them) |
+| Agent operation audit | Sealed monthly into `agent/audit-archive/`; live entries removed only if the operator sets a number of days | Sealed, never removed (`retention.audit_live_days: 0`) |
+| API access audit | Sealed monthly into `api/audit-archive/`; live entries removed after their segment is sealed and re-verified | 90 days after the end of the month |
+| Archive segments | Never deleted by Skep | |
+
+An audit entry leaves the live table only when it is inside a sealed
+segment: a trigger in each database refuses every other delete. Segments
+are ranges of entry IDs, written as gzip-compressed JSON Lines, and form
+a hash chain (`internal/auditarchive`).
+
+The agent does this in a daily task, `maintenance.retention`, whose own
+audit entry records what was removed. `skep-api` has no task engine; a
+timer does the same for the access log and records each run as an access
+audit entry (`audit.archive`). Both report a broken archive, or a month
+still unsealed 7 days into the next, through the health check.
 
 So far the agent writes `schema_migrations`, the local row in `nodes`,
 `tasks`, `task_events`, and `audit_log`. The other tables define the schema
@@ -251,6 +274,8 @@ imported, both as an unprivileged user and as root.
 | `skepctl`: first-contact key confirmation on a pseudo-terminal and refusal without one, `--trust-key`, refusal of a changed key with nothing sent, password without echo, `0600` token file in a `0700` directory, read-only commands, logout, a session ended on the server; `skep-api admin disable` and `admin delete` with the last-administrator rule | Validated as an ordinary user, API on loopback (2026-11-12, see `tests/integration/skepctl`) |
 | `skepctl` from another host (merrick, Linux build) and on the host, against the `skep_api` rc.d service listening on the management address; back to loopback afterwards | Validated (2026-11-12, see `tests/integration/skepctl`) |
 | `skepctl` chain verification of an operator-supplied certificate (`--ca-file`), a renewal with a new key without a new login, refusal of another CA | Validated as an ordinary user (see `tests/integration/skepctl`) |
+| Retention under rc.d on UFS: archive directories `root:wheel 0700` and `skep:skep 0700` with `0400` files, seal (write, sync, rename, read back), task pruning, removal of old access audit entries, `audit verify` and `audit export`, the syslog notice of each seal, a restart, an altered segment | Validated (2026-11-12, see `tests/integration/retention`) |
+| Retention with the data directory on a ZFS dataset | **Pending FreeBSD validation** |
 | ZFS-root host | **Pending FreeBSD validation** (the lab VM is UFS-root) |
 | arm64 | Not a target yet |
 
@@ -260,9 +285,11 @@ imported, both as an unprivileged user and as root.
   roles yet.
 - Sessions and users are per node.
 - The local node is the only node.
-- Tasks, task events, and audit entries are never removed. Retention is not
-  designed yet, which is why the inventory is refreshed only at start and
-  not periodically.
+- The inventory is refreshed only at start, not periodically.
+- Retention does not shrink the database files: SQLite reuses freed pages,
+  so a file stops growing. `VACUUM` is a manual step.
+- Archived audit entries are read on the host (`audit export`); the API
+  serves the live table only.
 - `os.release` on FreeBSD is the kernel release (`kern.osrelease`). The
   userland patch level can differ and is not reported.
 - Memory "available" on FreeBSD is an estimate: free, inactive, and laundry

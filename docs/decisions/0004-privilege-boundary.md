@@ -196,7 +196,10 @@ key if any.
 Audit is written on both sides. The API records authentication events and
 authorization decisions, including denials that never reach the agent. The
 agent records every privileged operation it accepted, in its own
-append-only log that the API process cannot write to. An attacker who
+append-only log that the API process cannot write to. ("Append-only"
+means the record as a whole since [ADR 0007](0007-retention.md): an entry
+is never changed, and leaves the live table only after it is in a sealed,
+hash-chained archive segment that the same process keeps.) An attacker who
 controls the API can add false entries to the API's log but cannot remove
 the agent's record of the operations they ran.
 

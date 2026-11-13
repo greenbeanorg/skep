@@ -181,8 +181,10 @@ know whether the first attempt arrived.
   take the database write lock when they begin, so the lookup and the
   insert cannot interleave; the `UNIQUE` constraint on the key is the
   backstop.
-- A key lives as long as its task row. There is no expiry until task
-  retention is designed.
+- A key lives as long as its task row. Finished tasks are deleted after
+  `retention.tasks_days` (default 90, never fewer than 7), and the key
+  with them ([ADR 0007](0007-retention.md)): a key replayed after that
+  creates a new task.
 
 A new attempt after a failure needs a new key. That is deliberate: it makes
 a retry a visible, separate decision.
@@ -311,11 +313,12 @@ and a full queue is answered with `queue_full` (HTTP 503), with defaults of
 | `discovery.refresh`, submitted once at agent start | Done |
 | `GET /api/v1/tasks`, `GET /api/v1/tasks/{id}` | Done, read-only |
 | Task submission and cancellation over the agent socket | Milestone 4 |
-| Task and audit retention | Not designed |
+| Task and audit retention | Done ([ADR 0007](0007-retention.md), migration `agent/0003`) |
 
-The agent refreshes its inventory once at start. A periodic refresh is
-deliberately left out until retention exists, because every task adds rows
-to `tasks`, `task_events`, and `audit_log` that nothing removes yet.
+The agent refreshes its inventory once at start. A periodic refresh was
+left out because every task added rows that nothing removed. Retention
+removes that reason; whether to add a periodic refresh is a separate
+decision that has not been made.
 
 ## FreeBSD validation
 
