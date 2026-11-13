@@ -1,6 +1,12 @@
 # Build output
 /bin/
 /dist/
+# "go build ./cmd/<name>" without -o writes the binary here
+/skep-agent
+/skep-api
+/skepctl
+/skep-installer
+/skep-controller
 
 # Local state: databases are never committed
 /.skep-dev/
