@@ -604,6 +604,24 @@ open, or could not follow it literally. Each is open to correction.
   address delay is enforced by refusing attempts that arrive before the
   delay has passed, with `Retry-After`, not by holding the connection
   open.
+- **Throttled attempts are audited aggregated (Decision 4).** Changed
+  after the milestone shipped, as amendment (b) of
+  [ADR 0007](0007-retention.md). Writing one access audit row per
+  throttled attempt let an unauthenticated client grow `api.db` as fast as
+  it could send requests, since a refused attempt costs it almost nothing.
+  Throttled logins are now written as **one entry per source address per
+  minute**: action `auth.login`, outcome `denied`, reason `rate_limited`,
+  with `aggregated: true`, the number of attempts, the first and last
+  attempt, the limits that refused them, the session kinds, and up to ten
+  distinct well-formed usernames (the actor is that username when there
+  is exactly one, otherwise `multiple-usernames`). The entry is written
+  when its minute has ended: on the next attempt from that address, by a
+  flush every 10 seconds, or at shutdown, before `api.db` is closed. The
+  first refusal of a minute is still logged to the service log at once.
+  At most 4096 addresses are tracked at a time; attempts from further
+  addresses are counted together in one overflow entry, so memory stays
+  bounded. Failed logins whose password was checked, successful logins,
+  logouts, and refused password changes are still one entry each.
 - **Hash timing command.** `skep-api admin hash-benchmark` was added to
   measure the Argon2id parameters on a host, as Decision 2 asks for.
 - **`skepctl`.** Its key pinning (Decision 6) and token file

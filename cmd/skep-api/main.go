@@ -224,7 +224,13 @@ func runServer(ctx context.Context, args []string, e env) error {
 		},
 		TrustedProxies: proxies,
 	})
-	if err := serve(ctx, cfg, handler, certs, log); err != nil {
+	err = serve(ctx, cfg, handler, certs, log)
+	// Throttled logins of the current minute are counted, not yet
+	// written: write them before the database closes.
+	flushCtx, cancelFlush := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	authn.FlushThrottled(flushCtx, true)
+	cancelFlush()
+	if err != nil {
 		return err
 	}
 	log.Info("stopped")
