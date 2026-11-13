@@ -36,6 +36,9 @@ type Options struct {
 	Nodes NodeStore
 	// Tasks reads tasks for the API. Optional; without it there are none.
 	Tasks TaskReader
+	// Checks are additional health checks, by name, for example the audit
+	// archive's. Optional.
+	Checks map[string]models.HealthProbe
 	// CacheTTL is how long a discovery result is reused. Zero disables
 	// caching.
 	CacheTTL time.Duration
@@ -53,6 +56,7 @@ type Service struct {
 	db       Pinger
 	nodes    NodeStore
 	tasks    TaskReader
+	checks   map[string]models.HealthProbe
 	cacheTTL time.Duration
 	log      *slog.Logger
 	now      func() time.Time
@@ -86,6 +90,7 @@ func NewService(opts Options) (*Service, error) {
 		db:       opts.Database,
 		nodes:    opts.Nodes,
 		tasks:    opts.Tasks,
+		checks:   opts.Checks,
 		cacheTTL: opts.CacheTTL,
 		log:      opts.Logger,
 		now:      opts.Now,
@@ -114,6 +119,14 @@ func (s *Service) Health(ctx context.Context) models.Health {
 			h.Status = models.HealthDegraded
 		}
 		h.Checks["database"] = check
+	}
+	for name, probe := range s.checks {
+		check := models.HealthCheck{Status: models.HealthOK}
+		if problem := probe(ctx); problem != "" {
+			check = models.HealthCheck{Status: models.HealthDegraded, Error: problem}
+			h.Status = models.HealthDegraded
+		}
+		h.Checks[name] = check
 	}
 	return h
 }

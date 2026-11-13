@@ -234,7 +234,12 @@ func runServer(ctx context.Context, args []string, e env) error {
 		<-archiveDone
 	}()
 
+	checks := map[string]models.HealthProbe{}
+	if archive != nil {
+		checks[models.CheckAccessAuditArchive] = archive.Health
+	}
 	handler := api.NewHandler(api.Options{
+		Checks:   checks,
 		Backend:  agent,
 		Auth:     authn,
 		Users:    users,

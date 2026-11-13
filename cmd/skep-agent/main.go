@@ -150,6 +150,18 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
+	// Retention (ADR 0007): the audit archive, its health check, and the
+	// task that maintains it and deletes old tasks.
+	archive, err := newArchive(db, cfg, nodeID, log)
+	if err != nil {
+		return err
+	}
+	checks := map[string]models.HealthProbe{}
+	if archive != nil {
+		// Degraded when the archive fails verification, and when last
+		// month is still unsealed 7 days into this one.
+		checks[models.CheckAuditArchive] = archive.Health
+	}
 	svc, err := agent.NewService(agent.Options{
 		NodeID:     nodeID,
 		DevMode:    cfg.DevMode,
@@ -157,6 +169,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		Database:   db,
 		Nodes:      database.NewNodeStore(db),
 		Tasks:      engine,
+		Checks:     checks,
 		CacheTTL:   cfg.Discovery.CacheTTL.Std(),
 		Logger:     log,
 	})
@@ -164,12 +177,6 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 	if err := engine.Register(svc.RefreshDefinition()); err != nil {
-		return err
-	}
-	// Retention (ADR 0007): the audit archive and the task that maintains
-	// it and deletes old tasks.
-	archive, err := newArchive(db, cfg, nodeID, log)
-	if err != nil {
 		return err
 	}
 	keeper, err := retention.New(retention.Options{

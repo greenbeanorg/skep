@@ -149,6 +149,10 @@ func TestRunServesInternalAPI(t *testing.T) {
 	if health.Status != models.HealthOK || health.Checks["database"].Status != models.HealthOK {
 		t.Errorf("health = %+v", health)
 	}
+	// The audit archive is one of the agent's health checks.
+	if c, ok := health.Checks[models.CheckAuditArchive]; !ok || c.Status != models.HealthOK {
+		t.Errorf("audit archive health check = %+v (present %v)", c, ok)
+	}
 	sys, err := client.System(ctx)
 	if err != nil || sys.NodeID == "" || !sys.DevMode || sys.ProductionHost {
 		t.Fatalf("system = %+v, %v", sys, err)

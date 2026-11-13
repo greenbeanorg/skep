@@ -342,7 +342,8 @@ func TestRunServesAPIThroughTheSocket(t *testing.T) {
 	stopAgent := startAgent(t, socket, agent)
 	get(t, c, base+"/api/v1/health", http.StatusOK, &health)
 	if health.Status != models.HealthOK || health.Checks["agent"].Status != models.HealthOK ||
-		health.Checks["database"].Status != models.HealthOK {
+		health.Checks["database"].Status != models.HealthOK ||
+		health.Checks[models.CheckAccessAuditArchive].Status != models.HealthOK {
 		t.Errorf("health = %+v", health)
 	}
 	var sys models.System

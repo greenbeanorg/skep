@@ -105,6 +105,56 @@ func TestHealthShowsOnlyTheStatusWithoutASession(t *testing.T) {
 	}
 }
 
+// TestHealthIncludesTheAPIsOwnChecks: skep-api reports the archive of its
+// access audit log in the health document, next to what the agent says,
+// and only to a caller with a session (ADR 0007, amendment d).
+func TestHealthIncludesTheAPIsOwnChecks(t *testing.T) {
+	e := shared(t)
+	b := newBackend()
+	b.health = models.Health{Status: models.HealthOK, Version: "9.9.9",
+		Checks: map[string]models.HealthCheck{models.CheckAuditArchive: {Status: models.HealthOK}}}
+	problem := ""
+	h := NewHandler(Options{
+		Backend: b, Auth: e.authn, Users: e.users, Audit: e.access, AuditLog: e.access,
+		Logger: slog.New(slog.NewJSONHandler(&bytes.Buffer{}, nil)),
+		Checks: map[string]models.HealthProbe{
+			models.CheckAccessAuditArchive: func(context.Context) string { return problem },
+		},
+	})
+
+	rec := e.serve(h, request{method: http.MethodGet, path: "/api/v1/health", role: auth.RoleViewer})
+	full := decode[models.Health](t, rec)
+	if rec.Code != http.StatusOK || full.Status != models.HealthOK ||
+		full.Checks[models.CheckAccessAuditArchive].Status != models.HealthOK ||
+		full.Checks[models.CheckAuditArchive].Status != models.HealthOK {
+		t.Errorf("health = %d %+v", rec.Code, full)
+	}
+
+	// The access log's archive is late, the agent is fine: degraded.
+	problem = "last month's audit entries are not sealed yet"
+	rec = e.serve(h, request{method: http.MethodGet, path: "/api/v1/health", role: auth.RoleViewer})
+	full = decode[models.Health](t, rec)
+	if rec.Code != http.StatusServiceUnavailable || full.Status != models.HealthDegraded ||
+		full.Checks[models.CheckAccessAuditArchive] != (models.HealthCheck{Status: models.HealthDegraded, Error: problem}) ||
+		full.Checks[models.CheckAuditArchive].Status != models.HealthOK {
+		t.Errorf("degraded health = %d %+v", rec.Code, full)
+	}
+	// Without a session: the status and nothing about why.
+	rec = e.serve(h, request{method: http.MethodGet, path: "/api/v1/health"})
+	if rec.Code != http.StatusServiceUnavailable || strings.TrimSpace(rec.Body.String()) != `{"status":"degraded"}` {
+		t.Errorf("unauthenticated degraded health: %d %s", rec.Code, rec.Body)
+	}
+
+	// A backend that returns no checks at all (the agent is unreachable
+	// and says so differently) does not break the merge.
+	b.health = models.Health{Status: models.HealthOK}
+	problem = ""
+	rec = e.serve(h, request{method: http.MethodGet, path: "/api/v1/health", role: auth.RoleViewer})
+	if full = decode[models.Health](t, rec); full.Checks[models.CheckAccessAuditArchive].Status != models.HealthOK {
+		t.Errorf("health without backend checks = %+v", full)
+	}
+}
+
 // TestLoginGivesOneKindOfSession: a cookie login never shows the token to
 // JavaScript, a bearer login sets no cookie, and each token works only
 // through its own channel.
