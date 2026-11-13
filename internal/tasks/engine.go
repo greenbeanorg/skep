@@ -564,6 +564,9 @@ func (e *Engine) outcome(task Task, result any, runErr error, timedOut, cancelRe
 			return tr
 		}
 		tr.To, tr.Result = models.TaskSucceeded, raw
+		if a, ok := result.(Audited); ok {
+			tr.AuditDetails = a.AuditDetails()
+		}
 		return tr
 	}
 
@@ -571,6 +574,7 @@ func (e *Engine) outcome(task Task, result any, runErr error, timedOut, cancelRe
 	switch {
 	case errors.As(runErr, &failure):
 		tr.To, tr.ErrorCode, tr.ErrorMessage = models.TaskFailed, failure.Code, failure.Message
+		tr.AuditDetails = failure.Details
 	case e.stopping() && errors.Is(runErr, context.Canceled):
 		// Nobody asked for this task to be cancelled: it is interrupted.
 		tr.To, tr.ErrorCode, tr.ErrorMessage = models.TaskInterrupted, CodeAgentShutdown,

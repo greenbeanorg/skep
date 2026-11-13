@@ -90,6 +90,94 @@ type Config struct {
 	Database        DatabaseConfig  `json:"database"`
 	Discovery       DiscoveryConfig `json:"discovery"`
 	Tasks           TasksConfig     `json:"tasks"`
+	Retention       RetentionConfig `json:"retention"`
+}
+
+// RetentionConfig says how long history is kept (ADR 0007). The fields are
+// pointers so that a value that was not set can be told from an explicit
+// zero, which means "never" for both numbers.
+type RetentionConfig struct {
+	// TasksDays is the age, in days since it finished, at which a task is
+	// deleted with its events. 0 keeps tasks forever; otherwise at least
+	// MinTaskRetentionDays. Default 90. The agent only.
+	TasksDays *int `json:"tasks_days,omitempty"`
+	// AuditLiveDays is the number of days after the end of its month that
+	// a sealed audit segment's entries stay in the database. 0 seals
+	// segments and never removes an entry; otherwise at least
+	// MinAuditLiveDays. Default 0 for the agent's operation audit log and
+	// 90 for skep-api's access audit log.
+	AuditLiveDays *int `json:"audit_live_days"`
+	// AuditArchive turns the monthly sealing of archive segments on.
+	// Default true. When false nothing is sealed and no audit entry is
+	// ever removed, whatever AuditLiveDays says.
+	AuditArchive *bool `json:"audit_archive"`
+}
+
+// Limits of the retention settings.
+const (
+	// DefaultTaskRetentionDays is how long finished tasks are kept.
+	DefaultTaskRetentionDays = 90
+	// MinTaskRetentionDays is the shortest task retention. An idempotency
+	// key is forgotten with its task, and a key replayed after that
+	// creates a second task; seven days is far beyond any retry window.
+	MinTaskRetentionDays = 7
+	// DefaultAccessAuditLiveDays is how long skep-api's access audit
+	// entries stay in the database after their month ended.
+	DefaultAccessAuditLiveDays = 90
+	// MinAuditLiveDays is the shortest time sealed audit entries stay in
+	// the database, so a month can always be sealed before it is due for
+	// removal.
+	MinAuditLiveDays = 35
+	// MaxRetentionDays bounds both numbers (100 years).
+	MaxRetentionDays = 36500
+	// AuditArchiveDirName is the archive directory, next to the database.
+	AuditArchiveDirName = "audit-archive"
+)
+
+// applyDefaults fills the unset fields. liveDays is the default of
+// AuditLiveDays, which differs between the two logs.
+func (r *RetentionConfig) applyDefaults(tasksDays *int, liveDays int) {
+	if r.TasksDays == nil {
+		r.TasksDays = tasksDays
+	}
+	if r.AuditLiveDays == nil {
+		r.AuditLiveDays = &liveDays
+	}
+	if r.AuditArchive == nil {
+		on := true
+		r.AuditArchive = &on
+	}
+}
+
+func (r RetentionConfig) validate() []error {
+	var errs []error
+	if d := r.TasksDays; d != nil && *d != 0 && (*d < MinTaskRetentionDays || *d > MaxRetentionDays) {
+		errs = append(errs, fmt.Errorf("retention.tasks_days must be 0 (keep forever) or between %d and %d: "+
+			"an idempotency key is forgotten with its task", MinTaskRetentionDays, MaxRetentionDays))
+	}
+	if d := r.AuditLiveDays; d != nil && *d != 0 && (*d < MinAuditLiveDays || *d > MaxRetentionDays) {
+		errs = append(errs, fmt.Errorf("retention.audit_live_days must be 0 (never remove) or between %d and %d: "+
+			"a month must be sealed before it is due for removal", MinAuditLiveDays, MaxRetentionDays))
+	}
+	return errs
+}
+
+// AuditLiveDaysOrZero returns the number of days sealed entries stay live,
+// or 0 when they are never removed: by choice, or because archiving is off.
+func (r RetentionConfig) AuditLiveDaysOrZero() int {
+	if r.AuditArchive == nil || !*r.AuditArchive || r.AuditLiveDays == nil {
+		return 0
+	}
+	return *r.AuditLiveDays
+}
+
+// ArchiveEnabled reports whether archive segments are sealed.
+func (r RetentionConfig) ArchiveEnabled() bool { return r.AuditArchive != nil && *r.AuditArchive }
+
+// AuditArchiveDir returns the directory of the agent's audit archive
+// segments: next to the database, in the directory only root can open.
+func (c Config) AuditArchiveDir() string {
+	return filepath.Join(filepath.Dir(c.Database.Path), AuditArchiveDirName)
 }
 
 // TasksConfig configures the task engine.
@@ -346,6 +434,10 @@ func (c *Config) applyDefaults() {
 	if c.Tasks.QueueSize == 0 {
 		c.Tasks.QueueSize = 64
 	}
+	tasksDays := DefaultTaskRetentionDays
+	// The agent's audit log is sealed and never removed unless the
+	// operator opts in (ADR 0007, amendment a).
+	c.Retention.applyDefaults(&tasksDays, 0)
 }
 
 // Validate reports every problem in the configuration as one error.
@@ -397,6 +489,7 @@ func (c Config) Validate() error {
 	if c.Tasks.QueueSize < 1 || c.Tasks.QueueSize > 4096 {
 		add("tasks.queue_size must be between 1 and 4096")
 	}
+	errs = append(errs, c.Retention.validate()...)
 	if len(errs) == 0 {
 		return nil
 	}

@@ -153,6 +153,16 @@ type Definition struct {
 type Failure struct {
 	Code    string
 	Message string
+	// Details is added to the task's "finished" audit entry. Optional. It
+	// must not contain secrets.
+	Details map[string]any
+}
+
+// Audited is implemented by a handler's result when a summary of what the
+// task did belongs in its "finished" audit entry, which outlives the task
+// and its result. The details must not contain secrets.
+type Audited interface {
+	AuditDetails() map[string]any
 }
 
 // Error implements error.
@@ -170,6 +180,9 @@ type Transition struct {
 	// ErrorCode and ErrorMessage are stored for other terminal states.
 	ErrorCode    string
 	ErrorMessage string
+	// AuditDetails is added to the "finished" audit entry of a terminal
+	// state, next to the error code.
+	AuditDetails map[string]any
 	// Extra is written to the audit log with the transition, in addition
 	// to the "finished" entry the store writes for a terminal state.
 	Extra []audit.Entry

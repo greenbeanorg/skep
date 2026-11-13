@@ -275,8 +275,16 @@ func applyTransition(ctx context.Context, tx *sql.Tx, id string, tr tasks.Transi
 		TaskID: t.ID, Phase: audit.Finished, Outcome: outcome, TaskStatus: string(tr.To),
 		RequestID: t.RequestID,
 	}
-	if tr.ErrorCode != "" {
-		entry.Details = map[string]any{"error_code": tr.ErrorCode}
+	// The entry outlives the task (ADR 0007): it carries the error code,
+	// and whatever the task says belongs on the record.
+	if len(tr.AuditDetails) > 0 || tr.ErrorCode != "" {
+		entry.Details = map[string]any{}
+		for k, v := range tr.AuditDetails {
+			entry.Details[k] = v
+		}
+		if tr.ErrorCode != "" {
+			entry.Details["error_code"] = tr.ErrorCode
+		}
 	}
 	return true, insertAudit(ctx, tx, entry, tr.At)
 }
@@ -506,4 +514,67 @@ func boolInt(b bool) int {
 		return 1
 	}
 	return 0
+}
+
+// maxPruneBatch bounds one PruneFinished call: the IDs are bound as
+// statement parameters.
+const maxPruneBatch = 1000
+
+// PruneFinished deletes up to limit finished tasks whose finished_at is
+// before cutoff, oldest first, with their events, in one transaction. It
+// returns how many tasks and events it deleted; zero tasks means nothing
+// is left to delete.
+//
+// The newest finished task of each resource is kept whatever its age, so
+// "the last operation on this resource" always has an answer. Unfinished
+// tasks are never candidates, and the schema refuses to delete one.
+func (s *TaskStore) PruneFinished(ctx context.Context, cutoff time.Time, limit int) (tasksDeleted, eventsDeleted int64, err error) {
+	if limit < 1 || limit > maxPruneBatch {
+		return 0, 0, fmt.Errorf("database: prune batch must be between 1 and %d", maxPruneBatch)
+	}
+	err = s.inTx(ctx, func(tx *sql.Tx) error {
+		rows, err := tx.QueryContext(ctx, `
+			SELECT t.id FROM tasks t
+			WHERE t.status IN ('succeeded', 'failed', 'cancelled', 'interrupted')
+			  AND t.finished_at < ?
+			  AND (t.resource_type IS NULL OR EXISTS (
+			        SELECT 1 FROM tasks n
+			        WHERE n.resource_type = t.resource_type AND n.resource_id = t.resource_id
+			          AND n.finished_at IS NOT NULL
+			          AND (n.finished_at > t.finished_at OR (n.finished_at = t.finished_at AND n.id > t.id))))
+			ORDER BY t.finished_at, t.id LIMIT ?`, formatTime(cutoff), limit)
+		if err != nil {
+			return fmt.Errorf("database: find tasks to prune: %w", err)
+		}
+		var ids []any
+		for rows.Next() {
+			var id string
+			if err := rows.Scan(&id); err != nil {
+				rows.Close()
+				return fmt.Errorf("database: find tasks to prune: %w", err)
+			}
+			ids = append(ids, id)
+		}
+		if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+			return fmt.Errorf("database: find tasks to prune: %w", err)
+		}
+		if len(ids) == 0 {
+			return nil
+		}
+		in := "(?" + strings.Repeat(", ?", len(ids)-1) + ")"
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM task_events WHERE task_id IN `+in, ids...).Scan(&eventsDeleted); err != nil {
+			return fmt.Errorf("database: count events to prune: %w", err)
+		}
+		// The events go with their tasks through the cascade.
+		res, err := tx.ExecContext(ctx, `DELETE FROM tasks WHERE id IN `+in, ids...)
+		if err != nil {
+			return fmt.Errorf("database: prune tasks: %w", err)
+		}
+		tasksDeleted, _ = res.RowsAffected()
+		return nil
+	})
+	if err != nil {
+		return 0, 0, err
+	}
+	return tasksDeleted, eventsDeleted, nil
 }

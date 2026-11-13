@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"io/fs"
@@ -161,8 +162,10 @@ func TestRunServesInternalAPI(t *testing.T) {
 			t.Errorf("capability without status or reason: %+v", c)
 		}
 	}
-	// The startup inventory refresh ran as a task, submitted by "system".
-	waitTask := func(wantTotal int) models.Task {
+	// Every start submits two tasks as "system": the inventory refresh and
+	// the retention run. waitTasks waits until starts of each have finished
+	// and returns the newest of each type.
+	waitTasks := func(starts int) map[string]models.Task {
 		t.Helper()
 		deadline := time.Now().Add(15 * time.Second)
 		for {
@@ -170,8 +173,15 @@ func TestRunServesInternalAPI(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if len(list.Items) == wantTotal && list.Items[0].Status.Terminal() {
-				return list.Items[0]
+			newest, done := map[string]models.Task{}, true
+			for _, task := range list.Items { // newest first
+				done = done && task.Status.Terminal()
+				if _, seen := newest[task.Type]; !seen {
+					newest[task.Type] = task
+				}
+			}
+			if done && len(list.Items) == 2*starts && len(newest) == 2 {
+				return newest
 			}
 			if time.Now().After(deadline) {
 				t.Fatalf("tasks = %+v", list)
@@ -179,7 +189,8 @@ func TestRunServesInternalAPI(t *testing.T) {
 			time.Sleep(10 * time.Millisecond)
 		}
 	}
-	refresh := waitTask(1)
+	first := waitTasks(1)
+	refresh := first["discovery.refresh"]
 	if refresh.Type != "discovery.refresh" || refresh.Status != models.TaskSucceeded ||
 		refresh.Actor.ID != "system" || refresh.ResourceID != sys.NodeID {
 		t.Errorf("startup task = %+v", refresh)
@@ -191,6 +202,38 @@ func TestRunServesInternalAPI(t *testing.T) {
 	if len(detail.Events) < 3 || detail.Events[0].Message != "task is pending" ||
 		detail.Events[len(detail.Events)-1].Message != "task is succeeded" {
 		t.Errorf("task events = %+v", detail.Events)
+	}
+	// The retention run: a task of its own, with the system as its actor,
+	// whose result says what it removed. Nothing is old enough here.
+	kept := first["maintenance.retention"]
+	if kept.Status != models.TaskSucceeded || kept.Actor.ID != "system" || kept.Cancellable ||
+		kept.ResourceType != "maintenance" || kept.ResourceID != "retention" {
+		t.Errorf("retention task = %+v", kept)
+	}
+	keptDetail, err := client.Task(ctx, kept.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result struct {
+		Tasks struct {
+			RetentionDays int    `json:"retention_days"`
+			Cutoff        string `json:"cutoff"`
+			TasksRemoved  *int   `json:"tasks_removed"`
+		} `json:"tasks"`
+		Audit *struct {
+			Verified *int `json:"segments_verified"`
+		} `json:"audit"`
+	}
+	raw, err := json.Marshal(keptDetail.Result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(raw, &result); err != nil {
+		t.Fatalf("retention result %s: %v", raw, err)
+	}
+	if result.Tasks.RetentionDays != 90 || result.Tasks.Cutoff == "" || result.Tasks.TasksRemoved == nil ||
+		*result.Tasks.TasksRemoved != 0 || result.Audit == nil || result.Audit.Verified == nil {
+		t.Errorf("retention result = %s", raw)
 	}
 	if _, err := client.Task(ctx, "unknown"); !errors.Is(err, models.ErrNotFound) {
 		t.Errorf("unknown task: %v", err)
@@ -217,9 +260,11 @@ func TestRunServesInternalAPI(t *testing.T) {
 		t.Errorf("node ID changed across a restart: %q then %q (%v)", sys.NodeID, again.NodeID, err)
 	}
 	// Task history survives the restart, and the new start adds its own
-	// refresh instead of touching the old one.
-	second := waitTask(2)
-	if second.ID == refresh.ID || second.Status != models.TaskSucceeded {
-		t.Errorf("second startup task = %+v", second)
+	// tasks instead of touching the old ones.
+	second := waitTasks(2)
+	for typ, task := range second {
+		if task.ID == first[typ].ID || task.Status != models.TaskSucceeded {
+			t.Errorf("second %s task = %+v", typ, task)
+		}
 	}
 }
