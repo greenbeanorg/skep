@@ -186,6 +186,9 @@ type System struct {
 	// API describes the API server that answered. The agent leaves it
 	// out; skep-api fills it in.
 	API *APIInfo `json:"api,omitempty"`
+	// Health is the full health document, with every check, including
+	// degraded ones. The agent leaves it out; skep-api fills it in.
+	Health *Health `json:"health,omitempty"`
 }
 
 // APIInfo describes the skep-api process that served a request.
@@ -207,18 +210,70 @@ type TLSInfo struct {
 	PublicKeySHA256 string `json:"public_key_sha256"`
 }
 
-// Health statuses.
+// Health statuses, of a whole document and of one check. Only
+// HealthUnavailable means the service cannot serve requests; the public
+// health endpoint answers 503 for it and 200 for the others.
 const (
 	// HealthOK means every check passed.
 	HealthOK = "ok"
-	// HealthDegraded means at least one check failed.
+	// HealthDegraded means a non-critical check failed: the service
+	// still serves requests, but something needs an operator, for
+	// example a late or damaged audit archive.
 	HealthDegraded = "degraded"
+	// HealthUnavailable means a critical check failed: the service cannot
+	// serve requests, for example because the agent or its database
+	// cannot be reached.
+	HealthUnavailable = "unavailable"
 )
 
 // HealthCheck is the result of one health check.
 type HealthCheck struct {
+	// Status is HealthOK, or, when the check failed, HealthUnavailable
+	// for a critical check and HealthDegraded for any other.
 	Status string `json:"status"`
-	Error  string `json:"error,omitempty"`
+	// Critical is true when the service cannot serve requests without
+	// this check passing.
+	Critical bool   `json:"critical"`
+	Error    string `json:"error,omitempty"`
+}
+
+// Record adds the result of a check to the document and updates its
+// status: problem is "" when the check passed. The document's status is
+// the worst of its checks'.
+func (h *Health) Record(name string, critical bool, problem string) {
+	check := HealthCheck{Status: HealthOK, Critical: critical}
+	if problem != "" {
+		check.Status, check.Error = HealthDegraded, problem
+		if critical {
+			check.Status = HealthUnavailable
+		}
+	}
+	if h.Checks == nil {
+		h.Checks = map[string]HealthCheck{}
+	}
+	h.Checks[name] = check
+	h.Status = WorseHealth(h.Status, check.Status)
+}
+
+// WorseHealth returns the worse of two health statuses. An empty or
+// unknown status counts as HealthOK.
+func WorseHealth(a, b string) string {
+	rank := func(s string) int {
+		switch s {
+		case HealthUnavailable:
+			return 2
+		case HealthDegraded:
+			return 1
+		}
+		return 0
+	}
+	if rank(b) > rank(a) {
+		return b
+	}
+	if rank(a) == 0 {
+		return HealthOK
+	}
+	return a
 }
 
 // HealthProbe is one additional health check of a service: it returns ""
@@ -245,7 +300,9 @@ type Health struct {
 }
 
 // HealthStatus is what the health endpoint returns to a caller without a
-// session: the status and nothing else.
+// session: the status and nothing else. Monitoring that must notice a
+// degraded component checks this field, not only the HTTP status, which
+// is 503 for HealthUnavailable alone.
 type HealthStatus struct {
 	Status string `json:"status"`
 }

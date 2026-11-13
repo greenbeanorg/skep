@@ -304,7 +304,7 @@ func TestPeerOutsideTheAllowListIsDisconnected(t *testing.T) {
 	if !errors.Is(err, agentclient.ErrUnavailable) {
 		t.Fatalf("error = %v, want ErrUnavailable", err)
 	}
-	if h := c.Health(callerCtx()); h.Status != models.HealthDegraded || h.Checks["agent"].Status != models.HealthDegraded {
+	if h := c.Health(callerCtx()); h.Status != models.HealthUnavailable || h.Checks["agent"].Status != models.HealthUnavailable {
 		t.Errorf("health = %+v, want degraded", h)
 	}
 	if _, _, called := backend.last(); called {

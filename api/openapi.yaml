@@ -83,23 +83,34 @@ paths:
       summary: Health
       security: [{}, {bearer: []}, {cookie: []}]
       description: |
-        Reports whether the agent is reachable and whether it and its local
-        database are working.
+        Reports whether the service can serve requests, and whether any
+        component needs attention.
+
+        The status is `ok`, `degraded` or `unavailable`. `unavailable`
+        means a critical check failed and the service cannot serve
+        requests: the agent cannot be reached (`agent`), or the agent's
+        database cannot (`database`). It is the only status answered with
+        `503`. `degraded` means a non-critical check failed; the service
+        still serves requests and the answer is `200`. Monitoring that must
+        notice a degraded component checks the `status` field, not only the
+        HTTP status. A load balancer or supervisor can use the HTTP status
+        alone.
 
         Without a session the response is the status and nothing else
-        (`HealthStatus`). With a session it is the full `Health` document;
-        its `agent` check is `degraded` when skep-api cannot reach the
-        agent.
+        (`HealthStatus`). With a session it is the full `Health` document,
+        where each check says whether it is critical. The same document is
+        in the system document's `health` field.
 
         Two checks concern the audit archives: `audit_archive` (the
         agent's operation audit log) and `access_audit_archive`
         (skep-api's access audit log). Each is `degraded` when the
         archive failed verification or a needed segment is missing, and
         when the previous month is still unsealed 7 days into the new
-        one. A check is absent when archiving is turned off.
+        one. Neither is critical. A check is absent when archiving is
+        turned off.
       responses:
         "200":
-          description: Every check passed.
+          description: The service serves requests. The status is `ok` or `degraded`.
           headers:
             X-Request-ID:
               $ref: "#/components/headers/RequestID"
@@ -110,7 +121,9 @@ paths:
                   - $ref: "#/components/schemas/HealthStatus"
                   - $ref: "#/components/schemas/Health"
         "503":
-          description: At least one check failed. The body has the same shape as for 200.
+          description: |
+            A critical check failed and the service cannot serve requests.
+            The status is `unavailable`. The body has the same shape as for 200.
           headers:
             X-Request-ID:
               $ref: "#/components/headers/RequestID"
@@ -926,7 +939,7 @@ components:
       properties:
         status:
           type: string
-          enum: [ok, degraded]
+          enum: [ok, degraded, unavailable]
     LoginRequest:
       type: object
       required: [username, password]
@@ -1102,7 +1115,8 @@ components:
       properties:
         status:
           type: string
-          enum: [ok, degraded]
+          enum: [ok, degraded, unavailable]
+          description: The worst status of the checks.
         version:
           type: string
         uptime_seconds:
@@ -1112,11 +1126,17 @@ components:
           type: object
           additionalProperties:
             type: object
-            required: [status]
+            required: [status, critical]
             properties:
               status:
                 type: string
-                enum: [ok, degraded]
+                enum: [ok, degraded, unavailable]
+                description: |
+                  `ok`, or when the check failed, `unavailable` for a
+                  critical check and `degraded` for any other.
+              critical:
+                type: boolean
+                description: The service cannot serve requests while this check fails.
               error:
                 type: string
     BuildInfo:
@@ -1198,6 +1218,11 @@ components:
           format: int64
         api:
           $ref: "#/components/schemas/APIInfo"
+        health:
+          $ref: "#/components/schemas/Health"
+          description: |
+            The full health document, as `GET /health` returns it with a
+            session, including degraded components.
     APIInfo:
       type: object
       description: The skep-api process that answered the request.

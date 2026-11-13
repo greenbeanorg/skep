@@ -185,7 +185,9 @@ func TestHealth(t *testing.T) {
 		Discoverer: &fakeDiscoverer{},
 		Database:   fakePinger{err: errors.New("disk I/O error at /var/db/skep/agent/agent.db")},
 	}).Health(ctx)
-	if bad.Status != models.HealthDegraded || bad.Checks["database"].Status != models.HealthDegraded {
+	// The database is critical: the agent cannot serve without it.
+	if bad.Status != models.HealthUnavailable || bad.Checks["database"].Status != models.HealthUnavailable ||
+		!bad.Checks["database"].Critical {
 		t.Errorf("health = %+v", bad)
 	}
 	if got := bad.Checks["database"].Error; got != "database is not reachable" {
@@ -207,7 +209,7 @@ func TestHealth(t *testing.T) {
 	}
 	problem = "last month's audit entries are not sealed yet"
 	if h := withChecks.Health(ctx); h.Status != models.HealthDegraded ||
-		h.Checks[models.CheckAuditArchive] != (models.HealthCheck{Status: models.HealthDegraded, Error: problem}) ||
+		h.Checks[models.CheckAuditArchive] != (models.HealthCheck{Status: models.HealthDegraded, Critical: false, Error: problem}) ||
 		h.Checks["database"].Status != models.HealthOK {
 		t.Errorf("health with a failing check = %+v", h)
 	}

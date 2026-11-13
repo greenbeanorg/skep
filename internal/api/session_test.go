@@ -91,11 +91,11 @@ func TestHealthShowsOnlyTheStatusWithoutASession(t *testing.T) {
 	if rec.Code != http.StatusOK || strings.Contains(rec.Body.String(), "version") {
 		t.Errorf("health with a bad token: %d %s", rec.Code, rec.Body)
 	}
-	b.health.Status = models.HealthDegraded
-	b.health.Checks["database"] = models.HealthCheck{Status: models.HealthDegraded, Error: "database is not reachable"}
+	b.health.Status = models.HealthUnavailable
+	b.health.Checks["database"] = models.HealthCheck{Status: models.HealthUnavailable, Critical: true, Error: "database is not reachable"}
 	rec = e.serve(h, request{method: http.MethodGet, path: "/api/v1/health"})
-	if rec.Code != http.StatusServiceUnavailable || strings.TrimSpace(rec.Body.String()) != `{"status":"degraded"}` {
-		t.Errorf("unauthenticated degraded health: %d %s", rec.Code, rec.Body)
+	if rec.Code != http.StatusServiceUnavailable || strings.TrimSpace(rec.Body.String()) != `{"status":"unavailable"}` {
+		t.Errorf("unauthenticated unavailable health: %d %s", rec.Code, rec.Body)
 	}
 	// With a session: the whole document.
 	rec = e.serve(h, request{method: http.MethodGet, path: "/api/v1/health", role: auth.RoleViewer})
@@ -130,19 +130,37 @@ func TestHealthIncludesTheAPIsOwnChecks(t *testing.T) {
 		t.Errorf("health = %d %+v", rec.Code, full)
 	}
 
-	// The access log's archive is late, the agent is fine: degraded.
+	// The access log's archive is late, the agent is fine: degraded,
+	// but still serving, so 200.
 	problem = "last month's audit entries are not sealed yet"
 	rec = e.serve(h, request{method: http.MethodGet, path: "/api/v1/health", role: auth.RoleViewer})
 	full = decode[models.Health](t, rec)
-	if rec.Code != http.StatusServiceUnavailable || full.Status != models.HealthDegraded ||
+	if rec.Code != http.StatusOK || full.Status != models.HealthDegraded ||
 		full.Checks[models.CheckAccessAuditArchive] != (models.HealthCheck{Status: models.HealthDegraded, Error: problem}) ||
 		full.Checks[models.CheckAuditArchive].Status != models.HealthOK {
 		t.Errorf("degraded health = %d %+v", rec.Code, full)
 	}
-	// Without a session: the status and nothing about why.
+	// Without a session: the status and nothing about why. Monitoring
+	// reads the field to notice the degraded archive.
 	rec = e.serve(h, request{method: http.MethodGet, path: "/api/v1/health"})
-	if rec.Code != http.StatusServiceUnavailable || strings.TrimSpace(rec.Body.String()) != `{"status":"degraded"}` {
+	if rec.Code != http.StatusOK || strings.TrimSpace(rec.Body.String()) != `{"status":"degraded"}` {
 		t.Errorf("unauthenticated degraded health: %d %s", rec.Code, rec.Body)
+	}
+	// The system document reports the degraded component too.
+	rec = e.serve(h, request{method: http.MethodGet, path: "/api/v1/system", role: auth.RoleViewer})
+	sys := decode[models.System](t, rec)
+	if rec.Code != http.StatusOK || sys.Health == nil || sys.Health.Status != models.HealthDegraded ||
+		sys.Health.Checks[models.CheckAccessAuditArchive].Error != problem {
+		t.Errorf("system document = %d %+v", rec.Code, sys.Health)
+	}
+	// A degraded agent check (its own archive) and a critical failure
+	// together: unavailable wins.
+	b.health = models.Health{Status: models.HealthUnavailable, Version: "9.9.9", Checks: map[string]models.HealthCheck{
+		"agent": {Status: models.HealthUnavailable, Critical: true, Error: "the host agent is not reachable"},
+	}}
+	rec = e.serve(h, request{method: http.MethodGet, path: "/api/v1/health"})
+	if rec.Code != http.StatusServiceUnavailable || strings.TrimSpace(rec.Body.String()) != `{"status":"unavailable"}` {
+		t.Errorf("unavailable health: %d %s", rec.Code, rec.Body)
 	}
 
 	// A backend that returns no checks at all (the agent is unreachable

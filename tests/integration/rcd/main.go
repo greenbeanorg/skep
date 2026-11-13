@@ -1052,7 +1052,7 @@ func (s *suite) api() error {
 	_, child := s.checkAPIRunning()
 	var anonymous map[string]any
 	status, err := s.apiGet("/api/v1/health", &anonymous)
-	s.check(err == nil && status == http.StatusServiceUnavailable && len(anonymous) == 1 && anonymous["status"] == models.HealthDegraded,
+	s.check(err == nil && status == http.StatusServiceUnavailable && len(anonymous) == 1 && anonymous["status"] == models.HealthUnavailable,
 		"health without a session and without the agent: status %d, body %v (the status only)", status, anonymous)
 	var apiErr models.ErrorResponse
 	status, err = s.apiGet("/api/v1/system", &apiErr)
@@ -1065,7 +1065,7 @@ func (s *suite) api() error {
 	}
 	var health models.Health
 	status, err = s.apiGet("/api/v1/health", &health)
-	s.check(err == nil && status == http.StatusServiceUnavailable && health.Checks["agent"].Status == models.HealthDegraded,
+	s.check(err == nil && status == http.StatusServiceUnavailable && health.Checks["agent"].Status == models.HealthUnavailable,
 		"health with a session: status %d, agent check %q (err=%v)", status, health.Checks["agent"].Status, err)
 	status, err = s.apiGet("/api/v1/system", &apiErr)
 	s.check(err == nil && status == http.StatusServiceUnavailable && apiErr.Error.Code == models.CodeAgentUnavailable,

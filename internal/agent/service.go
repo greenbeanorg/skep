@@ -36,7 +36,9 @@ type Options struct {
 	Nodes NodeStore
 	// Tasks reads tasks for the API. Optional; without it there are none.
 	Tasks TaskReader
-	// Checks are additional health checks, by name, for example the audit
+	// Checks are additional, non-critical health checks, by name: a
+	// failure degrades the document but does not make the agent
+	// unavailable. For example the audit
 	// archive's. Optional.
 	Checks map[string]models.HealthProbe
 	// CacheTTL is how long a discovery result is reused. Zero disables
@@ -110,23 +112,21 @@ func (s *Service) Health(ctx context.Context) models.Health {
 		Checks:        map[string]models.HealthCheck{},
 	}
 	if s.db != nil {
-		check := models.HealthCheck{Status: models.HealthOK}
+		// Critical: without its database the agent can run no task and
+		// read no history.
+		problem := ""
 		if err := s.db.PingContext(ctx); err != nil {
 			s.log.Error("health: database check failed", "error", err)
 			// The cause is logged, not returned: health is readable
 			// without authentication.
-			check = models.HealthCheck{Status: models.HealthDegraded, Error: "database is not reachable"}
-			h.Status = models.HealthDegraded
+			problem = "database is not reachable"
 		}
-		h.Checks["database"] = check
+		h.Record("database", true, problem)
 	}
+	// The additional checks are not critical: a problem degrades the
+	// document but the agent still serves requests.
 	for name, probe := range s.checks {
-		check := models.HealthCheck{Status: models.HealthOK}
-		if problem := probe(ctx); problem != "" {
-			check = models.HealthCheck{Status: models.HealthDegraded, Error: problem}
-			h.Status = models.HealthDegraded
-		}
-		h.Checks[name] = check
+		h.Record(name, false, probe(ctx))
 	}
 	return h
 }

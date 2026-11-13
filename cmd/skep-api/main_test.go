@@ -316,7 +316,7 @@ func TestRunServesAPIThroughTheSocket(t *testing.T) {
 	// Without a session: the health status and nothing else.
 	var status map[string]any
 	get(t, anonymous, base+"/api/v1/health", http.StatusServiceUnavailable, &status)
-	if len(status) != 1 || status["status"] != models.HealthDegraded {
+	if len(status) != 1 || status["status"] != models.HealthUnavailable {
 		t.Errorf("unauthenticated health = %v, want only the status", status)
 	}
 	var denied models.ErrorResponse
@@ -329,7 +329,7 @@ func TestRunServesAPIThroughTheSocket(t *testing.T) {
 
 	var health models.Health
 	get(t, c, base+"/api/v1/health", http.StatusServiceUnavailable, &health)
-	if health.Status != models.HealthDegraded || health.Checks["agent"].Status != models.HealthDegraded {
+	if health.Status != models.HealthUnavailable || health.Checks["agent"].Status != models.HealthUnavailable {
 		t.Errorf("health without an agent = %+v", health)
 	}
 	var apiErr models.ErrorResponse
@@ -350,6 +350,9 @@ func TestRunServesAPIThroughTheSocket(t *testing.T) {
 	get(t, c, base+"/api/v1/system", http.StatusOK, &sys)
 	if sys.NodeID != "node-1" || sys.Hostname != "hearst" {
 		t.Errorf("system = %+v", sys)
+	}
+	if sys.Health == nil || sys.Health.Status != models.HealthOK || sys.Health.Checks["agent"].Status != models.HealthOK {
+		t.Errorf("system health = %+v", sys.Health)
 	}
 	// The agent is told which user the request is for.
 	if c := agent.seen(); c.ActorName != "andy" || len(c.ActorID) != 36 || c.RequestID == "" || c.SourceIP != "127.0.0.1" {

@@ -91,7 +91,8 @@ bin/skep-api admin create --username andy -dev
 CA=.skep-dev/api/tls/cert.pem
 API=https://127.0.0.1:8443/api/v1
 
-# Without a session only the health status is readable.
+# Without a session only the health status is readable: ok or degraded
+# (HTTP 200, still serving), or unavailable (HTTP 503).
 curl -s --cacert $CA $API/health
 
 # Log in for a bearer session (scripts) and keep the token.
