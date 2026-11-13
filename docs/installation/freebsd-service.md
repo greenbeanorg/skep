@@ -151,6 +151,16 @@ Run them as root (they change to the service account first) or as `skep`.
 picks the new pair up within a minute, or at once with
 `pkill -HUP -F /var/run/skep/api.pid`.
 
+A new pair is first written, complete and synced, as `key.pem.next` and
+`cert.pem.next`, and then moved into place: the key, then the
+certificate. A reader that finds the key moved but not yet the
+certificate finishes the move itself, so the server never loads a key and
+certificate that do not belong together. If the host stops in the
+middle, the next start finishes the move. Leftover `.next` files next to
+a working pair (the host stopped before anything was moved) are ignored
+and replaced by the next regenerate. Skep never moves a pending key
+whose certificate does not match it.
+
 To use your own certificate, set `tls.cert_file` and `tls.key_file` in
 `/usr/local/etc/skep/api.json`. The files must be readable by `skep`. After
 replacing them, the server reloads them within a minute or on `SIGHUP`.
