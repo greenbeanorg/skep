@@ -183,7 +183,8 @@ func (r *Runner) Run(ctx context.Context, report tasks.Reporter) (Result, error)
 	// Tasks are independent of the archive and are pruned even when the
 	// audit work failed.
 	if r.opts.TasksDays > 0 {
-		cutoff := r.opts.Now().UTC().AddDate(0, 0, -r.opts.TasksDays)
+		// Whole seconds: the cutoff is written into the audit log.
+		cutoff := r.opts.Now().UTC().Truncate(time.Second).AddDate(0, 0, -r.opts.TasksDays)
 		res.Tasks.Cutoff = &cutoff
 		report.Progress("deleting finished tasks older than the retention age",
 			map[string]any{"cutoff": cutoff.Format(time.RFC3339), "retention_days": r.opts.TasksDays})
