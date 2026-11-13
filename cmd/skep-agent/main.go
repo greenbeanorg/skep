@@ -55,7 +55,12 @@ func main() {
 }
 
 // run is the whole program; main only maps its error to an exit code.
+// Without a command it runs the agent; "audit" is a local command for the
+// host's administrator.
 func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
+	if len(args) > 0 && args[0] == "audit" {
+		return runAudit(ctx, args[1:], stdout, stderr)
+	}
 	flags := flag.NewFlagSet("skep-agent", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	var (
@@ -244,6 +249,12 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		log.Info("stopped")
 	}
 	return serveErr
+}
+
+// quietLogger is the logger of local commands: they report on stdout and
+// stderr themselves, and only problems are logged.
+func quietLogger(stderr io.Writer) *slog.Logger {
+	return slog.New(slog.NewTextHandler(stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
 }
 
 // syslogTag is the tag of the agent's own syslog lines.
