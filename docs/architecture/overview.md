@@ -1,6 +1,6 @@
 # Architecture overview
 
-This document describes Skep as of 0.1.0, Milestone 4b. It covers what exists
+This document describes Skep as of 0.1.0, Milestone 5. It covers what exists
 now. Planned subsystems are listed in `CLAUDE.md` and are not described here
 until they are built.
 
@@ -18,7 +18,9 @@ tasks, and listens on a Unix socket only.
   skep-api (user skep)    |
         +-----------------v------------------+
         | internal/api        public API     |  route table, sessions (via
-        |                                    |  internal/auth), validation
+        |   /api/v1                          |  internal/auth), validation
+        | internal/webui      everything     |  the embedded web interface:
+        |   outside /api                     |  static files, no data
         +-----------------+------------------+
                           | api.Backend (interface)
         +-----------------v------------------+
@@ -76,6 +78,24 @@ Clients sit in front of `skep-api` and use only `/api/v1`. The first is
 pins the server's public key on every connection; its local state (pins and
 session tokens) is in `internal/ctlstate`. See
 [docs/administration/skepctl.md](../administration/skepctl.md).
+
+The second is the web interface (`web/`,
+[ADR 0008](../decisions/0008-web-ui.md)). `skep-api` serves its built
+files on every path outside `/api`, from the same origin as the API, so the
+cookie session and the origin check of ADR 0006 apply unchanged; an unknown
+path under `/api` stays a JSON 404. The files are embedded with `go:embed`
+behind the build tag `skep_webui`, which `make build` and
+`make build-freebsd` set after building the interface with Node.js; a
+build without the tag (`go build ./...`, `make build-go`) carries a
+placeholder page that says so, so Go builds and tests need no Node.js.
+`internal/webui` sets the interface's own headers (a CSP without inline
+script or style, `Referrer-Policy`, COOP) and caches only the hashed
+files. Nothing it serves is data, and nothing it serves is written to the
+access audit log. The one server-side addition for the interface is the
+`X-Skep-Background` header: a request that carries it is authenticated
+like any other but does not extend the session's idle timeout, so an
+unattended page idles out. See
+[docs/administration/web-ui.md](../administration/web-ui.md).
 
 Either process can start first or restart alone. In development,
 `make run-dev` starts both, exactly as in production but as the developer.
@@ -280,6 +300,7 @@ imported, both as an unprivileged user and as root.
 | `skepctl` chain verification of an operator-supplied certificate (`--ca-file`), a renewal with a new key without a new login, refusal of another CA | Validated as an ordinary user (see `tests/integration/skepctl`) |
 | Retention under rc.d on UFS: archive directories `root:wheel 0700` and `skep:skep 0700` with `0400` files, seal (write, sync, rename, read back), task pruning, removal of old access audit entries, `audit verify` and `audit export`, the syslog notice of each seal, a restart, an altered segment | Validated (2026-11-12, see `tests/integration/retention`) |
 | Retention with the data directory on a ZFS dataset (file-backed test pool): the same checks | Validated (2026-11-13, same) |
+| `skep-api` from the FreeBSD build serving the web interface under rc.d to a browser on the lab network: login, every page, task cancel, logout; back to loopback afterwards | **Pending FreeBSD validation** |
 | ZFS-root host | **Pending FreeBSD validation** (the lab VM is UFS-root) |
 | arm64 | Not a target yet |
 
@@ -294,6 +315,8 @@ imported, both as an unprivileged user and as root.
   so a file stops growing. `VACUUM` is a manual step.
 - Archived audit entries are read on the host (`audit export`); the API
   serves the live table only.
+- The web interface is desktop first and was checked in Chromium; it has
+  no phone layout.
 - `os.release` on FreeBSD is the kernel release (`kern.osrelease`). The
   userland patch level can differ and is not reported.
 - Memory "available" on FreeBSD is an estimate: free, inactive, and laundry
