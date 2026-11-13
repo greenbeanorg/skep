@@ -78,7 +78,7 @@ export function TasksPage() {
     <>
       <PageHeader
         title="Tasks"
-        description="Every operation of the agent runs as a task. Tasks cannot be submitted or cancelled here yet."
+        description="Every operation of the agent runs as a task. Open a task to see its events or to cancel it."
         actions={<RefreshButton onClick={first.reload} updatedAt={first.updatedAt} />}
       />
 

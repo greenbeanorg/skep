@@ -1,14 +1,19 @@
+import { useState } from "react";
 import { Link, useParams } from "react-router";
 
-import { api } from "@/api/client";
+import { api, toApiError, type ApiError } from "@/api/client";
 import { useQuery } from "@/api/hooks";
-import type { TaskDetail, TaskStatus } from "@/api/types";
+import { PERMISSIONS, type TaskDetail, type TaskStatus } from "@/api/types";
+import { useSession } from "@/app/session";
 import { ChevronLeftIcon } from "@/components/icons";
 import { ErrorNotice, Fact, Facts, LoadingCards, PageHeader, RefreshButton } from "@/components/page";
 import { TaskStatusBadge } from "@/components/status";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { formatDateTime, formatElapsed } from "@/lib/format";
+import { Notice } from "@/components/ui/notice";
+import { formatDateTime, formatElapsed, shortId } from "@/lib/format";
+import { ConfirmDialog } from "@/pages/users/dialogs";
 
 function isFinished(status: TaskStatus): boolean {
   return status !== "pending" && status !== "running";
@@ -152,8 +157,67 @@ function TaskView({ task }: { task: TaskDetail }) {
   );
 }
 
+/** Whether the cancel button is offered: the role allows it and the task can still be cancelled. */
+export function canCancel(task: TaskDetail, can: (p: typeof PERMISSIONS.taskCancel) => boolean): boolean {
+  return can(PERMISSIONS.taskCancel) && !isFinished(task.status) && task.cancellable && !task.cancel_requested_at;
+}
+
+/** The cancel confirmation names the task (ADR 0008, decision 7). */
+function CancelTask({ task, onDone }: { task: TaskDetail; onDone: () => void }) {
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<ApiError | undefined>();
+  const confirm = async () => {
+    setBusy(true);
+    setError(undefined);
+    try {
+      await api.cancelTask(task.id);
+      setOpen(false);
+      onDone();
+    } catch (err) {
+      const apiErr = toApiError(err);
+      if (apiErr.code === "not_cancellable") {
+        Object.assign(apiErr, { message: "The task can no longer be cancelled; it finished or is finishing." });
+      }
+      setError(apiErr);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <>
+      <Button variant="outline" size="sm" onClick={() => setOpen(true)}>
+        Cancel task
+      </Button>
+      {open ? (
+        <ConfirmDialog
+          title={`Cancel ${task.type} ${shortId(task.id)}?`}
+          description="The agent asks the task to stop. What it had already done is not undone."
+          confirmLabel="Cancel task"
+          destructive
+          busy={busy}
+          error={error}
+          onConfirm={() => void confirm()}
+          onClose={() => setOpen(false)}
+        >
+          <Facts>
+            <Fact label="Task ID" mono>
+              {task.id}
+            </Fact>
+            <Fact label="Type" mono>
+              {task.type}
+            </Fact>
+            <Fact label="Requested by">{task.actor.name}</Fact>
+          </Facts>
+        </ConfirmDialog>
+      ) : null}
+    </>
+  );
+}
+
 export function TaskDetailPage() {
   const { id = "" } = useParams();
+  const { can } = useSession();
   const query = useQuery(id ? `task:${id}` : null, (o) => api.task(id, o), { refreshMs: 3_000 });
   const task = query.data;
 
@@ -166,9 +230,19 @@ export function TaskDetailPage() {
       <PageHeader
         title={task ? task.type : "Task"}
         description={task ? undefined : <span className="font-mono">{id}</span>}
-        actions={<RefreshButton onClick={query.reload} updatedAt={query.updatedAt} />}
+        actions={
+          <>
+            {task && canCancel(task, can) ? <CancelTask task={task} onDone={query.reload} /> : null}
+            <RefreshButton onClick={query.reload} updatedAt={query.updatedAt} />
+          </>
+        }
       />
       {query.error ? <ErrorNotice error={query.error} onRetry={query.reload} stale={task !== undefined} /> : null}
+      {task?.cancel_requested_at && !isFinished(task.status) ? (
+        <Notice tone="info" className="mb-4" title="Cancellation requested">
+          Asked at {formatDateTime(task.cancel_requested_at)}. The task stops when it next checks.
+        </Notice>
+      ) : null}
       {query.loading ? <LoadingCards count={2} /> : null}
       {task ? <TaskView task={task} /> : null}
     </>
