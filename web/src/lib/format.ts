@@ -23,9 +23,10 @@ export function formatDuration(totalSeconds: number): string {
   const hours = Math.floor((s % 86400) / 3600);
   const minutes = Math.floor((s % 3600) / 60);
   const seconds = s % 60;
-  if (days > 0) return `${days}d ${hours}h`;
-  if (hours > 0) return `${hours}h ${minutes}m`;
-  if (minutes > 0) return `${minutes}m ${seconds}s`;
+  const pair = (big: string, small: string, smallValue: number) => (smallValue > 0 ? `${big} ${small}` : big);
+  if (days > 0) return pair(`${days}d`, `${hours}h`, hours);
+  if (hours > 0) return pair(`${hours}h`, `${minutes}m`, minutes);
+  if (minutes > 0) return pair(`${minutes}m`, `${seconds}s`, seconds);
   return `${seconds}s`;
 }
 

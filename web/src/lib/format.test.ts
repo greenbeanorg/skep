@@ -22,6 +22,8 @@ describe("formatDuration", () => {
     expect(formatDuration(423)).toBe("7m 3s");
     expect(formatDuration(5 * 3600 + 12 * 60)).toBe("5h 12m");
     expect(formatDuration(3 * 86400 + 4 * 3600 + 5)).toBe("3d 4h");
+    expect(formatDuration(1800)).toBe("30m");
+    expect(formatDuration(12 * 3600)).toBe("12h");
   });
 });
 
