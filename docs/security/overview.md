@@ -52,10 +52,13 @@ is an explicit change of `listen_address`.
   at a restart.
 - **The source address is the TCP peer.** `X-Forwarded-For` is ignored
   unless `auth.trusted_proxies` lists the proxy.
-- **Audit.** Every successful login, failed login, throttled login,
-  logout, and session revocation is written to the access audit log with
-  the source address. A submitted username is recorded only if it has the
-  shape of a username. Tokens and their hashes are never logged.
+- **Audit.** Every successful login, failed login, logout, and session
+  revocation is written to the access audit log with the source address.
+  Throttled logins are aggregated into one entry per source address per
+  minute, with the number of attempts, so a flood of refused attempts
+  cannot grow the log one row per request (ADR 0007, amendment b). A
+  submitted username is recorded only if it has the shape of a username.
+  Tokens and their hashes are never logged.
 - **Before setup.** Until an administrator exists, login answers
   `503 setup_required` and names the command to run on the host.
 - **The agent is told who.** Each request to the agent carries the

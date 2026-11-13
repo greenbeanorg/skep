@@ -257,8 +257,27 @@ func TestLoginIsThrottled(t *testing.T) {
 	if sessionCookie(t, rec) != nil {
 		t.Error("a throttled login set a cookie")
 	}
-	if n := e.auditCount(t, `action = 'auth.login' AND outcome = 'denied' AND details LIKE '%rate_limited%'`); n != 1 {
-		t.Errorf("%d throttled logins audited, want 1", n)
+	// Throttled attempts are aggregated: nothing is written per attempt,
+	// and one entry per address and minute carries the count. A burst
+	// that happens to cross a minute boundary gives two entries.
+	for range 19 {
+		e.serve(h, bad)
+	}
+	throttled := `action = 'auth.login' AND outcome = 'denied' AND details LIKE '%rate_limited%'`
+	if n := e.auditCount(t, throttled); n != 0 {
+		t.Errorf("%d throttled logins audited one by one, want them aggregated", n)
+	}
+	e.authn.FlushThrottled(context.Background(), true)
+	var entries, attempts int
+	if err := e.db.QueryRow(`SELECT COUNT(*), COALESCE(SUM(json_extract(details, '$.attempts')), 0) FROM audit_log WHERE `+throttled).
+		Scan(&entries, &attempts); err != nil {
+		t.Fatal(err)
+	}
+	if entries < 1 || entries > 2 || attempts != 20 {
+		t.Errorf("%d aggregated entries counting %d attempts, want 1 (or 2 across a minute) counting 20", entries, attempts)
+	}
+	if n := e.auditCount(t, throttled+` AND source_ip = '192.0.2.7' AND actor_name = 'test-admin' AND details LIKE '%"aggregated":true%'`); n != entries {
+		t.Errorf("the aggregated entry lacks the address, the username, or the marker (%d of %d)", n, entries)
 	}
 	// Existing sessions are not affected: this is not a lockout.
 	if rec := e.serve(h, request{method: http.MethodGet, path: "/api/v1/system", role: auth.RoleAdmin}); rec.Code != http.StatusOK {
