@@ -67,7 +67,23 @@ installed services were stopped and `rc.conf` has no `skep_*` entries.
 | File system | Result |
 |---|---|
 | UFS (`/var/tmp/skep/m4c-ufs` on `/dev/da0s1a`) | **PASS**, 57 checks (2026-11-12 23:25 local, 2026-11-13 04:25 UTC) |
-| ZFS (a dataset in `skeptest`) | **Pending FreeBSD validation**: not run. The `zfs` kernel module was not loaded and `skeptest` was not imported on hearst, and loading a kernel module there needs Andy's go-ahead |
+| ZFS (`/skeptest/skep-m4c/data` on the dataset `skeptest/skep-m4c`) | **PASS**, 57 checks (2026-11-13 04:45 local, 09:45 UTC) |
+
+The ZFS run printed the same 57 checks with the ZFS paths; its first
+lines:
+
+```
+       Filesystem         Type 512-blocks Used   Avail Capacity  Mounted on
+       skeptest/skep-m4c  zfs     3669737   50 3669687     0%    /skeptest/skep-m4c
+ok     the data directory is on skeptest/skep-m4c zfs (want zfs)
+```
+
+For it, with Andy's approval, the `zfs` kernel module was loaded and
+`skeptest` imported with `-o cachefile=none`; afterwards the dataset was
+destroyed, the pool exported, and the module unloaded. No other pool was
+touched. One side effect: `/etc/zfs/zpool.cache`, which still listed
+`skeptest` from when the pool was created, was removed by ZFS when the
+pool was imported without a cache file.
 
 The UFS run, shortened (node ID and hashes abbreviated, long lines cut):
 
@@ -149,5 +165,5 @@ ok     audit verify names the altered segment and exits 1
 PASS, 57 checks
 ```
 
-Afterwards the test's directories were gone, the services were stopped as
-before, and nothing else on the host had changed.
+After each run the test's directories were gone and the services were
+stopped as before.

@@ -276,7 +276,8 @@ pw userdel skep             # also removes the skep group
 ## Limits
 
 - Validated on a UFS-root host only. A ZFS-root host is pending FreeBSD
-  validation, and so is the audit archive on a ZFS dataset.
+  validation. The audit archive and retention were also validated with
+  the data directory on a ZFS dataset.
 - Logging to a file with rotation is not offered; use syslog and
   `newsyslog(8)`.
 - The account's UID and GID are whatever `pw` assigns. A fixed, registered

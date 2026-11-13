@@ -275,7 +275,7 @@ imported, both as an unprivileged user and as root.
 | `skepctl` from another host (merrick, Linux build) and on the host, against the `skep_api` rc.d service listening on the management address; back to loopback afterwards | Validated (2026-11-12, see `tests/integration/skepctl`) |
 | `skepctl` chain verification of an operator-supplied certificate (`--ca-file`), a renewal with a new key without a new login, refusal of another CA | Validated as an ordinary user (see `tests/integration/skepctl`) |
 | Retention under rc.d on UFS: archive directories `root:wheel 0700` and `skep:skep 0700` with `0400` files, seal (write, sync, rename, read back), task pruning, removal of old access audit entries, `audit verify` and `audit export`, the syslog notice of each seal, a restart, an altered segment | Validated (2026-11-12, see `tests/integration/retention`) |
-| Retention with the data directory on a ZFS dataset | **Pending FreeBSD validation** |
+| Retention with the data directory on a ZFS dataset (file-backed test pool): the same checks | Validated (2026-11-13, same) |
 | ZFS-root host | **Pending FreeBSD validation** (the lab VM is UFS-root) |
 | arm64 | Not a target yet |
 

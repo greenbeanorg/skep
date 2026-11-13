@@ -611,4 +611,5 @@ FreeBSD 15.1-RELEASE-p6 (hearst), under the rc.d services, see
 | Seal: create, write, sync, rename, directory sync, read back | Validated on UFS (2026-11-12) |
 | The retention task under the real service, across a restart; an altered segment | Validated on UFS (2026-11-12) |
 | Syslog notice of each seal, from root and from the unprivileged account | Validated (2026-11-12) |
-| The same on a ZFS dataset | **Pending FreeBSD validation** |
+| The same with the data directory on a ZFS dataset (in the file-backed test pool `skeptest`) | Validated (2026-11-13) |
+| A ZFS-root host | **Pending FreeBSD validation** (the lab VM is UFS-root) |
