@@ -369,8 +369,12 @@ func main() {
 	check(mode(keyFile) == "0600", "new key file mode %s", mode(keyFile))
 	rows = auditRows(dbPath, "tls.key.regenerate")
 	wantActor := fmt.Sprintf("local:%d", os.Getuid())
-	check(len(rows) == 1 && rows[0].Actor == wantActor && strings.Contains(rows[0].Details, spki(first)) && strings.Contains(rows[0].Details, spki(regen)),
-		"the key change is in the access audit log with actor %s and both fingerprints: %+v", wantActor, rows)
+	pair := len(rows) == 2 &&
+		strings.Contains(rows[0].Details, `"phase":"requested"`) && strings.Contains(rows[1].Details, `"phase":"finished"`)
+	for _, r := range rows {
+		pair = pair && r.Actor == wantActor && strings.Contains(r.Details, spki(first)) && strings.Contains(r.Details, spki(regen))
+	}
+	check(pair, "the key change is in the access audit log as an intent and an outcome, with actor %s and both fingerprints: %+v", wantActor, rows)
 
 	step("a restart keeps the key and the certificate")
 	srv.stop()

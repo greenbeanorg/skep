@@ -211,9 +211,16 @@ and a request body limit are set. Responses carry `X-Content-Type-Options: nosni
   expiry with the same key and swapped in without a restart. Each renewal
   is written to the access audit log with the old and new fingerprints.
 - **A new key only on request.** `skep-api tls regenerate`, run on the
-  host, is the only thing that creates a new key. It is audited with the
-  actor `local:<uid>` and both key fingerprints. If the generated files are
-  damaged, `skep-api` refuses to start instead of replacing the key.
+  host, is the only thing that creates a new key. It writes two access
+  audit entries, `tls.key.regenerate` with `details.phase` `requested` and
+  then `finished`, joined by `details.operation_id`, each with the actor
+  `local:<uid>` and both key fingerprints. The intent is written after the
+  new key exists in memory and before anything on disk changes; if it
+  cannot be written, the key does not change. A key change that a crash
+  interrupts, and the next start completes, therefore always has its
+  intent, naming the installed key, on record, even without an outcome.
+  If the generated files are damaged, `skep-api` refuses to start instead
+  of replacing the key.
 - **Pinning.** The value to pin is the SHA-256 of the public key
   (`skep-api tls fingerprint`, also in the system document). It survives
   renewals.

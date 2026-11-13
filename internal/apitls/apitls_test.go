@@ -6,6 +6,7 @@ import (
 	"crypto/elliptic"
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"io"
 	"log/slog"
 	"net"
@@ -308,7 +309,7 @@ func TestBrokenGeneratedFilesAreNotReplaced(t *testing.T) {
 		// Restore for the next case.
 		os.WriteFile(keyFile, original, 0o600)
 		if _, err := os.Stat(filepath.Join(dir, CertFileName)); err != nil {
-			Regenerate(dir, c.now())
+			Regenerate(dir, c.now(), nil)
 			original, _ = os.ReadFile(keyFile)
 		}
 	}
@@ -320,7 +321,7 @@ func TestRegenerateMakesANewKeyAndRunningServerPicksItUp(t *testing.T) {
 	m := newSelfSigned(t, dir, c, nil)
 	old := m.Info()
 
-	before, after, err := Regenerate(dir, c.now())
+	before, after, err := Regenerate(dir, c.now(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -344,7 +345,7 @@ func TestRegenerateMakesANewKeyAndRunningServerPicksItUp(t *testing.T) {
 
 	// On an empty directory there is no "before".
 	empty := filepath.Join(t.TempDir(), "tls")
-	before, after, err = Regenerate(empty, c.now())
+	before, after, err = Regenerate(empty, c.now(), nil)
 	if err != nil || before.PublicKeySHA256 != "" || after.PublicKeySHA256 == "" {
 		t.Errorf("regenerate in an empty directory: %+v, %+v, %v", before, after, err)
 	}
@@ -480,7 +481,7 @@ func TestRunReloadsOnSignal(t *testing.T) {
 		close(done)
 	}()
 
-	if _, _, err := Regenerate(dir, c.now()); err != nil {
+	if _, _, err := Regenerate(dir, c.now(), nil); err != nil {
 		t.Fatal(err)
 	}
 	hup <- struct{}{}
@@ -640,7 +641,7 @@ func TestPendingPairIsNotInstalledOverAWorkingOne(t *testing.T) {
 	if m.Info().PublicKeySHA256 != old {
 		t.Error("a tick installed the pending pair over a working one")
 	}
-	_, after, err := Regenerate(dir, c.now())
+	_, after, err := Regenerate(dir, c.now(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -687,7 +688,7 @@ func TestConcurrentReadsNeverSeeAMismatch(t *testing.T) {
 	done := make(chan error, 1)
 	go func() {
 		for i := 0; i < rounds; i++ {
-			if _, _, err := Regenerate(dir, c.now()); err != nil {
+			if _, _, err := Regenerate(dir, c.now(), nil); err != nil {
 				done <- err
 				return
 			}
@@ -719,4 +720,50 @@ func TestConcurrentReadsNeverSeeAMismatch(t *testing.T) {
 		}
 		reads++
 	}
+}
+
+// TestRegenerateCallsIntentBeforeAnythingChanges: the intent sees what is
+// there and exactly the key that will be installed, while nothing on disk
+// has changed yet; a failing intent changes nothing.
+func TestRegenerateCallsIntentBeforeAnythingChanges(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "tls")
+	c := &clock{t: time.Now()}
+	old := newSelfSigned(t, dir, c, nil).Info()
+	keyFile := filepath.Join(dir, KeyFileName)
+	keyBefore, _ := os.ReadFile(keyFile)
+
+	var seenBefore, seenNext Info
+	before, after, err := Regenerate(dir, c.now(), func(b, n Info) error {
+		seenBefore, seenNext = b, n
+		if k, _ := os.ReadFile(keyFile); string(k) != string(keyBefore) {
+			t.Error("the key on disk changed before the intent was recorded")
+		}
+		if pendingExists(dir) {
+			t.Error("pending files were written before the intent was recorded")
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if seenBefore.PublicKeySHA256 != old.PublicKeySHA256 || before.PublicKeySHA256 != seenBefore.PublicKeySHA256 {
+		t.Errorf("intent saw before %s, want %s", seenBefore.PublicKeySHA256, old.PublicKeySHA256)
+	}
+	if seenNext.PublicKeySHA256 != after.PublicKeySHA256 || seenNext.CertificateSHA256 != after.CertificateSHA256 {
+		t.Errorf("intent announced %s, installed %s", seenNext.PublicKeySHA256, after.PublicKeySHA256)
+	}
+
+	// A failing intent: nothing changes, nothing is pending.
+	keyBefore, _ = os.ReadFile(keyFile)
+	refused := errors.New("audit log unavailable")
+	if _, _, err := Regenerate(dir, c.now(), func(Info, Info) error { return refused }); !errors.Is(err, refused) {
+		t.Fatalf("error = %v, want the intent's", err)
+	}
+	if k, _ := os.ReadFile(keyFile); string(k) != string(keyBefore) {
+		t.Error("the key changed although the intent failed")
+	}
+	if pendingExists(dir) {
+		t.Error("pending files remain after a failed intent")
+	}
+	assertSwapped(t, dir, after.PublicKeySHA256)
 }

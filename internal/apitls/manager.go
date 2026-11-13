@@ -279,13 +279,28 @@ func Fingerprint(dir, certFile, keyFile string) (Info, error) {
 // ones, for the host's current names and addresses. It returns what was
 // there before (the zero Info when nothing was) and what is there now. A
 // running skep-api picks the new pair up by itself.
-func Regenerate(dir string, now time.Time) (before, after Info, err error) {
+//
+// intent, when not nil, is called with what is there and what will
+// replace it after the new pair exists in memory and before anything on
+// disk changes. If it fails, nothing changes. A caller records the intent
+// there, so that a key change completed after a crash (by the recovery in
+// loadGenerated) is still on record, with the key that was installed.
+func Regenerate(dir string, now time.Time, intent func(before, next Info) error) (before, after Info, err error) {
 	if old, loadErr := loadGenerated(dir); loadErr == nil {
 		before = infoFor(SelfSigned, old.leaf)
 	}
-	l, err := generate(dir, now)
+	p, err := newPair(now)
 	if err != nil {
 		return Info{}, Info{}, err
+	}
+	if intent != nil {
+		if err := intent(before, infoFor(SelfSigned, p.leaf)); err != nil {
+			return before, Info{}, err
+		}
+	}
+	l, err := install(dir, p)
+	if err != nil {
+		return before, Info{}, err
 	}
 	return before, infoFor(SelfSigned, l.leaf), nil
 }

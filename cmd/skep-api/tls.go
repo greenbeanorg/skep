@@ -4,13 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/greenbeanorg/skep/internal/apidb"
 	"io"
 	"strings"
 	"time"
 
+	"github.com/greenbeanorg/skep/internal/apidb"
 	"github.com/greenbeanorg/skep/internal/apitls"
 	"github.com/greenbeanorg/skep/internal/audit"
+	"github.com/greenbeanorg/skep/internal/ids"
 )
 
 const tlsUsage = `usage:
@@ -71,32 +72,70 @@ func tlsRegenerate(ctx context.Context, args []string, e env) error {
 		return fmt.Errorf("an operator-supplied certificate is configured (%s); Skep never replaces operator files", cfg.TLS.CertFile)
 	}
 	log := quietLogger(e.stderr)
-	// Open the audit log first: a key change that cannot be recorded
-	// does not happen.
+	// Open the audit log first: a key change whose intent cannot be
+	// recorded does not happen.
 	db, err := openDatabase(ctx, cfg, log)
 	if err != nil {
 		return err
 	}
 	defer db.Close()
 
-	before, after, err := apitls.Regenerate(cfg.TLSDir(), time.Now())
+	// Two entries, like the task engine's requested and finished pair,
+	// joined by operation_id. The access log has no phase column, so the
+	// phase is in the details. The intent is written after the new pair
+	// exists in memory and before anything on disk changes: a key change
+	// that completes after a crash (skep-api finishes a half-done swap at
+	// its next start) is still on record, with the key that was
+	// installed. If the intent cannot be written, nothing changes.
+	opID, err := ids.NewUUID()
 	if err != nil {
 		return err
 	}
-	details := map[string]any{
-		"new_public_key_sha256":  after.PublicKeySHA256,
-		"new_certificate_sha256": after.CertificateSHA256,
-		"not_after":              after.NotAfter.UTC().Format(time.RFC3339),
+	access := apidb.NewAccessLog(db)
+	actor := audit.LocalActor(e.uid)
+	record := func(phase audit.Phase, outcome audit.Outcome, details map[string]any) error {
+		details["phase"], details["operation_id"] = string(phase), opID
+		return access.Write(ctx, audit.AccessEntry{
+			ActorName: actor, Action: apitls.ActionRegenerate, ResourceType: "tls",
+			Outcome: outcome, Details: details,
+		})
 	}
-	if before.PublicKeySHA256 != "" {
-		details["old_public_key_sha256"] = before.PublicKeySHA256
-		details["old_certificate_sha256"] = before.CertificateSHA256
+	pins := func(before, next apitls.Info) map[string]any {
+		d := map[string]any{
+			"new_public_key_sha256":  next.PublicKeySHA256,
+			"new_certificate_sha256": next.CertificateSHA256,
+			"not_after":              next.NotAfter.UTC().Format(time.RFC3339),
+		}
+		if before.PublicKeySHA256 != "" {
+			d["old_public_key_sha256"] = before.PublicKeySHA256
+			d["old_certificate_sha256"] = before.CertificateSHA256
+		}
+		return d
 	}
-	if err := apidb.NewAccessLog(db).Write(ctx, audit.AccessEntry{
-		ActorName: audit.LocalActor(e.uid), Action: apitls.ActionRegenerate, ResourceType: "tls",
-		Outcome: audit.Success, Details: details,
-	}); err != nil {
-		return fmt.Errorf("the key was replaced, but the audit entry could not be written: %w", err)
+
+	var next apitls.Info
+	before, after, err := apitls.Regenerate(cfg.TLSDir(), time.Now(), func(before, n apitls.Info) error {
+		next = n
+		if err := record(audit.Requested, audit.Success, pins(before, n)); err != nil {
+			return fmt.Errorf("the key change could not be recorded, so nothing was changed: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		if next.PublicKeySHA256 == "" {
+			// The intent was not written (or the pair could not be
+			// made): nothing on disk changed, so there is no outcome.
+			return err
+		}
+		details := pins(before, next)
+		details["error"] = err.Error()
+		if werr := record(audit.Finished, audit.Failure, details); werr != nil {
+			log.Error("could not write the outcome of the key change to the access audit log", "error", werr)
+		}
+		return err
+	}
+	if err := record(audit.Finished, audit.Success, pins(before, after)); err != nil {
+		return fmt.Errorf("the key was replaced and its intent is recorded, but the outcome could not be written: %w", err)
 	}
 
 	if before.PublicKeySHA256 != "" {
