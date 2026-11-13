@@ -159,7 +159,15 @@ func (m *Manager) reload(force bool) error {
 			return nil
 		}
 	}
-	l, err := loadPair(certFile, keyFile)
+	var l *loaded
+	var err error
+	if m.source == Operator {
+		l, err = loadPair(certFile, keyFile)
+	} else {
+		// Finishes a swap that generate has half done, so a reload that
+		// lands between its renames gets the new pair.
+		l, err = loadGenerated(m.opts.Dir)
+	}
 	if err != nil {
 		m.log.Error("TLS: the certificate files could not be loaded; the certificate in use stays",
 			"cert_file", certFile, "error", err)

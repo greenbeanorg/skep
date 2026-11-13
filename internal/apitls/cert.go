@@ -223,25 +223,34 @@ type loaded struct {
 // loadPair reads a certificate and key and checks that they belong
 // together.
 func loadPair(certFile, keyFile string) (*loaded, error) {
+	l, _, err := readPair(certFile, keyFile)
+	return l, err
+}
+
+// readPair is loadPair that also returns the stamp of what it read, when
+// both files could be read, so a caller can tell whether the files
+// changed while it was reading.
+func readPair(certFile, keyFile string) (*loaded, string, error) {
 	certPEM, err := os.ReadFile(certFile)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	keyPEM, err := os.ReadFile(keyFile)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
+	stamp := fileStamp(certPEM, keyPEM)
 	// X509KeyPair fails when the key does not match the certificate.
 	cert, err := tls.X509KeyPair(certPEM, keyPEM)
 	if err != nil {
-		return nil, fmt.Errorf("%s and %s: %w", certFile, keyFile, err)
+		return nil, stamp, fmt.Errorf("%s and %s: %w", certFile, keyFile, err)
 	}
 	leaf, err := x509.ParseCertificate(cert.Certificate[0])
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", certFile, err)
+		return nil, stamp, fmt.Errorf("%s: %w", certFile, err)
 	}
 	cert.Leaf = leaf
-	return &loaded{cert: &cert, leaf: leaf, stamp: fileStamp(certPEM, keyPEM)}, nil
+	return &loaded{cert: &cert, leaf: leaf, stamp: stamp}, stamp, nil
 }
 
 // fileStamp fingerprints file contents. It is compared, never shown.
@@ -282,8 +291,22 @@ func ensureDir(dir string) error {
 }
 
 // generate creates a new key and certificate in dir, replacing what is
-// there. The key is written first; a reader that sees the new key with the
-// old certificate finds a pair that does not match and keeps what it has.
+// there, so that no reader ever has to use a key and certificate that do
+// not match. Two files cannot be replaced in one atomic step, so the swap
+// is made recoverable instead:
+//
+//  1. Both new files are written under their pending names
+//     (key.pem.next, cert.pem.next), each to a temporary file, synced,
+//     and renamed; then the directory is synced. Nothing a reader uses
+//     has changed yet, and the complete new pair is durable.
+//  2. finishSwap renames the key into place, then the certificate, and
+//     syncs the directory.
+//
+// Between the two renames of step 2 the key is new and the certificate
+// old. A reader that finds that state (loadGenerated) sees the pending
+// certificate that matches the key and finishes the swap itself, so a
+// reload landing there gets the new pair, and a crash there is repaired
+// at the next start.
 func generate(dir string, now time.Time) (*loaded, error) {
 	if err := ensureDir(dir); err != nil {
 		return nil, err
@@ -301,18 +324,91 @@ func generate(dir string, now time.Time) (*loaded, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := writePending(dir, keyPEM, encodeCert(der)); err != nil {
+		return nil, err
+	}
+	if err := finishSwap(dir); err != nil {
+		return nil, err
+	}
+	return loadPair(filepath.Join(dir, CertFileName), filepath.Join(dir, KeyFileName))
+}
+
+// pendingSuffix marks the files of a new pair that is not in place yet.
+const pendingSuffix = ".next"
+
+// pendingFiles returns the pending names of the certificate and key.
+func pendingFiles(dir string) (certNext, keyNext string) {
+	return filepath.Join(dir, CertFileName+pendingSuffix), filepath.Join(dir, KeyFileName+pendingSuffix)
+}
+
+// writePending writes a complete new pair under the pending names and
+// makes it durable. The files in use are not touched.
+func writePending(dir string, keyPEM, certPEM []byte) error {
+	certNext, keyNext := pendingFiles(dir)
+	if err := writeFile(keyNext, keyPEM, 0o600); err != nil {
+		return fmt.Errorf("apitls: write key: %w", err)
+	}
+	if err := writeFile(certNext, certPEM, 0o644); err != nil {
+		return fmt.Errorf("apitls: write certificate: %w", err)
+	}
+	return syncDir(dir)
+}
+
+// finishSwap moves a pending pair into place: the key first, then the
+// certificate. It is idempotent, and safe when generate and a reader run
+// it at the same time: each rename is done by whoever gets there first,
+// and the other finds the pending file gone.
+//
+// It never installs a key without its certificate: the pending key moves
+// only if it matches the pending certificate, and the pending certificate
+// moves only if it matches the key in place.
+func finishSwap(dir string) error {
 	certFile, keyFile := filepath.Join(dir, CertFileName), filepath.Join(dir, KeyFileName)
-	if err := writeFile(keyFile, keyPEM, 0o600); err != nil {
-		return nil, fmt.Errorf("apitls: write key: %w", err)
+	certNext, keyNext := pendingFiles(dir)
+
+	if _, err := os.Stat(keyNext); err == nil {
+		_, err := loadPair(certNext, keyNext)
+		switch {
+		case errors.Is(err, os.ErrNotExist):
+			// Moved by someone else since the Stat.
+		case err != nil:
+			return fmt.Errorf("apitls: the pending key and certificate in %s do not match: %w", dir, err)
+		default:
+			if err := os.Rename(keyNext, keyFile); err != nil && !errors.Is(err, os.ErrNotExist) {
+				return fmt.Errorf("apitls: install key: %w", err)
+			}
+		}
 	}
-	if err := writeFile(certFile, encodeCert(der), 0o644); err != nil {
-		return nil, fmt.Errorf("apitls: write certificate: %w", err)
+	if _, err := os.Stat(certNext); err == nil {
+		if _, err := loadPair(certNext, keyFile); err == nil {
+			if err := os.Rename(certNext, certFile); err != nil && !errors.Is(err, os.ErrNotExist) {
+				return fmt.Errorf("apitls: install certificate: %w", err)
+			}
+		}
 	}
-	return loadPair(certFile, keyFile)
+	return syncDir(dir)
+}
+
+// syncDir makes the renames in dir durable.
+func syncDir(dir string) error {
+	d, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	defer d.Close()
+	if err := d.Sync(); err != nil {
+		return fmt.Errorf("apitls: sync %s: %w", dir, err)
+	}
+	return nil
 }
 
 // loadGenerated loads the generated pair from dir. It returns
 // errNoCertificate when neither file exists.
+//
+// When the pair does not load and a pending pair exists, a swap by
+// generate is half done (in progress, or interrupted by a crash), and it
+// is finished here before loading again; see generate. Nothing else is
+// ever replaced: without a pending pair that matches, the error stands.
 func loadGenerated(dir string) (*loaded, error) {
 	certFile, keyFile := filepath.Join(dir, CertFileName), filepath.Join(dir, KeyFileName)
 	_, certErr := os.Stat(certFile)
@@ -320,11 +416,40 @@ func loadGenerated(dir string) (*loaded, error) {
 	if errors.Is(certErr, os.ErrNotExist) && errors.Is(keyErr, os.ErrNotExist) {
 		return nil, errNoCertificate
 	}
-	l, err := loadPair(certFile, keyFile)
-	if err != nil {
-		return nil, fmt.Errorf("apitls: the generated certificate in %s is unusable: %w", dir, err)
+	for attempt := 1; ; attempt++ {
+		l, stamp, err := readPair(certFile, keyFile)
+		if err == nil {
+			return l, nil
+		}
+		// Read again only on evidence of a concurrent generate: a pending
+		// pair (whose swap is finished first), or files that changed
+		// while they were read, which tears the read across a swap.
+		again := false
+		if pendingExists(dir) {
+			if swapErr := finishSwap(dir); swapErr != nil {
+				return nil, fmt.Errorf("apitls: the generated certificate in %s is unusable: %w (and %w)", dir, err, swapErr)
+			}
+			again = true
+		} else if stamp != "" && stampOf(certFile, keyFile) != stamp {
+			again = true
+		}
+		if !again || attempt == maxLoadAttempts {
+			return nil, fmt.Errorf("apitls: the generated certificate in %s is unusable: %w", dir, err)
+		}
 	}
-	return l, nil
+}
+
+// maxLoadAttempts bounds loadGenerated's reads while a generate runs. If
+// they run out, a running server keeps the certificate it has and tries
+// again at the next tick; it never serves a pair that does not match.
+const maxLoadAttempts = 10
+
+// pendingExists reports whether either pending file is in dir.
+func pendingExists(dir string) bool {
+	certNext, keyNext := pendingFiles(dir)
+	_, certErr := os.Stat(certNext)
+	_, keyErr := os.Stat(keyNext)
+	return certErr == nil || keyErr == nil
 }
 
 // renew issues a new certificate for the existing key, with the names of

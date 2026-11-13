@@ -498,3 +498,225 @@ func TestRunReloadsOnSignal(t *testing.T) {
 		t.Fatal("Run did not stop")
 	}
 }
+
+// pendingPair writes a new pair under the pending names, as the first
+// step of generate does, and returns its public key pin.
+func pendingPair(t *testing.T, dir string, now time.Time) string {
+	t.Helper()
+	key, err := newKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	der, err := selfSign(key, []string{"next"}, nil, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyPEM, err := encodeKey(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writePending(dir, keyPEM, encodeCert(der)); err != nil {
+		t.Fatal(err)
+	}
+	leaf, _ := x509.ParseCertificate(der)
+	return fingerprint(leaf.RawSubjectPublicKeyInfo)
+}
+
+// halfSwapped leaves dir as generate leaves it between its two renames:
+// the new key in place, the old certificate still in place, and the new
+// certificate pending.
+func halfSwapped(t *testing.T, dir string, now time.Time) (newPin string) {
+	t.Helper()
+	newPin = pendingPair(t, dir, now)
+	_, keyNext := pendingFiles(dir)
+	if err := os.Rename(keyNext, filepath.Join(dir, KeyFileName)); err != nil {
+		t.Fatal(err)
+	}
+	// This is the window: the files in place do not match.
+	if _, err := loadPair(filepath.Join(dir, CertFileName), filepath.Join(dir, KeyFileName)); err == nil {
+		t.Fatal("the half-swapped files match; the test does not reach the window")
+	}
+	return newPin
+}
+
+// assertSwapped checks that dir holds a matching pair with the given key
+// and no pending files.
+func assertSwapped(t *testing.T, dir, wantPin string) {
+	t.Helper()
+	l, err := loadPair(filepath.Join(dir, CertFileName), filepath.Join(dir, KeyFileName))
+	if err != nil {
+		t.Fatalf("the files on disk do not match: %v", err)
+	}
+	if got := fingerprint(l.leaf.RawSubjectPublicKeyInfo); got != wantPin {
+		t.Errorf("key on disk %s, want %s", got, wantPin)
+	}
+	if pendingExists(dir) {
+		t.Error("pending files remain after the swap")
+	}
+	if got := mode(t, filepath.Join(dir, KeyFileName)); got != 0o600 {
+		t.Errorf("key file mode = %04o", got)
+	}
+}
+
+// TestReloadBetweenTheRenames: a reload that lands between generate's
+// rename of the key and of the certificate gets the new pair, never a
+// mismatched one, and leaves the files on disk matching.
+func TestReloadBetweenTheRenames(t *testing.T) {
+	for name, reload := range map[string]func(*Manager){
+		"tick":   func(m *Manager) { m.Tick(context.Background()) },
+		"SIGHUP": func(m *Manager) { _ = m.Reload(context.Background()) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := filepath.Join(t.TempDir(), "tls")
+			c := &clock{t: time.Now()}
+			m := newSelfSigned(t, dir, c, nil)
+			old := m.Info().PublicKeySHA256
+
+			newPin := halfSwapped(t, dir, c.now())
+			reload(m)
+			if got := m.Info().PublicKeySHA256; got != newPin || got == old {
+				t.Errorf("serving %s after the reload, want the new key %s (old %s)", got, newPin, old)
+			}
+			cert, _ := m.GetCertificate(nil)
+			if cert.Leaf == nil || fingerprint(cert.Leaf.RawSubjectPublicKeyInfo) != newPin {
+				t.Error("the served certificate is not the new one")
+			}
+			assertSwapped(t, dir, newPin)
+		})
+	}
+}
+
+// TestStartAfterACrashBetweenTheRenames: a crash between the renames
+// leaves mismatched files; the next start finishes the swap instead of
+// refusing to start.
+func TestStartAfterACrashBetweenTheRenames(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "tls")
+	c := &clock{t: time.Now()}
+	newSelfSigned(t, dir, c, nil)
+	newPin := halfSwapped(t, dir, c.now())
+
+	m, err := New(context.Background(), Options{Dir: dir, Logger: quiet(), Now: c.now})
+	if err != nil {
+		t.Fatalf("start after a crash between the renames: %v", err)
+	}
+	if got := m.Info().PublicKeySHA256; got != newPin {
+		t.Errorf("serving %s, want %s", got, newPin)
+	}
+	assertSwapped(t, dir, newPin)
+
+	// The same at the very first generation: no old certificate at all.
+	first := filepath.Join(t.TempDir(), "tls")
+	if err := ensureDir(first); err != nil {
+		t.Fatal(err)
+	}
+	firstPin := pendingPair(t, first, c.now())
+	_, keyNext := pendingFiles(first)
+	if err := os.Rename(keyNext, filepath.Join(first, KeyFileName)); err != nil {
+		t.Fatal(err)
+	}
+	if m, err = New(context.Background(), Options{Dir: first, Logger: quiet(), Now: c.now}); err != nil {
+		t.Fatalf("start after a crash in the first generation: %v", err)
+	}
+	if m.Info().PublicKeySHA256 != firstPin {
+		t.Errorf("serving %s, want %s", m.Info().PublicKeySHA256, firstPin)
+	}
+	assertSwapped(t, first, firstPin)
+}
+
+// TestPendingPairIsNotInstalledOverAWorkingOne: a crash before the
+// renames leaves the old pair intact; it stays in use, and the leftover
+// pending files do not stop the next regenerate.
+func TestPendingPairIsNotInstalledOverAWorkingOne(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "tls")
+	c := &clock{t: time.Now()}
+	old := newSelfSigned(t, dir, c, nil).Info().PublicKeySHA256
+	pendingPair(t, dir, c.now())
+
+	m, err := New(context.Background(), Options{Dir: dir, Logger: quiet(), Now: c.now})
+	if err != nil || m.Info().PublicKeySHA256 != old {
+		t.Fatalf("start with a working pair and a pending one: %v, serving %s, want %s", err, m.Info().PublicKeySHA256, old)
+	}
+	m.Tick(context.Background())
+	if m.Info().PublicKeySHA256 != old {
+		t.Error("a tick installed the pending pair over a working one")
+	}
+	_, after, err := Regenerate(dir, c.now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertSwapped(t, dir, after.PublicKeySHA256)
+}
+
+// TestMismatchedPendingPairIsRefused: a pending key without its own
+// certificate is never moved into place.
+func TestMismatchedPendingPairIsRefused(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "tls")
+	c := &clock{t: time.Now()}
+	newSelfSigned(t, dir, c, nil)
+	keyFile := filepath.Join(dir, KeyFileName)
+	before, _ := os.ReadFile(keyFile)
+
+	// Break the pair in place, and leave a pending key whose certificate
+	// belongs to another key.
+	pendingPair(t, dir, c.now())
+	other, _ := newKey()
+	otherPEM, _ := encodeKey(other)
+	_, keyNext := pendingFiles(dir)
+	if err := os.WriteFile(keyNext, otherPEM, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	os.Remove(filepath.Join(dir, CertFileName))
+
+	_, err := New(context.Background(), Options{Dir: dir, Logger: quiet(), Now: c.now})
+	if err == nil || !strings.Contains(err.Error(), "tls regenerate") || !strings.Contains(err.Error(), "pending") {
+		t.Errorf("error = %v, want a refusal naming the pending pair and 'tls regenerate'", err)
+	}
+	if after, _ := os.ReadFile(keyFile); string(after) != string(before) {
+		t.Error("the key in place was replaced by a pending key without its certificate")
+	}
+}
+
+// TestConcurrentReadsNeverSeeAMismatch: while the key is regenerated
+// again and again, every load of the generated pair succeeds.
+func TestConcurrentReadsNeverSeeAMismatch(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "tls")
+	c := &clock{t: time.Now()}
+	m := newSelfSigned(t, dir, c, nil)
+
+	const rounds = 200
+	done := make(chan error, 1)
+	go func() {
+		for i := 0; i < rounds; i++ {
+			if _, _, err := Regenerate(dir, c.now()); err != nil {
+				done <- err
+				return
+			}
+		}
+		done <- nil
+	}()
+	reads := 0
+	for {
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Fatalf("regenerate: %v", err)
+			}
+			if reads == 0 {
+				t.Fatal("no read overlapped the regenerations")
+			}
+			m.Tick(context.Background())
+			fp, err := Fingerprint(dir, "", "")
+			if err != nil || m.Info().PublicKeySHA256 != fp.PublicKeySHA256 {
+				t.Errorf("after the last regenerate: serving %s, on disk %+v (%v)", m.Info().PublicKeySHA256, fp, err)
+			}
+			assertSwapped(t, dir, fp.PublicKeySHA256)
+			t.Logf("%d reads during %d regenerations", reads, rounds)
+			return
+		default:
+		}
+		if _, err := loadGenerated(dir); err != nil {
+			t.Fatalf("read %d saw an unusable pair: %v", reads, err)
+		}
+		reads++
+	}
+}
