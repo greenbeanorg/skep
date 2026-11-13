@@ -1,6 +1,7 @@
 import { api } from "@/api/client";
 import { useQuery } from "@/api/hooks";
 import type { Hardware } from "@/api/types";
+import { useSystem } from "@/app/system";
 import { ErrorNotice, Fact, Facts, LoadingCards, Meter, PageHeader, RefreshButton } from "@/components/page";
 import { CapabilityBadge, PoolHealthBadge } from "@/components/status";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -189,13 +190,11 @@ function HardwareView({ hw }: { hw: Hardware }) {
 
 export function NodesPage() {
   // Only the local node exists in this release; its ID comes from /system.
-  const system = useQuery("system", (signal) => api.system(signal));
+  const system = useSystem();
   const nodeId = system.data?.node_id;
-  const hardware = useQuery(
-    nodeId ? `hardware:${nodeId}` : null,
-    (signal) => api.hardware(nodeId ?? "", signal),
-    { refreshMs: 30_000 },
-  );
+  const hardware = useQuery(nodeId ? `hardware:${nodeId}` : null, (o) => api.hardware(nodeId ?? "", o), {
+    refreshMs: 30_000,
+  });
 
   const hw = hardware.data;
   const error = system.error ?? hardware.error;

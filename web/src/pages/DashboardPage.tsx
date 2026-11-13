@@ -2,10 +2,13 @@ import { Link } from "react-router";
 
 import { api } from "@/api/client";
 import { useQuery } from "@/api/hooks";
-import type { Capability } from "@/api/types";
+import { PERMISSIONS, type Capability } from "@/api/types";
+import { useSession } from "@/app/session";
+import { useSystem } from "@/app/system";
 import { ErrorNotice, Fact, Facts, LoadingCards, PageHeader, RefreshButton } from "@/components/page";
 import { CapabilityBadge, HealthBadge, TaskStatusBadge } from "@/components/status";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Notice } from "@/components/ui/notice";
 import { formatAgo, formatDateTime, formatDuration, shortId } from "@/lib/format";
 
 function CapabilityRow({ name, detail, capability }: { name: string; detail: string; capability: Capability }) {
@@ -22,14 +25,19 @@ function CapabilityRow({ name, detail, capability }: { name: string; detail: str
 }
 
 export function DashboardPage() {
-  const system = useQuery("system", (signal) => api.system(signal), { refreshMs: 15_000 });
-  const health = useQuery("health", (signal) => api.health(signal), { refreshMs: 15_000 });
-  const tasks = useQuery("tasks:recent", (signal) => api.tasks({ limit: 5 }, signal), { refreshMs: 10_000 });
+  const { can } = useSession();
+  const system = useSystem();
+  const canReadTasks = can(PERMISSIONS.taskRead);
+  const tasks = useQuery(canReadTasks ? "tasks:recent" : null, (o) => api.tasks({ limit: 5 }, o), {
+    refreshMs: 10_000,
+  });
 
   const sys = system.data;
+  // The health document rides along in the system document.
+  const health = sys?.health;
+  const degraded = health ? Object.entries(health.checks ?? {}).filter(([, c]) => c.status !== "ok") : [];
   const reload = () => {
     system.reload();
-    health.reload();
     tasks.reload();
   };
 
@@ -61,7 +69,7 @@ export function DashboardPage() {
                 <CardTitle>System</CardTitle>
                 <CardDescription>Identity and software</CardDescription>
               </div>
-              <HealthBadge status={health.data?.status} />
+              <HealthBadge status={health?.status} />
             </CardHeader>
             <CardContent>
               <Facts>
@@ -111,26 +119,35 @@ export function DashboardPage() {
             <CardHeader>
               <div>
                 <CardTitle>Health checks</CardTitle>
-                <CardDescription>Dependencies of the agent</CardDescription>
+                <CardDescription>The agent's dependencies and skep-api's own checks</CardDescription>
               </div>
+              <HealthBadge status={health?.status} />
             </CardHeader>
             <CardContent>
-              {health.error && !health.data ? (
-                <p className="text-sm text-bad">{health.error.message}</p>
-              ) : health.data ? (
+              {degraded.length > 0 ? (
+                <Notice tone={health?.status === "unavailable" ? "bad" : "warn"} className="mb-3" title="Needs attention">
+                  {degraded.map(([name, check]) => (
+                    <p key={name}>
+                      <span className="font-medium">{name}</span>
+                      {check.error ? <>: {check.error}</> : null}
+                    </p>
+                  ))}
+                </Notice>
+              ) : null}
+              {health ? (
                 <ul className="divide-y text-sm">
-                  {Object.entries(health.data.checks ?? {}).map(([name, check]) => (
+                  {Object.entries(health.checks ?? {}).map(([name, check]) => (
                     <li key={name} className="flex items-center justify-between gap-4 py-2">
                       <span>
                         {name}
-                        {check.error ? <span className="ml-2 text-xs text-muted-foreground">{check.error}</span> : null}
+                        {check.critical ? <span className="ml-2 text-xs text-muted-foreground">critical</span> : null}
                       </span>
                       <HealthBadge status={check.status} />
                     </li>
                   ))}
                 </ul>
               ) : (
-                <p className="text-sm text-muted-foreground">Checking…</p>
+                <p className="text-sm text-muted-foreground">No health document in the system response.</p>
               )}
             </CardContent>
           </Card>
@@ -141,12 +158,16 @@ export function DashboardPage() {
                 <CardTitle>Recent tasks</CardTitle>
                 <CardDescription>The last five operations of the agent</CardDescription>
               </div>
-              <Link to="/tasks" className="text-xs font-medium underline underline-offset-2">
-                All tasks
-              </Link>
+              {canReadTasks ? (
+                <Link to="/tasks" className="text-xs font-medium underline underline-offset-2">
+                  All tasks
+                </Link>
+              ) : null}
             </CardHeader>
             <CardContent>
-              {tasks.error && !tasks.data ? (
+              {!canReadTasks ? (
+                <p className="text-sm text-muted-foreground">Your role cannot read tasks.</p>
+              ) : tasks.error && !tasks.data ? (
                 <p className="text-sm text-bad">{tasks.error.message}</p>
               ) : tasks.data && tasks.data.items.length === 0 ? (
                 <p className="text-sm text-muted-foreground">No tasks yet.</p>

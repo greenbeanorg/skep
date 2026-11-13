@@ -1,5 +1,6 @@
 import type { ComponentType } from "react";
 
+import { PERMISSIONS, type Permission } from "@/api/types";
 import {
   BackupIcon,
   ClusterIcon,
@@ -21,6 +22,12 @@ export interface NavItem {
   path: string;
   label: string;
   icon: ComponentType<IconProps>;
+  /**
+   * The permission the entry needs. An entry the role lacks is hidden, as
+   * a convenience: the server is the authority (ADR 0008, decision 1).
+   * Entries without one are shown to everyone logged in.
+   */
+  permission?: Permission;
   /** Set for sections that are not built yet: what it will hold, and when. */
   planned?: { summary: string; milestone: string };
 }
@@ -30,13 +37,14 @@ export interface NavGroup {
   items: NavItem[];
 }
 
-// The sections are the ones listed in CLAUDE.md, plus Tasks, which the API
-// already serves. Sections without a backend are honest placeholders.
+// The twelve sections CLAUDE.md names, with Tasks under Monitoring until
+// Monitoring has metrics of its own (ADR 0008, decision 1). Sections
+// without a backend are placeholders that show no data.
 export const NAV: NavGroup[] = [
   {
     label: "Overview",
     items: [
-      { path: "/", label: "Dashboard", icon: DashboardIcon },
+      { path: "/", label: "Dashboard", icon: DashboardIcon, permission: PERMISSIONS.systemRead },
       {
         path: "/cluster",
         label: "Cluster",
@@ -46,8 +54,7 @@ export const NAV: NavGroup[] = [
           milestone: "Milestone 8, after the cluster technology is decided",
         },
       },
-      { path: "/nodes", label: "Nodes", icon: NodeIcon },
-      { path: "/tasks", label: "Tasks", icon: TasksIcon },
+      { path: "/nodes", label: "Nodes", icon: NodeIcon, permission: PERMISSIONS.nodeRead },
     ],
   },
   {
@@ -98,9 +105,15 @@ export const NAV: NavGroup[] = [
         icon: BackupIcon,
         planned: { summary: "Backup jobs, schedules, and restore.", milestone: "Milestone 9" },
       },
+    ],
+  },
+  {
+    label: "Monitoring",
+    items: [
+      { path: "/tasks", label: "Tasks", icon: TasksIcon, permission: PERMISSIONS.taskRead },
       {
         path: "/monitoring",
-        label: "Monitoring",
+        label: "Metrics",
         icon: MonitoringIcon,
         planned: { summary: "Metrics and resource history.", milestone: "A later milestone" },
       },
@@ -109,20 +122,17 @@ export const NAV: NavGroup[] = [
   {
     label: "Administration",
     items: [
-      {
-        path: "/users",
-        label: "Users and permissions",
-        icon: UsersIcon,
-        planned: { summary: "Users, roles, and sessions.", milestone: "Milestone 4" },
-      },
-      {
-        path: "/settings",
-        label: "Settings",
-        icon: SettingsIcon,
-        planned: { summary: "Node and interface settings.", milestone: "A later milestone" },
-      },
+      { path: "/users", label: "Users and permissions", icon: UsersIcon, permission: PERMISSIONS.userRead },
+      { path: "/settings", label: "Settings", icon: SettingsIcon, permission: PERMISSIONS.systemRead },
     ],
   },
 ];
 
 export const NAV_ITEMS: NavItem[] = NAV.flatMap((g) => g.items);
+
+/** The navigation with the entries a set of permissions does not allow removed. */
+export function visibleNav(can: (p: Permission) => boolean): NavGroup[] {
+  return NAV.map((g) => ({ ...g, items: g.items.filter((item) => !item.permission || can(item.permission)) })).filter(
+    (g) => g.items.length > 0,
+  );
+}

@@ -1,12 +1,13 @@
 import type { ReactNode } from "react";
 
-import type { ApiError } from "@/api/client";
 import { RefreshIcon } from "@/components/icons";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { formatAgo } from "@/lib/format";
 import { cn } from "@/lib/utils";
+
+export { ErrorNotice } from "@/components/errors";
 
 export function PageHeader({
   title,
@@ -39,34 +40,6 @@ export function RefreshButton({ onClick, updatedAt }: { onClick: () => void; upd
         Refresh
       </Button>
     </>
-  );
-}
-
-/** Shows an API error. With `stale`, it sits above data that is still shown. */
-export function ErrorNotice({ error, onRetry, stale }: { error: ApiError; onRetry?: () => void; stale?: boolean }) {
-  const title =
-    error.status === 0
-      ? "The Skep API is not reachable"
-      : error.status === 404
-        ? "Not found"
-        : "The request failed";
-  return (
-    <div role="alert" className="mb-4 rounded-lg border border-bad/40 bg-bad-soft px-4 py-3 text-sm">
-      <div className="font-medium text-bad">{title}</div>
-      <div className="mt-0.5 text-foreground/80">
-        {error.message}
-        {stale ? " Showing the last data received." : ""}
-      </div>
-      <div className="mt-1 flex items-center gap-3 text-xs text-muted-foreground">
-        <span className="font-mono">{error.code}</span>
-        {error.requestId ? <span className="font-mono">request {error.requestId}</span> : null}
-        {onRetry ? (
-          <button type="button" className="underline underline-offset-2" onClick={onRetry}>
-            Try again
-          </button>
-        ) : null}
-      </div>
-    </div>
   );
 }
 

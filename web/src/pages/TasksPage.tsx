@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Link } from "react-router";
 
-import { api, ApiError } from "@/api/client";
+import { api, toApiError, type ApiError } from "@/api/client";
 import { useQuery } from "@/api/hooks";
 import { TASK_STATUSES, type Task, type TaskStatus } from "@/api/types";
 import { ErrorNotice, PageHeader, RefreshButton } from "@/components/page";
@@ -36,7 +36,7 @@ export function TasksPage() {
 
   // The first page refreshes by itself. Older pages are appended on demand
   // and are not refreshed: finished tasks do not change.
-  const first = useQuery(`tasks:${filter}`, (signal) => api.tasks({ status, limit: PAGE_SIZE }, signal), {
+  const first = useQuery(`tasks:${filter}`, (o) => api.tasks({ status, limit: PAGE_SIZE }, o), {
     refreshMs: 5_000,
   });
   const [olderState, setOlder] = useState<Older>(() => noOlder("all"));
@@ -69,7 +69,7 @@ export function TasksPage() {
         );
       })
       .catch((err: unknown) => {
-        const error = err instanceof ApiError ? err : new ApiError(0, "client_error", "The page could not be loaded.");
+        const error = toApiError(err);
         setOlder((prev) => (prev.filter === forFilter ? { ...prev, loading: false, error } : prev));
       });
   };

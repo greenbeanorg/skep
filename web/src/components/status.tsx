@@ -38,10 +38,12 @@ export function CapabilityBadge({ capability }: { capability: Capability }) {
   );
 }
 
+const HEALTH_TONE: Record<string, Tone> = { ok: "ok", degraded: "warn", unavailable: "bad" };
+
 export function HealthBadge({ status }: { status: string | undefined }) {
   if (status === undefined) return <Badge tone="neutral">checking</Badge>;
   return (
-    <Badge tone={status === "ok" ? "ok" : "bad"}>
+    <Badge tone={HEALTH_TONE[status] ?? "warn"}>
       <Dot />
       {status === "ok" ? "healthy" : status}
     </Badge>

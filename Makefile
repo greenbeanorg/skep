@@ -109,8 +109,8 @@ run-dev: build-go ## Run skep-agent and skep-api in development mode (API on 127
 web-install: ## Install the web interface's dependencies (npm ci)
 	cd web && npm ci
 
-web-check: ## Type-check and test the web interface
-	cd web && npm run typecheck && npm test
+web-check: ## Type-check the web interface, check the generated API types, and run its tests
+	cd web && npm run typecheck && npm run check-types && npm test
 
 web-build: ## Build the web interface and copy it to $(WEBUI_DIST) for embedding
 	cd web && npm run build

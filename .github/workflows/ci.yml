@@ -105,6 +105,11 @@ jobs:
       - name: Type-check
         run: npm run typecheck
 
+      # src/api/schema.d.ts is generated from api/openapi.yaml; a change
+      # to the API without regenerating fails here.
+      - name: Check the generated API types
+        run: npm run check-types
+
       - name: Test
         run: npm test
 

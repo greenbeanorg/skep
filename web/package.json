@@ -8,8 +8,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:e2e": "playwright test",
-    "generate-types": "openapi-typescript ../api/openapi.yaml -o src/api/schema.d.ts",
-    "check-types": "openapi-typescript ../api/openapi.yaml -o /dev/stdout | diff -u src/api/schema.d.ts -",
+    "generate-types": "openapi-typescript ../api/openapi.yaml --default-non-nullable=false -o src/api/schema.d.ts",
+    "check-types": "openapi-typescript ../api/openapi.yaml --default-non-nullable=false --check -o src/api/schema.d.ts",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview"
   },

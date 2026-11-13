@@ -154,7 +154,7 @@ function TaskView({ task }: { task: TaskDetail }) {
 
 export function TaskDetailPage() {
   const { id = "" } = useParams();
-  const query = useQuery(id ? `task:${id}` : null, (signal) => api.task(id, signal), { refreshMs: 3_000 });
+  const query = useQuery(id ? `task:${id}` : null, (o) => api.task(id, o), { refreshMs: 3_000 });
   const task = query.data;
 
   return (
