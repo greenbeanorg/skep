@@ -393,7 +393,7 @@ func TestRunTLS(t *testing.T) {
 	defer startAgent(t, socket, &fakeAgent{})()
 	dataDir, cfg := filepath.Join(dir, "data"), fastConfig(t)
 	createAdmin(t, cfg, dataDir)
-	base := startAPI(t, "-dev", "-config", cfg, "-data-dir", dataDir, "-agent-socket", socket)
+	base, logs := startAPIWithLogs(t, "-dev", "-config", cfg, "-data-dir", dataDir, "-agent-socket", socket)
 	addr := strings.TrimPrefix(base, "https://")
 
 	for path, want := range map[string]os.FileMode{
@@ -468,18 +468,29 @@ func TestRunTLS(t *testing.T) {
 	if err := syscall.Kill(os.Getpid(), syscall.SIGHUP); err != nil {
 		t.Fatal(err)
 	}
-	var after models.System
-	deadline := time.Now().Add(10 * time.Second)
-	for {
-		// The session survives the key change; only the trust anchor is new.
-		get(t, withToken(client(t, dataDir), token), base+"/api/v1/system", http.StatusOK, &after)
-		if after.API.TLS.PublicKeySHA256 != sys.API.TLS.PublicKeySHA256 {
+	// The reload is asynchronous: the signal reaches the certificate
+	// manager through two channels. Wait for the server to say it has
+	// swapped the certificate before connecting, because a client that
+	// trusts only the new certificate cannot complete a handshake while
+	// the old one is still served.
+	reloaded := regexp.MustCompile(`"msg":"TLS: certificate reloaded from disk".*"public_key":"(sha256:[0-9a-f]+)","key_changed":true`)
+	var logged string
+	for deadline := time.Now().Add(10 * time.Second); ; {
+		if m := reloaded.FindStringSubmatch(logs.String()); m != nil {
+			logged = m[1]
 			break
 		}
 		if time.Now().After(deadline) {
-			t.Fatal("the running server did not pick up the regenerated key after SIGHUP")
+			t.Fatalf("the running server did not pick up the regenerated key after SIGHUP:\n%s", logs.String())
 		}
-		time.Sleep(20 * time.Millisecond)
+		time.Sleep(10 * time.Millisecond)
+	}
+	// The session survives the key change; only the trust anchor is new.
+	var after models.System
+	get(t, withToken(client(t, dataDir), token), base+"/api/v1/system", http.StatusOK, &after)
+	if after.API.TLS.PublicKeySHA256 == sys.API.TLS.PublicKeySHA256 || after.API.TLS.PublicKeySHA256 != logged {
+		t.Errorf("after SIGHUP the server reports the pin %s; old %s, reloaded %s",
+			after.API.TLS.PublicKeySHA256, sys.API.TLS.PublicKeySHA256, logged)
 	}
 	if !strings.Contains(out.String(), after.API.TLS.PublicKeySHA256) {
 		t.Errorf("the server's new pin %s is not the one regenerate printed:\n%s", after.API.TLS.PublicKeySHA256, out.String())
