@@ -1,6 +1,6 @@
 @import "tailwindcss";
 
-@custom-variant dark (&:where(.dark, .dark *));
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
 
 /*
  * Skep design tokens. A skep is a straw beehive: the palette is warm straw
@@ -38,7 +38,7 @@
   --info-soft: oklch(0.95 0.025 250);
 }
 
-.dark {
+:root[data-theme="dark"] {
   --background: oklch(0.17 0.015 260);
   --foreground: oklch(0.93 0.01 85);
   --surface: oklch(0.205 0.017 260);
@@ -105,7 +105,7 @@
   html {
     color-scheme: light;
   }
-  html.dark {
+  html[data-theme="dark"] {
     color-scheme: dark;
   }
   body {

@@ -5,18 +5,12 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="color-scheme" content="light dark" />
     <title>Skep</title>
-    <script>
-      // Apply the stored theme before the first paint to avoid a flash.
-      (function () {
-        try {
-          var stored = localStorage.getItem("skep-theme");
-          var dark =
-            stored === "dark" ||
-            (stored !== "light" && window.matchMedia("(prefers-color-scheme: dark)").matches);
-          if (dark) document.documentElement.classList.add("dark");
-        } catch (e) {}
-      })();
-    </script>
+    <!--
+      Applies the stored theme before the first paint. It is a file, not an
+      inline script, because skep-api serves the interface with a
+      Content-Security-Policy that allows no inline script (ADR 0008).
+    -->
+    <script src="/theme.js"></script>
   </head>
   <body>
     <div id="root"></div>

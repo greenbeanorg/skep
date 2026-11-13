@@ -60,7 +60,7 @@ function Sidebar({ onNavigate }: { onNavigate: () => void }) {
 }
 
 function TopBar({ onMenu }: { onMenu: () => void }) {
-  const { theme, toggle } = useTheme();
+  const { theme, setChoice } = useTheme();
   const system = useQuery("system", (signal) => api.system(signal), { refreshMs: 30_000 });
   const health = useQuery("health", (signal) => api.health(signal), { refreshMs: 10_000 });
 
@@ -95,7 +95,7 @@ function TopBar({ onMenu }: { onMenu: () => void }) {
         <Button
           variant="ghost"
           size="icon"
-          onClick={toggle}
+          onClick={() => setChoice(theme === "dark" ? "light" : "dark")}
           aria-label={theme === "dark" ? "Switch to the light theme" : "Switch to the dark theme"}
         >
           {theme === "dark" ? <SunIcon /> : <MoonIcon />}
