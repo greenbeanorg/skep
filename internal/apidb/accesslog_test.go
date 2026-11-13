@@ -63,7 +63,8 @@ func TestAccessLogWrite(t *testing.T) {
 		}
 	}
 
-	// The log is append-only, whoever asks.
+	// Nothing is archived, so nothing can be removed, whoever asks; and an
+	// entry is never changed.
 	if _, err := log.db.ExecContext(ctx, `DELETE FROM audit_log`); err == nil {
 		t.Error("audit entries could be deleted")
 	}
