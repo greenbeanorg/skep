@@ -600,6 +600,22 @@ open, or could not follow it literally. Each is open to correction.
 - **Audit endpoint (Decision 5).** `audit:read` is enforced on
   `GET /api/v1/audit`, which was added so the permission has something to
   protect.
+- **The origin check covers every request (Decision 3).** Changed after
+  the milestone shipped, as an amendment made in the review of
+  [ADR 0008](0008-web-ui.md). The text required a matching `Origin` only
+  on non-GET requests authenticated by cookie, and the login had its own
+  check; a bearer request, a GET, or a logout without a valid session
+  carrying another site's `Origin` was served. Now any request that
+  carries an `Origin` header must name `https://` plus the request's
+  `Host`, on every route, with any credentials or none, including
+  `POST /auth/login` and `POST /auth/logout`. The check is in the one
+  access gate (`serve`), before the route's requirement is looked at.
+  Requests without `Origin`, such as `skepctl`'s, are unaffected, and a
+  cookie-authenticated write still needs one. A refusal of a request with
+  a valid session is audited under its user (`auth.origin_check`); one
+  without a session is logged and not audited, like other unauthenticated
+  refusals, so no web page can grow `api.db`. The header's value is not
+  logged.
 - **Throttled attempts answer 429 (Decision 4).** The per-username and
   address delay is enforced by refusing attempts that arrive before the
   delay has passed, with `Retry-After`, not by holding the connection

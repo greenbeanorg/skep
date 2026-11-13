@@ -33,10 +33,15 @@ is an explicit change of `listen_address`.
   change, a role change, disabling, and deletion delete all of the user's
   sessions. The user and role are read on every request.
 - **Cross-site requests.** `SameSite=Strict` is the first control. The
-  second: a request authenticated by cookie that is not a GET or HEAD must
-  carry an `Origin` header naming this host over HTTPS, or it is refused
-  and audited. Bearer requests are exempt, because a browser does not
-  attach them by itself. Request bodies must be `application/json`.
+  second: any request that carries an `Origin` header, on any route,
+  authenticated or not (the login and the logout included), must name
+  this host over HTTPS, or it is refused. The third: a request
+  authenticated by cookie that is not a GET or HEAD must carry such an
+  `Origin`. Requests without `Origin`, such as `skepctl`'s, are not
+  affected; a browser cannot attach a bearer token by itself. A refusal
+  of a request with a valid session is audited under its user; one
+  without a session is only logged, so that no web page can fill the
+  audit log. Request bodies must be `application/json`.
 - **Failed logins are indistinguishable.** A wrong password, an unknown
   user, and a disabled user get the same answer, and the unknown and
   disabled cases verify a dummy hash made with the current parameters, so
