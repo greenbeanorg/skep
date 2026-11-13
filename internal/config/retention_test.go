@@ -65,3 +65,39 @@ func TestAgentRetentionSettings(t *testing.T) {
 		t.Errorf("tasks_days = %d, want the default", *cfg.Retention.TasksDays)
 	}
 }
+
+func TestAPIRetention(t *testing.T) {
+	cfg, err := loadAPI(t, APILoadOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The access log: sealed, and 90 days live (ADR 0007, amendment a).
+	r := cfg.Retention
+	if r.TasksDays != nil || *r.AuditLiveDays != 90 || !r.ArchiveEnabled() || r.AuditLiveDaysOrZero() != 90 {
+		t.Errorf("retention = %+v", r)
+	}
+	if want := filepath.Join(DefaultDataDir, "api", "audit-archive"); cfg.AuditArchiveDir() != want {
+		t.Errorf("archive directory = %q, want %q", cfg.AuditArchiveDir(), want)
+	}
+
+	load := func(retention string) (API, error) {
+		t.Helper()
+		return loadAPI(t, APILoadOptions{Path: writeFile(t, `{"retention": `+retention+`}`)})
+	}
+	if cfg, err := load(`{"audit_live_days": 0}`); err != nil || cfg.Retention.AuditLiveDaysOrZero() != 0 || !cfg.Retention.ArchiveEnabled() {
+		t.Errorf("seal and never remove: %+v, %v", cfg.Retention, err)
+	}
+	if cfg, err := load(`{"audit_archive": false}`); err != nil || cfg.Retention.ArchiveEnabled() || cfg.Retention.AuditLiveDaysOrZero() != 0 {
+		t.Errorf("archive off: %+v, %v", cfg.Retention, err)
+	}
+	for retention, want := range map[string]string{
+		`{"audit_live_days": 34}`: "retention.audit_live_days",
+		`{"audit_live_days": 7}`:  "retention.audit_live_days",
+		`{"tasks_days": 90}`:      "skep-agent",
+		`{"tasks_days": 0}`:       "skep-agent",
+	} {
+		if _, err := load(retention); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%s: error = %v, want one about %s", retention, err, want)
+		}
+	}
+}

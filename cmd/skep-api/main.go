@@ -75,8 +75,8 @@ var errRoot = errors.New("refusing to run as root: skep-api is the network-facin
 	"must run as the unprivileged skep account (use the skep_api rc.d service)")
 
 // run is the whole program; main only maps its error to an exit code.
-// Without a command it runs the server; "admin" and "tls" are local
-// commands for the host's administrator.
+// Without a command it runs the server; "admin", "tls", and "audit" are
+// local commands for the host's administrator.
 func run(ctx context.Context, args []string, e env) error {
 	if len(args) > 0 {
 		switch args[0] {
@@ -84,6 +84,8 @@ func run(ctx context.Context, args []string, e env) error {
 			return runAdmin(ctx, args[1:], e)
 		case "tls":
 			return runTLS(ctx, args[1:], e)
+		case "audit":
+			return runAudit(ctx, args[1:], e)
 		}
 	}
 	return runServer(ctx, args, e)
@@ -210,6 +212,27 @@ func runServer(ctx context.Context, args []string, e env) error {
 		return err
 	}
 	defer agent.Close()
+
+	// Retention of the access audit log: once now, then once a day.
+	archive, err := newAccessArchive(db, cfg, agent, log, time.Now)
+	if err != nil {
+		return err
+	}
+	log.Info("retention configured", "audit_archive", cfg.Retention.ArchiveEnabled(),
+		"audit_live_days", cfg.Retention.AuditLiveDaysOrZero(), "audit_archive_dir", cfg.AuditArchiveDir())
+	// The loop is stopped, and waited for, before the database closes.
+	archiveCtx, stopArchive := context.WithCancel(ctx)
+	archiveDone := make(chan struct{})
+	go func() {
+		defer close(archiveDone)
+		if archive != nil {
+			archiveLoop(archiveCtx, archive, cfg.Retention.AuditLiveDaysOrZero(), access, log, archiveInterval, archiveRetry)
+		}
+	}()
+	defer func() {
+		stopArchive()
+		<-archiveDone
+	}()
 
 	handler := api.NewHandler(api.Options{
 		Backend:  agent,
