@@ -110,7 +110,7 @@ test("login, dashboard, every page in both themes, logout", async ({ page }) => 
 
   // The dashboard, with the health checks and the recent tasks.
   await expect(page.getByRole("heading", { name: "Dashboard" })).toBeVisible();
-  await expect(page.getByText("Health checks")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Health checks" })).toBeVisible();
   await expect(page.getByRole("link", { name: /test\.sleep/ }).first()).toBeVisible();
   await expect(page.getByRole("navigation", { name: "Sections" }).getByRole("link", { name: "Users and permissions" })).toBeVisible();
   await shoot(page, "dashboard");
@@ -127,7 +127,7 @@ test("login, dashboard, every page in both themes, logout", async ({ page }) => 
   const nav = page.getByRole("navigation", { name: "Sections" });
   await nav.getByRole("link", { name: "Nodes" }).click();
   await expect(page.getByRole("heading", { name: "Nodes" })).toBeVisible();
-  await expect(page.getByText("Processor")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Processor" })).toBeVisible();
   await shoot(page, "nodes");
 
   await nav.getByRole("link", { name: "Tasks" }).click();
@@ -137,7 +137,7 @@ test("login, dashboard, every page in both themes, logout", async ({ page }) => 
 
   await page.getByRole("link", { name: /test\.sleep/ }).first().click();
   await expect(page.getByRole("heading", { name: "test.sleep" })).toBeVisible();
-  await expect(page.getByText("Events")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Events" })).toBeVisible();
   await shoot(page, "task-detail");
 
   await nav.getByRole("link", { name: "Users and permissions" }).click();
