@@ -73,6 +73,11 @@ type Options struct {
 	// believed. Empty, the default, means the header is ignored and the
 	// source address is always the TCP peer.
 	TrustedProxies []netip.Prefix
+	// UI serves every path outside /api: the web interface
+	// (internal/webui). It sets its own security headers. Nil, the
+	// default, answers those paths with the JSON 404. An unknown path
+	// under /api is a JSON 404 in either case; it never falls back to UI.
+	UI http.Handler
 }
 
 type handler struct {
@@ -164,7 +169,16 @@ func NewHandler(opts Options) http.Handler {
 	for _, path := range paths {
 		mux.Handle(Prefix+path, h.dispatch(byPath[path]))
 	}
-	mux.HandleFunc("/", httpkit.NotFound)
+	// Anything else under /api, any version, is an unknown endpoint. The
+	// interface, when there is one, gets the rest. "/api" itself is
+	// registered too, or the mux would redirect it to "/api/".
+	mux.HandleFunc("/api", httpkit.NotFound)
+	mux.HandleFunc("/api/", httpkit.NotFound)
+	if opts.UI != nil {
+		mux.Handle("/", opts.UI)
+	} else {
+		mux.HandleFunc("/", httpkit.NotFound)
+	}
 
 	var root http.Handler = mux
 	root = httpkit.WithRecovery(log, root)

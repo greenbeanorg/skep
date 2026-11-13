@@ -467,3 +467,47 @@ func TestHSTSOnlyWithOperatorCertificate(t *testing.T) {
 		t.Error("TLS details reported without TLS")
 	}
 }
+
+// TestUIDispatch: with a UI handler, paths outside /api go to it; unknown
+// paths under /api stay JSON 404 and never fall back to the interface.
+func TestUIDispatch(t *testing.T) {
+	e := shared(t)
+	ui := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("Content-Security-Policy", "default-src 'none'; script-src 'self'")
+		_, _ = w.Write([]byte("<!doctype html>ui " + r.URL.Path))
+	})
+	h := NewHandler(Options{
+		Backend: newBackend(), Auth: e.authn, Users: e.users, Audit: e.access, AuditLog: e.access,
+		Logger: slog.New(slog.NewJSONHandler(&bytes.Buffer{}, nil)), UI: ui,
+	})
+	for _, p := range []string{"/", "/login", "/nodes/node-1", "/assets/x.js", "/apix"} {
+		rec := e.serve(h, request{method: http.MethodGet, path: p})
+		if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "ui "+p) {
+			t.Errorf("GET %s: status %d, body %q; want the UI", p, rec.Code, rec.Body.String())
+		}
+		// The UI's own policy replaced the API's, and the request ID
+		// middleware still applies.
+		if csp := rec.Header().Get("Content-Security-Policy"); !strings.Contains(csp, "script-src 'self'") {
+			t.Errorf("GET %s: CSP %q is the API's, not the UI's", p, csp)
+		}
+		if rec.Header().Get(httpkit.RequestIDHeader) == "" {
+			t.Errorf("GET %s: no request ID", p)
+		}
+	}
+	for _, p := range []string{"/api", "/api/", "/api/v1", "/api/v1/", "/api/v1/nope", "/api/v2/system", "/api/v1/system/extra"} {
+		rec := e.serve(h, request{method: http.MethodGet, path: p, role: auth.RoleAdmin})
+		if rec.Code != http.StatusNotFound || !strings.Contains(rec.Body.String(), httpkit.CodeNotFound) {
+			t.Errorf("GET %s: status %d, body %q; want the JSON 404", p, rec.Code, rec.Body.String())
+		}
+		if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
+			t.Errorf("GET %s: Content-Type %q", p, ct)
+		}
+	}
+	// Without a UI handler the root is the JSON 404 as before.
+	rec := do(t, newBackend(), http.MethodGet, "/", nil)
+	if rec.Code != http.StatusNotFound || !strings.Contains(rec.Header().Get("Content-Type"), "json") {
+		t.Errorf("GET / without UI: status %d, Content-Type %q", rec.Code, rec.Header().Get("Content-Type"))
+	}
+}
