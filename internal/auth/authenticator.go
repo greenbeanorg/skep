@@ -140,9 +140,11 @@ type Authenticator struct {
 	hasher   *Hasher
 	audit    AuditWriter
 	throttle *Throttle
-	cfg      SessionConfig
-	log      *slog.Logger
-	now      func() time.Time
+	// throttled aggregates the audit entries of throttled logins.
+	throttled *throttleLog
+	cfg       SessionConfig
+	log       *slog.Logger
+	now       func() time.Time
 }
 
 // NewAuthenticator validates opts and returns an Authenticator.
@@ -166,7 +168,7 @@ func NewAuthenticator(opts AuthenticatorOptions) (*Authenticator, error) {
 	throttle.now = opts.Now
 	return &Authenticator{
 		users: opts.Users, sessions: opts.Sessions, hasher: opts.Hasher, audit: opts.Audit,
-		throttle: throttle, cfg: opts.Session, log: opts.Logger, now: opts.Now,
+		throttle: throttle, throttled: newThrottleLog(), cfg: opts.Session, log: opts.Logger, now: opts.Now,
 	}, nil
 }
 
@@ -216,8 +218,15 @@ func (a *Authenticator) Login(ctx context.Context, req LoginRequest) (LoginResul
 	}
 
 	if ok, retry, limit := a.throttle.Attempt(req.SourceIP, req.Username); !ok {
-		refuse(audit.Denied, CodeRateLimited, map[string]any{"limit": limit})
-		a.log.Warn("login throttled", "source_ip", req.SourceIP, "username", actor.Name, "limit", limit)
+		// Aggregated: one audit entry per address and minute, written
+		// when the minute has ended (throttlelog.go). The first refusal
+		// of a minute is logged at once, so an attack is visible early.
+		ended, started := a.throttled.add(req.SourceIP, req.Username, string(req.Kind), limit, a.now())
+		a.writeThrottled(ctx, ended)
+		if started {
+			a.log.Warn("login throttled; further refusals from this address are counted and audited "+
+				"as one entry per minute", "source_ip", req.SourceIP, "username", actor.Name, "limit", limit)
+		}
 		return LoginResult{}, &RateLimitedError{RetryAfter: retry, Limit: limit}
 	}
 
@@ -415,14 +424,21 @@ func (a *Authenticator) Sweep(ctx context.Context) (int, error) {
 	return a.sessions.DeleteExpiredSessions(ctx, now, now.Add(-a.cfg.IdleTimeout))
 }
 
-// Run sweeps expired sessions once per interval until ctx is done.
+// Run sweeps expired sessions once per interval, and writes the
+// aggregated audit entries of throttled logins whose minute has ended
+// every ThrottleFlushInterval, until ctx is done. The caller writes what
+// is still pending with FlushThrottled at shutdown.
 func (a *Authenticator) Run(ctx context.Context, interval time.Duration) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
+	flush := time.NewTicker(ThrottleFlushInterval)
+	defer flush.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case <-flush.C:
+			a.FlushThrottled(ctx, false)
 		case <-ticker.C:
 			if n, err := a.Sweep(ctx); err != nil {
 				a.log.Warn("could not delete expired sessions", "error", err)

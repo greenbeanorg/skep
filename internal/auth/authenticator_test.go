@@ -3,6 +3,7 @@ package auth_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -362,8 +363,15 @@ func TestLoginThrottling(t *testing.T) {
 	if f.sessions(t, u.ID) != 0 {
 		t.Error("a throttled login created a session")
 	}
+	// Audited aggregated, when the minute is over (or at a flush of
+	// everything), not on its own.
+	if e := f.audit.find(auth.ActionLogin); len(e) != 0 {
+		t.Errorf("a throttled attempt was audited on its own: %+v", e)
+	}
+	f.authn.FlushThrottled(ctx, true)
 	if e := f.audit.find(auth.ActionLogin); len(e) != 1 || e[0].Outcome != audit.Denied ||
-		e[0].Details["reason"] != auth.CodeRateLimited || e[0].Details["limit"] != auth.LimitUsernameAddress {
+		e[0].Details["reason"] != auth.CodeRateLimited || e[0].Details["attempts"] != 1 ||
+		fmt.Sprint(e[0].Details["limits"]) != "["+auth.LimitUsernameAddress+"]" || e[0].ActorName != "andy" {
 		t.Errorf("throttle audit = %+v", e)
 	}
 	// The same user from another address is not delayed.
@@ -450,5 +458,73 @@ func TestNewAuthenticatorValidation(t *testing.T) {
 		if _, err := auth.NewAuthenticator(o); err == nil {
 			t.Errorf("%s: accepted", name)
 		}
+	}
+}
+
+// TestThrottledLoginsAreAggregated: a flood of refused attempts from one
+// address is one access audit entry per minute, not one per attempt.
+func TestThrottledLoginsAreAggregated(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	f.create(t, "andy", auth.RoleAdmin)
+	f.clock.mu.Lock()
+	f.clock.t = time.Date(2026, 11, 12, 12, 0, 0, 0, time.UTC)
+	f.clock.mu.Unlock()
+
+	// After 5 failures for one username from one address, further
+	// attempts are refused by the throttle (and later also by the limit
+	// of 10 per address and minute).
+	flood := func(ip string, n int) {
+		for range n {
+			req := loginReq("nobody", "whatever password", auth.BearerSession)
+			req.SourceIP = ip
+			f.authn.Login(ctx, req)
+			f.clock.advance(100 * time.Millisecond)
+		}
+	}
+	flood("192.0.2.50", 210)
+	flood("192.0.2.51", 15)
+	checked := func() int {
+		n := 0
+		for _, e := range f.audit.find(auth.ActionLogin) {
+			if e.Details["aggregated"] != true {
+				n++
+			}
+		}
+		return n
+	}
+	aggregated := func() []audit.AccessEntry {
+		var out []audit.AccessEntry
+		for _, e := range f.audit.find(auth.ActionLogin) {
+			if e.Details["aggregated"] == true {
+				out = append(out, e)
+			}
+		}
+		return out
+	}
+	// 10 attempts were checked (5 per address) and audited one each; the
+	// 215 refused ones are not yet written: the minute is not over.
+	if n := checked(); n != 10 {
+		t.Errorf("%d checked attempts audited, want 10", n)
+	}
+	if a := aggregated(); len(a) != 0 {
+		t.Fatalf("aggregated entries before the minute ended: %+v", a)
+	}
+	f.authn.FlushThrottled(ctx, false)
+	if a := aggregated(); len(a) != 0 {
+		t.Fatalf("a flush within the minute wrote %d entries", len(a))
+	}
+	f.clock.advance(time.Minute)
+	f.authn.FlushThrottled(ctx, false)
+	a := aggregated()
+	if len(a) != 2 {
+		t.Fatalf("%d aggregated entries, want one per address", len(a))
+	}
+	byIP := map[string]audit.AccessEntry{a[0].SourceIP: a[0], a[1].SourceIP: a[1]}
+	if e := byIP["192.0.2.50"]; e.Details["attempts"] != 205 || e.Outcome != audit.Denied || e.ActorName != "nobody" {
+		t.Errorf("192.0.2.50: %+v", e)
+	}
+	if e := byIP["192.0.2.51"]; e.Details["attempts"] != 10 {
+		t.Errorf("192.0.2.51: %+v", e)
 	}
 }

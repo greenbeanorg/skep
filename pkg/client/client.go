@@ -1,20 +1,30 @@
 // Package client is a Go client for the Skep REST API under /api/v1. It is
 // what skepctl uses, and it uses nothing but the public API.
 //
-// Every connection is checked against a pinned public key (ADR 0006
-// decision 6): a Client cannot be created without a pin, and a server
-// that presents another key is refused during the TLS handshake, before
-// anything is sent. FetchCertificate is the only way to talk to a server
-// without a pin, and it sends nothing but a handshake.
+// Every connection is checked, in one of two ways, during the TLS
+// handshake and before anything is sent:
+//
+//   - against a pinned public key (ADR 0006 decision 6), for skep-api's
+//     self-signed certificate; a server that presents another key is
+//     refused;
+//   - by verifying the certificate chain and host name (Options.VerifyChain)
+//     against the system roots or given CA certificates, for an
+//     operator-supplied certificate; a pin is then optional.
+//
+// A Client cannot be created with neither. FetchCertificate is the only
+// way to talk to a server without either, and it sends nothing but a
+// handshake.
 package client
 
 import (
 	"bytes"
 	"context"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -38,8 +48,16 @@ type Options struct {
 	// accepts.
 	Server string
 	// Pin is the SHA-256 of the server's public key, as "sha256:<hex>".
-	// Required.
+	// Required unless VerifyChain is set; with VerifyChain it is checked
+	// in addition when given.
 	Pin string
+	// VerifyChain verifies the server's certificate chain against RootCAs
+	// and its host name, as for any public TLS server. Use it for an
+	// operator-supplied certificate.
+	VerifyChain bool
+	// RootCAs are the CA certificates for VerifyChain. Nil means the
+	// system roots.
+	RootCAs *x509.CertPool
 	// Token is the bearer session token. It may be empty for Login.
 	Token string
 	// Timeout bounds one request. Zero means DefaultTimeout.
@@ -62,7 +80,12 @@ func New(opts Options) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	cfg, err := tlsConfig(opts.Pin)
+	host, err := hostPort(server)
+	if err != nil {
+		return nil, err
+	}
+	hostname, _, _ := net.SplitHostPort(host)
+	cfg, err := tlsConfig(hostname, opts.Pin, opts.VerifyChain, opts.RootCAs)
 	if err != nil {
 		return nil, err
 	}

@@ -260,8 +260,10 @@ skepctl logout
 
 On first contact it shows the server's public key pin; compare it with
 `skep-api tls fingerprint` on the host before answering. A changed key is
-refused until it is named with `--trust-key`. There is no option to skip
-the check. The token and the pins are kept in `~/.config/skepctl`, `0600`.
+refused until it is named with `--trust-key`. For a server with an
+operator-supplied certificate, `--ca-file FILE` or `--system-roots`
+verifies the chain and host name instead, so renewals with a new key keep
+working. There is no option to skip verification. The token and the pins are kept in `~/.config/skepctl`, `0600`.
 See [docs/administration/skepctl.md](docs/administration/skepctl.md).
 
 ## API

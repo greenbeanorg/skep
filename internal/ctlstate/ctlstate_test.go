@@ -13,8 +13,8 @@ func TestRoundTripAndModes(t *testing.T) {
 	s := New(dir)
 
 	// Nothing exists yet: empty state, nothing created.
-	if _, ok, err := s.Pin("https://h:8443"); ok || err != nil {
-		t.Fatalf("Pin on empty state = %v, %v", ok, err)
+	if _, ok, err := s.Trust("https://h:8443"); ok || err != nil {
+		t.Fatalf("Trust on empty state = %v, %v", ok, err)
 	}
 	if cur, err := s.Current(); cur != "" || err != nil {
 		t.Fatalf("Current on empty state = %q, %v", cur, err)
@@ -24,8 +24,8 @@ func TestRoundTripAndModes(t *testing.T) {
 	}
 
 	at := time.Date(2026, 11, 12, 12, 0, 0, 0, time.UTC)
-	pin := Pin{PublicKeySHA256: "sha256:" + strings.Repeat("ab", 32), TrustedAt: at}
-	if err := s.SetPin("https://h:8443", pin); err != nil {
+	pin := Trust{PublicKeySHA256: "sha256:" + strings.Repeat("ab", 32), TrustedAt: at}
+	if err := s.SetTrust("https://h:8443", pin); err != nil {
 		t.Fatal(err)
 	}
 	sess := Session{Username: "andy", Token: "secret-token", CreatedAt: at, ExpiresAt: at.Add(time.Hour)}
@@ -50,9 +50,9 @@ func TestRoundTripAndModes(t *testing.T) {
 		t.Errorf("the directory holds %d entries, want 2 (no leftover temporary files)", len(entries))
 	}
 
-	got, ok, err := s.Pin("https://h:8443")
+	got, ok, err := s.Trust("https://h:8443")
 	if err != nil || !ok || got != pin {
-		t.Errorf("Pin = %+v, %v, %v", got, ok, err)
+		t.Errorf("Trust = %+v, %v, %v", got, ok, err)
 	}
 	gs, ok, err := s.Session("https://h:8443")
 	if err != nil || !ok || gs != sess {
@@ -74,8 +74,20 @@ func TestRoundTripAndModes(t *testing.T) {
 	if err := s.DeleteSession("https://never:8443"); err != nil {
 		t.Errorf("deleting an absent session: %v", err)
 	}
-	if _, ok, _ := s.Pin("https://h:8443"); !ok {
+	if _, ok, _ := s.Trust("https://h:8443"); !ok {
 		t.Error("the pin was lost")
+	}
+
+	// A CA entry keeps its mode and file; an entry without a mode is a pin.
+	ca := Trust{Mode: TrustCA, CAFile: "/etc/ssl/operator-ca.pem", TrustedAt: at}
+	if err := s.SetTrust("https://ca:8443", ca); err != nil {
+		t.Fatal(err)
+	}
+	if got, _, _ := s.Trust("https://ca:8443"); got != ca || !got.VerifiesChain() {
+		t.Errorf("CA entry = %+v", got)
+	}
+	if got, _, _ := s.Trust("https://h:8443"); got.VerifiesChain() {
+		t.Error("an entry without a mode verifies the chain")
 	}
 }
 
@@ -100,7 +112,7 @@ func TestRefusesLooseOrForeignFiles(t *testing.T) {
 
 	// A directory others can enter is not used.
 	os.Chmod(dir, 0o755)
-	if _, _, err := s.Pin("x"); err == nil || !strings.Contains(err.Error(), "chmod 700") {
+	if _, _, err := s.Trust("x"); err == nil || !strings.Contains(err.Error(), "chmod 700") {
 		t.Errorf("0755 directory: %v", err)
 	}
 	os.Chmod(dir, 0o700)

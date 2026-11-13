@@ -52,10 +52,13 @@ is an explicit change of `listen_address`.
   at a restart.
 - **The source address is the TCP peer.** `X-Forwarded-For` is ignored
   unless `auth.trusted_proxies` lists the proxy.
-- **Audit.** Every successful login, failed login, throttled login,
-  logout, and session revocation is written to the access audit log with
-  the source address. A submitted username is recorded only if it has the
-  shape of a username. Tokens and their hashes are never logged.
+- **Audit.** Every successful login, failed login, logout, and session
+  revocation is written to the access audit log with the source address.
+  Throttled logins are aggregated into one entry per source address per
+  minute, with the number of attempts, so a flood of refused attempts
+  cannot grow the log one row per request (ADR 0007, amendment b). A
+  submitted username is recorded only if it has the shape of a username.
+  Tokens and their hashes are never logged.
 - **Before setup.** Until an administrator exists, login answers
   `503 setup_required` and names the command to run on the host.
 - **The agent is told who.** Each request to the agent carries the
@@ -232,11 +235,20 @@ and a request body limit are set. Responses carry `X-Content-Type-Options: nosni
   reaches a server with another key. A changed key is accepted only by
   naming the new pin with `--trust-key`. There is no option that turns the
   check off.
-- **No chain or host name check.** With a pinned key, neither adds
-  anything: the pin names the exact key. The Go TLS configuration
+- **No chain or host name check in pin mode.** With a pinned key, neither
+  adds anything: the pin names the exact key. The Go TLS configuration
   therefore sets `InsecureSkipVerify` together with a `VerifyConnection`
-  function that does the pin check; a client cannot be built without a pin
-  (`pkg/client`). TLS 1.3 only, no proxy, redirects are not followed.
+  function that does the pin check. TLS 1.3 only, no proxy, redirects are
+  not followed.
+- **Chain mode for operator certificates.** With `--ca-file` or
+  `--system-roots`, the chain and host name are verified the standard way
+  (no `InsecureSkipVerify`), so an operator's renewal with a new key does
+  not lock clients out; a pin is optional and checked in addition. The
+  user chooses the mode at login, and it is checked with a handshake
+  before it is stored; the server cannot select it. A client cannot be
+  built with neither a pin nor chain verification (`pkg/client`).
+- **Re-login and logout end only skepctl's own session**, by its token.
+  The user's other sessions, such as a browser's, are not affected.
 - **Token file.** The bearer token is stored as it is in
   `~/.config/skepctl/sessions.json` (`0600`, directory `0700`, atomic
   replacement). A file or directory that is a symbolic link, belongs to
