@@ -54,14 +54,16 @@ jobs:
           go vet -tags skep_testtasks ./cmd/...
           go test -race -count=1 -tags skep_testtasks ./cmd/...
 
+      # Without the web interface (build tag skep_webui): the Go build must
+      # not need Node.js. The "release" job builds the binaries with it.
       - name: Build (Linux, development only)
-        run: make build
+        run: make build-go
 
       # Cross-compilation proves the FreeBSD build compiles. It does not
       # prove runtime behaviour; that is validated on a real FreeBSD host.
       - name: Cross-compile (FreeBSD amd64)
         run: |
-          make build-freebsd
+          make build-freebsd-go
           make build-freebsd-test
           # The shipped agent must not contain the test-only task type.
           if grep -q 'test\.sleep' bin/freebsd-amd64/skep-agent; then
@@ -79,3 +81,106 @@ jobs:
 
       - name: Vulnerability check
         run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+
+  web:
+    name: Web interface
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+
+      # web/.node-version names the Node.js major the interface is built
+      # and tested with on the development machine.
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: web/.node-version
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: Type-check
+        run: npm run typecheck
+
+      # src/api/schema.d.ts is generated from api/openapi.yaml; a change
+      # to the API without regenerating fails here.
+      - name: Check the generated API types
+        run: npm run check-types
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+  # The release binaries: the web interface built and embedded in skep-api
+  # (ADR 0008, decision 4). Checks that the FreeBSD binary carries the
+  # interface and not the placeholder page.
+  release:
+    name: Release build with the web interface
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: web/.node-version
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install the web interface's dependencies
+        run: make web-install
+
+      - name: Vet and test with the interface embedded
+        run: |
+          make web-build
+          go vet -tags skep_webui ./...
+          go test -count=1 -tags skep_webui ./internal/webui/ ./cmd/skep-api/
+
+      - name: Build (Linux) and cross-compile (FreeBSD amd64) with the interface
+        run: |
+          make build
+          make build-freebsd
+
+      # The browser tests drive a real skep-api with the interface embedded
+      # and the agent's test build (scripts/e2e-stack.sh).
+      - name: Install Playwright's browser
+        run: cd web && npx playwright install --with-deps chromium
+
+      - name: Browser tests
+        run: cd web && npm run test:e2e
+
+      - name: Upload the browser test report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            web/playwright-report
+            web/test-results
+          retention-days: 7
+
+      - name: The FreeBSD skep-api carries the interface, not the placeholder
+        run: |
+          if grep -a -q 'skep-webui-placeholder' bin/freebsd-amd64/skep-api; then
+            echo "the FreeBSD skep-api contains the placeholder page"
+            exit 1
+          fi
+          if ! grep -a -q 'src="/theme.js"' bin/freebsd-amd64/skep-api; then
+            echo "the FreeBSD skep-api does not contain the built interface"
+            exit 1
+          fi
+          # The other binaries never embed it.
+          for b in skep-agent skepctl; do
+            if grep -a -q 'src="/theme.js"' bin/freebsd-amd64/$b; then
+              echo "$b contains the web interface"
+              exit 1
+            fi
+          done

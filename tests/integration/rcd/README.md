@@ -52,6 +52,13 @@ sudo shutdown -r now
 sudo ~/skep-m4/rcd-test -state ~/skep-m4/reboot-state.json post-reboot
 ```
 
+## Milestone 5 `api` phase on FreeBSD 15.1-RELEASE-p6 (hearst, 2026-11-13)
+
+The `api` phase with the health statuses of #15 (the agent down answers
+`503` with `status: unavailable`, with and without a session, and
+`/system` answers `503 agent_unavailable`): **PASS**, 71 checks, with the
+test build and `skep-api` at `61089f1`, which carries the web interface.
+
 ## Milestone 4 result on FreeBSD 15.1-RELEASE-p6 (hearst, 2026-11-12)
 
 Account `skep` uid 1002, gid 1002. Agent test build and `skep-api` at

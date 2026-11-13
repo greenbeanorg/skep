@@ -334,8 +334,23 @@ func truncate(s string, n int) string {
 // Authenticate returns the identity behind a session token that was
 // presented through the channel of the given kind. A token is accepted
 // only through the channel it was issued for. Every failure is
-// ErrUnauthenticated: the caller learns nothing about why.
+// ErrUnauthenticated: the caller learns nothing about why. The request
+// counts as use of the session: it extends the idle timeout.
 func (a *Authenticator) Authenticate(ctx context.Context, token string, kind SessionKind) (Identity, error) {
+	return a.authenticate(ctx, token, kind, true)
+}
+
+// AuthenticateBackground is Authenticate for a request the client made by
+// itself, such as a timer-driven refresh (ADR 0008, decision 3). The
+// session is checked exactly as for any request, the idle timeout
+// included, but the request does not count as use: it does not extend the
+// idle timeout. A client can only shorten its own session with this,
+// never lengthen it.
+func (a *Authenticator) AuthenticateBackground(ctx context.Context, token string, kind SessionKind) (Identity, error) {
+	return a.authenticate(ctx, token, kind, false)
+}
+
+func (a *Authenticator) authenticate(ctx context.Context, token string, kind SessionKind, touch bool) (Identity, error) {
 	// A token is 43 characters; anything else cannot be one.
 	if len(token) != 43 {
 		return Identity{}, ErrUnauthenticated
@@ -363,7 +378,7 @@ func (a *Authenticator) Authenticate(ctx context.Context, token string, kind Ses
 	if user.Disabled {
 		return Identity{}, ErrUnauthenticated
 	}
-	if now.Sub(sess.LastSeenAt) >= touchInterval {
+	if touch && now.Sub(sess.LastSeenAt) >= touchInterval {
 		if err := a.sessions.TouchSession(ctx, sess.TokenHash, now); err != nil {
 			a.log.Warn("could not record the use of a session", "user_id", user.ID, "error", err)
 		} else {

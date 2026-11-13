@@ -324,6 +324,30 @@ func TestRunServesAPIThroughTheSocket(t *testing.T) {
 	if denied.Error.Code != "unauthenticated" {
 		t.Errorf("unauthenticated system = %+v", denied)
 	}
+	// The web interface is served on every path outside /api, without a
+	// session, with its own headers; unknown API paths are not pages.
+	for _, p := range []string{"/", "/login", "/nodes/node-1"} {
+		resp, err := anonymous.Get(base + p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK || !strings.HasPrefix(resp.Header.Get("Content-Type"), "text/html") ||
+			!strings.Contains(string(body), "<!doctype html>") {
+			t.Errorf("GET %s: status %d, Content-Type %q", p, resp.StatusCode, resp.Header.Get("Content-Type"))
+		}
+		if csp := resp.Header.Get("Content-Security-Policy"); !strings.Contains(csp, "script-src 'self'") {
+			t.Errorf("GET %s: CSP %q", p, csp)
+		}
+		if cc := resp.Header.Get("Cache-Control"); cc != "no-store" {
+			t.Errorf("GET %s: Cache-Control %q", p, cc)
+		}
+	}
+	get(t, anonymous, base+"/api/v1/nope", http.StatusNotFound, &denied)
+	if denied.Error.Code != "not_found" {
+		t.Errorf("unknown API path = %+v", denied)
+	}
 	// Logging in works while the agent is down.
 	c := login(t, anonymous, base)
 

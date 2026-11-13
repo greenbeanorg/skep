@@ -1,6 +1,7 @@
 # ADR 0008: The first web interface (Milestone 5)
 
-- Status: **Accepted** (not yet implemented). Every recommendation was
+- Status: **Accepted**, implemented 2026-11-13 (see
+  [Implementation notes](#implementation-notes)). Every recommendation was
   accepted; the review answers and one amendment are under
   [Decisions](#decisions) and are worked into the text.
 - Date: 2026-11-13 (proposed and accepted)
@@ -413,3 +414,47 @@ One amendment was made at acceptance and is worked into Decision 2.
   [ADR 0006](0006-api-split-authentication-tls.md). The proposal relied
   on the existing check, which covered only cookie-authenticated writes
   and the login.
+
+## Implementation notes
+
+Implemented on 2026-11-13 on the branch `feat/web-ui`, in the suggested
+order. Where the implementation differs from the text above, the
+implementation is what holds:
+
+- **Embedding (decision 4a).** The text says the repository commits a
+  placeholder `index.html` inside the embedded directory. Instead the
+  built files are embedded behind the build tag `skep_webui`
+  (`internal/webui/embed_dist.go`), and a build without the tag embeds a
+  committed placeholder page from `internal/webui/placeholder/`
+  (`embed_placeholder.go`). `internal/webui/dist` is never committed and
+  `make build` never dirties the working tree, which a placeholder
+  overwritten by the build would have. The effect the decision asked for
+  is the same: `go build ./...` and `go test ./...` need no Node.js, and
+  CI checks that the FreeBSD `skep-api` built by `make build-freebsd`
+  carries the interface and not the placeholder. `make build-go` and
+  `make build-freebsd-go` are the Go-only builds; `make run-dev` uses the
+  former, because in development the interface is served by Vite.
+- **Routing (decision 4a).** A path whose last segment looks like a file
+  name (has an extension) and does not exist is a 404, not `index.html`,
+  so a missing file is reported as missing. A path with a hidden segment
+  (starting with a dot) is a 404 too.
+- **Navigation (decision 1).** "Tasks" and the "Metrics" placeholder form
+  a "Monitoring" group; the twelve sections are all present.
+- **The background header (decision 3)** is `internal/auth`'s
+  `AuthenticateBackground`, selected by `internal/api` when
+  `X-Skep-Background` has any non-empty value, and is documented as a
+  reusable parameter in `api/openapi.yaml`.
+- **Shared data (decision 8).** The one resource several pages show,
+  `/system`, has a provider that polls it once for the shell and the
+  pages; `useQuery` gained the background header, pausing while the tab
+  is hidden, backoff while `skep-api` is unreachable, and cancellation.
+  No data-fetching library was added.
+- **Testing (decision 8).** Vitest 5 (Vitest 3's advisories are gone),
+  Testing Library with jsdom for the login page and the user dialogs,
+  and Playwright against a real `skep-api` with the interface embedded
+  and the agent's test build (`scripts/e2e-stack.sh`), run by CI's
+  release job. The Playwright run also photographs every page in both
+  themes.
+- **Validation on `hearst`** is recorded in the architecture overview's
+  FreeBSD validation table.
+

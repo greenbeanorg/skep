@@ -10,8 +10,10 @@ import (
 	"net/netip"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/greenbeanorg/skep/internal/auth"
+	"github.com/greenbeanorg/skep/internal/database"
 	"github.com/greenbeanorg/skep/internal/httpkit"
 	"github.com/greenbeanorg/skep/pkg/models"
 )
@@ -600,5 +602,51 @@ func TestSourceAddressAndTrustedProxies(t *testing.T) {
 		if got := call(tt.proxies, tt.remote, tt.xff...); got != tt.want {
 			t.Errorf("%s: source address %q, want %q", name, got, tt.want)
 		}
+	}
+}
+
+// TestBackgroundHeaderDoesNotCountAsUse: a request marked X-Skep-Background
+// is authenticated like any other, idle timeout included, but does not
+// extend the idle timeout (ADR 0008, decision 3).
+func TestBackgroundHeaderDoesNotCountAsUse(t *testing.T) {
+	e := freshEnv(t)
+	h := e.handler(newBackend(), nil)
+	hash := auth.HashToken(e.tokens[auth.RoleViewer])
+	lastSeen := func() string {
+		var s string
+		if err := e.db.QueryRow(`SELECT last_seen_at FROM sessions WHERE token_hash = ?`, hash).Scan(&s); err != nil {
+			t.Fatal(err)
+		}
+		return s
+	}
+	setLastSeen := func(ago time.Duration) {
+		if _, err := e.db.Exec(`UPDATE sessions SET last_seen_at = ? WHERE token_hash = ?`,
+			database.FormatTime(time.Now().Add(-ago)), hash); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Ten minutes idle, then a background request: served, not counted.
+	setLastSeen(10 * time.Minute)
+	before := lastSeen()
+	rec := e.serve(h, request{method: http.MethodGet, path: "/api/v1/system", role: auth.RoleViewer,
+		headers: map[string]string{BackgroundHeader: "1"}})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("background request: status %d, body %s", rec.Code, rec.Body.String())
+	}
+	if lastSeen() != before {
+		t.Error("a background request extended the idle timeout")
+	}
+	// The same request without the header counts.
+	rec = e.serve(h, request{method: http.MethodGet, path: "/api/v1/system", role: auth.RoleViewer})
+	if rec.Code != http.StatusOK || lastSeen() == before {
+		t.Errorf("an ordinary request: status %d, last_seen_at changed: %v", rec.Code, lastSeen() != before)
+	}
+	// Idled out: a background request is refused like any other and
+	// cannot revive the session.
+	setLastSeen(31 * time.Minute)
+	for _, hdr := range []map[string]string{{BackgroundHeader: "1"}, nil} {
+		rec = e.serve(h, request{method: http.MethodGet, path: "/api/v1/system", role: auth.RoleViewer, headers: hdr})
+		wantError(t, rec, http.StatusUnauthorized, auth.CodeUnauthenticated)
 	}
 }

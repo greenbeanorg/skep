@@ -6,11 +6,11 @@ with QEMU as an optional secondary engine), jails, OpenZFS storage, and
 networking on single hosts and, later, multi-node clusters, through a REST
 API, a web UI, and a CLI.
 
-**Status: 0.1.0, Milestone 4b "CLI".** The code contains the host agent,
-the API server with TLS, accounts, sessions, and permissions, the `skepctl`
-command-line client, read-only host discovery, a task engine with history,
-and two audit logs. It cannot create or manage VMs, jails, storage, or
-networks yet.
+**Status: 0.1.0, Milestone 5 "First frontend".** The code contains the host
+agent, the API server with TLS, accounts, sessions, and permissions, the
+`skepctl` command-line client, the web interface, read-only host discovery,
+a task engine with history, and two audit logs. It cannot create or manage
+VMs, jails, storage, or networks yet.
 
 > **Security notice:** this is pre-release software. `skep-api` listens on
 > loopback by default; opening it to a network is an explicit
@@ -36,7 +36,8 @@ networks yet.
 | User management | `GET/POST /users`, `GET/PUT/DELETE /users/{id}`, `GET /roles`, `GET /audit`; the last administrator cannot be removed |
 | Retention | Finished tasks are deleted after 90 days; both audit logs are sealed monthly into hash-chained archive segments, and an entry leaves the live table only when it is in one (never by default for the agent's log, after 90 days for the access log); `audit verify` and `audit export` on the host |
 | `skepctl` | Command-line client on the public API: bearer-session login with the token in a `0600` file, the server's public key pinned on first use and never skipped, logout, and read-only `system`, `hardware`, `tasks`, and `audit` commands |
-| Not yet | VM or jail management, storage or network changes, UI, clustering |
+| Web interface | Served by `skep-api` on the same address as the API, embedded in the binary; cookie-session login; dashboard, node, tasks (with cancel), users, roles, access audit log, settings, own account; the other sections are placeholders that name their milestone |
+| Not yet | VM or jail management, storage or network changes, clustering |
 
 ## Platforms
 
@@ -56,9 +57,15 @@ networks yet.
 ## Build
 
 ```sh
-make build          # development binaries for this machine: bin/skep-agent, bin/skep-api, bin/skepctl
-make build-freebsd  # FreeBSD amd64 binaries in bin/freebsd-amd64/
+make build             # the web interface, then the binaries for this machine with it embedded: bin/skep-agent, bin/skep-api, bin/skepctl
+make build-freebsd     # the same for FreeBSD amd64, in bin/freebsd-amd64/
+make build-go          # Go only, no Node.js: skep-api then serves a placeholder page instead of the interface
+make build-freebsd-go  # the same for FreeBSD amd64
 ```
+
+`make build` and `make build-freebsd` need Node.js and npm for the web
+interface ([web/README.md](web/README.md)). The Go-only targets and
+`go build ./...` do not.
 
 The version, commit, and build date are injected with `-ldflags`:
 
@@ -75,7 +82,9 @@ Override the version with `make build VERSION=0.1.1`.
 make run-dev
 ```
 
-This builds and starts both processes with `-dev`, as you: state goes to
+This builds the Go binaries (without the web interface; in development the
+interface is served by Vite, see [web/README.md](web/README.md)) and starts
+both processes with `-dev`, as you: state goes to
 `./.skep-dev/`, logs are human-readable text at debug level, the agent
 listens on the Unix socket `.skep-dev/run/agent.sock` (which only your own
 UID may open), and the API listens on `127.0.0.1:8443` with a self-signed
@@ -156,6 +165,15 @@ The native service test is in
 [tests/integration/rcd](tests/integration/rcd/README.md), and the native
 retention test in
 [tests/integration/retention](tests/integration/retention/README.md).
+
+## Web interface
+
+The web interface is in [web/](web/README.md) and is served by `skep-api`
+on the same address as the API, from files embedded in the binary. Open
+`https://` plus the listen address in a browser and log in with the
+administrator created by `skep-api admin create`. How to check the
+certificate on the first visit, and what the interface does, is in
+[docs/administration/web-ui.md](docs/administration/web-ui.md).
 
 ## Configuration
 
@@ -336,6 +354,8 @@ internal/retention/    the maintenance.retention task
 internal/peercred/     Unix socket peer credentials, read from the kernel
 internal/sysaccount/   user and group name resolution
 internal/ctlstate/     skepctl's pins and session tokens on disk
+internal/webui/        serves the web interface from skep-api (embedded with the build tag skep_webui)
+web/                   the web interface: React, TypeScript, Vite, Tailwind CSS
 packaging/             rc.d scripts and sample configuration
 scripts/               development helpers
 migrations/sqlite/     versioned SQL migrations, one set per database (agent, api)
@@ -354,6 +374,7 @@ docs/                  architecture, security, and decision records
 - [Security overview](docs/security/overview.md)
 - [Running Skep as FreeBSD services](docs/installation/freebsd-service.md)
 - [skepctl](docs/administration/skepctl.md)
+- [The web interface](docs/administration/web-ui.md)
 - Decision records:
   [0001 Go toolchain and SQLite driver](docs/decisions/0001-go-toolchain-and-sqlite-driver.md),
   [0002 Discovery abstraction](docs/decisions/0002-discovery-abstraction.md),
@@ -361,7 +382,8 @@ docs/                  architecture, security, and decision records
   [0004 Privilege boundary](docs/decisions/0004-privilege-boundary.md),
   [0005 Agent task engine](docs/decisions/0005-agent-task-engine.md),
   [0006 API split, authentication, and TLS](docs/decisions/0006-api-split-authentication-tls.md),
-  [0007 Retention](docs/decisions/0007-retention.md)
+  [0007 Retention](docs/decisions/0007-retention.md),
+  [0008 The first web interface](docs/decisions/0008-web-ui.md)
 
 ## Trademarks
 

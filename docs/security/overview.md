@@ -1,14 +1,15 @@
 # Security overview
 
 This document describes the security posture of Skep 0.1.0 as of
-Milestone 4. It states plainly what is and is not protected.
+Milestone 5. It states plainly what is and is not protected.
 
 ## Status
 
-Milestone 4 is in progress
-([ADR 0006](../decisions/0006-api-split-authentication-tls.md)). The split
-into two processes, TLS, accounts, sessions, and permission checks are
-done. One endpoint acts on the node: cancelling a task. Nothing in the
+Milestone 4 ([ADR 0006](../decisions/0006-api-split-authentication-tls.md))
+is done: the split into two processes, TLS, accounts, sessions, and
+permission checks. Milestone 5 ([ADR 0008](../decisions/0008-web-ui.md))
+adds the web interface, a client of the API with no privileged path of
+its own. One endpoint acts on the node: cancelling a task. Nothing in the
 API creates or changes host resources yet.
 
 `skep-api` listens on `127.0.0.1:8443` by default. Opening it to a network
@@ -68,6 +69,50 @@ is an explicit change of `listen_address`.
   `503 setup_required` and names the command to run on the host.
 - **The agent is told who.** Each request to the agent carries the
   authenticated user as its actor.
+- **Background requests do not extend a session.** A request that carries
+  `X-Skep-Background` (any non-empty value) is authenticated like any
+  other, the idle check included, but does not refresh `last_seen_at`.
+  The web interface sends it on its own refreshes, so an unattended page
+  idles out. A client can only shorten its own session with it.
+
+## The web interface
+
+The interface ([ADR 0008](../decisions/0008-web-ui.md)) is static files
+served by `skep-api` on the same origin as the API. It adds no endpoint
+and no privilege: everything it does is an API request under the user's
+session and permissions, audited like any other client's.
+
+- **Same origin, cookie session only.** The login asks for a cookie
+  session; the token is `HttpOnly` and never reaches JavaScript. The
+  browser adds `Origin` to the interface's writes by itself, which the
+  origin check requires. Requests use the browser's `same-origin`
+  credentials, never `include`. There is no CORS and no second origin.
+- **Nothing about the session in browser storage.** The identity is held
+  in memory and asked of the server at every page load
+  (`GET /auth/session`). `localStorage` holds the theme choice only.
+- **Content-Security-Policy** on the interface's responses:
+  `default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'
+  data:; font-src 'self'; connect-src 'self'; base-uri 'none';
+  form-action 'self'; frame-ancestors 'none'`, with
+  `Referrer-Policy: no-referrer`, `X-Content-Type-Options: nosniff`, and
+  `Cross-Origin-Opener-Policy: same-origin`. No inline script or style
+  exists in the interface; the theme script is a file. The API's own
+  responses keep their stricter policy. The browser tests fail on any CSP
+  violation.
+- **Caching.** Only the hashed files under `/assets` are cacheable;
+  `index.html` and every API response are `no-store`.
+- **Hidden is not denied.** Navigation entries the role lacks are hidden
+  as a convenience; the server decides, and a page reached by its address
+  without the permission does not call the API.
+- **The first visit.** With the self-signed certificate the browser warns,
+  and the interface cannot help: it is not loaded yet. The administration
+  guide says how to compare the certificate with
+  `skep-api tls fingerprint` on the host before accepting it. The
+  Settings page shows the pin for reference only, because a man in the
+  middle would serve its own page.
+- **Development serving** (Vite) is HTTPS with the development
+  certificate and proxies `/api` over verified HTTPS; no development
+  switch in `skep-api` relaxes the cookie, the origin check, or the CSP.
 
 ## What else is enforced
 

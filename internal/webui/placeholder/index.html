@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Skep</title>
+  </head>
+  <body>
+    <h1>Skep</h1>
+    <p>
+      <strong>The web interface was not built into this binary.</strong>
+      This <code>skep-api</code> was compiled without the <code>skep_webui</code> build tag, the way
+      <code>go build ./...</code> does it, so it carries this page instead of the interface.
+    </p>
+    <p>
+      To get the interface, build the release binaries with <code>make build</code> (this machine) or
+      <code>make build-freebsd</code> (FreeBSD amd64) in the Skep repository. Both build the interface with
+      Node.js first and embed it. See <code>web/README.md</code>.
+    </p>
+    <p>The API is unaffected and is served under <code>/api/v1</code>.</p>
+    <p id="skep-webui-placeholder" hidden>skep-webui-placeholder</p>
+  </body>
+</html>

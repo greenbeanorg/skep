@@ -20,9 +20,13 @@
 *.out
 coverage.*
 
-# Frontend
+# Frontend. The built interface is copied to internal/webui/dist for
+# embedding (make web-build) and is never committed.
 node_modules/
 /web/dist/
+/internal/webui/dist/
+/web/test-results/
+/web/playwright-report/
 
 # Secrets and local environment
 .env

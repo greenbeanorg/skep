@@ -119,7 +119,9 @@ the host, ending its sessions. Neither touches the only enabled
 administrator.
 
 To use the API from the command line, see
-[skepctl](../administration/skepctl.md).
+[skepctl](../administration/skepctl.md). To use it from a browser, see
+[the web interface](../administration/web-ui.md) below and in its own
+guide.
 
 ## Opening the API to the network
 
@@ -133,6 +135,27 @@ from the management network, set the management address in
 
 Create the administrator first. Every endpoint except the health status
 and the login needs a session.
+
+## The web interface
+
+`skep-api` serves the web interface on the same address, from files
+embedded in the binary: open `https://` plus the listen address (for the
+example above, `https://10.79.20.170:8443/`) and log in. The binaries from
+`make build-freebsd` carry it; a `skep-api` built with `make build-freebsd-go`
+or `go build` serves a page that says the interface was not built in, and
+the API is unaffected.
+
+On the first visit the browser warns about the self-signed certificate.
+Compare it with the host before accepting it:
+
+```sh
+skep-api tls fingerprint                                                   # the public key pin
+openssl x509 -in /var/db/skep/api/tls/cert.pem -noout -fingerprint -sha256  # the certificate fingerprint
+```
+
+and check that the browser's certificate details show the same public key
+or the same fingerprint. [docs/administration/web-ui.md](../administration/web-ui.md)
+has the browser-by-browser steps and what the interface does.
 
 ## TLS certificate
 

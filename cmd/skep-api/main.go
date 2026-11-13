@@ -32,6 +32,7 @@ import (
 	"github.com/greenbeanorg/skep/internal/logging"
 	"github.com/greenbeanorg/skep/internal/privdrop"
 	"github.com/greenbeanorg/skep/internal/termpass"
+	"github.com/greenbeanorg/skep/internal/webui"
 	"github.com/greenbeanorg/skep/migrations"
 	"github.com/greenbeanorg/skep/pkg/models"
 	"github.com/greenbeanorg/skep/pkg/version"
@@ -251,7 +252,14 @@ func runServer(ctx context.Context, args []string, e env) error {
 			return models.TLSInfo{Source: string(info.Source), NotAfter: info.NotAfter.UTC(), PublicKeySHA256: info.PublicKeySHA256}
 		},
 		TrustedProxies: proxies,
+		UI:             webui.Handler(),
 	})
+	if webui.Embedded() {
+		log.Info("web interface embedded; serving it on every path outside /api")
+	} else {
+		log.Warn("this binary was built without the web interface (build tag skep_webui); " +
+			"a placeholder page is served instead. Use 'make build' or 'make build-freebsd'")
+	}
 	err = serve(ctx, cfg, handler, certs, log)
 	// Throttled logins of the current minute are counted, not yet
 	// written: write them before the database closes.

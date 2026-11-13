@@ -224,6 +224,28 @@ func TestSessionLifetime(t *testing.T) {
 		t.Errorf("after 30 idle minutes: %v", err)
 	}
 
+	// Background requests are checked, idle timeout included, but do not
+	// count as use (ADR 0008, decision 3).
+	res = f.login(t, "andy", auth.CookieSession)
+	first = lastSeen(res.Token)
+	f.clock.advance(20 * time.Minute)
+	if id, err := f.authn.AuthenticateBackground(ctx, res.Token, auth.CookieSession); err != nil || id.User.ID != u.ID {
+		t.Fatalf("background request within the idle timeout: %+v, %v", id, err)
+	}
+	if lastSeen(res.Token) != first {
+		t.Error("a background request extended the idle timeout")
+	}
+	if _, err := f.authn.AuthenticateBackground(ctx, res.Token, auth.BearerSession); !errors.Is(err, auth.ErrUnauthenticated) {
+		t.Errorf("background request through the wrong channel: %v", err)
+	}
+	f.clock.advance(10 * time.Minute)
+	if _, err := f.authn.AuthenticateBackground(ctx, res.Token, auth.CookieSession); !errors.Is(err, auth.ErrUnauthenticated) {
+		t.Errorf("background request after 30 idle minutes: %v, want unauthenticated", err)
+	}
+	if _, err := f.authn.Authenticate(ctx, res.Token, auth.CookieSession); !errors.Is(err, auth.ErrUnauthenticated) {
+		t.Errorf("an ordinary request after the session idled out: %v", err)
+	}
+
 	// Absolute: 12 hours after the login, however busy the session was.
 	res = f.login(t, "andy", auth.BearerSession)
 	for range 47 {
@@ -237,12 +259,12 @@ func TestSessionLifetime(t *testing.T) {
 		t.Errorf("12 hours after the login: %v", err)
 	}
 
-	// The sweep removes both, and only expired ones.
+	// The sweep removes all three expired sessions, and only those.
 	live := f.login(t, "andy", auth.CookieSession)
 	f.audit.reset()
 	n, err := f.authn.Sweep(ctx)
-	if err != nil || n != 2 || f.sessions(t, u.ID) != 1 {
-		t.Errorf("sweep removed %d (%v); %d session(s) left, want 2 removed and 1 left", n, err, f.sessions(t, u.ID))
+	if err != nil || n != 3 || f.sessions(t, u.ID) != 1 {
+		t.Errorf("sweep removed %d (%v); %d session(s) left, want 3 removed and 1 left", n, err, f.sessions(t, u.ID))
 	}
 	if _, err := f.authn.Authenticate(ctx, live.Token, auth.CookieSession); err != nil {
 		t.Errorf("the live session did not survive the sweep: %v", err)
