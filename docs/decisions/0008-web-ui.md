@@ -1,8 +1,9 @@
 # ADR 0008: The first web interface (Milestone 5)
 
-- Status: **Proposed**. Not to be merged until the review questions under
-  [Questions for review](#questions-for-review) are answered and recorded.
-- Date: 2026-11-13
+- Status: **Accepted** (not yet implemented). Every recommendation was
+  accepted; the review answers and one amendment are under
+  [Decisions](#decisions) and are worked into the text.
+- Date: 2026-11-13 (proposed and accepted)
 - Depends on: [ADR 0004](0004-privilege-boundary.md) (unprivileged
   `skep-api`), [ADR 0006](0006-api-split-authentication-tls.md) (cookie
   sessions, the origin check, TLS 1.3, RBAC), [ADR 0007](0007-retention.md)
@@ -39,7 +40,8 @@ uses, with one small exception (Decision 3).
   `Path=/`. The token never appears in a response body, so JavaScript
   never sees it. A non-GET request authenticated by cookie must carry an
   `Origin` header equal to `https://` plus the request's `Host`, or it is
-  refused and audited. Sessions end after 30 minutes idle or 12 hours, and
+  refused and audited. (Amendment a extended this, before the milestone,
+  to every request that carries an `Origin` header.) Sessions end after 30 minutes idle or 12 hours, and
   `last_seen_at` is refreshed at most once a minute by any authenticated
   request.
 - **The server sends** `Content-Security-Policy: default-src 'none';
@@ -123,9 +125,14 @@ bearer token. What remains is how the UI uses it.
   cleared and the login page shown. Other open tabs are told at once over
   a `BroadcastChannel` that carries only the word "logged out", and the
   same happens after a password change, which ends every session.
-- **Every write sends `Origin`.** Browsers add it to same-origin
-  `fetch` calls that are not GET or HEAD, so the existing check passes
-  without anything in the UI; the UI must stay same-origin (Decision 4).
+- **`Origin` must always be this host** (amendment a). Any request that
+  carries an `Origin` header, on any route and with any credentials or
+  none, including `POST /auth/login` and `POST /auth/logout`, must name
+  `https://` plus the request's `Host`, or `skep-api` refuses it.
+  Requests without `Origin`, such as `skepctl`'s, are unaffected, and a
+  cookie-authenticated write must still carry one. Browsers add `Origin`
+  to same-origin `fetch` calls that are not GET or HEAD, so the UI passes
+  without doing anything, as long as it stays same-origin (Decision 4).
 - **Requests use `credentials: "same-origin"`**, the `fetch` default, and
   never `"include"`.
 - **First administrator:** still a local command (ADR 0006, decision 8).
@@ -351,8 +358,10 @@ Testing:
 | FreeBSD | `hearst` | `skep-api` from the FreeBSD build serves the UI to a browser on the lab network; pending FreeBSD validation until done |
 
 Testing Library and Playwright are new development dependencies. Neither
-ships in the built files. Playwright downloads browsers; if the lab's DNS
-filtering blocks that, it is raised, not worked around.
+ships in the built files. Installing Playwright's browsers and system
+dependencies on `merrick` (`npx playwright install --with-deps`) is
+approved for when the build starts; if the lab's DNS filtering blocks the
+download, the work stops and it is raised, never worked around.
 
 ## Consequences
 
@@ -375,18 +384,32 @@ filtering blocks that, it is raised, not worked around.
 5. Read-only pages, then the interactive ones (Decisions 1 and 7).
 6. Browser tests; documentation; validation on `hearst`.
 
-## Questions for review
+## Decisions
 
-1. **Navigation (Decision 1):** all twelve sections with placeholders, or
-   only the sections that have content?
-2. **Background requests (Decision 3):** add `X-Skep-Background` so an
-   unattended tab idles out, or accept that an open dashboard keeps the
-   session for up to 12 hours?
-3. **Serving (Decision 4):** `skep-api` serves the UI, embedded in the
-   binary with a placeholder for builds without Node.js; or from a
-   directory on disk?
-4. **Interactive scope (Decision 7):** include user management and task
-   cancel, or ship read-only first?
-5. **Testing (Decision 8):** accept Playwright and Testing Library as
-   development dependencies?
-6. **Scaffold (Decision 8):** build on `feat/web-scaffold`?
+Accepted on 2026-11-13 with these answers to the six review questions.
+
+1. **All twelve sections, with placeholders** for those the API cannot
+   fill yet (Decision 1).
+2. **Add `X-Skep-Background`**, so that an unattended tab idles out
+   (Decision 3).
+3. **Embedded with `go:embed`, with the placeholder** for builds without
+   Node.js (Decision 4a, option A1).
+4. **Include user management and task cancel** (Decision 7, option B).
+5. **Playwright and Testing Library as development dependencies**
+   (Decision 8). Installing Playwright's browsers and system
+   dependencies on `merrick` is approved for the build; a download
+   blocked by the lab's DNS filtering stops the work and is raised.
+6. **Build on `feat/web-scaffold`** (Decision 8, option A).
+
+One amendment was made at acceptance and is worked into Decision 2.
+
+- **a. The origin check covers every request.** Any request that carries
+  an `Origin` header must match `https://` plus the request's `Host`,
+  including `POST /auth/login` and `POST /auth/logout`, not only
+  cookie-authenticated writes. Requests without `Origin`, such as
+  `skepctl`'s, are unaffected. It is a change to `skep-api`, not to the
+  UI, so it was implemented at once, before the milestone, in its own
+  change (#18), and is recorded in the implementation notes of
+  [ADR 0006](0006-api-split-authentication-tls.md). The proposal relied
+  on the existing check, which covered only cookie-authenticated writes
+  and the login.
