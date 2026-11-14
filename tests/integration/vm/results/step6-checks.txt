@@ -171,3 +171,37 @@ bridge0 with vtnet1 only; vmm.ko, nmdm.ko, zfs.ko loaded. The API:
 fbsd1 desired "running", observed "stopped" (20:16:54Z, the watcher after
 the agent started), drift true. Tasks since boot: discovery.refresh and
 maintenance.retention only. Nothing started by itself.
+
+## Networking isolation, rerun after the lab firewall fix: PASSED (20:30-20:35 UTC)
+
+Before the fix (20:27 UTC), from fbsd1 (10.79.60.100), VLAN 10 (MGMT,
+10.79.10.0/24) was open beyond DNS as well:
+    TCP 10.79.10.1:443, 10.79.10.1:80 (gateway web UI)      open
+    TCP 10.79.10.5:8006, 10.79.10.5:22 (swearengen)         open
+    TCP 10.79.10.250:53, :80, :443, 10.79.10.249:80 (Pi-hole) open
+    ping 10.79.10.1, 10.79.10.5, 10.79.10.250               answered
+    traceroute 10.79.10.5: 1 10.79.60.1, 2 10.79.10.5
+So the guest VLAN reached both SERVERS (VLAN 20) and MGMT (VLAN 10)
+through the lab firewall (path VLAN 60 -> 10.79.60.1 -> the target). Not
+Skep: hearst does not forward (net.inet.ip.forwarding=0) and bridge0 and
+vtnet1 have no address.
+
+Andy reordered the firewall's LAB rules: DNS, ICMP, NTP, block RFC 1918,
+then internet only. Rerun from fbsd1 (started for the test, stopped
+afterwards):
+    TCP, must fail (nc -z -w4):
+      10.79.20.170:22, 10.79.20.170:8443, 10.79.20.80:22, 10.79.20.1:443  blocked
+      10.79.10.1:443, 10.79.10.1:80, 10.79.10.5:8006, 10.79.10.5:22       blocked
+      10.79.10.250:80, 10.79.10.250:443, 10.79.10.249:80                  blocked
+    Internet, must work:
+      ping 9.9.9.9 0% loss; fetch https://www.freebsd.org/ OK
+    DNS through the Pi-holes, must work:
+      host www.freebsd.org 10.79.10.250 -> 96.47.72.77
+      host www.freebsd.org 10.79.10.249 -> 96.47.72.77
+    NTP to 10.79.60.1, must work:
+      ntpdate -q 10.79.60.1: stratum 2, offset +1.104178, exit status 0
+    ICMP to private networks (allowed on purpose, for diagnostics):
+      ping 10.79.20.170, 10.79.20.1, 10.79.10.1, 10.79.10.5, 10.79.10.250  answered
+fbsd1 stopped afterwards (ACPI stop succeeded; desired and observed
+stopped, no runner, bhyve, or tap). It stays stopped until Andy says
+otherwise.

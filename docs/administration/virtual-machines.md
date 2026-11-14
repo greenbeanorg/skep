@@ -9,7 +9,7 @@ networking, and a serial console in the web interface. The design is
 > UFS-root, itself a KVM guest): FreeBSD was installed into a VM through
 > the browser console, and every check in
 > [tests/integration/vm](../../tests/integration/vm/README.md) passed
-> except one that depends on the lab network (guest isolation). A ZFS-root
+> (guest isolation once the lab firewall was fixed). A ZFS-root
 > host, real disks, `e1000`, `nvme`, and `ahci-hd` are still pending.
 
 ## What this release does and does not do
