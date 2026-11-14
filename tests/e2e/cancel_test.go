@@ -114,7 +114,11 @@ func newStack(t *testing.T) *stack {
 	if err := os.WriteFile(filepath.Join(s.conf.MediaDir, "install.iso"), []byte("iso"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	s.fake = hostfake.New(s.conf, hostfake.Options{PoolBytes: 20 << 30, HostCPUs: 4, HostMemoryBytes: 6 << 30, Logger: quiet()})
+	s.fake = hostfake.New(s.conf, hostfake.Options{PoolBytes: 20 << 30, HostCPUs: 4, HostMemoryBytes: 6 << 30, Logger: quiet(),
+		Runner: func(ctx context.Context, ops hostops.Ops, vmID string, pid int, signals <-chan hostops.RunnerSignal) error {
+			return bhyve.RunVM(ctx, ops, vmID, pid, signals, quiet())
+		}})
+	t.Cleanup(s.fake.Close)
 	host := s.fake.Ops()
 	vms, err := vm.New(vm.Options{
 		NodeID: nodeID, Store: database.NewVMStore(s.agentDB), Engine: s.engine, Host: host, Logger: quiet(),

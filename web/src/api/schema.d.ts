@@ -444,6 +444,47 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/vms/{id}/actions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["VMID"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start, stop, force-stop, or restart a virtual machine
+         * @description Requires `vm:power`. Submits the task the action becomes:
+         *     `vm.start`, `vm.stop`, `vm.force_stop`, or `vm.restart`.
+         *
+         *     - `start` sets `desired_state` to `running`, starts the VM's runner,
+         *       and succeeds once the guest runs. Refused when bhyve is not
+         *       available (`bhyve_unavailable`), when the running VMs and this
+         *       one would exceed physical memory less the configured reserve
+         *       (`insufficient_memory`), or when the bridge holds a management
+         *       interface (`bridge_not_allowed`).
+         *     - `stop` sets `desired_state` to `stopped` and presses the guest's
+         *       ACPI power button. It waits `timeout` seconds (default 90, at
+         *       most 300); if the guest has not shut down by then the task fails
+         *       with `stop_timeout` and the VM keeps running. A stop never
+         *       escalates to a force stop.
+         *     - `force_stop` powers the guest off at once and destroys whatever
+         *       is left of the VM on the host.
+         *     - `restart` is a stop followed by a start, in one task.
+         *
+         *     Nothing restarts a VM by itself: a guest that powers off leaves
+         *     `desired_state` at `running` and `drift` true.
+         */
+        post: operations["vmAction"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/storage/pools": {
         parameters: {
             query?: never;
@@ -618,6 +659,12 @@ export interface components {
             config?: components["schemas"]["VMConfig"];
             /** @description Replaces the attached install media; empty detaches all. */
             media?: string[];
+        };
+        VMAction: {
+            /** @enum {string} */
+            action: "start" | "stop" | "force_stop" | "restart";
+            /** @description Seconds a stop or restart waits for the guest to shut down. Default 90. */
+            timeout?: number;
         };
         VMCreated: {
             vm: components["schemas"]["VM"];
@@ -1090,7 +1137,8 @@ export interface components {
          * @description The current state of the VM or the host refuses the request:
          *     `vm_not_stopped`, `vm_not_provisioned`, `vm_name_taken`,
          *     `insufficient_space`, `insufficient_memory`, `bhyve_unavailable`,
-         *     `storage_unavailable`, `resource_busy`, `idempotency_key_conflict`.
+         *     `storage_unavailable`, `vm_not_running`, `vm_start_failed`,
+         *     `stop_timeout`, `resource_busy`, `idempotency_key_conflict`.
          */
         VMConflict: {
             headers: {
@@ -2009,6 +2057,46 @@ export interface operations {
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
             409: components["responses"]["VMConflict"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
+    vmAction: {
+        parameters: {
+            query?: never;
+            header?: {
+                /**
+                 * @description Makes a retry safe: a second request with the same key and the
+                 *     same body returns the task of the first; with a different body it
+                 *     is refused with `idempotency_key_conflict`.
+                 */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                id: components["parameters"]["VMID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["VMAction"];
+            };
+        };
+        responses: {
+            /** @description The task. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Task"];
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["VMConflict"];
+            422: components["responses"]["VMUnprocessable"];
             503: components["responses"]["Unavailable"];
         };
     };

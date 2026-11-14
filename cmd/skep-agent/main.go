@@ -64,6 +64,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if len(args) > 0 && args[0] == "audit" {
 		return runAudit(ctx, args[1:], stdout, stderr)
 	}
+	if len(args) > 0 && args[0] == hostops.RunnerCommand {
+		return runRunner(args[1:], stderr)
+	}
 	flags := flag.NewFlagSet("skep-agent", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	var (
@@ -279,6 +282,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if err := vms.ObserveAll(ctx); err != nil {
 		log.Warn("could not observe the virtual machines", "error", err)
 	}
+	go vms.Watch(ctx, cfg.Hypervisor.Bhyve.WatchInterval.Std())
 	if caps := vms.Capabilities(ctx); caps.Available {
 		log.Info("bhyve is available", "reason", caps.Reason, "max_vcpus_per_vm", caps.MaxVCPUsPerVM,
 			"guest_memory_bytes", caps.GuestMemoryBytes)

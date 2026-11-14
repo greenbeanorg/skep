@@ -55,6 +55,14 @@ func (c *Client) DeleteVM(ctx context.Context, id string) (models.Task, error) {
 	return task, err
 }
 
+// VMAction asks the agent to start, stop, force-stop, or restart a VM, and
+// returns the task.
+func (c *Client) VMAction(ctx context.Context, id string, act models.VMAction) (models.Task, error) {
+	var task models.Task
+	err := c.do(ctx, http.MethodPost, "/vms/"+url.PathEscape(id)+"/actions", nil, act, &task)
+	return task, err
+}
+
 // StoragePools returns the allow-listed pools as the agent observes them.
 func (c *Client) StoragePools(ctx context.Context) (models.StoragePoolList, error) {
 	var list models.StoragePoolList

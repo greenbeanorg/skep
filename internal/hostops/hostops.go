@@ -24,6 +24,7 @@ package hostops
 
 import (
 	"context"
+	"syscall"
 	"time"
 )
 
@@ -35,6 +36,7 @@ type Ops struct {
 	Net   Net
 	VMM   VMM
 	Files Files
+	Procs Procs
 }
 
 // ZFS creates, lists, and destroys the datasets of VMs inside the
@@ -108,11 +110,23 @@ type Dataset struct {
 	DiskID string
 }
 
-// Net inspects the bridges guests may join.
+// Net inspects the bridges guests may join and keeps the taps of VMs.
+// Skep never creates, destroys, or re-addresses a bridge.
 type Net interface {
 	// Bridge describes an allow-listed bridge. A bridge that is not on
 	// the allow-list is refused with bridge_not_allowed.
 	Bridge(ctx context.Context, name string) (Bridge, error)
+	// CreateTap creates a tap for one NIC of a VM, describes it as
+	// skep:<vm-id>:<slot>, brings it up, and returns its name.
+	CreateTap(ctx context.Context, vmID string, slot int) (string, error)
+	// AddBridgeMember adds a tap of a VM to an allow-listed bridge that
+	// exists and has no management interface among its members.
+	AddBridgeMember(ctx context.Context, bridge, tap string) error
+	// DestroyTap destroys a tap, only if its description says it belongs
+	// to the VM. A tap that does not exist is not an error.
+	DestroyTap(ctx context.Context, vmID, tap string) error
+	// VMTaps lists the taps whose description says they belong to the VM.
+	VMTaps(ctx context.Context, vmID string) ([]string, error)
 }
 
 // Bridge is an allow-listed bridge as observed.
@@ -129,6 +143,59 @@ type VMM interface {
 	Capabilities(ctx context.Context) VMMInfo
 	// InstanceExists reports whether the vmm instance of a VM exists.
 	InstanceExists(vmID string) bool
+	// DestroyInstance destroys the vmm instance of a VM. An instance that
+	// does not exist is not an error.
+	DestroyInstance(ctx context.Context, vmID string) error
+	// ForcePoweroff powers the instance of a VM off at once, as pulling
+	// the plug would.
+	ForcePoweroff(ctx context.Context, vmID string) error
+	// StartBhyve starts bhyve for a VM with a configuration file the
+	// runner rendered in the VM's state directory, writing its output to
+	// the VM's bhyve.log. Only the runner calls it.
+	StartBhyve(ctx context.Context, vmID string) (Process, error)
+}
+
+// Process is a child process: bhyve, as the runner sees it.
+type Process interface {
+	PID() int
+	// Wait blocks until the process ends.
+	Wait() ExitStatus
+	// Signal sends a signal to the process.
+	Signal(sig syscall.Signal) error
+}
+
+// ExitStatus is how a process ended: an exit code, or a signal.
+type ExitStatus struct {
+	// Code is the exit status, -1 when the process was killed by a signal
+	// or could not be waited for.
+	Code int
+	// Signal names the signal that killed the process, if one did.
+	Signal string
+	Err    error
+}
+
+// RunnerSignal is what the agent can ask of a VM's runner.
+type RunnerSignal int
+
+const (
+	// StopGraceful asks the guest to power off (ACPI power button).
+	StopGraceful RunnerSignal = iota + 1
+	// StopForce powers the guest off at once.
+	StopForce
+)
+
+// Procs starts and signals the per-VM runner processes (ADR 0009
+// decision 7). A runner is identified by its process ID file and checked
+// against the process's own argument list before anything is sent to
+// it, so a recycled process ID is never signalled.
+type Procs interface {
+	// StartRunner starts the runner of a VM in its own session, so it
+	// survives the agent, and returns its process ID.
+	StartRunner(ctx context.Context, vmID string) (int, error)
+	// Runner returns the process ID of the VM's live runner.
+	Runner(vmID string) (pid int, ok bool)
+	// SignalRunner sends a request to the VM's live runner.
+	SignalRunner(vmID string, sig RunnerSignal) error
 }
 
 // VMMInfo is the state of the hypervisor on this host.
@@ -163,6 +230,26 @@ type Files interface {
 	// RemoveVM removes the persistent and runtime directories of a VM.
 	// Missing directories are not an error.
 	RemoveVM(ctx context.Context, vmID string) error
+
+	// PrepareRun creates the runtime directory of a VM (root, 0700).
+	PrepareRun(ctx context.Context, vmID string) error
+	// WriteRunFile replaces one of the fixed files of a VM's runtime
+	// directory (RunSpecFile, RunStateFile, RunnerPIDFile) atomically.
+	WriteRunFile(vmID, name string, data []byte) error
+	// ReadRunFile reads one of them. A missing file is fs.ErrNotExist.
+	ReadRunFile(vmID, name string) ([]byte, error)
+	// RemoveRunFile removes one of them. A missing file is not an error.
+	RemoveRunFile(vmID, name string) error
+	// RunVMs lists the IDs of the VMs that have a runtime directory.
+	RunVMs() ([]string, error)
+	// WriteStateFile replaces one of the fixed files of a VM's persistent
+	// directory (BhyveConfigFile) atomically.
+	WriteStateFile(vmID, name string, data []byte) error
+	// StateFilePath is the path of a fixed file of a VM's persistent
+	// directory (BhyveConfigFile, BhyveLogFile, VMVarsFile).
+	StateFilePath(vmID, name string) (string, error)
+	// LogTail returns the end of the VM's bhyve.log, at most maxBytes.
+	LogTail(vmID string, maxBytes int) string
 }
 
 // MediaFile is one ISO file in the media directory.

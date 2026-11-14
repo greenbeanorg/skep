@@ -4,6 +4,7 @@ import (
 	"errors"
 	"log/slog"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -22,6 +23,12 @@ type system interface {
 	// Exists reports whether a path exists, without following a final
 	// symbolic link.
 	Exists(path string) bool
+	// Alive reports whether a process exists.
+	Alive(pid int) bool
+	// ProcessArgs returns a process's argument list.
+	ProcessArgs(pid int) ([]string, error)
+	// Kill sends a signal to a process.
+	Kill(pid int, sig syscall.Signal) error
 }
 
 // Options configures the real implementation.
@@ -30,14 +37,19 @@ type Options struct {
 	CommandTimeout time.Duration
 	// Logger defaults to slog.Default().
 	Logger *slog.Logger
+	// Self is the absolute path of the agent's own executable, which
+	// runs the per-VM runners. Empty means no runner can be started.
+	Self string
 }
 
 // host is the real implementation of every interface in this package.
 type host struct {
-	conf Confinement
-	run  Runner
-	sys  system
-	log  *slog.Logger
+	conf  Confinement
+	run   Runner
+	sys   system
+	spawn spawner
+	self  string
+	log   *slog.Logger
 
 	// ignoredMedia remembers which entries of the media directory were
 	// already logged as ignored.

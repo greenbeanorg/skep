@@ -30,7 +30,15 @@ type Options struct {
 	HostCPUs        int
 	HostMemoryBytes int64
 	Logger          *slog.Logger
+	// Runner is what a started runner runs: in the agent and the tests,
+	// the real runner loop of the bhyve package, here against the fake.
+	// Without it no VM can be started.
+	Runner RunnerFunc
 }
+
+// RunnerFunc runs one VM until its run ends, taking requests from
+// signals. pid is the runner's simulated process ID.
+type RunnerFunc func(ctx context.Context, ops hostops.Ops, vmID string, pid int, signals <-chan hostops.RunnerSignal) error
 
 // Fake implements the hostops interfaces in memory. Every allow-listed
 // pool and bridge exists. The exported fields let a test break things.
@@ -52,9 +60,30 @@ type Fake struct {
 	// FailCreateVolume makes the next CreateVolume calls fail.
 	FailCreateVolume error
 
+	// IgnoreACPI lists the VMs whose guest ignores the ACPI power
+	// button, as an installer menu does.
+	IgnoreACPI map[string]bool
+
 	datasets  map[string]hostops.Dataset
 	instances map[string]bool
 	calls     []string
+	// taps maps a tap to its description and bridge.
+	taps    map[string]fakeTap
+	nextTap int
+	nextPID int
+	runners map[string]*fakeRunner
+	guests  map[string]*Guest
+	ctx     context.Context
+	stop    context.CancelFunc
+	wg      sync.WaitGroup
+}
+
+type fakeTap struct{ desc, bridge string }
+
+type fakeRunner struct {
+	pid     int
+	signals chan hostops.RunnerSignal
+	kill    context.CancelFunc
 }
 
 // New returns a fake host for the given confinement.
@@ -68,11 +97,18 @@ func New(conf hostops.Confinement, opts Options) *Fake {
 	if opts.HostMemoryBytes <= 0 {
 		opts.HostMemoryBytes = 16 << 30
 	}
+	ctx, stop := context.WithCancel(context.Background())
 	return &Fake{
-		conf:      conf,
-		files:     hostops.NewFiles(conf, opts.Logger),
-		opts:      opts,
-		ZFSLoaded: true,
+		ctx: ctx, stop: stop,
+		IgnoreACPI: map[string]bool{},
+		taps:       map[string]fakeTap{},
+		nextPID:    10000,
+		runners:    map[string]*fakeRunner{},
+		guests:     map[string]*Guest{},
+		conf:       conf,
+		files:      hostops.NewFiles(conf, opts.Logger),
+		opts:       opts,
+		ZFSLoaded:  true,
 		Info: hostops.VMMInfo{
 			Simulated: true, VMMLoaded: true, BhyvePresent: true, MaxCPU: 256,
 			HostCPUs: opts.HostCPUs, HostMemoryBytes: opts.HostMemoryBytes,
@@ -87,7 +123,7 @@ func New(conf hostops.Confinement, opts Options) *Fake {
 
 // Ops returns the fake as the hostops surface.
 func (f *Fake) Ops() hostops.Ops {
-	return hostops.Ops{Conf: f.conf, ZFS: f, Net: f, VMM: f, Files: fakeFiles{f}}
+	return hostops.Ops{Conf: f.conf, ZFS: f, Net: f, VMM: f, Files: fakeFiles{Files: f.files, f: f}, Procs: f}
 }
 
 // Calls returns what was called so far, one line per mutating call.
@@ -315,23 +351,14 @@ func (f *Fake) InstanceExists(vmID string) bool {
 
 // fakeFiles is the real file implementation, except that the UEFI variable
 // store is an empty file: a development machine has no firmware.
-type fakeFiles struct{ f *Fake }
-
-func (ff fakeFiles) Media(ctx context.Context) ([]hostops.MediaFile, error) {
-	return ff.f.files.Media(ctx)
-}
-
-func (ff fakeFiles) ResolveMedia(ctx context.Context, name string) (string, error) {
-	return ff.f.files.ResolveMedia(ctx, name)
+type fakeFiles struct {
+	hostops.Files
+	f *Fake
 }
 
 func (ff fakeFiles) PrepareVM(ctx context.Context, vmID string) error {
 	if err := writeEmptyVars(ff.f.conf, vmID); err != nil {
 		return err
 	}
-	return ff.f.files.PrepareVM(ctx, vmID)
-}
-
-func (ff fakeFiles) RemoveVM(ctx context.Context, vmID string) error {
-	return ff.f.files.RemoveVM(ctx, vmID)
+	return ff.Files.PrepareVM(ctx, vmID)
 }

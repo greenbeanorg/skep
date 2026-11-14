@@ -22,6 +22,7 @@ type VMBackend interface {
 	CreateVM(ctx context.Context, req models.VMCreate) (models.VMCreated, error)
 	UpdateVM(ctx context.Context, id string, upd models.VMUpdate) (models.Task, error)
 	DeleteVM(ctx context.Context, id string) (models.Task, error)
+	VMAction(ctx context.Context, id string, act models.VMAction) (models.Task, error)
 	StoragePools(ctx context.Context) (models.StoragePoolList, error)
 	Media(ctx context.Context) (models.MediaList, error)
 }
@@ -35,6 +36,7 @@ func (h *handler) vmRoutes() []route {
 		{http.MethodGet, "/vms/{id}", auth.PermVMRead, h.getVM},
 		{http.MethodPut, "/vms/{id}", auth.PermVMWrite, h.updateVM},
 		{http.MethodDelete, "/vms/{id}", auth.PermVMDelete, h.deleteVM},
+		{http.MethodPost, "/vms/{id}/actions", auth.PermVMPower, h.vmAction},
 		{http.MethodGet, "/storage/pools", auth.PermStorageRead, h.listPools},
 		{http.MethodGet, "/storage/media", auth.PermStorageRead, h.listMedia},
 	}
@@ -55,6 +57,9 @@ func (noVMs) UpdateVM(context.Context, string, models.VMUpdate) (models.Task, er
 	return models.Task{}, models.ErrNotFound
 }
 func (noVMs) DeleteVM(context.Context, string) (models.Task, error) {
+	return models.Task{}, models.ErrNotFound
+}
+func (noVMs) VMAction(context.Context, string, models.VMAction) (models.Task, error) {
 	return models.Task{}, models.ErrNotFound
 }
 func (noVMs) StoragePools(context.Context) (models.StoragePoolList, error) {
@@ -206,6 +211,35 @@ func (h *handler) deleteVM(w http.ResponseWriter, r *http.Request) {
 	}
 	task, err := h.vms.DeleteVM(r.Context(), id)
 	h.auditVM(r, models.TaskVMDelete, id, &task, err)
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	httpkit.WriteJSON(w, r, http.StatusAccepted, task)
+}
+
+// vmAction asks the agent for a power action. The audit action is the
+// task type the action becomes, so both logs name it the same way.
+func (h *handler) vmAction(w http.ResponseWriter, r *http.Request) {
+	id, ok := vmID(w, r)
+	if !ok {
+		return
+	}
+	var act models.VMAction
+	if !decodeBody(w, r, &act) {
+		return
+	}
+	if r, ok = withIdempotencyKey(w, r); !ok {
+		return
+	}
+	action := "vm." + act.Action
+	switch act.Action {
+	case models.VMActionStart, models.VMActionStop, models.VMActionForceStop, models.VMActionRestart:
+	default:
+		action = "vm.action"
+	}
+	task, err := h.vms.VMAction(r.Context(), id, act)
+	h.auditVM(r, action, id, &task, err)
 	if err != nil {
 		h.fail(w, r, err)
 		return

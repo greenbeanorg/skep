@@ -3,12 +3,14 @@ package hostops
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/greenbeanorg/skep/pkg/models"
@@ -46,6 +48,10 @@ func noSuchDataset() error {
 type fakeSystem struct {
 	oids  map[string]uint64
 	paths map[string]bool
+	// procs maps a live process ID to its arguments; kills records
+	// "pid signal".
+	procs map[int][]string
+	kills *[]string
 }
 
 func (f fakeSystem) SysctlUint64(name string) (uint64, error) {
@@ -63,6 +69,23 @@ func (f fakeSystem) SysctlExists(name string) (bool, error) {
 
 func (f fakeSystem) Exists(path string) bool { return f.paths[path] }
 
+func (f fakeSystem) Alive(pid int) bool { _, ok := f.procs[pid]; return ok }
+
+func (f fakeSystem) ProcessArgs(pid int) ([]string, error) {
+	args, ok := f.procs[pid]
+	if !ok {
+		return nil, errors.New("no such process")
+	}
+	return args, nil
+}
+
+func (f fakeSystem) Kill(pid int, sig syscall.Signal) error {
+	if f.kills != nil {
+		*f.kills = append(*f.kills, fmt.Sprintf("%d %v", pid, sig))
+	}
+	return nil
+}
+
 func testConf(t *testing.T) Confinement {
 	t.Helper()
 	dir := t.TempDir()
@@ -76,7 +99,7 @@ func testConf(t *testing.T) Confinement {
 
 func testHost(t *testing.T, run *script, zfsLoaded bool) *host {
 	t.Helper()
-	sys := fakeSystem{oids: map[string]uint64{}, paths: map[string]bool{}}
+	sys := fakeSystem{oids: map[string]uint64{}, paths: map[string]bool{}, procs: map[int][]string{}, kills: &[]string{}}
 	if zfsLoaded {
 		sys.oids[sysctlZFSLoaded] = 1
 	}

@@ -19,11 +19,11 @@ import (
 // Definitions returns the task types of the VM lifecycle, with the time
 // limits and cancellability of ADR 0009 decision 9.
 func (s *Service) Definitions() []tasks.Definition {
-	return []tasks.Definition{
+	return append([]tasks.Definition{
 		{Type: models.TaskVMCreate, Cancellable: true, Timeout: 10 * time.Minute, Run: s.runCreate},
 		{Type: models.TaskVMUpdate, Timeout: time.Minute, Run: s.runUpdate},
 		{Type: models.TaskVMDelete, Timeout: 10 * time.Minute, Run: s.runDelete},
-	}
+	}, s.actionDefinitions()...)
 }
 
 // failure turns an error the user can act on into a task failure with its

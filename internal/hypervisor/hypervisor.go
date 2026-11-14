@@ -9,6 +9,7 @@ package hypervisor
 
 import (
 	"context"
+	"time"
 
 	"github.com/greenbeanorg/skep/internal/hostops"
 	"github.com/greenbeanorg/skep/pkg/models"
@@ -34,6 +35,18 @@ type Hypervisor interface {
 	// Delete removes the storage and the state of a VM that is not
 	// running. What does not exist is not an error.
 	Delete(ctx context.Context, vm models.VM) (Removed, error)
+	// Start boots a provisioned VM and returns once it runs, or with the
+	// reason it does not.
+	Start(ctx context.Context, vm models.VM) error
+	// Stop asks the guest to shut down and waits up to timeout for it.
+	// On timeout it fails with stop_timeout and the VM keeps running: it
+	// never escalates to a force stop.
+	Stop(ctx context.Context, vmID string, timeout time.Duration) error
+	// ForceStop ends a VM at once, and destroys whatever of it is left on
+	// the host without a runner.
+	ForceStop(ctx context.Context, vmID string) error
+	// Restart is Stop and then Start.
+	Restart(ctx context.Context, vm models.VM, timeout time.Duration) error
 	// Inspect reports the state of one VM on the host.
 	Inspect(ctx context.Context, vmID string) (Observation, error)
 	// List reports every VM the engine knows something about on the

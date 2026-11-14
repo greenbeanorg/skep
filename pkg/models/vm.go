@@ -102,6 +102,7 @@ const (
 	CodeVMNotRunning        = "vm_not_running"
 	CodeVMNotProvisioned    = "vm_not_provisioned"
 	CodeStopTimeout         = "stop_timeout"
+	CodeVMStartFailed       = "vm_start_failed"
 	CodeConsoleBusy         = "console_busy"
 )
 

@@ -22,6 +22,7 @@ type VMBackend interface {
 	CreateVM(ctx context.Context, req models.VMCreate, sub vm.Submission) (models.VMCreated, error)
 	UpdateVM(ctx context.Context, id string, upd models.VMUpdate, sub vm.Submission) (models.Task, error)
 	DeleteVM(ctx context.Context, id string, sub vm.Submission) (models.Task, error)
+	Action(ctx context.Context, id string, act models.VMAction, sub vm.Submission) (models.Task, error)
 	StoragePools(ctx context.Context) (models.StoragePoolList, error)
 	Media(ctx context.Context) (models.MediaList, error)
 }
@@ -32,6 +33,7 @@ func (h *handler) registerVMs(mux *http.ServeMux) {
 	mux.Handle(agentproto.Prefix+"/vms", httpkit.Methods(h.vmCollection, http.MethodGet, http.MethodHead, http.MethodPost))
 	mux.Handle(agentproto.Prefix+"/vms/{id}", httpkit.Methods(h.vmItem,
 		http.MethodGet, http.MethodHead, http.MethodPut, http.MethodDelete))
+	mux.Handle(agentproto.Prefix+"/vms/{id}/actions", httpkit.Methods(h.vmAction, http.MethodPost))
 	mux.Handle(agentproto.Prefix+"/storage/pools", httpkit.ReadOnly(h.storagePools))
 	mux.Handle(agentproto.Prefix+"/storage/media", httpkit.ReadOnly(h.storageMedia))
 }
@@ -132,6 +134,24 @@ func (h *handler) vmItem(w http.ResponseWriter, r *http.Request) {
 		}
 		httpkit.WriteJSON(w, r, http.StatusOK, found)
 	}
+}
+
+func (h *handler) vmAction(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if !idRE.MatchString(id) {
+		httpkit.WriteError(w, r, http.StatusBadRequest, httpkit.CodeInvalidRequest, "invalid VM ID")
+		return
+	}
+	var act models.VMAction
+	if !decode(w, r, &act) {
+		return
+	}
+	task, err := h.vms.Action(r.Context(), id, act, submission(r))
+	if err != nil {
+		httpkit.Fail(h.log, w, r, err)
+		return
+	}
+	httpkit.WriteJSON(w, r, http.StatusAccepted, task)
 }
 
 func (h *handler) storagePools(w http.ResponseWriter, r *http.Request) {

@@ -889,6 +889,64 @@ paths:
           $ref: "#/components/responses/VMConflict"
         "503":
           $ref: "#/components/responses/Unavailable"
+  /vms/{id}/actions:
+    parameters:
+      - $ref: "#/components/parameters/VMID"
+    post:
+      tags: [vms]
+      operationId: vmAction
+      summary: Start, stop, force-stop, or restart a virtual machine
+      x-skep-permission: vm:power
+      description: |
+        Requires `vm:power`. Submits the task the action becomes:
+        `vm.start`, `vm.stop`, `vm.force_stop`, or `vm.restart`.
+
+        - `start` sets `desired_state` to `running`, starts the VM's runner,
+          and succeeds once the guest runs. Refused when bhyve is not
+          available (`bhyve_unavailable`), when the running VMs and this
+          one would exceed physical memory less the configured reserve
+          (`insufficient_memory`), or when the bridge holds a management
+          interface (`bridge_not_allowed`).
+        - `stop` sets `desired_state` to `stopped` and presses the guest's
+          ACPI power button. It waits `timeout` seconds (default 90, at
+          most 300); if the guest has not shut down by then the task fails
+          with `stop_timeout` and the VM keeps running. A stop never
+          escalates to a force stop.
+        - `force_stop` powers the guest off at once and destroys whatever
+          is left of the VM on the host.
+        - `restart` is a stop followed by a start, in one task.
+
+        Nothing restarts a VM by itself: a guest that powers off leaves
+        `desired_state` at `running` and `drift` true.
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VMAction"
+      responses:
+        "202":
+          description: The task.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Task"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/VMConflict"
+        "422":
+          $ref: "#/components/responses/VMUnprocessable"
+        "503":
+          $ref: "#/components/responses/Unavailable"
   /storage/pools:
     get:
       tags: [storage]
@@ -992,7 +1050,8 @@ components:
         The current state of the VM or the host refuses the request:
         `vm_not_stopped`, `vm_not_provisioned`, `vm_name_taken`,
         `insufficient_space`, `insufficient_memory`, `bhyve_unavailable`,
-        `storage_unavailable`, `resource_busy`, `idempotency_key_conflict`.
+        `storage_unavailable`, `vm_not_running`, `vm_start_failed`,
+        `stop_timeout`, `resource_busy`, `idempotency_key_conflict`.
       content:
         application/json:
           schema:
@@ -1277,6 +1336,18 @@ components:
           type: array
           description: Replaces the attached install media; empty detaches all.
           items: { type: string }
+    VMAction:
+      type: object
+      required: [action]
+      properties:
+        action:
+          type: string
+          enum: [start, stop, force_stop, restart]
+        timeout:
+          type: integer
+          minimum: 1
+          maximum: 300
+          description: Seconds a stop or restart waits for the guest to shut down. Default 90.
     VMCreated:
       type: object
       required: [vm, task]

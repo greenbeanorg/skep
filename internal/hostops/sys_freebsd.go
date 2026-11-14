@@ -3,10 +3,13 @@
 package hostops
 
 import (
+	"bytes"
 	"encoding/binary"
 	"errors"
 	"fmt"
 	"os"
+	"strings"
+	"syscall"
 	"time"
 
 	"golang.org/x/sys/unix"
@@ -19,7 +22,8 @@ func New(conf Confinement, opts Options) (Ops, error) {
 		timeout = 30 * time.Second
 	}
 	h := newHost(conf, execRunner{timeout: timeout}, kernel{}, opts.Logger)
-	return Ops{Conf: conf, ZFS: h, Net: h, VMM: h, Files: h}, nil
+	h.spawn, h.self = execSpawner{}, opts.Self
+	return Ops{Conf: conf, ZFS: h, Net: h, VMM: h, Files: h, Procs: h}, nil
 }
 
 // kernel is the real system binding.
@@ -58,3 +62,24 @@ func (kernel) Exists(path string) bool {
 	_, err := os.Lstat(path)
 	return err == nil
 }
+
+func (kernel) Alive(pid int) bool {
+	err := unix.Kill(pid, 0)
+	return err == nil || errors.Is(err, unix.EPERM)
+}
+
+// ProcessArgs reads kern.proc.args.<pid>: the arguments, each followed by
+// a NUL byte.
+func (kernel) ProcessArgs(pid int) ([]string, error) {
+	raw, err := unix.SysctlRaw("kern.proc.args", pid)
+	if err != nil {
+		return nil, err
+	}
+	raw = bytes.TrimRight(raw, "\x00")
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	return strings.Split(string(raw), "\x00"), nil
+}
+
+func (kernel) Kill(pid int, sig syscall.Signal) error { return unix.Kill(pid, sig) }

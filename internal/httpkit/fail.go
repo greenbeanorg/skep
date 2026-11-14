@@ -38,6 +38,7 @@ var StatusForCode = map[string]int{
 	models.CodeVMNotRunning:        http.StatusConflict,
 	models.CodeVMNotProvisioned:    http.StatusConflict,
 	models.CodeStopTimeout:         http.StatusConflict,
+	models.CodeVMStartFailed:       http.StatusConflict,
 	models.CodeConsoleBusy:         http.StatusConflict,
 }
 

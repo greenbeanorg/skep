@@ -3,6 +3,7 @@ package e2e
 import (
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"testing"
 
@@ -103,6 +104,45 @@ func TestVMLifecycleEndToEnd(t *testing.T) {
 	json.Unmarshal(rec.Body.Bytes(), &vm)
 	if len(vm.Disks) != 1 {
 		t.Errorf("disks after detaching the media = %+v", vm.Disks)
+	}
+
+	// Power: a viewer is refused; an operator starts and stops it.
+	power := func(role, action, rid string) *httptest.ResponseRecorder {
+		return s.call(http.MethodPost, "/api/v1/vms/"+id+"/actions", role, []byte(`{"action":"`+action+`"}`), rid)
+	}
+	if rec := power(auth.RoleViewer, "start", "req-vm-start-viewer"); rec.Code != http.StatusForbidden {
+		t.Fatalf("start as viewer: %d %s", rec.Code, rec.Body)
+	}
+	rec = power(auth.RoleOperator, "start", "req-vm-start")
+	task = models.Task{}
+	if err := json.Unmarshal(rec.Body.Bytes(), &task); err != nil || rec.Code != http.StatusAccepted || task.Type != models.TaskVMStart {
+		t.Fatalf("start: %d %s", rec.Code, rec.Body)
+	}
+	s.waitStatus(t, task.ID, models.TaskSucceeded)
+	rec = s.call(http.MethodGet, "/api/v1/vms/"+id, auth.RoleViewer, nil, "")
+	vm = models.VM{}
+	json.Unmarshal(rec.Body.Bytes(), &vm)
+	if vm.Observed.State != models.VMRunning || vm.DesiredState != models.VMRunning || vm.NICs[0].Tap == "" {
+		t.Fatalf("after start: %+v", vm)
+	}
+	if rec := s.call(http.MethodDelete, "/api/v1/vms/"+id, auth.RoleOperator, nil, ""); rec.Code != http.StatusConflict {
+		t.Errorf("delete while running: %d %s", rec.Code, rec.Body)
+	}
+	if n := s.count(t, s.apiDB, `SELECT COUNT(*) FROM audit_log WHERE action = 'vm.start' AND outcome = 'success'
+		AND resource_id = ? AND request_id = 'req-vm-start'`, id); n != 1 {
+		t.Errorf("%d vm.start entries in the access audit log, want 1", n)
+	}
+	if n := s.count(t, s.agentDB, `SELECT COUNT(*) FROM audit_log WHERE action = 'vm.start' AND request_id = 'req-vm-start'`); n != 2 {
+		t.Errorf("%d vm.start entries in the agent's audit log, want 2", n)
+	}
+	rec = power(auth.RoleOperator, "stop", "req-vm-stop")
+	task = models.Task{}
+	if err := json.Unmarshal(rec.Body.Bytes(), &task); err != nil || rec.Code != http.StatusAccepted {
+		t.Fatalf("stop: %d %s", rec.Code, rec.Body)
+	}
+	s.waitStatus(t, task.ID, models.TaskSucceeded)
+	if rec := power(auth.RoleOperator, "reboot", ""); rec.Code != http.StatusBadRequest {
+		t.Errorf("unknown action: %d %s", rec.Code, rec.Body)
 	}
 
 	// Storage listings.

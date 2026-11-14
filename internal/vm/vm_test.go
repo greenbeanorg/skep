@@ -69,7 +69,11 @@ func newFixture(t *testing.T) *fixture {
 		t.Fatal(err)
 	}
 	quiet := slog.New(slog.NewTextHandler(io.Discard, nil))
-	fake := hostfake.New(conf, hostfake.Options{PoolBytes: poolSize, HostCPUs: 4, HostMemoryBytes: 6 * gib, Logger: quiet})
+	fake := hostfake.New(conf, hostfake.Options{PoolBytes: poolSize, HostCPUs: 4, HostMemoryBytes: 6 * gib, Logger: quiet,
+		Runner: func(ctx context.Context, ops hostops.Ops, vmID string, pid int, signals <-chan hostops.RunnerSignal) error {
+			return bhyve.RunVM(ctx, ops, vmID, pid, signals, quiet)
+		}})
+	t.Cleanup(fake.Close)
 	engine, err := tasks.New(tasks.Options{
 		Store: database.NewTaskStore(db), Audit: database.NewAuditLog(db), NodeID: nodeID, Logger: quiet,
 	})

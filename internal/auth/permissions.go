@@ -19,6 +19,7 @@ const (
 	PermVMRead      = "vm:read"
 	PermVMWrite     = "vm:write"
 	PermVMDelete    = "vm:delete"
+	PermVMPower     = "vm:power"
 	PermStorageRead = "storage:read"
 
 	// PermAll is how the admin role is stored: every permission,
@@ -30,7 +31,7 @@ const (
 var Permissions = []string{
 	PermSystemRead, PermNodeRead, PermTaskRead, PermTaskCancel,
 	PermUserRead, PermUserManage, PermRoleRead, PermAuditRead,
-	PermVMRead, PermVMWrite, PermVMDelete, PermStorageRead,
+	PermVMRead, PermVMWrite, PermVMDelete, PermVMPower, PermStorageRead,
 }
 
 // KnownPermission reports whether p is a declared permission.

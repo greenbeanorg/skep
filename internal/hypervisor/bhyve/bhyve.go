@@ -282,21 +282,3 @@ func (a *Adapter) Delete(ctx context.Context, vm models.VM) (hypervisor.Removed,
 	}
 	return gone, nil
 }
-
-// Inspect implements hypervisor.Hypervisor.
-func (a *Adapter) Inspect(_ context.Context, vmID string) (hypervisor.Observation, error) {
-	if !hostops.ValidID(vmID) {
-		return hypervisor.Observation{}, models.Invalid("invalid VM ID")
-	}
-	obs := hypervisor.Observation{VMID: vmID, State: models.VMStopped}
-	if a.host.VMM.InstanceExists(vmID) {
-		obs.State, obs.Active = models.VMFailed, true
-		obs.Detail = "a vmm instance exists without a runner; force-stop the VM to destroy it"
-	}
-	return obs, nil
-}
-
-// List implements hypervisor.Hypervisor.
-func (a *Adapter) List(context.Context) ([]hypervisor.Observation, error) {
-	return []hypervisor.Observation{}, nil
-}
