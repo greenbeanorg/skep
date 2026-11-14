@@ -42,21 +42,30 @@ type Options struct {
 	Hypervisor hypervisor.Hypervisor
 	// Host is used for the pool and media listings only; everything a VM
 	// needs on the host goes through the adapter.
-	Host   hostops.Ops
-	Logger *slog.Logger
+	Host hostops.Ops
+	// Console is told what the watcher observes, so a running VM's
+	// console is open from the start. Optional.
+	Console ConsoleTracker
+	Logger  *slog.Logger
 	// Now defaults to time.Now. Tests replace it.
 	Now func() time.Time
 }
 
+// ConsoleTracker keeps the consoles of the running VMs open.
+type ConsoleTracker interface {
+	Track(vmID string, running bool)
+}
+
 // Service implements the VM and storage operations of the internal API.
 type Service struct {
-	nodeID string
-	store  *database.VMStore
-	engine Engine
-	hv     hypervisor.Hypervisor
-	host   hostops.Ops
-	log    *slog.Logger
-	now    func() time.Time
+	console ConsoleTracker
+	nodeID  string
+	store   *database.VMStore
+	engine  Engine
+	hv      hypervisor.Hypervisor
+	host    hostops.Ops
+	log     *slog.Logger
+	now     func() time.Time
 }
 
 // New returns a Service. Register its task definitions with the engine
@@ -73,7 +82,7 @@ func New(opts Options) (*Service, error) {
 	}
 	return &Service{
 		nodeID: opts.NodeID, store: opts.Store, engine: opts.Engine, hv: opts.Hypervisor,
-		host: opts.Host, log: opts.Logger, now: opts.Now,
+		host: opts.Host, log: opts.Logger, now: opts.Now, console: opts.Console,
 	}, nil
 }
 
@@ -199,7 +208,16 @@ func (s *Service) Observe(ctx context.Context, id string) (hypervisor.Observatio
 	err = s.store.SaveObserved(ctx, id, database.Observation{
 		State: obs.State, Detail: obs.Detail, PID: obs.PID, Taps: obs.Taps, At: s.now().UTC(),
 	})
+	if s.console != nil {
+		s.console.Track(id, Running(obs.State))
+	}
 	return obs, err
+}
+
+// Running reports whether an observed state has a guest that runs, and so
+// a console.
+func Running(state string) bool {
+	return state == models.VMRunning || state == models.VMStopping
 }
 
 // ObserveAll inspects every VM in the database. The agent calls it before

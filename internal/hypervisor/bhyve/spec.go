@@ -52,18 +52,8 @@ const (
 	pciLPC        = 31
 )
 
-// ConsoleDevice is the bhyve side of a VM's serial console: an nmdm(4)
-// pair named after the instance. The agent opens the B side.
-func ConsoleDevice(vmID string, side byte) (string, error) {
-	name, err := hostops.Instance(vmID)
-	if err != nil {
-		return "", err
-	}
-	if side != 'A' && side != 'B' {
-		return "", fmt.Errorf("bhyve: an nmdm side is A or B")
-	}
-	return "/dev/nmdm-" + name + ".1" + string(side), nil
-}
+// ConsoleDevice is one side of a VM's serial console pair.
+func ConsoleDevice(vmID string, side byte) (string, error) { return hostops.ConsoleDevice(vmID, side) }
 
 // Render returns the bhyve_config(5) file of a VM, with the taps the
 // runner created for its NICs. Keys are emitted in a fixed order.

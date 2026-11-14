@@ -3,6 +3,8 @@ package hostfake
 import (
 	"context"
 	"fmt"
+	"io"
+	"net"
 	"sort"
 	"strings"
 	"syscall"
@@ -277,4 +279,34 @@ func (f *Fake) KillRunner(vmID string) {
 	if r != nil {
 		r.kill()
 	}
+}
+
+// OpenConsole implements hostops.VMM: a simulated serial console that
+// prints a banner and echoes what is typed, so the console path can be
+// exercised on a development machine.
+func (f *Fake) OpenConsole(vmID string) (io.ReadWriteCloser, error) {
+	if !hostops.ValidID(vmID) {
+		return nil, fmt.Errorf("hostfake: invalid VM ID")
+	}
+	agent, guest := net.Pipe()
+	go func() {
+		defer guest.Close()
+		if _, err := guest.Write([]byte("skep-hostfake: simulated serial console of VM " + vmID + "\r\n")); err != nil {
+			return
+		}
+		buf := make([]byte, 512)
+		for {
+			n, err := guest.Read(buf)
+			if err != nil {
+				return
+			}
+			if _, err := guest.Write(buf[:n]); err != nil {
+				return
+			}
+		}
+	}()
+	f.mu.Lock()
+	f.record("open console %s", vmID)
+	f.mu.Unlock()
+	return agent, nil
 }

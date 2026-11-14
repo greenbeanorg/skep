@@ -24,6 +24,7 @@ package hostops
 
 import (
 	"context"
+	"io"
 	"syscall"
 	"time"
 )
@@ -153,6 +154,9 @@ type VMM interface {
 	// runner rendered in the VM's state directory, writing its output to
 	// the VM's bhyve.log. Only the runner calls it.
 	StartBhyve(ctx context.Context, vmID string) (Process, error)
+	// OpenConsole opens the agent's side (B) of a VM's nmdm(4) serial
+	// console in raw mode. bhyve holds the A side.
+	OpenConsole(vmID string) (io.ReadWriteCloser, error)
 }
 
 // Process is a child process: bhyve, as the runner sees it.

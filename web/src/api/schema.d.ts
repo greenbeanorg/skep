@@ -485,6 +485,51 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/vms/{id}/console/serial": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["VMID"];
+            };
+            cookie?: never;
+        };
+        /**
+         * The serial console of a running VM (WebSocket)
+         * @description Requires `vm:console`: a console is a login on the guest. Upgrades
+         *     to a WebSocket (`Connection: Upgrade`, `Upgrade: websocket`);
+         *     OpenAPI cannot describe the stream itself. A browser authenticates
+         *     with its session cookie and must send a matching `Origin`; other
+         *     clients send `Authorization: Bearer`.
+         *
+         *     Messages are binary in both directions: the guest's output, and
+         *     keystrokes for the guest. No terminal emulation happens on the
+         *     server. On attach the client first receives up to 64 KiB of the
+         *     output the agent kept since the VM started.
+         *
+         *     At most 4 clients attach to one console; a fifth is refused with
+         *     `409 console_busy`, and a VM that is not running with
+         *     `409 vm_not_running`, both before the upgrade.
+         *
+         *     A console does not outlive its session: it is re-checked once a
+         *     minute, and when the session has ended, expired, or been revoked
+         *     the WebSocket closes with code 4001. Keystrokes count as use of
+         *     the session (at most once a minute); output from the guest does
+         *     not, so an unattended console idles out.
+         *
+         *     Attachment and detachment are recorded in the access audit log and
+         *     in the agent's operation audit log (`vm.console.attach`,
+         *     `vm.console.detach`), linked by the request ID.
+         */
+        get: operations["vmSerialConsole"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/storage/pools": {
         parameters: {
             query?: never;
@@ -1138,7 +1183,8 @@ export interface components {
          *     `vm_not_stopped`, `vm_not_provisioned`, `vm_name_taken`,
          *     `insufficient_space`, `insufficient_memory`, `bhyve_unavailable`,
          *     `storage_unavailable`, `vm_not_running`, `vm_start_failed`,
-         *     `stop_timeout`, `resource_busy`, `idempotency_key_conflict`.
+         *     `stop_timeout`, `console_busy`, `resource_busy`,
+         *     `idempotency_key_conflict`.
          */
         VMConflict: {
             headers: {
@@ -2097,6 +2143,32 @@ export interface operations {
             404: components["responses"]["NotFound"];
             409: components["responses"]["VMConflict"];
             422: components["responses"]["VMUnprocessable"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
+    vmSerialConsole: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["VMID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Switching to the WebSocket protocol. */
+            101: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["VMConflict"];
             503: components["responses"]["Unavailable"];
         };
     };

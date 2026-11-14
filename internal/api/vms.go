@@ -37,6 +37,7 @@ func (h *handler) vmRoutes() []route {
 		{http.MethodPut, "/vms/{id}", auth.PermVMWrite, h.updateVM},
 		{http.MethodDelete, "/vms/{id}", auth.PermVMDelete, h.deleteVM},
 		{http.MethodPost, "/vms/{id}/actions", auth.PermVMPower, h.vmAction},
+		{http.MethodGet, "/vms/{id}/console/serial", auth.PermVMConsole, h.vmConsole},
 		{http.MethodGet, "/storage/pools", auth.PermStorageRead, h.listPools},
 		{http.MethodGet, "/storage/media", auth.PermStorageRead, h.listMedia},
 	}

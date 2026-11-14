@@ -46,6 +46,9 @@ type Backend interface {
 type Options struct {
 	// VMs is the VM service. Nil leaves the VM and storage routes out.
 	VMs VMBackend
+	// Console is the serial console broker. Nil leaves the console route
+	// out.
+	Console ConsoleBroker
 	// RequestTimeout bounds the time spent on one request.
 	RequestTimeout time.Duration
 	// Logger defaults to slog.Default().
@@ -57,6 +60,7 @@ var idRE = regexp.MustCompile(httpkit.IDPattern)
 type handler struct {
 	backend Backend
 	vms     VMBackend
+	console ConsoleBroker
 	log     *slog.Logger
 }
 
@@ -68,7 +72,7 @@ func NewHandler(backend Backend, opts Options) http.Handler {
 	if log == nil {
 		log = slog.Default()
 	}
-	h := &handler{backend: backend, vms: opts.VMs, log: log}
+	h := &handler{backend: backend, vms: opts.VMs, console: opts.Console, log: log}
 
 	mux := http.NewServeMux()
 	mux.Handle(agentproto.Prefix+"/health", httpkit.ReadOnly(h.health))
@@ -125,7 +129,7 @@ func withRequestLog(log *slog.Logger, next http.Handler) http.Handler {
 func withLimits(timeout time.Duration, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		r.Body = http.MaxBytesReader(w, r.Body, MaxRequestBody)
-		if timeout > 0 {
+		if timeout > 0 && !isConsole(r) {
 			ctx, cancel := context.WithTimeout(r.Context(), timeout)
 			defer cancel()
 			r = r.WithContext(ctx)

@@ -24,6 +24,7 @@ import (
 	"github.com/greenbeanorg/skep/internal/apidb"
 	"github.com/greenbeanorg/skep/internal/audit"
 	"github.com/greenbeanorg/skep/internal/auth"
+	"github.com/greenbeanorg/skep/internal/console"
 	"github.com/greenbeanorg/skep/internal/database"
 	"github.com/greenbeanorg/skep/internal/hostops"
 	"github.com/greenbeanorg/skep/internal/hostops/hostfake"
@@ -120,8 +121,10 @@ func newStack(t *testing.T) *stack {
 		}})
 	t.Cleanup(s.fake.Close)
 	host := s.fake.Ops()
+	consoles := console.New(console.Options{Open: host.VMM.OpenConsole, Audit: database.NewAuditLog(s.agentDB), Logger: quiet()})
 	vms, err := vm.New(vm.Options{
-		NodeID: nodeID, Store: database.NewVMStore(s.agentDB), Engine: s.engine, Host: host, Logger: quiet(),
+		Console: consoles,
+		NodeID:  nodeID, Store: database.NewVMStore(s.agentDB), Engine: s.engine, Host: host, Logger: quiet(),
 		Hypervisor: bhyve.New(bhyve.Options{Host: host, HostMemoryReserveBytes: 1 << 30, Logger: quiet()}),
 	})
 	if err != nil {
@@ -152,7 +155,7 @@ func newStack(t *testing.T) *stack {
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv := internalapi.NewServer(internalapi.NewHandler(svc, internalapi.Options{VMs: vms, RequestTimeout: 10 * time.Second, Logger: quiet()}), 10*time.Second, quiet())
+	srv := internalapi.NewServer(internalapi.NewHandler(svc, internalapi.Options{VMs: vms, Console: consoles, RequestTimeout: 10 * time.Second, Logger: quiet()}), 10*time.Second, quiet())
 	go srv.Serve(ln)
 	t.Cleanup(func() { srv.Close(); ln.Close() })
 
@@ -185,7 +188,8 @@ func newStack(t *testing.T) *stack {
 		t.Fatal(err)
 	}
 	t.Cleanup(client.Close)
-	s.handler = api.NewHandler(api.Options{Backend: client, Auth: authn, Users: users, Audit: access, AuditLog: access, Logger: quiet()})
+	s.handler = api.NewHandler(api.Options{Backend: client, Auth: authn, Users: users, Audit: access, AuditLog: access, Logger: quiet(),
+		ConsoleSessionCheck: 200 * time.Millisecond})
 
 	for _, role := range []string{auth.RoleAdmin, auth.RoleOperator, auth.RoleViewer} {
 		u, err := users.Create(ctx, auth.Actor{Name: "local:0"}, auth.NewUser{Username: "e2e-" + role, Password: password, RoleID: role})

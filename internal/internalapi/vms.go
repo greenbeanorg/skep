@@ -34,6 +34,9 @@ func (h *handler) registerVMs(mux *http.ServeMux) {
 	mux.Handle(agentproto.Prefix+"/vms/{id}", httpkit.Methods(h.vmItem,
 		http.MethodGet, http.MethodHead, http.MethodPut, http.MethodDelete))
 	mux.Handle(agentproto.Prefix+"/vms/{id}/actions", httpkit.Methods(h.vmAction, http.MethodPost))
+	if h.console != nil {
+		mux.Handle(agentproto.Prefix+"/vms/{id}/console/serial", httpkit.Methods(h.vmConsole, http.MethodGet))
+	}
 	mux.Handle(agentproto.Prefix+"/storage/pools", httpkit.ReadOnly(h.storagePools))
 	mux.Handle(agentproto.Prefix+"/storage/media", httpkit.ReadOnly(h.storageMedia))
 }

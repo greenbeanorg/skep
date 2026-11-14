@@ -27,6 +27,7 @@ import (
 	"github.com/greenbeanorg/skep/internal/audit"
 	"github.com/greenbeanorg/skep/internal/auditarchive"
 	"github.com/greenbeanorg/skep/internal/config"
+	"github.com/greenbeanorg/skep/internal/console"
 	"github.com/greenbeanorg/skep/internal/database"
 	"github.com/greenbeanorg/skep/internal/hardware"
 	"github.com/greenbeanorg/skep/internal/hostops"
@@ -189,7 +190,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		MaxVCPUsPerVM:          cfg.Hypervisor.Bhyve.MaxVCPUsPerVM,
 		Logger:                 log,
 	})
+	consoles := console.New(console.Options{Open: host.VMM.OpenConsole, Audit: database.NewAuditLog(db), Logger: log})
 	vms, err := vm.New(vm.Options{
+		Console:    consoles,
 		NodeID:     nodeID,
 		Store:      database.NewVMStore(db),
 		Engine:     engine,
@@ -298,6 +301,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	}
 	internal := internalapi.NewHandler(svc, internalapi.Options{
 		VMs:            vms,
+		Console:        consoles,
 		RequestTimeout: cfg.Socket.RequestTimeout.Std(),
 		Logger:         log,
 	})
