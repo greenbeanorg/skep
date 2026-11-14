@@ -100,16 +100,6 @@ func (a *Adapter) Capabilities(ctx context.Context) models.EngineCapabilities {
 	return caps
 }
 
-// unavailable returns the bhyve_unavailable error when the engine cannot
-// run a VM, with the reason Capabilities gives.
-func (a *Adapter) unavailable(ctx context.Context) error {
-	caps := a.Capabilities(ctx)
-	if caps.Available {
-		return nil
-	}
-	return &models.Error{Code: models.CodeBhyveUnavailable, Message: "bhyve cannot run a VM on this host: " + caps.Reason}
-}
-
 // Validate implements hypervisor.Hypervisor.
 func (a *Adapter) Validate(ctx context.Context, vm models.VM) ([]string, error) {
 	if vm.Engine != models.EngineBhyve {
