@@ -25,8 +25,12 @@ import (
 	"github.com/greenbeanorg/skep/internal/audit"
 	"github.com/greenbeanorg/skep/internal/auth"
 	"github.com/greenbeanorg/skep/internal/database"
+	"github.com/greenbeanorg/skep/internal/hostops"
+	"github.com/greenbeanorg/skep/internal/hostops/hostfake"
+	"github.com/greenbeanorg/skep/internal/hypervisor/bhyve"
 	"github.com/greenbeanorg/skep/internal/internalapi"
 	"github.com/greenbeanorg/skep/internal/tasks"
+	"github.com/greenbeanorg/skep/internal/vm"
 	"github.com/greenbeanorg/skep/migrations"
 	"github.com/greenbeanorg/skep/pkg/models"
 )
@@ -46,6 +50,10 @@ type stack struct {
 	handler http.Handler
 	tokens  map[string]string
 	userIDs map[string]string
+	// The simulated host behind the agent's VM service, and its
+	// confinement.
+	fake *hostfake.Fake
+	conf hostops.Confinement
 }
 
 func quiet() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
@@ -93,6 +101,33 @@ func newStack(t *testing.T) *stack {
 			t.Fatal(err)
 		}
 	}
+	// The VM service on the simulated host, as the agent wires it on a
+	// development machine.
+	s.conf = hostops.Confinement{
+		Pools: []string{"devpool"}, DatasetRoot: "skep", MediaDir: filepath.Join(dir, "media"),
+		Bridges: []string{"bridge0"}, ManagementInterfaces: []string{"vtnet0"},
+		RunDir: filepath.Join(dir, "run"), StateDir: filepath.Join(dir, "agent", "vm"),
+	}
+	if err := os.MkdirAll(s.conf.MediaDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(s.conf.MediaDir, "install.iso"), []byte("iso"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s.fake = hostfake.New(s.conf, hostfake.Options{PoolBytes: 20 << 30, HostCPUs: 4, HostMemoryBytes: 6 << 30, Logger: quiet()})
+	host := s.fake.Ops()
+	vms, err := vm.New(vm.Options{
+		NodeID: nodeID, Store: database.NewVMStore(s.agentDB), Engine: s.engine, Host: host, Logger: quiet(),
+		Hypervisor: bhyve.New(bhyve.Options{Host: host, HostMemoryReserveBytes: 1 << 30, Logger: quiet()}),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, def := range vms.Definitions() {
+		if err := s.engine.Register(def); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if err := s.engine.Start(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -101,7 +136,8 @@ func newStack(t *testing.T) *stack {
 		defer cancel()
 		s.engine.Shutdown(stop)
 	})
-	svc, err := agent.NewService(agent.Options{NodeID: nodeID, Discoverer: discoverer{}, Database: s.agentDB, Tasks: s.engine, Logger: quiet()})
+	svc, err := agent.NewService(agent.Options{NodeID: nodeID, Discoverer: discoverer{}, Database: s.agentDB, Tasks: s.engine,
+		Bhyve: vms.Capabilities, Logger: quiet()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,7 +148,7 @@ func newStack(t *testing.T) *stack {
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv := internalapi.NewServer(internalapi.NewHandler(svc, internalapi.Options{RequestTimeout: 10 * time.Second, Logger: quiet()}), 10*time.Second, quiet())
+	srv := internalapi.NewServer(internalapi.NewHandler(svc, internalapi.Options{VMs: vms, RequestTimeout: 10 * time.Second, Logger: quiet()}), 10*time.Second, quiet())
 	go srv.Serve(ln)
 	t.Cleanup(func() { srv.Close(); ln.Close() })
 

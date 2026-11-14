@@ -49,6 +49,9 @@ var nodeIDRE = regexp.MustCompile(httpkit.IDPattern)
 type Options struct {
 	// Backend is the service layer, in skep-api the agent client.
 	Backend Backend
+	// VMs is the VM and storage service layer. When nil, Backend is used
+	// if it implements VMBackend, as the agent client does.
+	VMs VMBackend
 	// Auth checks sessions and performs logins.
 	Auth *auth.Authenticator
 	// Users manages accounts.
@@ -82,6 +85,7 @@ type Options struct {
 
 type handler struct {
 	backend Backend
+	vms     VMBackend
 	auth    *auth.Authenticator
 	users   *auth.Users
 	audit   auth.AuditWriter
@@ -119,7 +123,7 @@ type route struct {
 
 // routes is the whole public API.
 func (h *handler) routes() []route {
-	return []route{
+	return append([]route{
 		{http.MethodGet, "/health", requirePublic, h.health},
 		{http.MethodPost, "/auth/login", requirePublic, h.login},
 		{http.MethodPost, "/auth/logout", requireSession, h.logout},
@@ -139,7 +143,7 @@ func (h *handler) routes() []route {
 		{http.MethodDelete, "/users/{id}", auth.PermUserManage, h.deleteUser},
 		{http.MethodGet, "/roles", auth.PermRoleRead, h.listRoles},
 		{http.MethodGet, "/audit", auth.PermAuditRead, h.listAudit},
-	}
+	}, h.vmRoutes()...)
 }
 
 // NewHandler returns the API as an http.Handler, wrapped in the request ID,
@@ -152,6 +156,14 @@ func NewHandler(opts Options) http.Handler {
 	h := &handler{
 		backend: opts.Backend, auth: opts.Auth, users: opts.Users, audit: opts.Audit, history: opts.AuditLog,
 		checks: opts.Checks, log: log, tls: opts.TLS, proxies: opts.TrustedProxies,
+	}
+	switch vms, ok := opts.Backend.(VMBackend); {
+	case opts.VMs != nil:
+		h.vms = opts.VMs
+	case ok:
+		h.vms = vms
+	default:
+		h.vms = noVMs{}
 	}
 
 	// Routes are grouped by path, and the method is checked by the

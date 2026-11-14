@@ -97,6 +97,29 @@ func (f *Fake) Calls() []string {
 	return append([]string(nil), f.calls...)
 }
 
+// SetInstance makes the vmm instance of a VM exist, or not.
+func (f *Fake) SetInstance(vmID string, exists bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if exists {
+		f.instances[vmID] = true
+	} else {
+		delete(f.instances, vmID)
+	}
+}
+
+// Datasets returns the names of every simulated dataset, sorted.
+func (f *Fake) Datasets() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	names := make([]string, 0, len(f.datasets))
+	for name := range f.datasets {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
 // Set changes the fake's exported fields under its lock.
 func (f *Fake) Set(change func(f *Fake)) {
 	f.mu.Lock()

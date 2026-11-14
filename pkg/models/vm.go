@@ -358,15 +358,18 @@ type MediaList struct {
 	Items []Media `json:"items"`
 }
 
-// BhyveCapabilities is what the bhyve engine can do on this host right
+// EngineCapabilities is what a hypervisor engine can do on this host right
 // now. Available is false when anything a VM needs is missing, and Reason
 // then says what.
-type BhyveCapabilities struct {
+type EngineCapabilities struct {
 	Available bool   `json:"available"`
 	Reason    string `json:"reason"`
 	// Simulated is true on a development machine: VMs are simulated in
 	// memory and nothing runs. Never true on a FreeBSD host.
-	Simulated     bool `json:"simulated,omitempty"`
+	Simulated bool `json:"simulated,omitempty"`
+	// VMMLoaded, FirmwareFound, and NmdmAvailable are the three things
+	// bhyve needs from the host: the kernel module, the UEFI firmware
+	// files, and the console device driver.
 	VMMLoaded     bool `json:"vmm_loaded"`
 	FirmwareFound bool `json:"firmware_found"`
 	NmdmAvailable bool `json:"nmdm_available"`

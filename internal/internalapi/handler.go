@@ -2,8 +2,9 @@
 // JSON under /internal/v1 on a Unix domain socket, for skep-api only
 // (ADR 0004, ADR 0006 decision 1).
 //
-// It carries the agent's read operations and task cancellation. There is
-// no operation that takes a command, a path, or a shell string.
+// It carries the agent's read operations, task cancellation, and the VM
+// operations, each of which is a typed request that becomes a task. There
+// is no operation that takes a command, a path, or a shell string.
 //
 // Two checks happen before any handler runs. The listener reads the peer's
 // credentials from the kernel and drops everyone who is not on the
@@ -43,6 +44,8 @@ type Backend interface {
 
 // Options configures the handler.
 type Options struct {
+	// VMs is the VM service. Nil leaves the VM and storage routes out.
+	VMs VMBackend
 	// RequestTimeout bounds the time spent on one request.
 	RequestTimeout time.Duration
 	// Logger defaults to slog.Default().
@@ -53,6 +56,7 @@ var idRE = regexp.MustCompile(httpkit.IDPattern)
 
 type handler struct {
 	backend Backend
+	vms     VMBackend
 	log     *slog.Logger
 }
 
@@ -64,7 +68,7 @@ func NewHandler(backend Backend, opts Options) http.Handler {
 	if log == nil {
 		log = slog.Default()
 	}
-	h := &handler{backend: backend, log: log}
+	h := &handler{backend: backend, vms: opts.VMs, log: log}
 
 	mux := http.NewServeMux()
 	mux.Handle(agentproto.Prefix+"/health", httpkit.ReadOnly(h.health))
@@ -73,6 +77,9 @@ func NewHandler(backend Backend, opts Options) http.Handler {
 	mux.Handle(agentproto.Prefix+"/tasks", httpkit.ReadOnly(h.tasks))
 	mux.Handle(agentproto.Prefix+"/tasks/{id}", httpkit.ReadOnly(h.task))
 	mux.Handle(agentproto.Prefix+"/tasks/{id}/cancel", httpkit.Methods(h.cancelTask, http.MethodPost))
+	if h.vms != nil {
+		h.registerVMs(mux)
+	}
 	mux.HandleFunc("/", httpkit.NotFound)
 
 	var root http.Handler = mux

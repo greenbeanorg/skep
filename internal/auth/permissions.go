@@ -14,6 +14,13 @@ const (
 	PermRoleRead   = "role:read"
 	PermAuditRead  = "audit:read"
 
+	// The first working VM (ADR 0009 decision 10). Deleting destroys
+	// data and is its own permission.
+	PermVMRead      = "vm:read"
+	PermVMWrite     = "vm:write"
+	PermVMDelete    = "vm:delete"
+	PermStorageRead = "storage:read"
+
 	// PermAll is how the admin role is stored: every permission,
 	// including ones added later.
 	PermAll = "*"
@@ -23,6 +30,7 @@ const (
 var Permissions = []string{
 	PermSystemRead, PermNodeRead, PermTaskRead, PermTaskCancel,
 	PermUserRead, PermUserManage, PermRoleRead, PermAuditRead,
+	PermVMRead, PermVMWrite, PermVMDelete, PermStorageRead,
 }
 
 // KnownPermission reports whether p is a declared permission.

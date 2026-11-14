@@ -9,6 +9,7 @@ package tasks
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -106,7 +107,17 @@ type Request struct {
 	PeerUID   uint32
 	RequestID string
 	SourceIP  string
+	// Companion is optional work done in the transaction that creates the
+	// task: the task and what it reserves exist together or not at all.
+	// vm.create inserts the VM's rows this way, so the name is taken the
+	// moment the task is accepted. It does not run for an idempotent
+	// replay. A *models.Error it returns refuses the submission with
+	// that error, audited as denied.
+	Companion Companion
 }
+
+// Companion runs inside the transaction that creates a task.
+type Companion func(ctx context.Context, tx *sql.Tx) error
 
 // CancelRequest asks the engine to cancel a task.
 type CancelRequest struct {
@@ -199,7 +210,9 @@ type Store interface {
 	// a models.Error with CodeIdempotencyConflict when the key exists with
 	// a different hash, and with CodeResourceBusy when the resource already
 	// has an unfinished task.
-	Create(ctx context.Context, t Task, sourceIP string) (task Task, created bool, err error)
+	// companion, when not nil, runs in the same transaction after the
+	// task is inserted; its error rolls everything back.
+	Create(ctx context.Context, t Task, sourceIP string, companion Companion) (task Task, created bool, err error)
 	// Transition applies tr. ok is false, without error, when the task was
 	// not in tr.From.
 	Transition(ctx context.Context, id string, tr Transition) (task Task, ok bool, err error)
@@ -231,6 +244,10 @@ const (
 	// MaxPayloadBytes bounds a task payload.
 	MaxPayloadBytes = 256 << 10
 )
+
+// CanonicalPayload returns a payload in the form the engine stores and
+// fingerprints: object keys sorted, no insignificant whitespace.
+func CanonicalPayload(raw json.RawMessage) (json.RawMessage, error) { return canonicalPayload(raw) }
 
 // canonicalPayload validates the payload and returns it in canonical form:
 // object keys sorted, no insignificant whitespace. Empty input means {}.

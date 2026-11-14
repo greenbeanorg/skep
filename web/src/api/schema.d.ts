@@ -366,10 +366,309 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/vms": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List virtual machines
+         * @description Requires `vm:read`. Returns VMs ordered by name, cursor paginated
+         *     like tasks. Each VM carries what was asked for (`desired_state`,
+         *     the configuration) and what the agent last observed (`observed`),
+         *     never mixed in one field.
+         */
+        get: operations["listVMs"];
+        put?: never;
+        /**
+         * Create a virtual machine
+         * @description Requires `vm:write`. Validates the request against the engine and
+         *     the host confinement, reserves the VM's name, and submits a
+         *     `vm.create` task that creates its datasets and zvols. The VM
+         *     exists, with `provisioned: false`, as soon as this returns; it can
+         *     be started once the task has succeeded.
+         *
+         *     Sizes are a number of bytes or a string with a binary suffix
+         *     (`"512M"`, `"8G"`). Disks and network interfaces are fixed at
+         *     creation. A disk reserves its full size unless `thin` is true.
+         *
+         *     Refusals that need the host to decide (`pool_not_allowed`,
+         *     `bridge_not_allowed`, `engine_unsupported`, `firmware_unsupported`,
+         *     `insufficient_space`, `media_not_found`) create no task and are
+         *     audited. An `Idempotency-Key` header makes a retry return the
+         *     first answer.
+         */
+        post: operations["createVM"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/vms/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["VMID"];
+            };
+            cookie?: never;
+        };
+        /**
+         * One virtual machine
+         * @description Requires `vm:read`.
+         */
+        get: operations["getVM"];
+        /**
+         * Change a stopped virtual machine
+         * @description Requires `vm:write`. Submits a `vm.update` task. Fields left out
+         *     are unchanged. Only a stopped, provisioned VM can be changed
+         *     (`vm_not_stopped`, `vm_not_provisioned`). `media` replaces the
+         *     attached install media; `[]` detaches all of it.
+         */
+        put: operations["updateVM"];
+        post?: never;
+        /**
+         * Delete a stopped virtual machine and its disks
+         * @description Requires `vm:delete`. Submits a `vm.delete` task that destroys the
+         *     VM's datasets recursively, its persistent state, and its rows. The
+         *     VM must be stopped (`vm_not_stopped`). Install media files are
+         *     never touched. The finished audit entry lists every dataset
+         *     destroyed and its size.
+         */
+        delete: operations["deleteVM"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/storage/pools": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The pools VMs may use
+         * @description Requires `storage:read`. The pools in the agent's allow-list
+         *     (`storage.pools` in `agent.json`), as observed now. A pool that
+         *     cannot be read is listed with health `UNAVAILABLE` and an `error`.
+         */
+        get: operations["listStoragePools"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/storage/media": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Install media
+         * @description Requires `storage:read`. The ISO files an administrator placed in
+         *     the agent's media directory. Names only; the path is not exposed.
+         *     There is no upload.
+         */
+        get: operations["listMedia"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** @description A number of bytes, or a string with a binary suffix such as "512M", "8G", "1T". Always returned as a number. */
+        ByteSize: number | string;
+        /** @enum {string} */
+        VMState: "unknown" | "stopped" | "starting" | "running" | "stopping" | "failed";
+        /** @description The part of a VM's configuration the database does not constrain. */
+        VMConfig: {
+            /** @description CPU topology shown to the guest; sockets x cores x threads must equal cpu_count. */
+            cpu?: {
+                sockets: number;
+                cores: number;
+                threads: number;
+            };
+            console?: {
+                /** @description Not implemented; enabling it is refused with `not_implemented`. */
+                vnc?: {
+                    enabled?: boolean;
+                };
+            };
+        };
+        VMDisk: {
+            id: string;
+            slot: number;
+            /** @enum {string} */
+            bus: "virtio-blk" | "nvme" | "ahci-hd" | "ahci-cd";
+            read_only: boolean;
+            /** Format: int64 */
+            size_bytes?: number;
+            pool?: string;
+            thin?: boolean;
+            volblocksize?: number;
+            /** @description The zvol, `<pool>/skep/vm/<vm-id>/disk<slot>`. */
+            dataset?: string;
+            /** @description The ISO file name, for install media (`ahci-cd`). */
+            media?: string;
+        };
+        VMNIC: {
+            id: string;
+            slot: number;
+            /** @enum {string} */
+            model: "virtio-net" | "e1000";
+            mac_address: string;
+            bridge: string;
+            /** @description The host's tap interface, while the VM runs. */
+            tap?: string;
+        };
+        VM: {
+            id: string;
+            node_id: string;
+            name: string;
+            description: string;
+            /** @enum {string} */
+            engine: "bhyve" | "qemu";
+            cpu_count: number;
+            /** Format: int64 */
+            memory_bytes: number;
+            /** @enum {string} */
+            firmware: "uefi" | "bios";
+            config: components["schemas"]["VMConfig"];
+            /** @description True once `vm.create` has finished. A VM that is not provisioned can only be deleted. */
+            provisioned: boolean;
+            /**
+             * @description Set by start and stop. Nothing reconciles it in this release.
+             * @enum {string}
+             */
+            desired_state: "stopped" | "running";
+            observed: {
+                state: components["schemas"]["VMState"];
+                detail?: string;
+                pid?: number;
+                /** Format: date-time */
+                at?: string;
+            };
+            /** @description True when the desired and observed states disagree. Information only; nothing acts on it. */
+            drift: boolean;
+            disks: components["schemas"]["VMDisk"][];
+            nics: components["schemas"]["VMNIC"][];
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        VMList: {
+            items: components["schemas"]["VM"][];
+            next_cursor?: string;
+        };
+        VMCreate: {
+            name: string;
+            description?: string;
+            /**
+             * @description Only bhyve is implemented; qemu is refused with `engine_unsupported`.
+             * @default bhyve
+             * @enum {string}
+             */
+            engine?: "bhyve" | "qemu";
+            /**
+             * @description bhyve boots with UEFI only; bios is refused with `firmware_unsupported`.
+             * @default uefi
+             * @enum {string}
+             */
+            firmware?: "uefi" | "bios";
+            cpu_count: number;
+            memory: components["schemas"]["ByteSize"];
+            config?: components["schemas"]["VMConfig"];
+            disks?: {
+                /** @enum {string} */
+                bus?: "virtio-blk" | "nvme" | "ahci-hd" | "ahci-cd";
+                size?: components["schemas"]["ByteSize"];
+                pool?: string;
+                thin?: boolean;
+                media?: string;
+                volblocksize?: components["schemas"]["ByteSize"];
+            }[];
+            nics?: {
+                /** @enum {string} */
+                model?: "virtio-net" | "e1000";
+                mac_address?: string;
+                bridge: string;
+            }[];
+        };
+        VMUpdate: {
+            description?: string;
+            cpu_count?: number;
+            memory?: components["schemas"]["ByteSize"];
+            config?: components["schemas"]["VMConfig"];
+            /** @description Replaces the attached install media; empty detaches all. */
+            media?: string[];
+        };
+        VMCreated: {
+            vm: components["schemas"]["VM"];
+            task: components["schemas"]["Task"];
+        };
+        StoragePool: {
+            name: string;
+            type: string;
+            health: string;
+            error?: string;
+            /** Format: int64 */
+            size_bytes: number;
+            /** Format: int64 */
+            allocated_bytes: number;
+            /** Format: int64 */
+            free_bytes: number;
+            /** Format: int64 */
+            available_bytes: number;
+            /** Format: date-time */
+            observed_at?: string;
+        };
+        StoragePoolList: {
+            items: components["schemas"]["StoragePool"][];
+        };
+        Media: {
+            name: string;
+            /** Format: int64 */
+            size_bytes: number;
+            /** Format: date-time */
+            modified_at: string;
+        };
+        MediaList: {
+            items: components["schemas"]["Media"][];
+        };
+        /** @description What bhyve can do on this host now; `reason` says what is missing when it cannot run a VM. */
+        EngineCapabilities: {
+            available: boolean;
+            reason: string;
+            /** @description True on a development machine, where VMs are simulated. Never on FreeBSD. */
+            simulated?: boolean;
+            vmm_loaded: boolean;
+            firmware_found: boolean;
+            nmdm_available: boolean;
+            max_vcpus_per_vm: number;
+            /** Format: int64 */
+            host_memory_bytes: number;
+            /** Format: int64 */
+            guest_memory_bytes: number;
+            pools: string[];
+            bridges: string[];
+        };
         ErrorResponse: {
             error: {
                 /**
@@ -658,6 +957,7 @@ export interface components {
                 qemu: components["schemas"]["Capability"];
                 zfs: components["schemas"]["Capability"];
             };
+            bhyve?: components["schemas"]["EngineCapabilities"];
             /** Format: date-time */
             started_at: string;
             /** Format: int64 */
@@ -786,6 +1086,42 @@ export interface components {
         };
     };
     responses: {
+        /**
+         * @description The current state of the VM or the host refuses the request:
+         *     `vm_not_stopped`, `vm_not_provisioned`, `vm_name_taken`,
+         *     `insufficient_space`, `insufficient_memory`, `bhyve_unavailable`,
+         *     `storage_unavailable`, `resource_busy`, `idempotency_key_conflict`.
+         */
+        VMConflict: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["ErrorResponse"];
+            };
+        };
+        /**
+         * @description The request names something this host does not offer:
+         *     `engine_unsupported`, `firmware_unsupported`, `pool_not_allowed`,
+         *     `bridge_not_allowed`, `media_not_found`.
+         */
+        VMUnprocessable: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["ErrorResponse"];
+            };
+        };
+        /** @description The request asks for a feature that does not exist yet (`not_implemented`), such as the VNC console. */
+        NotImplemented: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["ErrorResponse"];
+            };
+        };
         /** @description The request is malformed (`invalid_request`). */
         InvalidRequest: {
             headers: {
@@ -891,6 +1227,13 @@ export interface components {
         };
     };
     parameters: {
+        /**
+         * @description Makes a retry safe: a second request with the same key and the
+         *     same body returns the task of the first; with a different body it
+         *     is refused with `idempotency_key_conflict`.
+         */
+        IdempotencyKey: string;
+        VMID: string;
         /**
          * @description Marks a request the client made by itself (a timer, a refetch on
          *     focus). Any non-empty value. The request is authenticated as any
@@ -1481,6 +1824,254 @@ export interface operations {
             400: components["responses"]["InvalidRequest"];
             401: components["responses"]["Unauthenticated"];
             403: components["responses"]["Forbidden"];
+        };
+    };
+    listVMs: {
+        parameters: {
+            query?: {
+                /** @description Only return VMs in this observed state. */
+                state?: components["schemas"]["VMState"];
+                limit?: number;
+                cursor?: string;
+            };
+            header?: {
+                /**
+                 * @description Marks a request the client made by itself (a timer, a refetch on
+                 *     focus). Any non-empty value. The request is authenticated as any
+                 *     other, the idle timeout included, but does not extend the idle
+                 *     timeout.
+                 */
+                "X-Skep-Background"?: components["parameters"]["Background"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description One page of VMs. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VMList"];
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
+    createVM: {
+        parameters: {
+            query?: never;
+            header?: {
+                /**
+                 * @description Makes a retry safe: a second request with the same key and the
+                 *     same body returns the task of the first; with a different body it
+                 *     is refused with `idempotency_key_conflict`.
+                 */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["VMCreate"];
+            };
+        };
+        responses: {
+            /** @description The VM, not yet provisioned, and the task that provisions it. */
+            202: {
+                headers: {
+                    Location?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VMCreated"];
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["VMConflict"];
+            422: components["responses"]["VMUnprocessable"];
+            501: components["responses"]["NotImplemented"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
+    getVM: {
+        parameters: {
+            query?: never;
+            header?: {
+                /**
+                 * @description Marks a request the client made by itself (a timer, a refetch on
+                 *     focus). Any non-empty value. The request is authenticated as any
+                 *     other, the idle timeout included, but does not extend the idle
+                 *     timeout.
+                 */
+                "X-Skep-Background"?: components["parameters"]["Background"];
+            };
+            path: {
+                id: components["parameters"]["VMID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The VM with its disks, install media, and network interfaces. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VM"];
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
+    updateVM: {
+        parameters: {
+            query?: never;
+            header?: {
+                /**
+                 * @description Makes a retry safe: a second request with the same key and the
+                 *     same body returns the task of the first; with a different body it
+                 *     is refused with `idempotency_key_conflict`.
+                 */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                id: components["parameters"]["VMID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["VMUpdate"];
+            };
+        };
+        responses: {
+            /** @description The task. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Task"];
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["VMConflict"];
+            422: components["responses"]["VMUnprocessable"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
+    deleteVM: {
+        parameters: {
+            query?: never;
+            header?: {
+                /**
+                 * @description Makes a retry safe: a second request with the same key and the
+                 *     same body returns the task of the first; with a different body it
+                 *     is refused with `idempotency_key_conflict`.
+                 */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                id: components["parameters"]["VMID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The task. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Task"];
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["VMConflict"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
+    listStoragePools: {
+        parameters: {
+            query?: never;
+            header?: {
+                /**
+                 * @description Marks a request the client made by itself (a timer, a refetch on
+                 *     focus). Any non-empty value. The request is authenticated as any
+                 *     other, the idle timeout included, but does not extend the idle
+                 *     timeout.
+                 */
+                "X-Skep-Background"?: components["parameters"]["Background"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The allow-listed pools. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StoragePoolList"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
+    listMedia: {
+        parameters: {
+            query?: never;
+            header?: {
+                /**
+                 * @description Marks a request the client made by itself (a timer, a refetch on
+                 *     focus). Any non-empty value. The request is authenticated as any
+                 *     other, the idle timeout included, but does not extend the idle
+                 *     timeout.
+                 */
+                "X-Skep-Background"?: components["parameters"]["Background"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The media, ordered by name. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MediaList"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            503: components["responses"]["Unavailable"];
         };
     };
 }

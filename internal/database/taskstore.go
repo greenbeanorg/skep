@@ -130,7 +130,7 @@ func insertStateEvent(ctx context.Context, tx *sql.Tx, id string, at time.Time, 
 }
 
 // Create implements tasks.Store.
-func (s *TaskStore) Create(ctx context.Context, t tasks.Task, sourceIP string) (out tasks.Task, created bool, err error) {
+func (s *TaskStore) Create(ctx context.Context, t tasks.Task, sourceIP string, companion tasks.Companion) (out tasks.Task, created bool, err error) {
 	err = s.inTx(ctx, func(tx *sql.Tx) error {
 		if t.IdempotencyKey != "" {
 			existing, found, err := getTask(ctx, tx, `idempotency_key = ?`, t.IdempotencyKey)
@@ -185,6 +185,12 @@ func (s *TaskStore) Create(ctx context.Context, t tasks.Task, sourceIP string) (
 			SourceIP: sourceIP, RequestID: t.RequestID,
 		}, t.CreatedAt); err != nil {
 			return err
+		}
+		// What the task reserves is written with it, or neither is.
+		if companion != nil {
+			if err := companion(ctx, tx); err != nil {
+				return err
+			}
 		}
 		stored, _, err := getTask(ctx, tx, `id = ?`, t.ID)
 		out, created = stored, true
