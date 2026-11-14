@@ -912,11 +912,15 @@ left open, or departs from it.
   firmware text. Under UEFI the loader menu does not ignore the ACPI
   power button (the firmware powers off), so the `stop_timeout` check used
   an installed guest with `hw.acpi.power_button_state=NONE`. And the lab
-  network does not isolate VLAN 60 from the management VLAN: the guest
-  reaches `10.79.20.0/24` through the lab firewall, so the isolation part
-  of the networking check failed; nothing on `hearst` forwards or bridges
-  it.
+  network did not isolate VLAN 60 at first: the guest reached
+  `10.79.20.0/24` through the lab firewall, so the isolation part of the
+  networking check failed; nothing on `hearst` forwards or bridges
+  it. The firewall routed VLAN 60 to both SERVERS (`10.79.20.0/24`) and
+  MGMT (`10.79.10.0/24`, the gateway's and Proxmox's web interfaces
+  included). After the LAB rules were reordered (DNS, ICMP, NTP, block
+  RFC 1918, then internet only) the rerun passed.
 - **Validation.** After the nested-KVM workaround every check of decision
-  11 passed on `hearst` except guest network isolation (above); see
+  11 passed on `hearst`, guest network isolation after the firewall fix
+  (above); see
   [tests/integration/vm](../../tests/integration/vm/README.md).
 
