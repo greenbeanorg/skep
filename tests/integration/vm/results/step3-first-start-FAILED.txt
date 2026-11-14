@@ -25,24 +25,26 @@ Read-only findings, before anything was changed:
 
 - No crash dump: /var/crash holds only minfree (dumpdev="AUTO" is set), so
   either the kernel hung without panicking, or it stopped at the debugger.
-- Writes after about 10:10 local (15:10Z) are missing from disk, although
-  the host was demonstrably alive until 10:24:57 (an scp, a service
-  restart, and the API's 202 answer to vm.start all happened after 10:10):
-    - /var/log/daemon.log ends at 10:09:47;
-    - the agent database has no vm.start task, the API database no session
-      from 10:24;
-    - /home/aba/skep-m6/skep-agent and skep-api, installed at 10:24, are 0
-      bytes, so both services crash-looped after the reset;
-    - bhyve.conf (written by the runner just before bhyve starts) and the
-      runtime directory do not exist (/var/run is cleared at boot anyway).
-  The disc1 ISO, downloaded between 10:07 and about 10:19, is intact
-  (sha256 matches). Losing 15 minutes of ordinary writes on a reset is not
-  what UFS with soft updates does; it suggests either the virtual disk's
-  cache on swearengen or a kernel that stopped flushing well before the
-  network went down. Unresolved.
-- Because bhyve.conf is missing, it is not known whether bhyve was started
-  at all, or whether the hang came at tap creation or `ifconfig bridge0
-  addm`.
+- Writes from the seconds before the freeze were lost; nothing older:
+    - lost, all made between about 10:24:50 and the freeze at about
+      10:25:01 local: the binaries installed at 10:24 (0 bytes after the
+      reset, so both services crash-looped), the log lines and startup
+      tasks of the service restart, the API session from the login, and
+      the vm.start task;
+    - kept: everything before. /var/log/daemon.log ends at 10:09:47
+      because nothing ran on hearst between the end of the step 2 checks
+      (10:09:47) and the deploy at 10:24 (the step 3 code was being
+      written on merrick), not because writes went missing. The disc1
+      ISO, downloaded between 10:07 and about 10:19, is intact (sha256
+      matches).
+  hearst's virtual disk is cache=none on swearengen (the host honours
+  flushes), so this is the ordinary loss of data not yet flushed by the
+  guest when KVM stopped it. Earlier versions of this note said 15
+  minutes of writes were lost; that was wrong: the gap in the logs had
+  nothing in it to log.
+- bhyve.conf is missing for the same reason: it was written seconds
+  before the freeze. (The root cause, below, shows bhyve was started: KVM
+  failed on its first VMLAUNCH.)
 - The boot configuration works: vmm.ko, nmdm.ko, zfs.ko loaded from
   loader.conf / rc.conf; skeptest re-imported at boot from the cache file
   with its vdev under /var/tmp on the UFS root (ADR "Changes hearst

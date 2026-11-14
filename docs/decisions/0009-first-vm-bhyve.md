@@ -862,8 +862,8 @@ left open, or departs from it.
   is lost, the console shows "console unavailable" with Reconnect, and the
   browser test checks the context-loss path for CSP violations.
   `screenReaderMode` keeps the rows as text for assistive technology.
-- **Durable runtime writes.** After a hard reset of `hearst` lost about 15
-  minutes of writes (0-byte binaries among them), every file the agent and
+- **Durable runtime writes.** After KVM stopped `hearst`, the writes of the
+  seconds before (0-byte binaries among them) were lost; every file the agent and
   the runner write under the run and state directories (`spec.json`,
   `state.json`, `runner.pid`, `bhyve.conf`, the per-VM `uefi-vars.fd`) is
   written to a temporary file, fsynced, renamed, and the directory
