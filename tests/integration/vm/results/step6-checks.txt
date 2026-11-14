@@ -158,3 +158,16 @@ The guest's root password is random and kept only on merrick (scratch).
 It was typed once as a shell command by mistake (the guest was already
 logged in); /root/.sh_history was removed and the shell left with
 HISTFILE unset.
+
+## Host reboot: PASSED (reboot 2 of 2, 20:15 UTC)
+Before: fbsd1 running (desired running, bhyve 4798, runner 4778).
+`shutdown -r now`; hearst answered again after about 35 s.
+Right after boot, before anything else:
+    hw.vmm.vmx.cap.virtual_interrupt_delivery: 0
+    hw.vmm.vmx.cap.posted_interrupts: 0     (from /boot/loader.conf)
+Then: skep_agent and skep_api running (rc.d); no vm-runner, no bhyve, no
+/dev/vmm, no tap; skeptest ONLINE (re-imported from the cache file);
+bridge0 with vtnet1 only; vmm.ko, nmdm.ko, zfs.ko loaded. The API:
+fbsd1 desired "running", observed "stopped" (20:16:54Z, the watcher after
+the agent started), drift true. Tasks since boot: discovery.refresh and
+maintenance.retention only. Nothing started by itself.

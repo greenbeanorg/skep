@@ -28,7 +28,7 @@ done through the serial console in a browser.
 | `vm.force_stop` (running guest; runner-less instance) | **passed** | [step6-checks.txt](results/step6-checks.txt) |
 | `vm.restart` | **passed** | [step6-checks.txt](results/step6-checks.txt) |
 | Agent restart and `kill -9` | **passed** | [step6-checks.txt](results/step6-checks.txt) |
-| Host reboot | see below | |
+| Host reboot | **passed** (both vmm caps 0 right after boot) | [step6-checks.txt](results/step6-checks.txt) |
 | `vm.delete` | **passed** | [step6-checks.txt](results/step6-checks.txt), [step2-datasets.txt](results/step2-datasets.txt) |
 | Permissions | **passed** | [step6-checks.txt](results/step6-checks.txt) |
 | Console (audit, fifth refused, closed after logout, idle) | **passed** | [step6-checks.txt](results/step6-checks.txt) |

@@ -906,8 +906,17 @@ left open, or departs from it.
   that recognises a FreeBSD host running under KVM with APIC virtual
   interrupt delivery enabled and says so before a start, rather than
   letting the first `VMLAUNCH` take the host down. Not in this milestone.
-- **Validation so far.** ZFS provisioning, confinement refusals, and
-  deletion passed on `hearst`. The first `vm.start` made `hearst`
-  unreachable; see [tests/integration/vm](../../tests/integration/vm/README.md)
-  for the record and the state of every check.
+- **Three assumptions of decision 11 did not hold, and the checks were
+  adjusted, not the product.** The edk2 bhyve firmware writes nothing to
+  COM1, so the browser shows the loader, kernel, and installer, but no
+  firmware text. Under UEFI the loader menu does not ignore the ACPI
+  power button (the firmware powers off), so the `stop_timeout` check used
+  an installed guest with `hw.acpi.power_button_state=NONE`. And the lab
+  network does not isolate VLAN 60 from the management VLAN: the guest
+  reaches `10.79.20.0/24` through the lab firewall, so the isolation part
+  of the networking check failed; nothing on `hearst` forwards or bridges
+  it.
+- **Validation.** After the nested-KVM workaround every check of decision
+  11 passed on `hearst` except guest network isolation (above); see
+  [tests/integration/vm](../../tests/integration/vm/README.md).
 

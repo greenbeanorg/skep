@@ -5,13 +5,12 @@ operating system: UEFI guests with disks on ZFS, bridged virtio
 networking, and a serial console in the web interface. The design is
 [ADR 0009](../decisions/0009-first-vm-bhyve.md).
 
-> **Validation status.** Everything below is implemented and tested on the
-> Linux development machine against a simulated host. The checks on real
-> FreeBSD 15.1 are listed in
-> [tests/integration/vm](../../tests/integration/vm/README.md), each one
-> marked passed, failed, or pending. ZFS provisioning and deletion passed;
-> starting a guest has not passed yet. Read that table before relying on
-> anything here.
+> **Validation status.** Verified on FreeBSD 15.1-RELEASE (amd64,
+> UFS-root, itself a KVM guest): FreeBSD was installed into a VM through
+> the browser console, and every check in
+> [tests/integration/vm](../../tests/integration/vm/README.md) passed
+> except one that depends on the lab network (guest isolation). A ZFS-root
+> host, real disks, `e1000`, `nvme`, and `ahci-hd` are still pending.
 
 ## What this release does and does not do
 
@@ -137,8 +136,9 @@ hw.vmm.vmx.cap.virtual_interrupt_delivery="0"
 
 It costs some interrupt-delivery performance in guests, which matters
 little in a nested lab and is not needed on bare metal. **Status on
-`hearst`: applied and verified** (both caps 0; a plain bhyve boot of the
-FreeBSD 15.1 ISO with the first `VMLAUNCH` ran without trouble); see
+`hearst`: applied and verified** (both caps 0, also after a reboot; a
+plain bhyve boot and then a full FreeBSD installation through Skep ran
+without trouble); see
 [tests/integration/vm](../../tests/integration/vm/README.md). Skep does
 not detect this condition yet (a follow-up).
 
@@ -178,7 +178,7 @@ from its disk.
 | Action | What happens |
 |---|---|
 | Start | `desired_state` becomes `running`; the runner creates the taps and starts bhyve; the task succeeds when the guest runs |
-| Stop | `desired_state` becomes `stopped`; the guest gets an ACPI power-button press and has `timeout` seconds (default 90, at most 300). If it does not shut down, the task **fails** with `stop_timeout` and the VM keeps running. A stop never turns into a force stop by itself |
+| Stop | `desired_state` becomes `stopped`; the guest gets an ACPI power-button press (with UEFI firmware this powers off even a guest still at its loader menu) and has `timeout` seconds (default 90, at most 300). If it does not shut down, the task **fails** with `stop_timeout` and the VM keeps running. A stop never turns into a force stop by itself |
 | Force stop | The guest is powered off at once, as pulling the plug would. Also cleans up a VM whose runner died |
 | Restart | A stop followed by a start, in one task |
 | Delete | Only when stopped. Destroys the VM's datasets (recursively, only its own), its firmware variables, and its records. ISO files are not touched |
@@ -193,8 +193,10 @@ A guest that reboots more than 10 times in a minute is stopped and marked
 
 ## The console
 
-The serial console is COM1 of the guest. FreeBSD's installer and the
-installed system use it when the firmware has no graphical console. The
+The serial console is COM1 of the guest. FreeBSD's loader, installer,
+and installed system use it when the firmware has no graphical console.
+The UEFI firmware itself prints nothing there, so the first output after
+a start is the loader's. The
 agent keeps the last 64 KiB of output from the moment the VM starts, so a
 client that attaches later sees what came before. Up to four clients can
 attach at once; their input all goes to the guest.
@@ -252,4 +254,5 @@ any request. Do not kill a runner by hand; if one dies, the VM is shown as
 | `insufficient_memory` | Running VMs plus this one exceed physical memory minus `host_memory_reserve_bytes` |
 | Start fails with `vm_start_failed` | The task message carries the runner's detail; `bhyve.log` has bhyve's own output |
 | The guest has no network | The tap is on the bridge (`ifconfig bridge0`)? The uplink accepts foreign MAC addresses? A DHCP server on that segment? |
+| Guests reach networks they should not | Skep's bridge has no address and the host does not forward, so guest traffic leaves only through the guest network's own gateway; what a guest can reach is that network's firewall policy, not Skep's |
 | The console shows nothing | Some guests print to a graphical console only; Skep has no graphical console yet |
