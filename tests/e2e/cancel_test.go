@@ -57,6 +57,10 @@ type stack struct {
 	conf hostops.Confinement
 }
 
+// agentServerTimeout is the agent server's per-request limit in these
+// tests: short, so that a console that does not outlive it fails a test.
+const agentServerTimeout = 2 * time.Second
+
 func quiet() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
 
 // newStack wires an agent and an API together the way the two binaries
@@ -155,7 +159,7 @@ func newStack(t *testing.T) *stack {
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv := internalapi.NewServer(internalapi.NewHandler(svc, internalapi.Options{VMs: vms, Console: consoles, RequestTimeout: 10 * time.Second, Logger: quiet()}), 10*time.Second, quiet())
+	srv := internalapi.NewServer(internalapi.NewHandler(svc, internalapi.Options{VMs: vms, Console: consoles, RequestTimeout: agentServerTimeout, Logger: quiet()}), agentServerTimeout, quiet())
 	go srv.Serve(ln)
 	t.Cleanup(func() { srv.Close(); ln.Close() })
 

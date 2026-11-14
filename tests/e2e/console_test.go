@@ -139,3 +139,37 @@ func TestConsoleEndToEnd(t *testing.T) {
 		t.Errorf("%d console denials in the access log, want the viewer's", n)
 	}
 }
+
+// TestConsoleOutlivesServerDeadlines: a console stays open longer than the
+// per-request deadlines of both servers, skep-api's and the agent's.
+func TestConsoleOutlivesServerDeadlines(t *testing.T) {
+	s := newStack(t)
+	srv := httptest.NewUnstartedServer(s.handler)
+	srv.Config.ReadTimeout, srv.Config.WriteTimeout = time.Second, time.Second
+	srv.Start()
+	t.Cleanup(srv.Close)
+
+	create := []byte(`{"name":"long","cpu_count":1,"memory":"256M","disks":[{"size":"1G","pool":"devpool","thin":true}]}`)
+	rec := s.call(http.MethodPost, "/api/v1/vms", auth.RoleOperator, create, "")
+	var created models.VMCreated
+	json.Unmarshal(rec.Body.Bytes(), &created)
+	s.waitStatus(t, created.Task.ID, models.TaskSucceeded)
+	rec = s.call(http.MethodPost, "/api/v1/vms/"+created.VM.ID+"/actions", auth.RoleOperator, []byte(`{"action":"start"}`), "")
+	var task models.Task
+	json.Unmarshal(rec.Body.Bytes(), &task)
+	s.waitStatus(t, task.ID, models.TaskSucceeded)
+
+	c, _, err := dialConsole(t, srv, s.tokens[auth.RoleOperator], created.VM.ID, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.CloseNow()
+	readUntil(t, c, "simulated serial console")
+	// Longer than skep-api's 1 s deadlines and the agent server's (see
+	// newStack: agentServerTimeout).
+	time.Sleep(agentServerTimeout + time.Second)
+	if err := c.Write(context.Background(), websocket.MessageBinary, []byte("still here")); err != nil {
+		t.Fatal(err)
+	}
+	readUntil(t, c, "still here")
+}
