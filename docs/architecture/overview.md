@@ -363,3 +363,8 @@ imported, both as an unprivileged user and as root.
 - CPU virtualization support (VT-x, EPT) is not probed while vmm is
   unloaded.
 - Discovery searches a fixed list of directories for binaries, not `$PATH`.
+- Nested bhyve under KVM with APIC virtual interrupt delivery enabled can
+  stop the whole host at a guest's first start (a KVM bug). Skep does not
+  detect it yet; the workaround is in the
+  [VM guide](../administration/virtual-machines.md). Follow-up: a startup
+  check that warns before a start.

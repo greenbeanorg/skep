@@ -86,7 +86,7 @@ func (h *host) PrepareVM(ctx context.Context, vmID string) error {
 	if err := os.MkdirAll(h.conf.StateDir, 0o700); err != nil {
 		return fmt.Errorf("hostops: create the VM state directory: %w", err)
 	}
-	if err := os.Mkdir(dir, 0o700); err != nil && !errors.Is(err, fs.ErrExist) {
+	if err := mkdirDurable(dir); err != nil {
 		return fmt.Errorf("hostops: create the VM state directory: %w", err)
 	}
 	vars := filepath.Join(dir, VMVarsFile)
@@ -101,7 +101,8 @@ func (h *host) PrepareVM(ctx context.Context, vmID string) error {
 const maxVarsBytes = 64 << 20
 
 // copyFile copies a small file to a new root-only file, written under a
-// temporary name and renamed, so a partial copy is never used.
+// temporary name, fsynced, renamed, and the directory fsynced, so a partial
+// or lost copy is never used after a crash.
 func copyFile(ctx context.Context, from, to string) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -123,6 +124,9 @@ func copyFile(ctx context.Context, from, to string) error {
 		return fmt.Errorf("hostops: create the variable store: %w", err)
 	}
 	n, err := io.Copy(dst, io.LimitReader(src, maxVarsBytes+1))
+	if err == nil {
+		err = dst.Sync()
+	}
 	if cerr := dst.Close(); err == nil {
 		err = cerr
 	}
@@ -131,6 +135,9 @@ func copyFile(ctx context.Context, from, to string) error {
 	}
 	if err == nil {
 		err = os.Rename(tmp, to)
+	}
+	if err == nil {
+		err = syncDir(filepath.Dir(to))
 	}
 	if err != nil {
 		_ = os.Remove(tmp)

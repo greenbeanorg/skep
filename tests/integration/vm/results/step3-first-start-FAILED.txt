@@ -50,3 +50,26 @@ Read-only findings, before anything was changed:
 
 Restored: the binaries reinstalled (with sync), both services running,
 bhyve reported available. fbsd1 is observed stopped. Reboots used: 1 of 2.
+
+## Root cause (found by Andy on swearengen, 2026-11-14)
+
+Not Skep. KVM on the Proxmox host hit an emulation failure on bhyve's
+first VMLAUNCH inside hearst: the QEMU journal shows "KVM internal error.
+Suberror: 1" with the instruction bytes 0f 01 c2 (VMLAUNCH). This is the
+known nested-bhyve-on-KVM bug; the guest VM (hearst) was stopped by KVM,
+which is why nothing inside FreeBSD logged or dumped anything. hearst was
+stopped and started from Proxmox: reboot 1 of the 2 allowed.
+
+Workaround to apply, pending approval: APIC virtual interrupt delivery off
+in vmm (hw.vmm.vmx.cap.virtual_interrupt_delivery=0; the older name
+hw.vmm.vmx.use_apic_vid is also read, both in
+/usr/src/sys/amd64/vmm/intel/vmx.c of 15.1-RELEASE-p6, lines 874-881).
+Before the change: hw.vmm.vmx.cap.virtual_interrupt_delivery: 1,
+hw.vmm.vmx.cap.posted_interrupts: 1.
+
+After the restart (11:08 local): binaries reinstalled, size and SHA-256
+equal to the build (skep-agent 12275882 bytes 925bd32c..., skep-api
+13971626 3ffce1ea..., skepctl 7184554 f6881be9...), sync run, both
+services stable (same PIDs after 20 s and later). The API shows fbsd1
+observed "stopped", desired "stopped", no drift, observed at
+16:08:36Z: not running after the host restart, as required.

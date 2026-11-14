@@ -301,6 +301,34 @@ test("an administrator creates a VM, starts it, types in its console, stops and 
   await expect(consoleBox).toContainText("hello from the browser");
   await shoot(page, "vm-console");
 
+  // The GPU takes the WebGL context back: the console says it is
+  // unavailable, never falls back to the DOM renderer (which the CSP would
+  // block), and Reconnect brings it back.
+  await page.evaluate(() => {
+    // The renderer's canvas is the one already holding a WebGL 2 context;
+    // asking a 2D canvas for one would give null.
+    for (const canvas of document.querySelectorAll<HTMLCanvasElement>("[data-testid=serial-console] canvas")) {
+      let gl: WebGL2RenderingContext | null = null;
+      try {
+        gl = canvas.getContext("webgl2");
+      } catch {
+        continue;
+      }
+      const ext = gl?.getExtension("WEBGL_lose_context");
+      if (ext) {
+        ext.loseContext();
+        return;
+      }
+    }
+    throw new Error("the console has no WebGL 2 canvas");
+  });
+  await expect(page.getByText("console unavailable", { exact: true })).toBeVisible();
+  await expect(page.getByText(/lost its graphics context/)).toBeVisible();
+  await shoot(page, "vm-console-unavailable");
+  await page.getByRole("button", { name: "Reconnect" }).click();
+  await expect(page.getByText("connected", { exact: true })).toBeVisible();
+  await expect(consoleBox).toContainText("hello from the browser", { timeout: 10_000 });
+
   await page.getByRole("button", { name: "Stop", exact: true }).click();
   await expect(page.getByText("stopped", { exact: true }).first()).toBeVisible({ timeout: 15_000 });
   // Media can be detached while it is stopped.

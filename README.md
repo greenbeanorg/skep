@@ -151,9 +151,14 @@ decision logic. It does not prove runtime behaviour on FreeBSD; see below.
 
 ```sh
 make build-freebsd
-scp bin/freebsd-amd64/skep-agent bin/freebsd-amd64/skep-api hearst:skep-m4/
+scripts/deploy-test.sh hearst skep-m4      # copy, check size and SHA-256, rename, sync
 ssh hearst '~/skep-m4/skep-agent -dev -data-dir ~/skep-m4/data'
 ```
+
+`scripts/deploy-test.sh` ends with `sync` on the host. Without it, a hard
+reset shortly after a copy can leave an empty binary behind: that happened
+on `hearst` during Milestone 6 (see
+[tests/integration/vm](tests/integration/vm/results/step3-first-start-FAILED.txt)).
 
 A successful cross-compile proves that the code compiles for FreeBSD and
 nothing more. FreeBSD behaviour counts as validated only after it has run on

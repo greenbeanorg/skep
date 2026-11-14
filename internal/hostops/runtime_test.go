@@ -234,3 +234,27 @@ func TestRunFilesAreFixedNames(t *testing.T) {
 		t.Errorf("RunVMs = %v, %v", ids, err)
 	}
 }
+
+func TestWriteAtomicReplacesAndLeavesNoTemporaryFile(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/state.json"
+	for _, content := range []string{"first", "second"} {
+		if err := writeAtomic(path, []byte(content)); err != nil {
+			t.Fatal(err)
+		}
+		raw, err := os.ReadFile(path)
+		if err != nil || string(raw) != content {
+			t.Fatalf("content = %q, %v", raw, err)
+		}
+	}
+	entries, _ := os.ReadDir(dir)
+	if len(entries) != 1 {
+		t.Errorf("directory holds %d entries, want only the file", len(entries))
+	}
+	if fi, _ := os.Stat(path); fi.Mode().Perm() != 0o600 {
+		t.Errorf("mode = %v", fi.Mode().Perm())
+	}
+	if err := writeAtomic(dir+"/missing/x", nil); err == nil {
+		t.Error("a write into a missing directory succeeded")
+	}
+}

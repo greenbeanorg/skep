@@ -113,24 +113,64 @@ func (h *host) PrepareRun(_ context.Context, vmID string) error {
 	if err := os.MkdirAll(h.conf.RunDir, 0o700); err != nil {
 		return fmt.Errorf("hostops: create the VM runtime directory: %w", err)
 	}
-	if err := os.Mkdir(dir, 0o700); err != nil && !errors.Is(err, fs.ErrExist) {
+	if err := mkdirDurable(dir); err != nil {
 		return fmt.Errorf("hostops: create the VM runtime directory: %w", err)
 	}
 	return nil
 }
 
-// writeAtomic writes a root-only file under a temporary name and renames
-// it, so a reader never sees half of it.
+// writeAtomic writes a root-only file so that, after a crash or a hard
+// reset, the file holds either its old content or the new one, never
+// nothing: the data goes to a temporary file, which is fsynced, renamed
+// over the old one, and the directory is fsynced so the rename itself is
+// on disk. A reader never sees half a file.
 func writeAtomic(path string, data []byte) error {
 	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o600); err != nil {
+	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	if err != nil {
 		return err
 	}
-	if err := os.Rename(tmp, path); err != nil {
+	_, err = f.Write(data)
+	if err == nil {
+		err = f.Sync()
+	}
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err == nil {
+		err = os.Rename(tmp, path)
+	}
+	if err != nil {
 		_ = os.Remove(tmp)
 		return err
 	}
-	return nil
+	return syncDir(filepath.Dir(path))
+}
+
+// syncDir fsyncs a directory, which makes the creation, renaming, or
+// removal of an entry in it durable.
+func syncDir(dir string) error {
+	d, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	err = d.Sync()
+	if cerr := d.Close(); err == nil {
+		err = cerr
+	}
+	return err
+}
+
+// mkdirDurable creates a directory, if it does not exist, and makes its
+// entry in the parent durable.
+func mkdirDurable(dir string) error {
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		if errors.Is(err, fs.ErrExist) {
+			return nil
+		}
+		return err
+	}
+	return syncDir(filepath.Dir(dir))
 }
 
 // WriteRunFile implements Files.

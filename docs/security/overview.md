@@ -413,8 +413,10 @@ The agent changes the host for the first time in Milestone 6
 - At most four clients per console. A client that cannot keep up is
   disconnected rather than slowing the guest.
 - The web interface's CSP is unchanged (`style-src 'self'`): the terminal
-  draws with xterm.js's WebGL renderer, because its default renderer
-  injects `<style>` elements the CSP would block.
+  draws with xterm.js's WebGL renderer only, because its default renderer
+  injects `<style>` elements the CSP would block. Without WebGL 2, or when
+  the context is lost, the console is shown as unavailable; it never falls
+  back to the other renderer.
 
 ## Audit logs and retention
 

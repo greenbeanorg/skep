@@ -107,6 +107,40 @@ itself. An administrator does the following once.
 The system page of the web interface, and `skepctl system --json`, show
 whether bhyve is available and, if not, exactly what is missing.
 
+### A FreeBSD host that is itself a KVM guest (nested bhyve)
+
+bhyve inside a KVM virtual machine (for example a FreeBSD VM on Proxmox
+with CPU type `host`, as the lab host `hearst` is) can hit a KVM bug on
+the guest's first `VMLAUNCH`: KVM on the outer host fails to emulate the
+instruction and stops the whole FreeBSD VM. Nothing is logged inside
+FreeBSD and no crash dump is written; the outer host's QEMU log shows
+`KVM internal error. Suberror: 1` with the instruction bytes
+`0f 01 c2` (`VMLAUNCH`). On `hearst` this happened at the first start of
+a VM through Skep, on 2026-11-14.
+
+The workaround is to turn off APIC virtual interrupt delivery in bhyve on
+the nested FreeBSD host. The tunable, read when `vmm.ko` loads
+(`sys/amd64/vmm/intel/vmx.c`), is
+`hw.vmm.vmx.cap.virtual_interrupt_delivery` (the older name
+`hw.vmm.vmx.use_apic_vid` is still accepted). With it at 0, posted
+interrupts are off too.
+
+```
+# now, with no VM running
+kenv hw.vmm.vmx.cap.virtual_interrupt_delivery=0
+kldunload vmm && kldload vmm
+sysctl hw.vmm.vmx.cap.virtual_interrupt_delivery   # must print 0
+
+# at every boot: /boot/loader.conf
+hw.vmm.vmx.cap.virtual_interrupt_delivery="0"
+```
+
+It costs some interrupt-delivery performance in guests, which matters
+little in a nested lab and is not needed on bare metal. **Status:
+proposed for `hearst`, not yet applied or verified**; see
+[tests/integration/vm](../../tests/integration/vm/README.md). Skep does
+not detect this condition yet (a follow-up).
+
 ## Creating and installing a VM
 
 In the web interface: **Virtual machines → Create VM**. Choose the CPUs,
@@ -169,6 +203,12 @@ A console is a login on the guest, so it needs its own permission,
 Typing in it counts as using the session; output from the guest does not,
 so a console left open on an unattended screen logs out like any other
 page. Every attachment is in both audit logs.
+
+The console in the browser needs WebGL 2. Without it, or when the
+browser takes the graphics context back, the console says "console
+unavailable" and offers Reconnect; the VM is not affected. (The terminal
+library's other renderer would break the interface's Content Security
+Policy, so it is never used.)
 
 `skepctl` does not attach to consoles yet.
 

@@ -856,9 +856,20 @@ left open, or departs from it.
   (`style-src 'self'`, ADR 0008) blocks; the browser test caught six
   violations. Loosening the CSP was not an option. The WebGL renderer
   (same project, same licence) draws on a canvas and, loaded before the
-  terminal opens, xterm never creates the DOM renderer. Without WebGL the
-  DOM renderer draws, with default colours. `screenReaderMode` keeps the
-  rows as text for assistive technology.
+  terminal opens, xterm never creates the DOM renderer. The DOM renderer
+  is never used: without WebGL 2 (checked before the terminal is built),
+  if the WebGL canvas is not in place after opening, or when the context
+  is lost, the console shows "console unavailable" with Reconnect, and the
+  browser test checks the context-loss path for CSP violations.
+  `screenReaderMode` keeps the rows as text for assistive technology.
+- **Durable runtime writes.** After a hard reset of `hearst` lost about 15
+  minutes of writes (0-byte binaries among them), every file the agent and
+  the runner write under the run and state directories (`spec.json`,
+  `state.json`, `runner.pid`, `bhyve.conf`, the per-VM `uefi-vars.fd`) is
+  written to a temporary file, fsynced, renamed, and the directory
+  fsynced; a new VM directory's entry is fsynced too. Lab deploys go
+  through `scripts/deploy-test.sh`, which verifies size and SHA-256 and
+  ends with `sync`.
 - **Runner identity.** The agent recognises a runner by its PID file and
   by the process's own argument list from `kern.proc.args`, compared with
   the exact command for that VM, before it sends any signal.
@@ -886,6 +897,15 @@ left open, or departs from it.
   `media_not_found`); one the state refuses is 409 (`vm_not_stopped`,
   `vm_not_running`, `insufficient_*`, `bhyve_unavailable`, `stop_timeout`,
   `console_busy`, and the new `vm_start_failed`); `not_implemented` is 501.
+- **Nested bhyve under KVM.** The first start on `hearst` stopped the whole
+  VM: KVM on `swearengen` failed to emulate bhyve's first `VMLAUNCH`
+  (QEMU: `KVM internal error. Suberror: 1`, `0f 01 c2`), a known
+  nested-virtualisation bug, not a Skep defect. The workaround is
+  `hw.vmm.vmx.cap.virtual_interrupt_delivery=0` on the nested host
+  (administration guide). **Follow-up:** a capability or health check
+  that recognises a FreeBSD host running under KVM with APIC virtual
+  interrupt delivery enabled and says so before a start, rather than
+  letting the first `VMLAUNCH` take the host down. Not in this milestone.
 - **Validation so far.** ZFS provisioning, confinement refusals, and
   deletion passed on `hearst`. The first `vm.start` made `hearst`
   unreachable; see [tests/integration/vm](../../tests/integration/vm/README.md)
