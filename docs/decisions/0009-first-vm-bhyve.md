@@ -1,11 +1,12 @@
 # ADR 0009: The first working VM on bhyve (Milestone 6)
 
-- Status: **Proposed**, for review. Nothing in this ADR is implemented.
-  Each decision lists its options and a recommendation; the questions that
-  need an answer before acceptance are collected under
-  [Questions for review](#questions-for-review), and the changes `hearst`
-  needs are under [Changes hearst needs](#changes-hearst-needs).
-- Date: 2026-11-13 (proposed)
+- Status: **Accepted** (not yet implemented). Every recommendation was
+  accepted, with `hearst`'s guest NIC on the lab's VLAN 60 instead of the
+  management VLAN; the review answers and two amendments are under
+  [Decisions](#decisions) and are worked into the text. The changes
+  `hearst` needs are under [Changes hearst needs](#changes-hearst-needs),
+  all approved.
+- Date: 2026-11-13 (proposed), 2026-11-14 (accepted)
 - Depends on: [ADR 0003](0003-read-only-discovery.md) (discovery never
   changes the host), [ADR 0004](0004-privilege-boundary.md) (typed
   operations only, host confinement, `internal/hostops`),
@@ -30,10 +31,10 @@ says what Skep may touch.
 | 2 | VM configuration schema and where state lives | Typed columns for what the database must constrain, a typed JSON `config` document for the rest; desired and observed never share a column; `desired_state` is recorded but not reconciled in this milestone |
 | 3 | Disk storage on ZFS | One dataset per VM under `<pool>/skep/vm/<vm-id>`, one zvol per disk named `disk<slot>`; `volmode=dev`, `volblocksize=16K`, full reservation by default with an opt-in `thin`; pools allow-listed in the agent's configuration; `skeptest` is the lab pool |
 | 4 | Install media | ISO files the operator places in a root-owned media directory, listed read-only and attached by name; no upload and no download in this milestone |
-| 5 | Guest networking | Bridged only: the operator creates the bridge, Skep creates one tap per NIC and adds it; on `hearst`, a second virtual NIC with the Proxmox firewall off carries guest traffic so the management NIC is never touched |
+| 5 | Guest networking | Bridged only: the operator creates the bridge, Skep creates one tap per NIC and adds it; on `hearst`, a second virtual NIC on the lab's untrusted VLAN 60, with the Proxmox firewall off, carries guest traffic so the management NIC is never touched |
 | 6 | Boot | UEFI from the `edk2-bhyve` package with a per-VM copy of the variable store; `firmware: bios` refused; the operator loads `vmm` at boot, Skep loads nothing |
 | 7 | Running bhyve | A detached per-VM runner process, started by the agent, that owns the bhyve reboot loop and survives an agent restart; the agent observes it through state files |
-| 8 | Console | Serial over `nmdm`, brokered by the agent and relayed by `skep-api` over a WebSocket to xterm.js; VNC deferred until the agent can authenticate to bhyve's framebuffer on the client's behalf |
+| 8 | Console | Serial over `nmdm`, brokered by the agent and relayed by `skep-api` over a WebSocket to xterm.js; keystrokes count as session activity, guest output does not; VNC deferred until the agent can authenticate to bhyve's framebuffer on the client's behalf |
 | 9 | Lifecycle operations as tasks | `vm.create`, `vm.update`, `vm.start`, `vm.stop`, `vm.force_stop`, `vm.restart`, `vm.delete`, each with a time limit and a cancellability declaration; `stop` never escalates to `force_stop` by itself |
 | 10 | Permissions and audit | `vm:read`, `vm:write`, `vm:delete`, `vm:power`, `vm:console`, `storage:read`; `operator` gets all of them, `viewer` the two reads; every task and every console attachment audited in both logs |
 | 11 | What "verified on FreeBSD 15.1" means | A named acceptance check per feature, run on `hearst`, recorded with its output under `tests/integration/vm`; a feature without a recorded check is pending |
@@ -359,13 +360,24 @@ milestone, and all of it goes in the administration guide.
 | Option | Notes |
 |---|---|
 | A. Disable the Proxmox firewall (or only its MAC filter) on `hearst`'s existing `net0`, and make `vtnet0` a member of `bridge0` | Puts the management interface into a bridge on a remote host. Moving the address to the bridge is a connectivity change with no safe rollback from here; leaving it on the member works but is the arrangement FreeBSD discourages. The standing rule says never apply a change that does not protect management connectivity. Rejected for the lab. |
-| B. Add a second virtio NIC (`net1`) to `hearst` in Proxmox, same bridge and VLAN as `net0`, with the Proxmox firewall **disabled** on that device; on `hearst`, `bridge0` with `vtnet1` as its only member and no address; guests get lab addresses from the lab's DHCP | The management path is untouched. It is also the shape the administration guide will recommend: a guest bridge separate from management. One Proxmox change and two `rc.conf` lines. |
+| B. Add a second virtio NIC (`net1`) to `hearst` in Proxmox, with the Proxmox firewall **disabled** on that device; on `hearst`, `bridge0` with `vtnet1` as its only member and no address; guests get lab addresses from the lab's DHCP | The management path is untouched. It is also the shape the administration guide will recommend: a guest bridge separate from management. One Proxmox change and two `rc.conf` lines. (Proposed on the same VLAN as `net0`; accepted on VLAN 60, below.) |
 | C. NAT inside `hearst` (option B of 5a) | More host changes, pf on a host that today has none, and a feature this milestone does not build. |
 | D. An isolated `bridge0` with no uplink | No Proxmox change. Proves that a VM boots and that the tap path works, but the guest has no network, so DHCP, virtio-net under load, and installing anything over the network cannot be verified. |
 | E. bhyve's own `slirp` network backend, a user-space NAT stack inside the bhyve process that serves DHCP and DNS to the guest and needs no bridge, no tap, no pf, and no Proxmox change; only the `libslirp` package (bhyve(8) on 15.1 documents it and names `net/libslirp`; `libslirp-4.9.5` is in the repository) | The guest gets outbound connectivity through `hearst`'s own address, so the Proxmox MAC filter never sees a foreign MAC. Slow, per-VM, and it exercises none of Skep's tap and bridge code, so it cannot stand in for validating the production model. It is a good fallback for the lab and a candidate backend for isolated hosts in the networking milestone. |
 
 **Recommendation: B**, with E as the fallback if the Proxmox change is
-declined, and D only if a package install is declined too. On `hearst`:
+declined, and D only if a package install is declined too.
+
+**Accepted: B, on VLAN 60.** `net1` is not on `net0`'s VLAN 20 (the
+management network, `10.79.20.0/24`). It is on VLAN 60, the lab's
+untrusted LAB VLAN, with the Proxmox firewall off on the device. Guests
+get their addresses by DHCP from the lab's Kea pool on VLAN 60, and the
+lab firewall's LAB rules block that VLAN from the private networks, so a
+guest reaches the internet but not `hearst`'s management address or
+anything else on `10.79.20.0/24`. That isolation is the lab network's
+doing, not Skep's; Skep's part is that the guest bridge has no address
+and no management member. Andy added `net1` and took the Proxmox
+snapshot `pre-m6` before acceptance. On `hearst`:
 
 ```
 # /etc/rc.conf
@@ -376,9 +388,9 @@ ifconfig_bridge0="addm vtnet1 up"
 
 `rc` loads `if_bridge` for the cloned interface. `vtnet0` and its address
 are not mentioned anywhere and are listed in
-`network.management_interfaces`. Open question for the review: whether the
-lab segment has a DHCP server that will serve a guest, or whether the
-first guest gets a static address.
+`network.management_interfaces`. The VLAN is Proxmox's business: `vtnet1`
+receives untagged frames, so nothing on `hearst` names VLAN 60, and Skep's
+rule that `vlan_tag` is `NULL` in this milestone is unaffected.
 
 ## Decision 6: boot
 
@@ -526,10 +538,16 @@ browser (xterm.js) --WebSocket, cookie session, Origin checked--> skep-api
   per VM; a fifth is refused with `console_busy`.
 - **A console does not outlive its session.** `skep-api` re-checks the
   session once a minute and closes the WebSocket when it has ended,
-  expired, or been revoked. Console traffic does not count as activity
-  for the idle timeout (it is sent as a background request in the sense
-  of ADR 0008), so an open console on an unattended screen idles out
-  like any other page.
+  expired, or been revoked.
+- **Typing is activity; output is not** (amendment b). Input sent to the
+  guest (a keystroke frame from the client) counts as session activity:
+  `skep-api` refreshes the session's `last_seen_at` when it relays input,
+  at most once a minute, the same throttle ADR 0006 applies to every
+  request. Output from the guest never counts, and neither does the
+  WebSocket's own keep-alive, so an open console on an unattended screen
+  idles out like any other page while a user typing in one stays logged
+  in. The once-a-minute session re-check above then closes the console
+  of a session that has idled out.
 - Frames are binary; the UI uses xterm.js (`@xterm/xterm`, with the fit
   addon), a new frontend dependency. No terminal emulation happens on
   the server.
@@ -645,7 +663,7 @@ output.
 | Install from media | A VM with 2 vCPUs, 1 GiB, one 8 GiB thin disk, one NIC on `bridge0`, and the FreeBSD 15.1 disc1 ISO attached starts; the firmware, loader, and installer appear on the serial console in the browser; FreeBSD is installed to the zvol through that console |
 | Guest reboot | The installer's final reboot exits bhyve with status 0 and the runner starts it again without the agent's involvement; the guest comes up from its disk |
 | Media detach | `vm.update` while stopped detaches the ISO; the next start boots from disk |
-| Networking | The guest gets an address from the lab's DHCP on `bridge0` (or is given one, Decision 5c), and reaches its gateway; the tap has the `skep:` description; the tap is gone after stop |
+| Networking | Through `bridge0`, the guest gets a DHCP address from the lab's Kea pool on VLAN 60 (Decision 5c), reaches the internet, and **cannot** reach `10.79.20.0/24` (`hearst`'s management address and the rest of the management network); the tap has the `skep:` description; the tap is gone after stop |
 | `vm.stop` | An ACPI stop shuts the FreeBSD guest down cleanly within the timeout; `observed_state` is `stopped`; the instance and the taps are gone. A stop of a guest that ignores ACPI (the installer's menu) times out, fails with `stop_timeout`, and leaves the VM running |
 | `vm.force_stop` | Ends a running guest; destroys a runner-less `/dev/vmm` instance left by killing the runner by hand |
 | `vm.restart` | Stop and start in one task; the task ID is in both audit phases |
@@ -653,7 +671,7 @@ output.
 | Host reboot | After `reboot`, the VM is observed `stopped`, `desired_state` is still `running`, and the API shows the drift; nothing starts by itself |
 | `vm.delete` | Refused while running; after a stop, the datasets, the persistent directory, and the rows are gone; the audit entry lists what was destroyed; the media file is untouched |
 | Permissions | `viewer` can list and read VMs and storage and is refused `POST /vms`, every action, `DELETE`, and the console, each refusal audited; `operator` can do all of them |
-| Console | Attach and detach are in both audit logs with the same request ID; a fifth attachment is refused; the console closes within a minute of logging out elsewhere |
+| Console | Attach and detach are in both audit logs with the same request ID; a fifth attachment is refused; the console closes within a minute of logging out elsewhere; with a shortened idle timeout, a console left unattended while the guest prints output idles out and closes, and one in which a user keeps typing does not |
 | Concurrency | A second `start` while the first is pending gets `resource_busy` naming the task |
 | Interrupted create | A `vm.create` interrupted by killing the agent leaves an unprovisioned VM; `vm.delete` cleans it up |
 | Unit tests natively | The `hostops`, `hypervisor/bhyve`, runner, and console packages' tests pass on `hearst` |
@@ -726,22 +744,24 @@ fake `hostops` carrying the Linux build and tests throughout.
 
 ## Changes hearst needs
 
-Each of these needs Andy's approval before it is made; none is made by
-this ADR. They are grouped by where the change happens.
+All of these were approved at acceptance (review answer 10). Items 1 to
+3 were done by Andy before acceptance; items 4 to 11 are applied during
+the build, in the order of the implementation steps that need them. They
+are grouped by where the change happens.
 
 **Already done**
 
 - 4 vCPUs and 6 GiB. Observed today: `hw.ncpu` 4, `hw.realmem` 6 GiB.
 
-**On the Proxmox host `swearengen`, for Decision 5c option B**
+**On the Proxmox host `swearengen`, for Decision 5c option B** (done)
 
-1. Add a second network device to `hearst` (virtio, the same bridge and
-   VLAN as `net0`), with the Proxmox firewall **disabled on that device**
-   (which also disables its MAC filter). No change to `net0`.
-2. Confirm whether that segment has a DHCP server that will answer a
-   guest, or decide that the first guest gets a static address.
-3. A fresh Proxmox snapshot of `hearst` before the first `vm.start`
-   (recommended; Skep will not rely on it).
+1. A second network device on `hearst`, `net1` (virtio), on VLAN 60, the
+   lab's untrusted LAB VLAN, with the Proxmox firewall **disabled on that
+   device** (which also disables its MAC filter). No change to `net0`.
+2. DHCP for guests: the lab's Kea pool on VLAN 60. The LAB firewall
+   rules block the VLAN from private networks.
+3. The Proxmox snapshot `pre-m6` of `hearst` (Skep will not rely on
+   it).
 
 **On hearst, `/boot/loader.conf`** (persistent; survives reboots)
 
@@ -783,27 +803,42 @@ forwarding (stays off), the root filesystem beyond the lines above, and
 every disk other than `/var/tmp/skep/skeptest.img`. Loading and unloading
 `vmm` by hand between tests stays within the standing permission.
 
-## Questions for review
+## Decisions
+
+Accepted on 2026-11-14 with these answers to the ten review questions.
 
 1. **Bridged only, with the second NIC on hearst** (Decisions 5a and 5c,
-   option B), or bhyve's `slirp` backend (option E) to avoid a Proxmox
-   change, or the isolated bridge (option D)? And does the lab segment
-   serve DHCP to a guest?
-2. **Serial console only, VNC deferred** with the agent-side RFB
-   authentication relay as its future design (Decision 8a)?
-3. **`github.com/coder/websocket`** as the one new Go dependency, or
-   `golang.org/x/net/websocket` to stay within the `x/` family
-   (Decision 8b)?
-4. **Full reservation by default, `thin` opt-in** (Decision 3b), knowing
-   the lab pool will use `thin`?
-5. **`vm.stop` never escalates** to a force stop; a timeout fails the task
-   and leaves the guest running (Decision 9)?
-6. **No reconciliation and no autostart** in this milestone; drift is
-   shown, not acted on (Decision 2c)?
-7. **Disks and NICs fixed at creation**, media attachable while stopped;
-   everything else waits for the storage milestone (Decisions 3c, 9)?
+   option B), with one change: `net1` is on VLAN 60, the lab's untrusted
+   LAB VLAN with the firewall off on the device, not on VLAN 20 with
+   `net0`. Guests get DHCP from the lab's Kea pool on VLAN 60, and the
+   LAB firewall rules block them from private networks. `net1` is added
+   and the snapshot `pre-m6` taken. Options D and E are not needed.
+2. **Serial console only, VNC deferred**, with the agent-side RFB
+   authentication relay as its future design (Decision 8a).
+3. **`github.com/coder/websocket`** as the one new Go dependency
+   (Decision 8b).
+4. **Full reservation by default, `thin` opt-in** (Decision 3b).
+5. **`vm.stop` never escalates** to a force stop (Decision 9).
+6. **No reconciliation and no autostart** in this milestone (Decision 2c).
+7. **Disks and NICs fixed at creation**, media attachable while stopped
+   (Decisions 3c, 9).
 8. **The six permissions** and their assignment to `operator` and
-   `viewer` (Decision 10)?
-9. **The runner as a subcommand of `skep-agent`** rather than a separate
-   binary (Decision 7a)?
-10. **The hearst changes** above: which are approved, and in which order.
+   `viewer` (Decision 10).
+9. **The runner as a subcommand of `skep-agent`** (Decision 7a).
+10. **All the hearst changes are approved**, applied during the build
+    (see [Changes hearst needs](#changes-hearst-needs)).
+
+Two amendments were made at acceptance and are worked into the text.
+
+- **a. The networking check proves isolation as well as reach.** Decision
+  5c and the Networking check of Decision 11 now say: the guest gets a
+  DHCP address on VLAN 60 through `bridge0`, reaches the internet, and
+  cannot reach `10.79.20.0/24`. The proposal asked only for an address
+  and the gateway.
+- **b. Console input is session activity; output is not.** Keystrokes
+  sent to the guest refresh the session, at most once a minute; output
+  from the guest does not. An unattended console still idles out; a user
+  typing in one does not (Decision 8b, and the Console check of Decision
+  11). The proposal counted no console traffic as activity, which would
+  have logged out a user in the middle of a long session at the guest's
+  console.
