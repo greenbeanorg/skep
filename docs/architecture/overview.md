@@ -249,6 +249,41 @@ was chosen because the standard library parses it; no dependency was added
 for a configuration format. Logging uses `log/slog`, JSON in production and
 text in dev mode.
 
+## Virtual machines
+
+Milestone 6 ([ADR 0009](../decisions/0009-first-vm-bhyve.md)), from the
+request to the guest:
+
+```
+skep-api  /api/v1/vms, /vms/{id}/actions, /vms/{id}/console/serial
+   |  (Unix socket: actor headers, peer UID checked)
+skep-agent
+   internal/vm          validation, tasks (vm.create ... vm.restart), memory budget,
+                        the watcher that writes observed state every 2 s
+   internal/hypervisor  the engine interface; bhyve is the only adapter
+   internal/console     the console broker: nmdm B side, 64 KiB scrollback, 4 clients
+   internal/hostops     every privileged call, bounded by the confinement in agent.json
+      |
+      +-- zfs/ifconfig/bhyvectl (exec, fixed paths)
+      +-- skep-agent vm-runner (one per running VM, own session)
+             taps -> bhyve -k bhyve.conf skep-<uuid>   (restarted after a guest reboot)
+```
+
+- **State.** Desired state (`desired_state`, the configuration) is written
+  by tasks acting for a user; observed state (`observed_*`) only by the
+  watcher. Nothing reconciles them: a difference is shown as drift. The
+  runner reports through `state.json` in `/var/run/skep/vm/<id>/`; the
+  agent reads it, checks that the runner is alive and is the right
+  process, and checks `/dev/vmm/skep-<uuid>`.
+- **Survival.** The runner is not a child the agent depends on. An agent
+  restart or crash leaves guests running; the restarted agent observes
+  every VM before it serves its socket. A host reboot empties `/var/run`,
+  so every VM is observed stopped.
+- **Development machines** use `internal/hostops/hostfake`: pools,
+  bridges, taps, and guests in memory, with the real runner loop running
+  in a goroutine and a console that echoes. It never ships in a FreeBSD
+  binary (CI checks the marker string).
+
 ## FreeBSD validation status
 
 Validated means it ran on FreeBSD 15.1-RELEASE-p6 (amd64, UFS-root, `hearst`)
@@ -302,6 +337,8 @@ imported, both as an unprivileged user and as root.
 | Retention with the data directory on a ZFS dataset (file-backed test pool): the same checks | Validated (2026-11-13, same) |
 | `skep-api` from the FreeBSD build (`make build-freebsd`) serving the web interface under rc.d on the management address, with a scratch state directory: the headers, login (a wrong password first), every page in both themes, a viewer refused Users, a session ended underneath an open page and the return to the same address, task cancel, logout, no CSP violation; the Playwright suite run from merrick against hearst; back to loopback and stopped afterwards | Validated (2026-11-13, `web/e2e`, 5 tests) |
 | The rc.d harness `api` phase with the health statuses of #15 (`unavailable` with the agent down) | Validated (2026-11-13, 71 checks, see `tests/integration/rcd`) |
+| VM storage on ZFS: datasets and zvols with `volmode=dev`, `volblocksize=16K`, full or no reservation, `skep:` user properties; refusals outside the confinement; deletion of the VM's datasets only | Validated (2026-11-14, see `tests/integration/vm`) |
+| Booting a bhyve guest: runner, taps, nmdm console, reboot loop, stop, force stop, agent restart, host reboot | **Failed, then pending**: the first start made `hearst` unreachable (2026-11-14); see `tests/integration/vm` |
 | ZFS-root host | **Pending FreeBSD validation** (the lab VM is UFS-root) |
 | arm64 | Not a target yet |
 

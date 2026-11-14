@@ -1,6 +1,7 @@
 # ADR 0009: The first working VM on bhyve (Milestone 6)
 
-- Status: **Accepted** (not yet implemented). Every recommendation was
+- Status: **Accepted**; implemented (steps 1 to 5 of the suggested order),
+  FreeBSD validation in progress, see [Implementation notes](#implementation-notes). Every recommendation was
   accepted, with `hearst`'s guest NIC on the lab's VLAN 60 instead of the
   management VLAN; the review answers and two amendments are under
   [Decisions](#decisions) and are worked into the text. The changes
@@ -842,3 +843,51 @@ Two amendments were made at acceptance and are worked into the text.
   11). The proposal counted no console traffic as activity, which would
   have logged out a user in the middle of a long session at the guest's
   console.
+
+## Implementation notes
+
+Recorded during the build (2026-11-14). The decisions above stand; these
+are the places where the implementation had to choose something the text
+left open, or departs from it.
+
+- **A third frontend dependency, `@xterm/addon-webgl`.** Decision 8b names
+  `@xterm/xterm` and its fit addon. xterm.js's default DOM renderer
+  injects `<style>` elements, which the web interface's CSP
+  (`style-src 'self'`, ADR 0008) blocks; the browser test caught six
+  violations. Loosening the CSP was not an option. The WebGL renderer
+  (same project, same licence) draws on a canvas and, loaded before the
+  terminal opens, xterm never creates the DOM renderer. Without WebGL the
+  DOM renderer draws, with default colours. `screenReaderMode` keeps the
+  rows as text for assistive technology.
+- **Runner identity.** The agent recognises a runner by its PID file and
+  by the process's own argument list from `kern.proc.args`, compared with
+  the exact command for that VM, before it sends any signal.
+- **The runner reads a spec, not the configuration.** The agent writes
+  `spec.json` (the VM, its derived paths, and the confinement) into the
+  root-only runtime directory; the runner never reads `agent.json` or the
+  database, so the agent's flags and data directory need not be repeated
+  on the runner's command line.
+- **A reboot loop ends the run.** More than 10 guest reboots in a minute
+  end it as `failed`. The ADR's runner restarted bhyve after every status
+  0 without a bound.
+- **A stop request that times out stays pending.** After `stop_timeout` the
+  VM keeps running, as decided; the runner still remembers the request, so
+  a guest that obeys the power button late is then stopped, not rebooted.
+  `desired_state` is already `stopped` at that point.
+- **Force stop removes a dead runner's record.** After it has destroyed a
+  runner-less instance and its taps, the leftover run state is removed, so
+  the VM shows `stopped` instead of the failure that no longer exists.
+- **The console is opened when the watcher first sees the VM running**,
+  not at the first attach, so the scrollback holds the boot from the
+  start. A client that falls more than 512 chunks behind is disconnected.
+- **HTTP status codes** of the new error codes: a request naming
+  something the host does not offer is 422 (`pool_not_allowed`,
+  `bridge_not_allowed`, `engine_unsupported`, `firmware_unsupported`,
+  `media_not_found`); one the state refuses is 409 (`vm_not_stopped`,
+  `vm_not_running`, `insufficient_*`, `bhyve_unavailable`, `stop_timeout`,
+  `console_busy`, and the new `vm_start_failed`); `not_implemented` is 501.
+- **Validation so far.** ZFS provisioning, confinement refusals, and
+  deletion passed on `hearst`. The first `vm.start` made `hearst`
+  unreachable; see [tests/integration/vm](../../tests/integration/vm/README.md)
+  for the record and the state of every check.
+

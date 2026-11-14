@@ -30,6 +30,15 @@ skepctl tasks list [--status S] [--limit N] [--cursor C] [--json]
 skepctl tasks show ID [--json]
 skepctl audit list [--limit N] [--cursor C] [--json]
 skepctl version
+
+skepctl vm list [--json]
+skepctl vm show VM [--json]
+skepctl vm create -f FILE [--wait] [--json]
+skepctl vm start VM [--wait] [--json]
+skepctl vm stop VM [--timeout SECONDS] [--wait] [--json]
+skepctl vm force-stop VM [--wait] [--json]
+skepctl vm restart VM [--timeout SECONDS] [--wait] [--json]
+skepctl vm delete VM [--wait] [--json]
 ```
 
 - The port defaults to `8443`. Only `https` is accepted.
@@ -40,6 +49,12 @@ skepctl version
   error, so standard output stays clean.
 - What a user may read is decided by the server: a `viewer` gets `403` from
   `audit list`, for example.
+- `VM` is a VM's ID or its name. A write prints the task it started;
+  `--wait` follows the task until it ends and exits non-zero when it
+  failed. `vm create -f -` reads the definition from standard input; an
+  unknown field in it is an error. The definition is the body of
+  `POST /api/v1/vms` (see [Virtual machines](virtual-machines.md)).
+  `skepctl` does not attach to consoles yet.
 
 ## First login: trusting the server's key
 
