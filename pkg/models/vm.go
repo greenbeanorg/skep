@@ -104,6 +104,14 @@ const (
 	CodeStopTimeout         = "stop_timeout"
 	CodeVMStartFailed       = "vm_start_failed"
 	CodeConsoleBusy         = "console_busy"
+
+	// Storage management (ADR 0010).
+	CodeSnapshotLimit             = "snapshot_limit"
+	CodeSnapshotHasClones         = "snapshot_has_clones"
+	CodeSnapshotNotLatest         = "snapshot_not_latest"
+	CodeSnapshotIncomplete        = "snapshot_incomplete"
+	CodeStorageLocked             = "storage_locked"
+	CodeStorageFeatureUnsupported = "storage_feature_unsupported"
 )
 
 // ByteSize is a number of bytes. In JSON it is a number, or a string with

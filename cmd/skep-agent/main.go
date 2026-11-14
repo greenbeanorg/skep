@@ -35,6 +35,7 @@ import (
 	"github.com/greenbeanorg/skep/internal/internalapi"
 	"github.com/greenbeanorg/skep/internal/logging"
 	"github.com/greenbeanorg/skep/internal/retention"
+	"github.com/greenbeanorg/skep/internal/storage"
 	"github.com/greenbeanorg/skep/internal/sysaccount"
 	"github.com/greenbeanorg/skep/internal/tasks"
 	"github.com/greenbeanorg/skep/internal/vm"
@@ -208,6 +209,16 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 			return err
 		}
 	}
+	// The storage inventory reads the host and the database; it changes
+	// nothing.
+	storageSvc, err := storage.New(storage.Options{
+		Host:   host,
+		Owners: database.NewStorageStore(db),
+		Logger: log,
+	})
+	if err != nil {
+		return err
+	}
 	svc, err := agent.NewService(agent.Options{
 		Bhyve:      vms.Capabilities,
 		NodeID:     nodeID,
@@ -302,6 +313,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	internal := internalapi.NewHandler(svc, internalapi.Options{
 		VMs:            vms,
 		Console:        consoles,
+		Storage:        storageSvc,
 		RequestTimeout: cfg.Socket.RequestTimeout.Std(),
 		Logger:         log,
 	})

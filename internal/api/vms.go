@@ -24,6 +24,7 @@ type VMBackend interface {
 	DeleteVM(ctx context.Context, id string) (models.Task, error)
 	VMAction(ctx context.Context, id string, act models.VMAction) (models.Task, error)
 	StoragePools(ctx context.Context) (models.StoragePoolList, error)
+	StorageDatasets(ctx context.Context, opts models.DatasetListOptions) (models.DatasetList, error)
 	Media(ctx context.Context) (models.MediaList, error)
 }
 
@@ -39,6 +40,7 @@ func (h *handler) vmRoutes() []route {
 		{http.MethodPost, "/vms/{id}/actions", auth.PermVMPower, h.vmAction},
 		{http.MethodGet, "/vms/{id}/console/serial", auth.PermVMConsole, h.vmConsole},
 		{http.MethodGet, "/storage/pools", auth.PermStorageRead, h.listPools},
+		{http.MethodGet, "/storage/datasets", auth.PermStorageRead, h.listDatasets},
 		{http.MethodGet, "/storage/media", auth.PermStorageRead, h.listMedia},
 	}
 }
@@ -65,6 +67,9 @@ func (noVMs) VMAction(context.Context, string, models.VMAction) (models.Task, er
 }
 func (noVMs) StoragePools(context.Context) (models.StoragePoolList, error) {
 	return models.StoragePoolList{Items: []models.StoragePool{}}, nil
+}
+func (noVMs) StorageDatasets(context.Context, models.DatasetListOptions) (models.DatasetList, error) {
+	return models.DatasetList{Items: []models.Dataset{}}, nil
 }
 func (noVMs) Media(context.Context) (models.MediaList, error) {
 	return models.MediaList{Items: []models.Media{}}, nil
@@ -259,6 +264,27 @@ func (h *handler) listPools(w http.ResponseWriter, r *http.Request) {
 
 func (h *handler) listMedia(w http.ResponseWriter, r *http.Request) {
 	list, err := h.vms.Media(r.Context())
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	httpkit.WriteJSON(w, r, http.StatusOK, list)
+}
+
+// listDatasets is the storage inventory (ADR 0010 decision 1): what Skep
+// owns under <pool>/<root>, unowned datasets flagged.
+func (h *handler) listDatasets(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	opts := models.DatasetListOptions{Pool: q.Get("pool"), Cursor: q.Get("cursor")}
+	if raw := q.Get("limit"); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n < 1 {
+			httpkit.WriteError(w, r, http.StatusBadRequest, httpkit.CodeInvalidRequest, "limit must be a positive integer")
+			return
+		}
+		opts.Limit = n
+	}
+	list, err := h.vms.StorageDatasets(r.Context(), opts)
 	if err != nil {
 		h.fail(w, r, err)
 		return

@@ -763,3 +763,63 @@ Amendments made at acceptance, worked into the text:
     considered (Decision 11).
   - The UI notes that a clone shares the source guest's hostname, SSH
     host keys, and machine ID (Decision 3).
+
+## Implementation notes
+
+Recorded during the build of 7a (from 2026-11-14). The decisions above
+stand; these are the places where the implementation had to choose
+something the text left open, or departs from it.
+
+### Step 1: schema, hostops, inventory
+
+- **`agent/0005` also creates `container_templates`**, because the
+  container amendment's `template_id` needs a table to reference; its
+  columns are those Decision 7b lists (source, packages or archive
+  checksum, release, size). `snapshots` gains a `provisioned` flag like
+  VMs, so a row left by an interrupted snapshot task is recognisable.
+  Snapshot rows are deleted with their resource by trigger; a clone's
+  `cloned_from_snapshot_id` is `ON DELETE RESTRICT`, so the database
+  refuses to delete an origin snapshot, or its VM, while a clone exists,
+  independently of the ZFS check.
+- **Permissions are granted in `api/0005` and declared when enforced.**
+  `api/0005` gives the built-in roles every permission of Decision 14 at
+  once, as the ADR orders. `internal/auth` declares each one only when a
+  route requires it (`vm:snapshot` with step 2, the `container:*` ones in
+  7b), because the route table test requires every declared permission
+  to be enforced. Until then the string sits in the role and
+  `Role.Allows` denies it, as it denies every undeclared permission.
+- **Two error codes the text did not name.** A rollback to a snapshot
+  that is not the latest, without `destroy_newer`, is
+  `snapshot_not_latest` (409), with the newer snapshot IDs in the
+  details. A rollback or clone of a snapshot that lacks a dataset the
+  resource has now (a disk added after the snapshot) is
+  `snapshot_incomplete` (409). The ADR does not cover the second case;
+  using the snapshot would give a VM a disk with post-snapshot contents,
+  a state it was never in (the same reasoning as Decision 4's), so it is
+  refused before anything changes, and the message says to remove the
+  disks added since. A `snapshot_has_clones` also comes from `DestroyVM`,
+  which before this milestone would have failed in `zfs destroy` with an
+  unnamed error.
+- **Snapshots Skep did not take block a rollback past them.** A newer
+  snapshot without a matching `skep:snapshot_id` (made by hand under a
+  VM's dataset) is not Skep's to destroy, so `destroy_newer` refuses with
+  `snapshot_not_latest` and names it, instead of letting `zfs rollback -r`
+  take it.
+- **Rollback is one `zfs rollback` per dataset.** ZFS has no recursive
+  rollback (`-r` destroys newer snapshots; it does not descend). Every
+  precondition is checked for every dataset first, so a refusal changes
+  nothing; a failure of the second or later command (I/O error, pool
+  suspended) leaves the earlier datasets rolled back. The task reports
+  that as a failure naming the dataset.
+- **Clone properties are set, not inherited.** A ZFS clone does not
+  copy the origin's local properties. `CloneVM` sets `skep:vm_id`,
+  `skep:disk_id`, `canmount=off`, and `volmode=dev` explicitly. A linked
+  clone has no reservation whatever the source had: it is thin.
+- **The inventory's owner kinds** are `vm`, `container`, `template`,
+  `skep` (the datasets that only hold others: `<root>`, `<root>/vm`,
+  `<root>/jail`, `<root>/templates`), and `unowned` with a reason. A
+  dataset is owned only when its place in the tree, its owner property,
+  and a database row agree; a snapshot is judged by its dataset and is
+  unowned if Skep did not take it. Pages are 100 entries by default, 500
+  at most, because a pool with snapshots has many more datasets than VMs.
+  A pool that cannot be read is reported in `unavailable_pools`.

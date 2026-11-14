@@ -60,8 +60,36 @@ type ZFS interface {
 	// without a dataset yields an empty list.
 	VMDatasets(ctx context.Context, pool, vmID string) ([]Dataset, error)
 	// DestroyVM destroys the dataset of a VM recursively and returns what
-	// existed. It refuses a dataset that does not carry the VM's ID.
+	// existed. It refuses a dataset that does not carry the VM's ID, and
+	// a VM with a snapshot a linked clone depends on
+	// (snapshot_has_clones).
 	DestroyVM(ctx context.Context, pool, vmID string) ([]Dataset, error)
+
+	// Inventory lists every filesystem, volume, and snapshot under
+	// <pool>/<root>, ordered by name (ADR 0010 decision 1).
+	Inventory(ctx context.Context, pool string) ([]Dataset, error)
+	// Snapshot takes one atomic recursive snapshot of a resource's
+	// dataset, <dataset>@skep-<snapshot-id>, carrying skep:snapshot_id,
+	// and returns it as one entry per dataset. A locked dataset is
+	// storage_locked.
+	Snapshot(ctx context.Context, pool string, o Owner, snapshotID string) ([]Dataset, error)
+	// Snapshots lists every snapshot of a resource's datasets, oldest
+	// first, Skep's or not.
+	Snapshots(ctx context.Context, pool string, o Owner) ([]Dataset, error)
+	// Rollback rolls every dataset of a resource back to a snapshot and
+	// returns the newer snapshots it destroyed. A snapshot that is not
+	// the latest is snapshot_not_latest unless destroyNewer is set; a
+	// newer snapshot with clones is snapshot_has_clones; a snapshot that
+	// lacks a dataset the resource has now is snapshot_incomplete. The
+	// caller makes sure the resource is stopped.
+	Rollback(ctx context.Context, pool string, o Owner, snapshotID string, destroyNewer bool) ([]Dataset, error)
+	// DestroySnapshot destroys a snapshot on every dataset of a resource
+	// and returns what it destroyed. A snapshot with clones is
+	// snapshot_has_clones.
+	DestroySnapshot(ctx context.Context, pool string, o Owner, snapshotID string) ([]Dataset, error)
+	// CloneVM makes a linked clone of every dataset of a VM's snapshot
+	// under a new VM ID and returns the clone's datasets.
+	CloneVM(ctx context.Context, spec CloneSpec) ([]Dataset, error)
 }
 
 // Pool is one allow-listed pool as observed.
@@ -105,11 +133,37 @@ type Dataset struct {
 	RefReservationBytes int64
 	VolMode             string
 	VolBlockSize        int
-	// VMID and DiskID are the user properties skep:vm_id and
-	// skep:disk_id.
-	VMID   string
-	DiskID string
+	// CreateTxg is the transaction group that created the dataset or
+	// snapshot: the order of snapshots.
+	CreateTxg int64
+	// Origin is the snapshot a clone was made from; Clones, on a
+	// snapshot, lists the clones made from it.
+	Origin string
+	Clones []string
+	// Encryption, KeyStatus, Compression, and CompressRatio are what the
+	// operator set on <pool>/<root> and Skep inherits (ADR 0010 decision
+	// 5). KeyStatus is "available", "unavailable", or empty when the
+	// dataset is not encrypted.
+	Encryption    string
+	KeyStatus     string
+	Compression   string
+	CompressRatio string
+	// The skep: user properties: skep:vm_id, skep:disk_id,
+	// skep:container_id, skep:template_id, and, on snapshots,
+	// skep:snapshot_id.
+	VMID        string
+	DiskID      string
+	ContainerID string
+	TemplateID  string
+	SnapshotID  string
 }
+
+// IsSnapshot reports whether the dataset is a snapshot.
+func (d Dataset) IsSnapshot() bool { return d.Type == "snapshot" }
+
+// Locked reports whether the dataset is encrypted and its key is not
+// loaded.
+func (d Dataset) Locked() bool { return d.KeyStatus == "unavailable" }
 
 // Net inspects the bridges guests may join and keeps the taps of VMs.
 // Skep never creates, destroys, or re-addresses a bridge.

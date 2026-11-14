@@ -76,3 +76,20 @@ func (c *Client) Media(ctx context.Context) (models.MediaList, error) {
 	err := c.do(ctx, http.MethodGet, "/storage/media", nil, nil, &list)
 	return list, err
 }
+
+// StorageDatasets returns a page of the storage inventory.
+func (c *Client) StorageDatasets(ctx context.Context, opts models.DatasetListOptions) (models.DatasetList, error) {
+	q := url.Values{}
+	if opts.Pool != "" {
+		q.Set("pool", opts.Pool)
+	}
+	if opts.Limit != 0 {
+		q.Set("limit", strconv.Itoa(opts.Limit))
+	}
+	if opts.Cursor != "" {
+		q.Set("cursor", opts.Cursor)
+	}
+	var list models.DatasetList
+	err := c.do(ctx, http.MethodGet, "/storage/datasets", q, nil, &list)
+	return list, err
+}

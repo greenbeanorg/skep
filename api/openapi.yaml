@@ -1020,6 +1020,57 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "503":
           $ref: "#/components/responses/Unavailable"
+  /storage/datasets:
+    get:
+      tags: [storage]
+      operationId: listStorageDatasets
+      summary: What Skep owns in its pools
+      x-skep-permission: storage:read
+      description: |
+        Requires `storage:read`. Every filesystem, volume, and snapshot
+        under `<pool>/<root>` of the allow-listed pools, ordered by pool
+        (in allow-list order) and name, cursor paginated, read from ZFS on
+        each request. Each entry names its owner: a VM, a jail, a
+        template, `skep` for the datasets that only hold others, or
+        `unowned` with a reason. A dataset is owned only when its place in
+        the tree, its `skep:` owner property, and the agent's database
+        agree; anything else (an interrupted create, a hand-made dataset,
+        a snapshot Skep did not take) is listed as unowned and never
+        removed automatically (ADR 0010 decision 1). Encryption,
+        compression, and key status are what the operator set and Skep
+        inherits (decision 5). A pool that cannot be read is named in
+        `unavailable_pools` instead of failing the list.
+      parameters:
+        - $ref: "#/components/parameters/Background"
+        - name: pool
+          in: query
+          description: Only list this allow-listed pool.
+          schema: { type: string }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 500, default: 100 }
+        - name: cursor
+          in: query
+          schema: { type: string }
+      responses:
+        "200":
+          description: One page of the inventory.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DatasetList"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/VMConflict"
+        "422":
+          $ref: "#/components/responses/VMUnprocessable"
+        "503":
+          $ref: "#/components/responses/Unavailable"
   /storage/media:
     get:
       tags: [storage]
@@ -1100,7 +1151,9 @@ components:
         `insufficient_space`, `insufficient_memory`, `bhyve_unavailable`,
         `storage_unavailable`, `vm_not_running`, `vm_start_failed`,
         `stop_timeout`, `console_busy`, `resource_busy`,
-        `idempotency_key_conflict`.
+        `idempotency_key_conflict`, and for storage operations
+        `storage_locked`, `snapshot_limit`, `snapshot_has_clones`,
+        `snapshot_not_latest`, `snapshot_incomplete`.
       content:
         application/json:
           schema:
@@ -1109,7 +1162,8 @@ components:
       description: |
         The request names something this host does not offer:
         `engine_unsupported`, `firmware_unsupported`, `pool_not_allowed`,
-        `bridge_not_allowed`, `media_not_found`.
+        `bridge_not_allowed`, `media_not_found`,
+        `storage_feature_unsupported`.
       content:
         application/json:
           schema:
@@ -1418,6 +1472,61 @@ components:
         free_bytes: { type: integer, format: int64 }
         available_bytes: { type: integer, format: int64 }
         observed_at: { type: string, format: date-time }
+    DatasetOwner:
+      type: object
+      required: [kind]
+      properties:
+        kind:
+          type: string
+          enum: [vm, container, template, skep, unowned]
+        id:
+          type: string
+          description: The owning resource, for vm, container, and template.
+        reason:
+          type: string
+          description: Why the dataset is unowned.
+    Dataset:
+      type: object
+      required: [name, pool, type, owner, used_bytes, referenced_bytes]
+      properties:
+        name: { type: string, description: The full ZFS name. }
+        pool: { type: string }
+        type:
+          type: string
+          enum: [filesystem, volume, snapshot]
+        owner:
+          $ref: "#/components/schemas/DatasetOwner"
+        snapshot_id:
+          type: string
+          description: Set on a snapshot Skep took.
+        used_bytes: { type: integer, format: int64 }
+        referenced_bytes: { type: integer, format: int64 }
+        volsize_bytes: { type: integer, format: int64, description: Volumes only. }
+        refreservation_bytes: { type: integer, format: int64, description: Volumes only; absent for a thin volume. }
+        volblocksize: { type: integer, description: Volumes only. }
+        origin: { type: string, description: The snapshot a linked clone was made from. }
+        clones:
+          type: array
+          description: On a snapshot, the datasets cloned from it.
+          items: { type: string }
+        encryption: { type: string }
+        keystatus:
+          type: string
+          description: "`available` or `unavailable`; absent when the dataset is not encrypted."
+        compression: { type: string }
+        compressratio: { type: string }
+    DatasetList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Dataset"
+        next_cursor: { type: string }
+        unavailable_pools:
+          type: array
+          items: { type: string }
     StoragePoolList:
       type: object
       required: [items]

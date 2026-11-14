@@ -552,6 +552,38 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/storage/datasets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * What Skep owns in its pools
+         * @description Requires `storage:read`. Every filesystem, volume, and snapshot
+         *     under `<pool>/<root>` of the allow-listed pools, ordered by pool
+         *     (in allow-list order) and name, cursor paginated, read from ZFS on
+         *     each request. Each entry names its owner: a VM, a jail, a
+         *     template, `skep` for the datasets that only hold others, or
+         *     `unowned` with a reason. A dataset is owned only when its place in
+         *     the tree, its `skep:` owner property, and the agent's database
+         *     agree; anything else (an interrupted create, a hand-made dataset,
+         *     a snapshot Skep did not take) is listed as unowned and never
+         *     removed automatically (ADR 0010 decision 1). Encryption,
+         *     compression, and key status are what the operator set and Skep
+         *     inherits (decision 5). A pool that cannot be read is named in
+         *     `unavailable_pools` instead of failing the list.
+         */
+        get: operations["listStorageDatasets"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/storage/media": {
         parameters: {
             query?: never;
@@ -730,6 +762,54 @@ export interface components {
             available_bytes: number;
             /** Format: date-time */
             observed_at?: string;
+        };
+        DatasetOwner: {
+            /** @enum {string} */
+            kind: "vm" | "container" | "template" | "skep" | "unowned";
+            /** @description The owning resource, for vm, container, and template. */
+            id?: string;
+            /** @description Why the dataset is unowned. */
+            reason?: string;
+        };
+        Dataset: {
+            /** @description The full ZFS name. */
+            name: string;
+            pool: string;
+            /** @enum {string} */
+            type: "filesystem" | "volume" | "snapshot";
+            owner: components["schemas"]["DatasetOwner"];
+            /** @description Set on a snapshot Skep took. */
+            snapshot_id?: string;
+            /** Format: int64 */
+            used_bytes: number;
+            /** Format: int64 */
+            referenced_bytes: number;
+            /**
+             * Format: int64
+             * @description Volumes only.
+             */
+            volsize_bytes?: number;
+            /**
+             * Format: int64
+             * @description Volumes only; absent for a thin volume.
+             */
+            refreservation_bytes?: number;
+            /** @description Volumes only. */
+            volblocksize?: number;
+            /** @description The snapshot a linked clone was made from. */
+            origin?: string;
+            /** @description On a snapshot, the datasets cloned from it. */
+            clones?: string[];
+            encryption?: string;
+            /** @description `available` or `unavailable`; absent when the dataset is not encrypted. */
+            keystatus?: string;
+            compression?: string;
+            compressratio?: string;
+        };
+        DatasetList: {
+            items: components["schemas"]["Dataset"][];
+            next_cursor?: string;
+            unavailable_pools?: string[];
         };
         StoragePoolList: {
             items: components["schemas"]["StoragePool"][];
@@ -1184,7 +1264,9 @@ export interface components {
          *     `insufficient_space`, `insufficient_memory`, `bhyve_unavailable`,
          *     `storage_unavailable`, `vm_not_running`, `vm_start_failed`,
          *     `stop_timeout`, `console_busy`, `resource_busy`,
-         *     `idempotency_key_conflict`.
+         *     `idempotency_key_conflict`, and for storage operations
+         *     `storage_locked`, `snapshot_limit`, `snapshot_has_clones`,
+         *     `snapshot_not_latest`, `snapshot_incomplete`.
          */
         VMConflict: {
             headers: {
@@ -1197,7 +1279,8 @@ export interface components {
         /**
          * @description The request names something this host does not offer:
          *     `engine_unsupported`, `firmware_unsupported`, `pool_not_allowed`,
-         *     `bridge_not_allowed`, `media_not_found`.
+         *     `bridge_not_allowed`, `media_not_found`,
+         *     `storage_feature_unsupported`.
          */
         VMUnprocessable: {
             headers: {
@@ -2200,6 +2283,45 @@ export interface operations {
             };
             401: components["responses"]["Unauthenticated"];
             403: components["responses"]["Forbidden"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
+    listStorageDatasets: {
+        parameters: {
+            query?: {
+                /** @description Only list this allow-listed pool. */
+                pool?: string;
+                limit?: number;
+                cursor?: string;
+            };
+            header?: {
+                /**
+                 * @description Marks a request the client made by itself (a timer, a refetch on
+                 *     focus). Any non-empty value. The request is authenticated as any
+                 *     other, the idle timeout included, but does not extend the idle
+                 *     timeout.
+                 */
+                "X-Skep-Background"?: components["parameters"]["Background"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description One page of the inventory. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DatasetList"];
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["VMConflict"];
+            422: components["responses"]["VMUnprocessable"];
             503: components["responses"]["Unavailable"];
         };
     };

@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -18,8 +19,12 @@ const sysctlZFSLoaded = "vfs.zfs.version.module"
 // User properties on every dataset Skep creates, so a stray dataset can
 // be matched to its owner without guessing from its name.
 const (
-	propVMID   = "skep:vm_id"
-	propDiskID = "skep:disk_id"
+	propVMID        = "skep:vm_id"
+	propDiskID      = "skep:disk_id"
+	propContainerID = "skep:container_id"
+	propTemplateID  = "skep:template_id"
+	// propSnapshotID is set on snapshots, which take user properties.
+	propSnapshotID = "skep:snapshot_id"
 )
 
 // Volume limits (ADR 0009 decision 3).
@@ -140,15 +145,39 @@ func parseBytes(s string) (int64, error) {
 	return n, nil
 }
 
-// datasetColumns is the fixed column list of every dataset listing.
-const datasetColumns = "name,type,volsize,used,referenced,refreservation,volmode,volblocksize," + propVMID + "," + propDiskID
+// datasetColumns is the fixed column list of every dataset listing. With
+// -p, sizes and createtxg are plain integers and compressratio is a bare
+// decimal; a property that does not apply prints "-".
+var datasetColumns = strings.Join([]string{
+	"name", "type", "volsize", "used", "referenced", "refreservation", "volmode", "volblocksize",
+	"createtxg", "origin", "clones", "encryption", "keystatus", "compression", "compressratio",
+	propVMID, propDiskID, propContainerID, propTemplateID, propSnapshotID,
+}, ",")
+
+const datasetFields = 20
 
 // listDatasets lists a dataset, recursively when asked. A dataset that
 // does not exist yields an empty list.
 func (h *host) listDatasets(ctx context.Context, name string, recursive bool) ([]Dataset, error) {
-	args := []string{"list", "-H", "-p", "-t", "filesystem,volume", "-o", datasetColumns}
+	return h.list(ctx, name, "filesystem,volume", recursive)
+}
+
+// listSnapshots lists the snapshots of a dataset and, when asked, of
+// everything under it, oldest first.
+func (h *host) listSnapshots(ctx context.Context, name string, recursive bool) ([]Dataset, error) {
+	list, err := h.list(ctx, name, "snapshot", recursive)
+	sortByTxg(list)
+	return list, err
+}
+
+func (h *host) list(ctx context.Context, name, types string, recursive bool) ([]Dataset, error) {
+	args := []string{"list", "-H", "-p", "-t", types, "-o", datasetColumns}
 	if recursive {
 		args = append(args, "-r")
+	} else if types == "snapshot" {
+		// Without -r, zfs list of a filesystem lists the filesystem;
+		// -d 1 lists its own snapshots.
+		args = append(args, "-d", "1")
 	}
 	out, err := h.run.Run(ctx, zfsBinary, append(args, name)...)
 	if err != nil {
@@ -160,19 +189,39 @@ func (h *host) listDatasets(ctx context.Context, name string, recursive bool) ([
 	return parseDatasets(out)
 }
 
+// sortByTxg orders snapshots by the transaction group that created them,
+// which is the order ZFS rolls back in; the name breaks ties, so the
+// snapshots of one recursive zfs snapshot keep a stable order.
+func sortByTxg(list []Dataset) {
+	sort.SliceStable(list, func(i, j int) bool {
+		if list[i].CreateTxg != list[j].CreateTxg {
+			return list[i].CreateTxg < list[j].CreateTxg
+		}
+		return list[i].Name < list[j].Name
+	})
+}
+
 func parseDatasets(out []byte) ([]Dataset, error) {
 	var list []Dataset
 	sc := bufio.NewScanner(bytes.NewReader(out))
+	sc.Buffer(make([]byte, 64<<10), 1<<20)
 	for sc.Scan() {
 		line := strings.TrimRight(sc.Text(), "\r")
 		if line == "" {
 			continue
 		}
 		f := strings.Split(line, "\t")
-		if len(f) != 10 {
-			return nil, fmt.Errorf("zfs list: want 10 tab-separated fields, got %d", len(f))
+		if len(f) != datasetFields {
+			return nil, fmt.Errorf("zfs list: want %d tab-separated fields, got %d", datasetFields, len(f))
 		}
-		d := Dataset{Name: f[0], Type: f[1], VolMode: dash(f[6]), VMID: dash(f[8]), DiskID: dash(f[9])}
+		d := Dataset{
+			Name: f[0], Type: f[1], VolMode: dash(f[6]), Origin: dash(f[9]),
+			Encryption: dash(f[11]), KeyStatus: dash(f[12]), Compression: dash(f[13]), CompressRatio: dash(f[14]),
+			VMID: dash(f[15]), DiskID: dash(f[16]), ContainerID: dash(f[17]), TemplateID: dash(f[18]), SnapshotID: dash(f[19]),
+		}
+		if c := dash(f[10]); c != "" {
+			d.Clones = strings.Split(c, ",")
+		}
 		var err error
 		for i, dst := range []*int64{&d.VolSizeBytes, &d.UsedBytes, &d.ReferencedBytes, &d.RefReservationBytes} {
 			if *dst, err = parseBytes(f[i+2]); err != nil {
@@ -184,6 +233,9 @@ func parseDatasets(out []byte) ([]Dataset, error) {
 			return nil, fmt.Errorf("zfs list: %s: %w", f[0], err)
 		}
 		d.VolBlockSize = int(bs)
+		if d.CreateTxg, err = parseBytes(f[8]); err != nil {
+			return nil, fmt.Errorf("zfs list: %s: %w", f[0], err)
+		}
 		list = append(list, d)
 	}
 	return list, sc.Err()
@@ -197,15 +249,16 @@ func dash(s string) string {
 	return s
 }
 
-// ensureDataset creates a container dataset if it does not exist. It is
-// never mounted: it only holds other datasets.
-func (h *host) ensureDataset(ctx context.Context, name string, props ...string) error {
+// ensureUnlockedDataset creates a container dataset if it does not exist,
+// and refuses one that exists with its key unloaded. It is never mounted:
+// it only holds other datasets.
+func (h *host) ensureUnlockedDataset(ctx context.Context, name string, props ...string) error {
 	existing, err := h.listDatasets(ctx, name, false)
 	if err != nil {
 		return err
 	}
 	if len(existing) > 0 {
-		return nil
+		return checkUnlocked(existing)
 	}
 	args := []string{"create", "-o", "canmount=off"}
 	for _, p := range props {
@@ -224,15 +277,17 @@ func (h *host) CreateVMDataset(ctx context.Context, pool, vmID string) (Dataset,
 	if err := h.zfsLoaded(); err != nil {
 		return Dataset{}, err
 	}
-	// <pool>/<root>, each component of the root, then <root>/vm.
+	// <pool>/<root>, each component of the root, then <root>/vm. Each
+	// that exists must have its key loaded (ADR 0010 decision 5): an
+	// encrypted <pool>/<root> is the operator's, and so is its key.
 	parent := pool
 	for _, part := range append(strings.Split(h.conf.DatasetRoot, "/"), "vm") {
 		parent += "/" + part
-		if err := h.ensureDataset(ctx, parent); err != nil {
+		if err := h.ensureUnlockedDataset(ctx, parent); err != nil {
 			return Dataset{}, err
 		}
 	}
-	if err := h.ensureDataset(ctx, name, propVMID+"="+vmID); err != nil {
+	if err := h.ensureUnlockedDataset(ctx, name, propVMID+"="+vmID); err != nil {
 		return Dataset{}, err
 	}
 	return h.oneDataset(ctx, name)
@@ -274,6 +329,12 @@ func (h *host) CreateVolume(ctx context.Context, spec VolumeSpec) (Dataset, erro
 		return Dataset{}, err
 	}
 	if err := h.zfsLoaded(); err != nil {
+		return Dataset{}, err
+	}
+	parent, _ := h.conf.VMDataset(spec.Pool, spec.VMID)
+	if above, err := h.listDatasets(ctx, parent, false); err != nil {
+		return Dataset{}, err
+	} else if err := checkUnlocked(above); err != nil {
 		return Dataset{}, err
 	}
 	args := []string{"create"}
@@ -337,6 +398,14 @@ func (h *host) DestroyVM(ctx context.Context, pool, vmID string) ([]Dataset, err
 		if d.VMID != vmID {
 			return nil, fmt.Errorf("hostops: refusing to destroy %s: its %s property does not name this VM", d.Name, propVMID)
 		}
+	}
+	// zfs destroy -r refuses a snapshot with clones too; this says which.
+	snaps, err := h.listSnapshots(ctx, name, true)
+	if err != nil {
+		return nil, err
+	}
+	if clones := clonesOf(snaps); len(clones) > 0 {
+		return nil, hasClones(clones)
 	}
 	if _, err := h.run.Run(ctx, zfsBinary, "destroy", "-r", name); err != nil {
 		return nil, err

@@ -81,21 +81,13 @@ func TestVMPermissionsMigration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Upgrade a database that is at 0003, as an installed one is.
-	before := fstest.MapFS{}
-	for _, m := range known[:3] {
-		name := fmt.Sprintf("%04d_%s.sql", m.Version, m.Name)
-		body, err := fs.ReadFile(all, name)
-		if err != nil {
-			t.Fatal(err)
-		}
-		before[name] = &fstest.MapFile{Data: body}
-	}
+	// Upgrade a database that is at 0003, as an installed one was, to
+	// 0004 alone.
 	db := openTestDB(t)
-	if _, err := Migrate(ctx, db, before); err != nil {
+	if _, err := Migrate(ctx, db, migrationPrefix(t, all, known, 3)); err != nil {
 		t.Fatal(err)
 	}
-	applied, err := Migrate(ctx, db, all)
+	applied, err := Migrate(ctx, db, migrationPrefix(t, all, known, 4))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -147,4 +139,20 @@ func TestVMPermissionsMigration(t *testing.T) {
 	// The protection is back.
 	wantConstraintError(t, db, "update a built-in role", `UPDATE roles SET permissions = '["*"]' WHERE id = 'viewer'`)
 	wantConstraintError(t, db, "delete a built-in role", `DELETE FROM roles WHERE id = 'viewer'`)
+}
+
+// migrationPrefix is the first n migrations of a set: a database as an
+// older release left it.
+func migrationPrefix(t *testing.T, all fs.FS, known []Migration, n int) fs.FS {
+	t.Helper()
+	out := fstest.MapFS{}
+	for _, m := range known[:n] {
+		name := fmt.Sprintf("%04d_%s.sql", m.Version, m.Name)
+		body, err := fs.ReadFile(all, name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out[name] = &fstest.MapFile{Data: body}
+	}
+	return out
 }

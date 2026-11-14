@@ -199,3 +199,55 @@ func (c Confinement) VMVarsPath(vmID string) (string, error) {
 	}
 	return filepath.Join(dir, VMVarsFile), nil
 }
+
+// Owner kinds: what a dataset under <pool>/<root> belongs to (ADR 0010
+// decision 1).
+const (
+	OwnerVM        = "vm"
+	OwnerContainer = "container"
+)
+
+// Owner is the resource a tree of datasets belongs to: a VM or a jail.
+type Owner struct {
+	Kind string
+	ID   string
+}
+
+// ownerPlaces maps an owner kind to the dataset under <root> that holds
+// one dataset per resource, and to the user property naming the owner.
+var ownerPlaces = map[string]struct{ dir, prop string }{
+	OwnerVM:        {"vm", propVMID},
+	OwnerContainer: {"jail", propContainerID},
+}
+
+// OwnerDataset is the dataset of a resource: <pool>/<root>/vm/<id> for a
+// VM, <pool>/<root>/jail/<id> for a jail.
+func (c Confinement) OwnerDataset(pool string, o Owner) (string, error) {
+	place, ok := ownerPlaces[o.Kind]
+	if !ok {
+		return "", invalid("invalid owner kind")
+	}
+	root, err := c.rootDataset(pool)
+	if err != nil {
+		return "", err
+	}
+	if !ValidID(o.ID) {
+		return "", invalid("invalid %s ID", o.Kind)
+	}
+	return root + "/" + place.dir + "/" + o.ID, nil
+}
+
+// SnapshotPrefix starts the ZFS name of every snapshot Skep takes.
+const SnapshotPrefix = "skep-"
+
+// SnapshotName is the ZFS short name of a snapshot: skep-<snapshot-id>.
+// The user's label is never part of it.
+func SnapshotName(snapshotID string) (string, error) {
+	if !ValidID(snapshotID) {
+		return "", invalid("invalid snapshot ID")
+	}
+	return SnapshotPrefix + snapshotID, nil
+}
+
+// RootDataset is <pool>/<root>, the top of what Skep owns in a pool.
+func (c Confinement) RootDataset(pool string) (string, error) { return c.rootDataset(pool) }

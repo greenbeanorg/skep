@@ -78,6 +78,10 @@ func (f *fakeVMs) StoragePools(context.Context) (models.StoragePoolList, error) 
 	return models.StoragePoolList{}, nil
 }
 
+func (f *fakeVMs) StorageDatasets(context.Context, models.DatasetListOptions) (models.DatasetList, error) {
+	return models.DatasetList{}, nil
+}
+
 func (f *fakeVMs) Media(context.Context) (models.MediaList, error) { return models.MediaList{}, nil }
 
 func TestVMCommands(t *testing.T) {
