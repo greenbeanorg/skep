@@ -181,9 +181,16 @@ func TestCreateProvisionsAVM(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The VM exists at once, not provisioned, with its name reserved.
+	// The VM exists at once, with its name reserved. It is not
+	// provisioned unless a worker already ran the task between the submit
+	// and the read that built the answer.
 	vm := created.VM
-	if vm.ID == "" || vm.Provisioned || vm.Name != "web-1" || vm.Engine != "bhyve" || vm.Firmware != "uefi" ||
+	if vm.Provisioned {
+		if task, err := f.engine.Get(ctx, created.Task.ID); err != nil || task.Status != models.TaskSucceeded {
+			t.Fatalf("the VM was provisioned before its task succeeded: %+v, %v", task, err)
+		}
+	}
+	if vm.ID == "" || vm.Name != "web-1" || vm.Engine != "bhyve" || vm.Firmware != "uefi" ||
 		vm.DesiredState != models.VMStopped || len(vm.Disks) != 2 || len(vm.NICs) != 1 {
 		t.Fatalf("created VM = %+v", vm)
 	}
