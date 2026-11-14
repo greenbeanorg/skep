@@ -1,0 +1,160 @@
+# Decision 11 checks on hearst, 2026-11-14 (after the nested-KVM workaround)
+
+Build 44a8784 (binaries deployed with scripts/deploy-test.sh: size and
+SHA-256 checked, synced). hw.vmm.vmx.cap.virtual_interrupt_delivery: 0,
+posted_interrupts: 0. Driven through the public API with curl (key pinned)
+as m6check (admin), m6operator (operator), m6viewer (viewer); the console
+through tests/integration/vm/consolectl in tmux (the same WebSocket
+endpoint as the browser) and through Chromium (Playwright) for the browser
+parts. Times are UTC.
+
+## vm.start through Skep (16:44)
+202, task vm.start succeeded; observed running, bhyve pid 2938, tap0.
+Host: runner 2918 -> bhyve 2938 (only the instance name on its command
+line); /dev/vmm/skep-<id>; /dev/nmdm-skep-<id>.1A and .1B; tap0
+"description: skep:<id>:0", "Opened by PID 2938", member of bridge0 with
+vtnet1; state.json {"state":"running","runner_pid":2918,"bhyve_pid":2938,
+"taps":{"0":"tap0"},"boots":1}; bhyve.conf as rendered (UEFI bootrom and
+per-VM bootvars, lpc.com1 nmdm, virtio-blk zvol, ahci-cd ISO ro, virtio-net
+tap0 with the generated 02:... MAC). merrick's ping of hearst: no loss.
+
+## Install from media: PASSED (browser part: loader, kernel, installer, login; no firmware text)
+- Console attached at 16:45: the 64 KiB scrollback held the guest's boot
+  up to the installer's "Console type [vt100]:" prompt.
+- FreeBSD 15.1 installed to the zvol through the console (bsdinstall:
+  hostname fbsd1, offline package install of base (214 packages), Auto
+  (UFS) on vtbd0 (the zvol) with GPT: 260 MB EFI, 7.3 GB UFS, 410 MB swap,
+  root password set, DHCP on vtnet0, UTC, sshd), "Installation of FreeBSD
+  complete!".
+- In Chromium on https://10.79.20.170:8443 (the web interface, WebGL
+  console): the installer's output at 16:50:52; across the reboot the
+  loader ("Consoles: EFI console", 16:54:19), the kernel ("Copyright (c)
+  1992-2025 The FreeBSD Project", 16:54:32), and "FreeBSD/amd64 (fbsd1)
+  (ttyu0) login:" (16:54:57). 0 CSP violations. The edk2 bhyve firmware
+  itself writes nothing to COM1, so no firmware text is on the serial
+  console; the ADR's check assumed it would.
+
+## Guest reboot: PASSED
+The installer's reboot: state.json boots 2, the same runner (2918), a new
+bhyve (3034), no task involved. The guest came up from its disk
+(/dev/vtbd0p2 on /, hostname fbsd1) although the ISO was still attached:
+the firmware kept the new boot entry in the VM's variable store.
+
+## Networking: FAILED (isolation); reach and Skep's part passed
+- Guest: vtnet0 inet 10.79.60.100/24 by DHCP (Kea, VLAN 60), default
+  10.79.60.1, resolvers 10.79.10.250 and .249.
+- Reach: ping 9.9.9.9 0% loss; host www.freebsd.org resolves; fetch
+  https://www.freebsd.org/ OK.
+- Isolation: the guest reaches the management network. ping 10.79.20.170,
+  10.79.20.80, 10.79.20.1: all answer; nc 10.79.20.170 22 and 8443: open.
+  traceroute 10.79.20.170: 1 10.79.60.1, 2 10.79.20.170, i.e. the lab
+  firewall routes VLAN 60 to VLAN 20. On hearst: net.inet.ip.forwarding=0,
+  bridge0 and vtnet1 without an address, members tap0 and vtnet1 only; the
+  guest's ARP table holds only its gateway. So the separation ADR 0009
+  expected from the lab's LAB firewall rules is not there; nothing on
+  hearst bridges or routes it. For Andy (lab firewall), not Skep.
+- Tap: described skep:<id>:0 while running; gone after stop (ifconfig -g
+  tap empty).
+
+## vm.stop: PASSED
+- Clean ACPI shutdown in 8 s (guest synced its disks, bhyve status 1);
+  desired and observed stopped; /dev/vmm, tap0, runner, bhyve gone; the
+  console closed normally.
+- A guest that ignores ACPI: under UEFI the loader menu does NOT ignore
+  the power button (the firmware powers off; the stop succeeded), so the
+  ADR's example was wrong. With hw.acpi.power_button_state=NONE in the
+  installed guest: stop with timeout 30 failed after 30 s with
+  stop_timeout ("the guest did not shut down within 30s; it is still
+  running..."); the VM kept running (bhyve 3242, the guest answering on
+  the console), observed "stopping" with "ACPI power-off requested".
+
+## Concurrency: PASSED
+stop (timeout 20) accepted, then force_stop at once: 409 resource_busy,
+details.task_id = the pending stop.
+
+## vm.force_stop: PASSED
+- A running guest (ignoring ACPI): succeeded, "force-stopped", instance,
+  taps, runner, bhyve gone.
+- A runner killed by hand (kill -9 of vm-runner 3314): bhyve 3334, the
+  instance, and tap0 left; Skep showed failed, "a vmm instance exists
+  without a runner; force-stop the VM to destroy it", and refused start
+  (vm_not_stopped). force_stop succeeded: the instance destroyed (bhyve
+  exited), tap0 destroyed, observed stopped.
+
+## Media detach: PASSED
+PUT {"media":[]} while stopped: disks [virtio-blk only]. The next start
+booted from the zvol (/dev/vtbd0p2 on /; no /dev/cd0).
+
+## vm.restart: PASSED
+One task: bhyve 3433 before, 3508 after, running. Agent audit for that
+task_id: vm.restart requested success, vm.restart finished success
+(succeeded), request id m6-restart in both.
+
+## Agent restart: PASSED
+- service skep_agent restart with the guest running: runner 3488 and
+  bhyve 3508 unchanged; the new agent logged, in order, "task engine
+  started", "bhyve is available" (logged after it observed every VM) and
+  "internal API listening"; the API reported running, pid 3508. The
+  console reattached (the guest's login prompt).
+- kill -9 of the agent: the supervisor restarted it (pid 3686); runner and
+  bhyve unchanged; API running, pid 3508; the console reattached.
+  Not verified separately: the observed row's timestamp from before the
+  socket opened (the watcher rewrites it within 2 s); the order is the
+  code's and the log's.
+
+## Console: PASSED
+- Attach and detach with X-Request-ID m6-console-audit: agent log
+  vm.console.attach requested success (peer_uid 1002, attachments 1) and
+  vm.console.detach finished success (bytes_out 47, duration 4 s); access
+  log vm.console.attach and vm.console.detach, source 10.79.20.80, the
+  same request id.
+- Four attached at once; the fifth: HTTP 409, agent log
+  vm.console.attach denied {"error_code":"console_busy"}.
+- Logout of the session elsewhere (204): the console closed with 4001
+  57 s later.
+- Idle: skep-api with auth.session.idle_timeout 2m (temporary config,
+  removed afterwards). Console A, only receiving output from a loop in the
+  guest: closed with 4001, 93 s after its last keystroke (about 2 min
+  after the session's last counted use). Console B, a keystroke every
+  30 s: still open after 270 s.
+
+## Permissions: PASSED
+viewer (m6viewer): GET /vms, /vms/{id}, /storage/pools, /storage/media
+200; POST /vms, the four actions, PUT, DELETE, and the console 403; each
+in the access log as authz.deny with the permission (vm:write, vm:power x4,
+vm:write, vm:delete, vm:console). operator (m6operator): create 202,
+start 202, console attached (audited as m6operator), force_stop 202,
+delete 202.
+
+## vm.delete: PASSED
+scratch1 (operator): DELETE while running 409 vm_not_stopped; after a
+force stop, DELETE 202: both datasets, the state and run directories, and
+the rows gone (GET 404); the finished entry lists datasets_destroyed with
+sizes; the ISO's sha256 unchanged.
+
+## Interrupted create: PASSED
+A 7-disk create with the agent killed 30 ms after the request: the task
+interrupted (agent_restart), the VM provisioned=false; no dataset had been
+created yet. vm.delete succeeded with nothing to destroy. (A first try at
+300 ms was too late: the create had finished in 0.2 s; that VM was deleted,
+8 datasets.)
+
+## Capabilities (vmm unloaded): PASSED
+With fbsd1 stopped: kldunload vmm; /system bhyve available false,
+"the vmm kernel module is not loaded (an administrator sets vmm_load=YES
+in /boot/loader.conf; Skep loads nothing)"; start refused 409
+bhyve_unavailable, audited denied. kldload vmm: available again, both caps
+still 0 (the tunable stays in the kernel environment).
+
+## Unit tests natively: PASSED
+Cross-compiled test binaries run on hearst as aba: internal/console,
+internal/hostops, internal/hostops/hostfake, internal/hypervisor/bhyve
+(the runner), internal/internalapi, internal/vm: PASS; tests/e2e:
+TestCancelEndToEnd, TestCancelRefusalsEndToEnd, TestConsoleEndToEnd,
+TestConsoleOutlivesServerDeadlines, TestVMLifecycleEndToEnd: PASS.
+
+## Housekeeping
+The guest's root password is random and kept only on merrick (scratch).
+It was typed once as a shell command by mistake (the guest was already
+logged in); /root/.sh_history was removed and the shell left with
+HISTFILE unset.

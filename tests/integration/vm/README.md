@@ -16,26 +16,25 @@ done through the serial console in a browser.
 
 | Check | Status | Record |
 |---|---|---|
-| Capabilities: `available` with the limits once `vmm`, `nmdm`, and the firmware are in place | **passed** | [step2-datasets.txt](results/step2-datasets.txt) (agent log: `bhyve is available ... max_vcpus_per_vm 4, guest_memory_bytes 5328257024`) |
-| Capabilities: `unavailable` with the reason and `bhyve_unavailable` when `vmm` is unloaded | pending | |
-| Confinement: a pool and a bridge outside the allow-lists are refused and audited, nothing created | **passed** (pool, bridge, engine) | [step2-datasets.txt](results/step2-datasets.txt) |
-| `vm.create` on ZFS: datasets, `volmode=dev`, `volblocksize=16K`, reservation or none, user properties, warning for a thin disk over `available`, refusal of a full one | **passed** | [step2-datasets.txt](results/step2-datasets.txt) |
-| `vm.delete`: the VM's datasets and directory and rows gone, the audit entry lists them, the media untouched | **passed** (refused-while-running part pending) | [step2-datasets.txt](results/step2-datasets.txt) |
-| Install from media: firmware, loader, and installer on the browser console; FreeBSD installed to the zvol | **failed**: `hearst` stopped at the first `vm.start`; cause: KVM on `swearengen` failed to emulate bhyve's first `VMLAUNCH` (nested-virtualisation bug, not Skep). Workaround applied (`hw.vmm.vmx.cap.virtual_interrupt_delivery=0`, live and in loader.conf) and a manual bhyve boot of the ISO without Skep **passed** ([step3-manual-bhyve-probe.txt](results/step3-manual-bhyve-probe.txt)); the retry through Skep awaits approval | [step3-first-start-FAILED.txt](results/step3-first-start-FAILED.txt) |
-| Host reboot (partial, unplanned): after the forced restart the VM is observed `stopped` and nothing started by itself; the boot configuration (`vmm`, `nmdm`, `zfs`, `skeptest` import, `bridge0`) came up | **passed** for those parts (the drift part is pending: the reset also lost the start task, so `desired_state` is `stopped`) | [step3-first-start-FAILED.txt](results/step3-first-start-FAILED.txt) |
-| Guest reboot: the runner restarts bhyve after status 0, the guest comes up from disk | pending | |
-| Media detach: the next start boots from disk | pending | |
-| Networking: DHCP on VLAN 60, internet reachable, `10.79.20.0/24` not; tap described, gone after stop | pending | |
-| `vm.stop`: clean ACPI shutdown; a guest that ignores ACPI times out with `stop_timeout` and keeps running | pending | |
-| `vm.force_stop`: ends a guest; destroys a runner-less instance | pending | |
-| `vm.restart`: one task, both audit phases | pending | |
-| Agent restart and `kill -9`: the guest keeps running, the console reconnects, the right PID before the socket is served | pending | |
-| Host reboot: VM observed `stopped`, desired `running`, drift shown, nothing starts | pending | |
-| Permissions: viewer refused create, actions, delete, console, each audited; operator allowed | pending on FreeBSD (passed in the Linux end-to-end and browser tests) | |
-| Console: attach/detach in both logs with one request ID; a fifth refused; closed within a minute of logout; idles out unattended, not while typing | pending on FreeBSD (all but the idle parts passed in the Linux end-to-end test) | |
-| Concurrency: a second start while the first is pending gets `resource_busy` | pending | |
-| Interrupted create: an unprovisioned VM left, `vm.delete` cleans it up | pending | |
-| Unit tests natively: `hostops`, `hypervisor/bhyve`, runner, console packages on `hearst` | pending | |
+| Capabilities: `available` with the limits once `vmm`, `nmdm`, and the firmware are in place | **passed** | [step2-datasets.txt](results/step2-datasets.txt) |
+| Capabilities: `unavailable` with the reason and `bhyve_unavailable` when `vmm` is unloaded | **passed** | [step6-checks.txt](results/step6-checks.txt) |
+| Confinement: a pool and a bridge outside the allow-lists are refused and audited, nothing created | **passed** | [step2-datasets.txt](results/step2-datasets.txt) |
+| `vm.create` on ZFS | **passed** | [step2-datasets.txt](results/step2-datasets.txt) |
+| Install from media | **passed** (the firmware writes nothing to COM1; loader, kernel, installer, and login seen in the browser) | [step6-checks.txt](results/step6-checks.txt); first attempt: [step3-first-start-FAILED.txt](results/step3-first-start-FAILED.txt), workaround: [step3-manual-bhyve-probe.txt](results/step3-manual-bhyve-probe.txt) |
+| Guest reboot | **passed** | [step6-checks.txt](results/step6-checks.txt) |
+| Media detach | **passed** | [step6-checks.txt](results/step6-checks.txt) |
+| Networking: DHCP, internet, no reach to `10.79.20.0/24`, tap described and removed | **failed (isolation)**: DHCP, internet, and the tap passed; the guest reaches `10.79.20.0/24` because the lab firewall routes VLAN 60 to VLAN 20 (nothing on hearst forwards or bridges it) | [step6-checks.txt](results/step6-checks.txt) |
+| `vm.stop` (clean; ACPI ignored → `stop_timeout`, keeps running) | **passed** (an ACPI-ignoring guest made with `hw.acpi.power_button_state=NONE`; the UEFI loader menu does not ignore it) | [step6-checks.txt](results/step6-checks.txt) |
+| `vm.force_stop` (running guest; runner-less instance) | **passed** | [step6-checks.txt](results/step6-checks.txt) |
+| `vm.restart` | **passed** | [step6-checks.txt](results/step6-checks.txt) |
+| Agent restart and `kill -9` | **passed** | [step6-checks.txt](results/step6-checks.txt) |
+| Host reboot | see below | |
+| `vm.delete` | **passed** | [step6-checks.txt](results/step6-checks.txt), [step2-datasets.txt](results/step2-datasets.txt) |
+| Permissions | **passed** | [step6-checks.txt](results/step6-checks.txt) |
+| Console (audit, fifth refused, closed after logout, idle) | **passed** | [step6-checks.txt](results/step6-checks.txt) |
+| Concurrency | **passed** | [step6-checks.txt](results/step6-checks.txt) |
+| Interrupted create | **passed** | [step6-checks.txt](results/step6-checks.txt) |
+| Unit tests natively | **passed** | [step6-checks.txt](results/step6-checks.txt) |
 
 Not verifiable on this host and pending regardless: a ZFS-root host; a
 non-thin disk on a pool with real disks; SMT topology in the guest; an
