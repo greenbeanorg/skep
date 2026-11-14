@@ -1,0 +1,164 @@
+# Workaround and manual bhyve test on hearst (no Skep involved), 2026-11-14
+
+Approved by Andy. hearst: FreeBSD 15.1-RELEASE-p6, booted 11:06 local
+(reboot 1 of 2, after the KVM emulation failure of the first start).
+
+## APIC virtual interrupt delivery off (live and persistent)
+
+    kenv hw.vmm.vmx.cap.virtual_interrupt_delivery=0
+    kldunload vmm && kldload vmm
+    echo 'hw.vmm.vmx.cap.virtual_interrupt_delivery="0"' >> /boot/loader.conf; sync
+
+Result:
+    hw.vmm.vmx.cap.virtual_interrupt_delivery: 0     (was 1)
+    hw.vmm.vmx.cap.posted_interrupts: 0              (was 1)
+/boot/loader.conf now:
+    vmm_load="YES"
+    nmdm_load="YES"
+    vfs.zfs.arc.max="1073741824"
+    hw.vmm.vmx.cap.virtual_interrupt_delivery="0"
+Undo: kenv -u the variable, reload vmm, delete the loader.conf line.
+
+## Step 1: vmm instance without a vCPU run: passed
+    bhyvectl --vm=m6probe --create   -> /dev/vmm/m6probe (crw------- root wheel)
+    bhyvectl --vm=m6probe --destroy  -> /dev/vmm gone
+
+## Step 2: first VMLAUNCH, plain bhyve: passed
+    timeout 90 bhyve -c 1 -m 256M -H -A -u \
+      -l bootrom,/usr/local/share/edk2-bhyve/BHYVE_UEFI.fd \
+      -s 0,hostbridge -s 31,lpc \
+      -s 3,ahci-cd,/home/aba/skep-m6/media/FreeBSD-15.1-RELEASE-amd64-disc1.iso,ro \
+      -l com1,/dev/nmdm-m6probe.1A m6probe
+Console read from /dev/nmdm-m6probe.1B (stty raw -echo clocal) for 60 s:
+7875 bytes: UEFI firmware, the FreeBSD loader, the installer's boot menu,
+and the 15.1-RELEASE kernel booting with "Hypervisor: Origin = bhyve".
+bhyve's own output: "Unhandled ps2 mouse command 0xe1" (harmless).
+merrick pinged hearst once a second throughout: 100 sent, 100 received,
+0% packet loss.
+
+## Step 3: cleanup: passed
+    bhyvectl --vm=m6probe --force-poweroff  -> bhyve exited
+    bhyvectl --vm=m6probe --destroy         -> /dev/vmm and /dev/nmdm* gone
+Caps still 0; uptime 14 min (no reboot).
+
+## Console capture (escape sequences removed)
+Loading /boot/defaults/loader.conf
+Loading /boot/defaults/loader.conf
+Loading /boot/device.hints
+Loading /boot/loader.conf
+Loading /boot/loader.conf.d/iwlwifi-22000.conf
+Loading /boot/loader.conf.d/iwlwifi-ax210.conf
+Loading /boot/loader.conf.d/iwlwifi-bz.conf
+Loading /boot/loader.conf.d/rtw8703b.conf
+Loading /boot/loader.conf.d/rtw8723d.conf
+Loading /boot/loader.conf.d/rtw8812a.conf
+Loading /boot/loader.conf.d/rtw8814a.conf
+Loading /boot/loader.conf.d/rtw8821a.conf
+Loading /boot/loader.conf.d/rtw8821c.conf
+Loading /boot/loader.conf.d/rtw8822b.conf
+Loading /boot/loader.conf.d/rtw8822c.conf
+Loading /boot/loader.conf.d/rtw8851b.conf
+Loading /boot/loader.conf.d/rtw8852a.conf
+Loading /boot/loader.conf.d/rtw8852b.conf
+Loading /boot/loader.conf.d/rtw8852bt.conf
+Loading /boot/loader.conf.d/rtw8852c.conf
+Loading /boot/loader.conf.d/rtw8922a.conf
+Loading /boot/loader.conf.local
+?c  ```                        ` s` `.....---.......--.```   -/ +o   .--`         /y:`      +.  yo`:.            :o      `+-   y/               -/`   -o/  .-                  ::/sy+:.  /                     `--  / `:                          :` `:                          :`  /                          /  .-                        -.   --                      -.    `:`                  `:`      .--             `--.         .---.....----. _____              ____ ____  ____     ___           _        _ _|  ___| __ ___  ___| __ ) ___||  _ \   |_ _|_ __  ___| |_ __ _| | | ___ _ __| |_ | '__/ _ \/ _ \  _ \___ \| | | |   | || '_ \/ __| __/ _` | | |/ _ \ '__||  _|| | |  __/  __/ |_) |__) | |_| |   | || | | \__ \ || (_| | | |  __/ ||_|  |_|  \___|\___|____/____/|____/   |___|_| |_|___/\__\__,_|_|_|\___|_| Welcome to FreeBSD 1. Boot Installer [Enter]2. Boot Single use
+Loading configured modules...
+can't find '/boot/entropy'
+can't find '/etc/hostid'
+not copying staging tramp 0xe5e4000 PT4 0xe5db000
+Start @ 0xffffffff80389000 ...
+Loading splash ok
+Loading shutdown splash ok
+staging 0x4000000
+---<<BOOT>>---
+Copyright (c) 1992-2025 The FreeBSD Project.
+Copyright (c) 1979, 1980, 1983, 1986, 1988, 1989, 1991, 1992, 1993, 1994
+	The Regents of the University of California. All rights reserved.
+FreeBSD is a registered trademark of The FreeBSD Foundation.
+FreeBSD 15.1-RELEASE releng/15.1-n283562-96841ea08dcf GENERIC amd64
+FreeBSD clang version 19.1.7 (https://github.com/llvm/llvm-project.git llvmorg-19.1.7-0-gcd708029e0b2)
+SRAT: Ignoring memory at addr 0xff000000
+SRAT: Ignoring memory at addr 0xffc84000
+VT: init without driver.
+CPU: Intel(R) Core(TM) i5-10600K CPU @ 4.10GHz (4108.04-MHz K8-class CPU)
+  Origin="GenuineIntel"  Id=0xa0655  Family=0x6  Model=0xa5  Stepping=5
+  Features=0x1f83fbff<FPU,VME,DE,PSE,TSC,MSR,PAE,MCE,CX8,APIC,SEP,MTRR,PGE,MCA,CMOV,PAT,PSE36,MMX,FXSR,SSE,SSE2,SS,HTT>
+  Features2=0xfeda3203<SSE3,PCLMULQDQ,SSSE3,FMA,CX16,PCID,SSE4.1,SSE4.2,MOVBE,POPCNT,AESNI,XSAVE,OSXSAVE,AVX,F16C,RDRAND,HV>
+  AMD Features=0x2c100800<SYSCALL,NX,Page1GB,RDTSCP,LM>
+  AMD Features2=0x121<LAHF,ABM,Prefetch>
+  Structured Extended Features=0x1407a9<FSGSBASE,BMI1,AVX2,SMEP,BMI2,ERMS,INVPCID,RDSEED,SMAP>
+  Structured Extended Features3=0x400<MD_CLEAR>
+  XSAVE Features=0x1<XSAVEOPT>
+  AMD Extended Feature Extensions ID EBX=0x100d000<IBPB,IBRS,STIBP,SSBD>
+Hypervisor: Origin = "bhyve bhyve "
+real memory  = 268435456 (256 MB)
+avail memory = 209362944 (199 MB)
+Event timer "LAPIC" quality 600
+ACPI APIC Table: <BHYVE  BVAPIC >
+random: registering fast source Intel Secure Key Seed
+random: fast provider: "Intel Secure Key Seed"
+random: unblocking device.
+ioapic0 <Version 1.1> irqs 0-31
+random: entropy device external interface
+kbd1 at kbdmux0
+efirtc0: <EFI Realtime Clock>
+efirtc0: registered as a time-of-day clock, resolution 1.000000s
+smbios0: <System Management BIOS> at iomem 0xfbd0000-0xfbd001e
+smbios0: Entry point: v2.1 (32-bit), Version: 2.8, BCD Revision: 2.8
+aesni0: <AES-CBC,AES-CCM,AES-GCM,AES-ICM,AES-XTS>
+acpi0: <BHYVE BVFACP >
+acpi0: Power Button (fixed)
+atrtc0: <AT realtime clock> port 0x70-0x71 irq 8 on acpi0
+atrtc0: registered as a time-of-day clock, resolution 1.000000s
+Event timer "RTC" frequency 32768 Hz quality 0
+attimer0: <AT timer> port 0x40-0x43 irq 0 on acpi0
+Timecounter "i8254" frequency 1193182 Hz quality 0
+Event timer "i8254" frequency 1193182 Hz quality 100
+hpet0: <High Precision Event Timer> iomem 0xfed00000-0xfed003ff on acpi0
+Timecounter "HPET" frequency 16777216 Hz quality 950
+Event timer "HPET" frequency 16777216 Hz quality 550
+Event timer "HPET1" frequency 16777216 Hz quality 450
+Event timer "HPET2" frequency 16777216 Hz quality 450
+Event timer "HPET3" frequency 16777216 Hz quality 450
+Event timer "HPET4" frequency 16777216 Hz quality 450
+Event timer "HPET5" frequency 16777216 Hz quality 450
+Event timer "HPET6" frequency 16777216 Hz quality 450
+Event timer "HPET7" frequency 16777216 Hz quality 450
+Timecounter "ACPI-fast" frequency 3579545 Hz quality 900
+acpi_timer0: <32-bit timer at 3.579545MHz> port 0x408-0x40b on acpi0
+pcib0: <ACPI Host-PCI bridge> port 0xcf8-0xcff on acpi0
+pci0: <ACPI PCI bus> on pcib0
+ahci0: <Intel ICH8 AHCI SATA controller> mem 0xc0000000-0xc0001fff irq 16 at device 3.0 on pci0
+ahci0: AHCI v1.30 with 32 6Gbps ports, Port Multiplier not supported
+ahcich0: <AHCI channel> at channel 0 on ahci0
+isab0: <PCI-ISA bridge> at device 31.0 on pci0
+isa0: <ISA bus> on isab0
+vmgenc0: <VM Generation Counter> on acpi0
+random: registering fast source VM Generation ID
+atkbdc0: <Keyboard controller (i8042)> port 0x60,0x64 irq 1 on acpi0
+atkbd0: <AT Keyboard> irq 1 on atkbdc0
+kbd0 at atkbd0
+atkbd0: [GIANT-LOCKED]
+driver bug: Unable to set devclass (class: atkbdc devname: (unknown))
+psm0: <PS/2 Mouse> irq 12 on atkbdc0
+psm0: [GIANT-LOCKED]
+WARNING: Device "psm" is Giant locked and may be deleted before FreeBSD 16.0.
+psm0: model Generic PS/2 mouse, device ID 0
+uart0: <16550 or compatible> port 0x3f8-0x3ff irq 4 flags 0x10 on acpi0
+uart0: console (115200,n,8,1)
+uart1: <16550 or compatible> port 0x2f8-0x2ff irq 3 on acpi0
+uart2: <16550 or compatible> port 0x3e8-0x3ef irq 4 on acpi0
+uart3: <16550 or compatible> port 0x2e8-0x2ef irq 3 on acpi0
+vga0: <Generic ISA VGA> at port 0x3b0-0x3bb iomem 0xb0000-0xb7fff pnpid PNP0900 on isa0
+Timecounter "TSC-low" frequency 2052058617 Hz quality 800
+Timecounters tick every 10.000 msec
+usb_needs_explore_all: no devclass
+Trying to mount root from cd9660:/dev/iso9660/15_1_RELEASE_AMD64_CD [ro]...
+cd0 at ahcich0 bus 0 scbus0 target 0 lun 0
+cd0: <BHYVE BHYVE DVD-ROM 001> Removable CD-ROM SCSI device
+cd0: Serial Number BHYVE-1BC4-7B80-A7B5
+cd0: 600.000MB/s transfers (SATA 3.x, UDMA6, ATAPI 12bytes, PIO 8192bytes)
+cd0: 1289MB (660281 2048 byte sectors)

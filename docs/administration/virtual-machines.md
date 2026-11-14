@@ -136,8 +136,9 @@ hw.vmm.vmx.cap.virtual_interrupt_delivery="0"
 ```
 
 It costs some interrupt-delivery performance in guests, which matters
-little in a nested lab and is not needed on bare metal. **Status:
-proposed for `hearst`, not yet applied or verified**; see
+little in a nested lab and is not needed on bare metal. **Status on
+`hearst`: applied and verified** (both caps 0; a plain bhyve boot of the
+FreeBSD 15.1 ISO with the first `VMLAUNCH` ran without trouble); see
 [tests/integration/vm](../../tests/integration/vm/README.md). Skep does
 not detect this condition yet (a follow-up).
 
