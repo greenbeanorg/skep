@@ -291,7 +291,8 @@ func TestRetentionMigrationOnExistingData(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if len(applied) != 1 || applied[0].Name != "retention" {
+			// Later migrations follow; retention is the first one applied.
+			if len(applied) == 0 || applied[0].Name != "retention" {
 				t.Fatalf("applied = %+v", applied)
 			}
 			if n := auditCount(t, db); n != 3 {

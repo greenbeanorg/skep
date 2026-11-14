@@ -29,6 +29,7 @@ import (
 	"github.com/greenbeanorg/skep/internal/config"
 	"github.com/greenbeanorg/skep/internal/database"
 	"github.com/greenbeanorg/skep/internal/hardware"
+	"github.com/greenbeanorg/skep/internal/hostops"
 	"github.com/greenbeanorg/skep/internal/internalapi"
 	"github.com/greenbeanorg/skep/internal/logging"
 	"github.com/greenbeanorg/skep/internal/retention"
@@ -137,6 +138,20 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if runtime.GOOS != "freebsd" {
 		log.Warn("this is not a FreeBSD host: running as a development build only, never as a production host")
 	}
+
+	// Everything that needs root goes through hostops, bounded by the
+	// confinement in the root-owned configuration (ADR 0009 decision 1).
+	host, err := newHostOps(confinement(cfg), log)
+	if err != nil {
+		return err
+	}
+	log.Info("host confinement", "pools", cfg.Storage.Pools, "dataset_root", cfg.Storage.DatasetRoot,
+		"bridges", cfg.Network.Bridges, "management_interfaces", cfg.Network.ManagementInterfaces,
+		"media_dir", cfg.Storage.MediaDir, "firmware_dir", cfg.Hypervisor.Bhyve.FirmwareDir)
+	if len(cfg.Storage.Pools) == 0 {
+		log.Warn("storage.pools is empty: no VM can be created until the configuration names a pool")
+	}
+	_ = host
 
 	taskStore := database.NewTaskStore(db)
 	engine, err := tasks.New(tasks.Options{
@@ -256,6 +271,21 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		log.Info("stopped")
 	}
 	return serveErr
+}
+
+// confinement builds what Skep may touch on this host from the agent's
+// configuration, and from nothing else.
+func confinement(cfg config.Config) hostops.Confinement {
+	return hostops.Confinement{
+		Pools:                cfg.Storage.Pools,
+		DatasetRoot:          cfg.Storage.DatasetRoot,
+		MediaDir:             cfg.Storage.MediaDir,
+		Bridges:              cfg.Network.Bridges,
+		ManagementInterfaces: cfg.Network.ManagementInterfaces,
+		FirmwareDir:          cfg.Hypervisor.Bhyve.FirmwareDir,
+		RunDir:               cfg.VMRunDir(),
+		StateDir:             cfg.VMStateDir(),
+	}
 }
 
 // quietLogger is the logger of local commands: they report on stdout and

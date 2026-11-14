@@ -91,6 +91,13 @@ type Config struct {
 	Discovery       DiscoveryConfig `json:"discovery"`
 	Tasks           TasksConfig     `json:"tasks"`
 	Retention       RetentionConfig `json:"retention"`
+	// Hypervisor, Storage, and Network are the host confinement (ADR 0004
+	// rule 4, ADR 0009 decision 1c): what Skep may touch on this host.
+	// They are read from the root-owned file only; nothing in the API can
+	// change them, and there is no environment variable or flag for them.
+	Hypervisor HypervisorConfig `json:"hypervisor"`
+	Storage    StorageConfig    `json:"storage"`
+	Network    NetworkConfig    `json:"network"`
 }
 
 // RetentionConfig says how long history is kept (ADR 0007). The fields are
@@ -434,6 +441,7 @@ func (c *Config) applyDefaults() {
 	if c.Tasks.QueueSize == 0 {
 		c.Tasks.QueueSize = 64
 	}
+	c.applyConfinementDefaults()
 	tasksDays := DefaultTaskRetentionDays
 	// The agent's audit log is sealed and never removed unless the
 	// operator opts in (ADR 0007, amendment a).
@@ -490,6 +498,7 @@ func (c Config) Validate() error {
 		add("tasks.queue_size must be between 1 and 4096")
 	}
 	errs = append(errs, c.Retention.validate()...)
+	errs = append(errs, c.validateConfinement()...)
 	if len(errs) == 0 {
 		return nil
 	}
