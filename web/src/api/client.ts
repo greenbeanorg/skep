@@ -26,6 +26,14 @@ import type {
   User,
   UserList,
   UserUpdate,
+  MediaList,
+  StoragePoolList,
+  VM,
+  VMActionName,
+  VMCreate,
+  VMCreated,
+  VMList,
+  VMUpdate,
 } from "./types";
 
 export const API_PREFIX = "/api/v1";
@@ -264,4 +272,31 @@ export const api = {
   deleteUser: (id: string) => request<void>(`/users/${enc(id)}`, { method: "DELETE" }),
   roles: (o: ReadOptions = {}) => request<RoleList>("/roles", o),
   audit: (q: AuditQuery = {}, o: ReadOptions = {}) => request<AuditList>(auditPath(q), o),
+
+  // Virtual machines and the storage they may use (ADR 0009). Every write
+  // answers with the task that carries it out.
+  vms: (o: ReadOptions = {}) => request<VMList>("/vms?limit=200", o),
+  vm: (id: string, o: ReadOptions = {}) => request<VM>(`/vms/${enc(id)}`, o),
+  createVM: (req: VMCreate) => request<VMCreated>("/vms", { method: "POST", body: req }),
+  updateVM: (id: string, req: VMUpdate) => request<Task>(`/vms/${enc(id)}`, { method: "PUT", body: req }),
+  deleteVM: (id: string) => request<Task>(`/vms/${enc(id)}`, { method: "DELETE" }),
+  vmAction: (id: string, action: VMActionName, timeout?: number) =>
+    request<Task>(`/vms/${enc(id)}/actions`, { method: "POST", body: timeout ? { action, timeout } : { action } }),
+  storagePools: (o: ReadOptions = {}) => request<StoragePoolList>("/storage/pools", o),
+  media: (o: ReadOptions = {}) => request<MediaList>("/storage/media", o),
 };
+
+/**
+ * The WebSocket address of a VM's serial console, on this origin. The
+ * browser sends the session cookie and Origin with the handshake, which
+ * skep-api checks like any other request.
+ */
+export function consoleURL(vmId: string, loc: Pick<Location, "protocol" | "host"> = window.location): string {
+  const scheme = loc.protocol === "https:" ? "wss:" : "ws:";
+  return `${scheme}//${loc.host}${API_PREFIX}/vms/${enc(vmId)}/console/serial`;
+}
+
+/** Reports a keystroke in the console as user activity, for the idle warning. */
+export function reportActivity(): void {
+  listeners.onUserRequest?.(Date.now());
+}

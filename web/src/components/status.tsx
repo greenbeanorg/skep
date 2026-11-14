@@ -67,3 +67,21 @@ export function PoolHealthBadge({ health }: { health: string }) {
     </Badge>
   );
 }
+
+const VM_TONE: Record<string, Tone> = {
+  unknown: "neutral",
+  stopped: "neutral",
+  starting: "info",
+  running: "ok",
+  stopping: "warn",
+  failed: "bad",
+};
+
+export function VMStateBadge({ state }: { state: string }) {
+  return (
+    <Badge tone={VM_TONE[state] ?? "neutral"}>
+      <Dot />
+      {state}
+    </Badge>
+  );
+}

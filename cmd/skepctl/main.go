@@ -81,6 +81,11 @@ Read-only:
                                              the access audit log, newest first
   version                                    print skepctl's version
 
+Virtual machines:
+  vm list | show VM | create -f FILE | start VM | stop VM [--timeout S]
+     | force-stop VM | restart VM | delete VM      [--wait] [--json]
+                                             VM is an ID or a name; see "skepctl vm"
+
 Every command takes --server; without it, the server of the last login is used.
 skepctl keeps its state in $SKEPCTL_CONFIG_DIR or ~/.config/skepctl.`
 
@@ -103,6 +108,8 @@ func run(ctx context.Context, args []string, e env) error {
 		return cmdTasks(ctx, args[1:], e)
 	case "audit":
 		return cmdAudit(ctx, args[1:], e)
+	case "vm":
+		return cmdVM(ctx, args[1:], e)
 	case "version", "-version", "--version":
 		fmt.Fprintln(e.stdout, "skepctl", version.Get())
 		return nil

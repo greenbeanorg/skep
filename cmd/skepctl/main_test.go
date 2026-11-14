@@ -92,6 +92,7 @@ type stack struct {
 	db       *sql.DB
 	authn    *auth.Authenticator
 	srv      *httptest.Server
+	fakeVMs  *fakeVMs
 	requests atomic.Int32
 }
 
@@ -134,10 +135,11 @@ func newStackWith(t *testing.T, cert **tls.Certificate) *stack {
 			t.Fatal(err)
 		}
 	}
+	vms := &fakeVMs{}
 	h := api.NewHandler(api.Options{
-		Backend: fakeBackend{}, Auth: authn, Users: users, Audit: access, AuditLog: access, Logger: quiet,
+		Backend: fakeBackend{}, VMs: vms, Auth: authn, Users: users, Audit: access, AuditLog: access, Logger: quiet,
 	})
-	s := &stack{db: db, authn: authn}
+	s := &stack{db: db, authn: authn, fakeVMs: vms}
 	s.srv = httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		s.requests.Add(1)
 		h.ServeHTTP(w, r)
@@ -160,6 +162,8 @@ func newStackWith(t *testing.T, cert **tls.Certificate) *stack {
 }
 
 func (s *stack) server() string { return s.srv.URL }
+
+func (s *stack) vms(*testing.T) *fakeVMs { return s.fakeVMs }
 func (s *stack) pin() string {
 	if c := s.srv.Certificate(); c != nil {
 		return client.PublicKeyPin(c)

@@ -49,7 +49,18 @@ cleanup() {
 trap cleanup INT TERM EXIT
 
 socket="${dir}/agent/run/agent.sock"
-SKEP_TEST_SLEEP=8m "${bin}/skep-agent-testbuild" -dev -data-dir "${dir}/agent" -log-level warn &
+# The agent's confinement for the VM tests: on a development machine the
+# host is simulated, so the pool and the bridge exist only in memory. The
+# media directory is real and holds a stand-in ISO.
+mkdir -p "${dir}/media"
+printf 'not really an ISO\n' >"${dir}/media/test-install.iso"
+cat >"${dir}/agent.json" <<EOF
+{
+  "storage": { "pools": ["devpool"], "dataset_root": "skep", "media_dir": "${dir}/media" },
+  "network": { "bridges": ["bridge0"], "management_interfaces": ["vtnet0"] }
+}
+EOF
+SKEP_TEST_SLEEP=8m "${bin}/skep-agent-testbuild" -dev -config "${dir}/agent.json" -data-dir "${dir}/agent" -log-level warn &
 agent_pid=$!
 
 printf '%s\n' "${password}" | "${bin}/skep-api" admin create --username andy --display-name "Andy Test" \
