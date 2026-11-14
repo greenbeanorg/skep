@@ -57,7 +57,14 @@ func TestEveryRouteDeclaresWhatItRequires(t *testing.T) {
 	// Every declared permission is enforced somewhere.
 	used := map[string]bool{}
 	for _, rt := range routes {
-		used[rt.requires] = true
+		for _, p := range rt.permissions() {
+			used[p] = true
+		}
+		for _, p := range rt.also {
+			if !auth.KnownPermission(p) {
+				t.Errorf("%s %s also requires %q, which is not a declared permission", rt.method, rt.path, p)
+			}
+		}
 	}
 	for _, p := range auth.Permissions {
 		if !used[p] {
@@ -108,19 +115,28 @@ func TestPermissionMatrix(t *testing.T) {
 			rq := concrete(e, rt)
 			rq.role = role
 			rec := e.serve(h, rq)
-			allowed := byID[role].Allows(rt.requires)
-			name := fmt.Sprintf("%s %s as %s (needs %s)", rt.method, rt.path, role, rt.requires)
+			// The first permission of the route the role lacks is the one
+			// the denial names.
+			missing := ""
+			for _, p := range rt.permissions() {
+				if !byID[role].Allows(p) {
+					missing = p
+					break
+				}
+			}
+			allowed := missing == ""
+			name := fmt.Sprintf("%s %s as %s (needs %v)", rt.method, rt.path, role, rt.permissions())
 			if allowed && (rec.Code == http.StatusForbidden || rec.Code == http.StatusUnauthorized) {
 				t.Errorf("%s: status %d, want it allowed", name, rec.Code)
 			}
 			if !allowed {
 				denials++
 				body := wantError(t, rec, http.StatusForbidden, auth.CodeForbidden)
-				if body.Details["permission"] != rt.requires {
+				if body.Details["permission"] != missing {
 					t.Errorf("%s: details = %v", name, body.Details)
 				}
 				n := e.auditCount(t, `action = 'authz.deny' AND outcome = 'denied' AND actor_id = ? AND details LIKE ? AND details LIKE ?`,
-					e.ids[role], `%"permission":"`+rt.requires+`"%`, `%"route":"`+Prefix+rt.path+`"%`)
+					e.ids[role], `%"permission":"`+missing+`"%`, `%"route":"`+Prefix+rt.path+`"%`)
 				if n < 1 {
 					t.Errorf("%s: the denial was not audited", name)
 				}
@@ -413,4 +429,33 @@ func TestAuditEndpointIsReadOnlyAndNeedsAuditRead(t *testing.T) {
 	}
 	wantError(t, e.serve(h, request{method: http.MethodGet, path: Prefix + "/audit", role: auth.RoleViewer}), http.StatusForbidden, auth.CodeForbidden)
 	wantError(t, e.serve(h, request{method: http.MethodGet, path: Prefix + "/audit"}), http.StatusUnauthorized, auth.CodeUnauthenticated)
+}
+
+// TestCloneNeedsBothPermissions: a route with further permissions refuses
+// a role that has the first and not the others, and names the one that is
+// missing (ADR 0010 decision 14: a clone needs vm:write and vm:snapshot).
+func TestCloneNeedsBothPermissions(t *testing.T) {
+	e := freshEnv(t)
+	ctx := t.Context()
+	if _, err := e.db.Exec(`INSERT INTO roles (id, name, permissions) VALUES ('writer', 'writer', '["vm:read","vm:write"]')`); err != nil {
+		t.Fatal(err)
+	}
+	u, err := e.users.Create(ctx, auth.Actor{Name: "local:0"}, auth.NewUser{Username: "writer1", Password: testPassword, RoleID: "writer"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := e.authn.Login(ctx, auth.LoginRequest{Username: u.Username, Password: testPassword, Kind: auth.BearerSession, SourceIP: "192.0.2.200"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.tokens["writer"] = res.Token
+	h := e.handler(newBackend(), nil)
+	rec := e.serve(h, request{method: http.MethodPost, path: Prefix + "/vms/" + e.ids[auth.RoleViewer] + "/clone", role: "writer", body: `{"name":"c"}`})
+	body := wantError(t, rec, http.StatusForbidden, auth.CodeForbidden)
+	if body.Details["permission"] != auth.PermVMSnapshot {
+		t.Errorf("details = %v", body.Details)
+	}
+	if n := e.auditCount(t, `action = 'authz.deny' AND actor_id = ? AND details LIKE '%"permission":"vm:snapshot"%'`, u.ID); n != 1 {
+		t.Errorf("%d denials audited", n)
+	}
 }

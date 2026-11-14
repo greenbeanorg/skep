@@ -128,7 +128,7 @@ func newStack(t *testing.T) *stack {
 	consoles := console.New(console.Options{Open: host.VMM.OpenConsole, Audit: database.NewAuditLog(s.agentDB), Logger: quiet()})
 	vms, err := vm.New(vm.Options{
 		Console: consoles,
-		NodeID:  nodeID, Store: database.NewVMStore(s.agentDB), Engine: s.engine, Host: host, Logger: quiet(),
+		NodeID:  nodeID, Store: database.NewVMStore(s.agentDB), Snapshots: database.NewSnapshotStore(s.agentDB), Engine: s.engine, Host: host, Logger: quiet(),
 		Hypervisor: bhyve.New(bhyve.Options{Host: host, HostMemoryReserveBytes: 1 << 30, Logger: quiet()}),
 	})
 	if err != nil {

@@ -3,6 +3,8 @@ package hostops
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strconv"
 	"strings"
@@ -326,5 +328,63 @@ func TestInventoryAndLockedRoot(t *testing.T) {
 	wantCode(t, err, models.CodeStorageLocked)
 	if m := mutations(run.calls); len(m) != 0 {
 		t.Errorf("commands ran: %v", m)
+	}
+}
+
+func TestVarsSnapshotCopies(t *testing.T) {
+	conf := testConf(t)
+	f := NewFiles(conf, nil)
+	ctx := context.Background()
+	vars, _ := conf.VMVarsPath(vmA)
+	if err := os.MkdirAll(filepath.Dir(vars), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(vars, []byte("v1"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.SaveVarsSnapshot(ctx, vmA, snap1); err != nil {
+		t.Fatal(err)
+	}
+	copyPath := filepath.Join(filepath.Dir(vars), VarsSnapshotDir, snap1+".fd")
+	if b, err := os.ReadFile(copyPath); err != nil || string(b) != "v1" {
+		t.Fatalf("copy = %q, %v", b, err)
+	}
+	if info, _ := os.Stat(copyPath); info.Mode().Perm() != 0o600 {
+		t.Errorf("mode = %v", info.Mode())
+	}
+	// The guest changes a variable; the rollback brings v1 back.
+	_ = os.WriteFile(vars, []byte("v2"), 0o600)
+	if err := f.RestoreVarsSnapshot(ctx, vmA, snap1); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(vars); string(b) != "v1" {
+		t.Errorf("restored = %q", b)
+	}
+	// A clone starts from the snapshot's copy.
+	if err := f.CloneVars(ctx, vmA, snap1, vmB); err != nil {
+		t.Fatal(err)
+	}
+	cloneVars, _ := conf.VMVarsPath(vmB)
+	if b, _ := os.ReadFile(cloneVars); string(b) != "v1" {
+		t.Errorf("clone vars = %q", b)
+	}
+	if err := f.RemoveVarsSnapshot(vmA, snap1); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.RemoveVarsSnapshot(vmA, snap1); err != nil {
+		t.Errorf("second remove: %v", err)
+	}
+	if err := f.RestoreVarsSnapshot(ctx, vmA, snap1); err == nil {
+		t.Error("restored from a removed copy")
+	}
+	// A planted link is not followed.
+	_ = os.Symlink("/etc/passwd", filepath.Join(filepath.Dir(vars), VarsSnapshotDir, snap2+".fd"))
+	if err := f.RestoreVarsSnapshot(ctx, vmA, snap2); err == nil {
+		t.Error("restored through a symbolic link")
+	}
+	for _, bad := range []string{"", "../x", snap1 + "/.."} {
+		if err := f.SaveVarsSnapshot(ctx, vmA, bad); err == nil {
+			t.Errorf("snapshot ID %q accepted", bad)
+		}
 	}
 }

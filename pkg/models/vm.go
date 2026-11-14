@@ -249,11 +249,15 @@ type VM struct {
 	Observed     VMObserved `json:"observed"`
 	// Drift is true when the VM should be running and is not, or the
 	// reverse. It is information; nothing acts on it.
-	Drift     bool      `json:"drift"`
-	Disks     []VMDisk  `json:"disks"`
-	NICs      []VMNIC   `json:"nics"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	Drift bool     `json:"drift"`
+	Disks []VMDisk `json:"disks"`
+	NICs  []VMNIC  `json:"nics"`
+	// ClonedFromSnapshotID is the snapshot a linked clone was made from.
+	// A clone is the same guest as its source: its hostname, SSH host
+	// keys, and machine ID are the source's (ADR 0010 decision 3).
+	ClonedFromSnapshotID string    `json:"cloned_from_snapshot_id,omitempty"`
+	CreatedAt            time.Time `json:"created_at"`
+	UpdatedAt            time.Time `json:"updated_at"`
 }
 
 // VMList is one page of VMs, ordered by name.

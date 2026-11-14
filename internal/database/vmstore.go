@@ -61,6 +61,13 @@ func poolID(ctx context.Context, tx *sql.Tx, nodeID, name string) (string, error
 	return id, nil
 }
 
+func nullString(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
+}
+
 // InsertTx stores a new, unprovisioned VM with its disks, volumes, and
 // NICs in an open transaction: the one that creates its vm.create task.
 // datasetRoot names the volumes. It returns ErrVMNameTaken, or an
@@ -80,10 +87,10 @@ func (s *VMStore) InsertTx(ctx context.Context, tx *sql.Tx, vm models.VM, datase
 	now := formatTime(vm.CreatedAt)
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO virtual_machines (id, node_id, name, description, engine, cpu_count, memory_bytes,
-			firmware, config, desired_state, provisioned, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'stopped', 0, ?, ?)`,
+			firmware, config, desired_state, provisioned, cloned_from_snapshot_id, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'stopped', 0, ?, ?, ?)`,
 		vm.ID, vm.NodeID, vm.Name, vm.Description, vm.Engine, vm.CPUCount, vm.MemoryBytes,
-		vm.Firmware, string(config), now, now); err != nil {
+		vm.Firmware, string(config), nullString(vm.ClonedFromSnapshotID), now, now); err != nil {
 		return fmt.Errorf("database: insert VM: %w", err)
 	}
 	for _, d := range vm.Disks {
@@ -144,7 +151,7 @@ func insertDisk(ctx context.Context, tx *sql.Tx, vm models.VM, d models.VMDisk, 
 
 const vmColumns = `id, node_id, name, description, engine, cpu_count, memory_bytes, firmware, config,
 	desired_state, provisioned, observed_state, COALESCE(observed_detail, ''), observed_pid, observed_at,
-	created_at, updated_at`
+	COALESCE(cloned_from_snapshot_id, ''), created_at, updated_at`
 
 type queryer interface {
 	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
@@ -162,7 +169,7 @@ func scanVM(row rowScanner) (models.VM, error) {
 	)
 	err := row.Scan(&vm.ID, &vm.NodeID, &vm.Name, &vm.Description, &vm.Engine, &vm.CPUCount, &vm.MemoryBytes,
 		&vm.Firmware, &config, &vm.DesiredState, &provisioned, &vm.Observed.State, &vm.Observed.Detail,
-		&pid, &observedAt, &created, &updated)
+		&pid, &observedAt, &vm.ClonedFromSnapshotID, &created, &updated)
 	if err != nil {
 		return models.VM{}, err
 	}

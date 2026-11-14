@@ -485,6 +485,151 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/vms/{id}/snapshots": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["VMID"];
+            };
+            cookie?: never;
+        };
+        /**
+         * A VM's snapshots
+         * @description Requires `vm:read`. The VM's snapshots, oldest first, with what
+         *     ZFS shows of each now (`observed`) and the linked clones that
+         *     depend on each.
+         */
+        get: operations["listSnapshots"];
+        put?: never;
+        /**
+         * Take a snapshot of a VM's disks
+         * @description Requires `vm:snapshot`. Submits `vm.snapshot.create`, which takes
+         *     one atomic recursive ZFS snapshot of every disk of the VM and
+         *     copies its UEFI variable store (ADR 0010 decision 2). Memory is
+         *     not saved. Taken while the VM runs, the snapshot is
+         *     `crash_consistent`: what a power cut would leave on disk; taken
+         *     while it is stopped, `consistent`. The task can be cancelled until
+         *     the ZFS call.
+         *
+         *     Refused for a VM with no disks or with disks in more than one pool
+         *     (`storage_feature_unsupported`: ZFS snapshots are atomic within a
+         *     pool only), for a name the VM already uses
+         *     (`snapshot_name_taken`), beyond
+         *     `storage.max_snapshots_per_resource` (`snapshot_limit`, default
+         *     64), and when the encryption key of the VM's datasets is not
+         *     loaded (`storage_locked`).
+         */
+        post: operations["createSnapshot"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/vms/{id}/snapshots/{sid}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["VMID"];
+                sid: components["parameters"]["SnapshotID"];
+            };
+            cookie?: never;
+        };
+        /** One snapshot */
+        get: operations["getSnapshot"];
+        put?: never;
+        post?: never;
+        /**
+         * Delete a snapshot
+         * @description Requires `vm:snapshot`. Submits `vm.snapshot.delete`, which
+         *     destroys the snapshot on every disk of the VM and its copy of the
+         *     variable store. The VM may be running. Refused while a linked clone
+         *     depends on the snapshot (`snapshot_has_clones`, naming the
+         *     clones).
+         */
+        delete: operations["deleteSnapshot"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/vms/{id}/snapshots/{sid}/rollback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["VMID"];
+                sid: components["parameters"]["SnapshotID"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Roll a VM back to a snapshot
+         * @description Requires `vm:snapshot`. Submits `vm.snapshot.rollback`, which
+         *     rolls every disk of the VM back and restores the variable store
+         *     copied with the snapshot. Only while the VM is stopped
+         *     (`vm_not_stopped`): a rollback never hides a power-off.
+         *
+         *     A rollback to a snapshot that is not the latest destroys every
+         *     newer one, and is refused without `"destroy_newer": true`
+         *     (`snapshot_not_latest`, listing them). The task result and the
+         *     audit entry name each snapshot destroyed. A newer snapshot with
+         *     linked clones refuses the rollback whatever the flag says
+         *     (`snapshot_has_clones`), and so does a newer snapshot Skep did not
+         *     take. A snapshot taken before a disk was added is refused
+         *     (`snapshot_incomplete`): rolling back to it would give the VM a
+         *     disk with contents from after the snapshot.
+         */
+        post: operations["rollbackSnapshot"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/vms/{id}/clone": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["VMID"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Make a linked clone of a VM
+         * @description Requires `vm:write` and `vm:snapshot`. Submits `vm.clone`, which
+         *     makes a new VM whose disks are ZFS clones of one snapshot of the
+         *     source (ADR 0010 decision 3). Without `snapshot_id`, the task
+         *     takes a snapshot of the source first, named after the clone, and
+         *     leaves it behind. The clone gets a new ID (and so SMBIOS UUID),
+         *     the given name, and new MAC addresses; it has the source's CPU,
+         *     memory, and NICs, its disks are thin, and install media is not
+         *     attached.
+         *
+         *     **A clone is the same guest.** Skep does not change what is inside
+         *     the disks: the guest's hostname, its SSH host keys, and its
+         *     machine ID (`/etc/hostid`, `/etc/machine-id`, the Windows SID) are
+         *     the source's. Change them in the clone before it shares a network
+         *     with the source.
+         *
+         *     While the clone exists, its origin snapshot and the source VM
+         *     cannot be deleted (`snapshot_has_clones`). Clones stay in the
+         *     source's pool.
+         */
+        post: operations["cloneVM"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/vms/{id}/console/serial": {
         parameters: {
             query?: never;
@@ -686,6 +831,8 @@ export interface components {
             drift: boolean;
             disks: components["schemas"]["VMDisk"][];
             nics: components["schemas"]["VMNIC"][];
+            /** @description The snapshot a linked clone was made from. A clone is the same guest as its source (hostname, SSH host keys, machine ID). */
+            cloned_from_snapshot_id?: string;
             /** Format: date-time */
             created_at: string;
             /** Format: date-time */
@@ -742,6 +889,53 @@ export interface components {
             action: "start" | "stop" | "force_stop" | "restart";
             /** @description Seconds a stop or restart waits for the guest to shut down. Default 90. */
             timeout?: number;
+        };
+        SnapshotClone: {
+            id: string;
+            name: string;
+        };
+        Snapshot: {
+            id: string;
+            /** @enum {string} */
+            resource_kind: "vm" | "container";
+            resource_id: string;
+            name: string;
+            description: string;
+            /** @enum {string} */
+            consistency: "consistent" | "crash_consistent";
+            /** @description False while the snapshot task runs, and after it was interrupted; such a snapshot can only be deleted. */
+            provisioned: boolean;
+            /** Format: date-time */
+            created_at: string;
+            observed?: {
+                exists: boolean;
+                /** Format: int64 */
+                used_bytes: number;
+                /** Format: date-time */
+                at?: string;
+            };
+            clones: components["schemas"]["SnapshotClone"][];
+        };
+        SnapshotList: {
+            items: components["schemas"]["Snapshot"][];
+        };
+        SnapshotCreate: {
+            name: string;
+            description?: string;
+        };
+        SnapshotCreated: {
+            snapshot: components["schemas"]["Snapshot"];
+            task: components["schemas"]["Task"];
+        };
+        SnapshotRollback: {
+            /** @description Allow a rollback to an older snapshot, which destroys every newer one. */
+            destroy_newer?: boolean;
+        };
+        VMClone: {
+            name: string;
+            description?: string;
+            /** @description The snapshot of the source to clone. Without it, the task takes one first. */
+            snapshot_id?: string;
         };
         VMCreated: {
             vm: components["schemas"]["VM"];
@@ -1411,6 +1605,7 @@ export interface components {
          */
         IdempotencyKey: string;
         VMID: string;
+        SnapshotID: string;
         /**
          * @description Marks a request the client made by itself (a timer, a refetch on
          *     focus). Any non-empty value. The request is authenticated as any
@@ -2218,6 +2413,233 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Task"];
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["VMConflict"];
+            422: components["responses"]["VMUnprocessable"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
+    listSnapshots: {
+        parameters: {
+            query?: never;
+            header?: {
+                /**
+                 * @description Marks a request the client made by itself (a timer, a refetch on
+                 *     focus). Any non-empty value. The request is authenticated as any
+                 *     other, the idle timeout included, but does not extend the idle
+                 *     timeout.
+                 */
+                "X-Skep-Background"?: components["parameters"]["Background"];
+            };
+            path: {
+                id: components["parameters"]["VMID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The snapshots. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SnapshotList"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
+    createSnapshot: {
+        parameters: {
+            query?: never;
+            header?: {
+                /**
+                 * @description Makes a retry safe: a second request with the same key and the
+                 *     same body returns the task of the first; with a different body it
+                 *     is refused with `idempotency_key_conflict`.
+                 */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                id: components["parameters"]["VMID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SnapshotCreate"];
+            };
+        };
+        responses: {
+            /** @description The snapshot, not yet taken, and its task. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SnapshotCreated"];
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["VMConflict"];
+            422: components["responses"]["VMUnprocessable"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
+    getSnapshot: {
+        parameters: {
+            query?: never;
+            header?: {
+                /**
+                 * @description Marks a request the client made by itself (a timer, a refetch on
+                 *     focus). Any non-empty value. The request is authenticated as any
+                 *     other, the idle timeout included, but does not extend the idle
+                 *     timeout.
+                 */
+                "X-Skep-Background"?: components["parameters"]["Background"];
+            };
+            path: {
+                id: components["parameters"]["VMID"];
+                sid: components["parameters"]["SnapshotID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The snapshot. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Snapshot"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
+    deleteSnapshot: {
+        parameters: {
+            query?: never;
+            header?: {
+                /**
+                 * @description Makes a retry safe: a second request with the same key and the
+                 *     same body returns the task of the first; with a different body it
+                 *     is refused with `idempotency_key_conflict`.
+                 */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                id: components["parameters"]["VMID"];
+                sid: components["parameters"]["SnapshotID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The task. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Task"];
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["VMConflict"];
+            422: components["responses"]["VMUnprocessable"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
+    rollbackSnapshot: {
+        parameters: {
+            query?: never;
+            header?: {
+                /**
+                 * @description Makes a retry safe: a second request with the same key and the
+                 *     same body returns the task of the first; with a different body it
+                 *     is refused with `idempotency_key_conflict`.
+                 */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                id: components["parameters"]["VMID"];
+                sid: components["parameters"]["SnapshotID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SnapshotRollback"];
+            };
+        };
+        responses: {
+            /** @description The task. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Task"];
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["VMConflict"];
+            422: components["responses"]["VMUnprocessable"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
+    cloneVM: {
+        parameters: {
+            query?: never;
+            header?: {
+                /**
+                 * @description Makes a retry safe: a second request with the same key and the
+                 *     same body returns the task of the first; with a different body it
+                 *     is refused with `idempotency_key_conflict`.
+                 */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                id: components["parameters"]["VMID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["VMClone"];
+            };
+        };
+        responses: {
+            /** @description The clone, not yet provisioned, and its task. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VMCreated"];
                 };
             };
             400: components["responses"]["InvalidRequest"];

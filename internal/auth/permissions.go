@@ -23,6 +23,10 @@ const (
 	PermVMConsole   = "vm:console"
 	PermStorageRead = "storage:read"
 
+	// Snapshots of VMs (ADR 0010 decision 14). A clone needs vm:write
+	// as well.
+	PermVMSnapshot = "vm:snapshot"
+
 	// PermAll is how the admin role is stored: every permission,
 	// including ones added later.
 	PermAll = "*"
@@ -33,6 +37,7 @@ var Permissions = []string{
 	PermSystemRead, PermNodeRead, PermTaskRead, PermTaskCancel,
 	PermUserRead, PermUserManage, PermRoleRead, PermAuditRead,
 	PermVMRead, PermVMWrite, PermVMDelete, PermVMPower, PermVMConsole, PermStorageRead,
+	PermVMSnapshot,
 }
 
 // KnownPermission reports whether p is a declared permission.

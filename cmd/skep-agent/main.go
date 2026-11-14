@@ -193,13 +193,15 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	})
 	consoles := console.New(console.Options{Open: host.VMM.OpenConsole, Audit: database.NewAuditLog(db), Logger: log})
 	vms, err := vm.New(vm.Options{
-		Console:    consoles,
-		NodeID:     nodeID,
-		Store:      database.NewVMStore(db),
-		Engine:     engine,
-		Hypervisor: engineBhyve,
-		Host:       host,
-		Logger:     log,
+		Console:      consoles,
+		NodeID:       nodeID,
+		Store:        database.NewVMStore(db),
+		Snapshots:    database.NewSnapshotStore(db),
+		MaxSnapshots: cfg.Storage.MaxSnapshotsPerResource,
+		Engine:       engine,
+		Hypervisor:   engineBhyve,
+		Host:         host,
+		Logger:       log,
 	})
 	if err != nil {
 		return err

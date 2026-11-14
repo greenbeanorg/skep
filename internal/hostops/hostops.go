@@ -308,6 +308,20 @@ type Files interface {
 	StateFilePath(vmID, name string) (string, error)
 	// LogTail returns the end of the VM's bhyve.log, at most maxBytes.
 	LogTail(vmID string, maxBytes int) string
+
+	// SaveVarsSnapshot copies a VM's UEFI variable store to
+	// <state>/<vm-id>/snapshots/<snapshot-id>.fd, durably (ADR 0010
+	// decision 2b).
+	SaveVarsSnapshot(ctx context.Context, vmID, snapshotID string) error
+	// RestoreVarsSnapshot replaces a VM's variable store with the copy
+	// taken with a snapshot.
+	RestoreVarsSnapshot(ctx context.Context, vmID, snapshotID string) error
+	// RemoveVarsSnapshot removes the copy taken with a snapshot. A copy
+	// that does not exist is not an error.
+	RemoveVarsSnapshot(vmID, snapshotID string) error
+	// CloneVars creates the persistent directory of a linked clone with
+	// the variable store copied from the source's snapshot.
+	CloneVars(ctx context.Context, sourceVMID, snapshotID, targetVMID string) error
 }
 
 // MediaFile is one ISO file in the media directory.

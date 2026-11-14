@@ -40,9 +40,15 @@ type Options struct {
 	Engine Engine
 	// Hypervisor is the bhyve adapter, the only engine there is.
 	Hypervisor hypervisor.Hypervisor
-	// Host is used for the pool and media listings only; everything a VM
-	// needs on the host goes through the adapter.
+	// Host is used for the pool and media listings, and for snapshots and
+	// clones, which are storage operations the same for every engine;
+	// everything else a VM needs on the host goes through the adapter.
 	Host hostops.Ops
+	// Snapshots is the snapshot store (ADR 0010 decision 2d).
+	Snapshots *database.SnapshotStore
+	// MaxSnapshots is storage.max_snapshots_per_resource. 0 means
+	// models.DefaultMaxSnapshotsPerResource.
+	MaxSnapshots int
 	// Console is told what the watcher observes, so a running VM's
 	// console is open from the start. Optional.
 	Console ConsoleTracker
@@ -64,15 +70,21 @@ type Service struct {
 	engine  Engine
 	hv      hypervisor.Hypervisor
 	host    hostops.Ops
-	log     *slog.Logger
-	now     func() time.Time
+	snaps   *database.SnapshotStore
+	// maxSnapshots bounds the snapshots of one VM.
+	maxSnapshots int
+	log          *slog.Logger
+	now          func() time.Time
 }
 
 // New returns a Service. Register its task definitions with the engine
 // (Definitions) before the engine starts.
 func New(opts Options) (*Service, error) {
-	if opts.NodeID == "" || opts.Store == nil || opts.Engine == nil || opts.Hypervisor == nil {
-		return nil, errors.New("vm: a node ID, a store, a task engine, and a hypervisor are required")
+	if opts.NodeID == "" || opts.Store == nil || opts.Snapshots == nil || opts.Engine == nil || opts.Hypervisor == nil {
+		return nil, errors.New("vm: a node ID, the VM and snapshot stores, a task engine, and a hypervisor are required")
+	}
+	if opts.MaxSnapshots <= 0 {
+		opts.MaxSnapshots = models.DefaultMaxSnapshotsPerResource
 	}
 	if opts.Logger == nil {
 		opts.Logger = slog.Default()
@@ -83,6 +95,7 @@ func New(opts Options) (*Service, error) {
 	return &Service{
 		nodeID: opts.NodeID, store: opts.Store, engine: opts.Engine, hv: opts.Hypervisor,
 		host: opts.Host, log: opts.Logger, now: opts.Now, console: opts.Console,
+		snaps: opts.Snapshots, maxSnapshots: opts.MaxSnapshots,
 	}, nil
 }
 

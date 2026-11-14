@@ -30,6 +30,10 @@ const (
 	// VMStateDirName is the directory of per-VM persistent state, next to
 	// the agent's database.
 	VMStateDirName = "vm"
+	// DefaultMaxSnapshotsPerResource and MaxSnapshotsPerResource bound
+	// storage.max_snapshots_per_resource.
+	DefaultMaxSnapshotsPerResource = 64
+	MaxSnapshotsPerResource        = 1000
 )
 
 // HypervisorConfig configures the hypervisor engines.
@@ -63,6 +67,9 @@ type StorageConfig struct {
 	// MediaDir holds the ISO files an operator placed on the host. Skep
 	// only reads it.
 	MediaDir string `json:"media_dir"`
+	// MaxSnapshotsPerResource bounds the snapshots of one VM or jail
+	// (ADR 0010 decision 2d). 0 means the default, 64.
+	MaxSnapshotsPerResource int `json:"max_snapshots_per_resource"`
 }
 
 // NetworkConfig says which network interfaces Skep may use.
@@ -111,6 +118,9 @@ func (c *Config) applyConfinementDefaults() {
 	if c.Storage.Pools == nil {
 		c.Storage.Pools = []string{}
 	}
+	if c.Storage.MaxSnapshotsPerResource == 0 {
+		c.Storage.MaxSnapshotsPerResource = DefaultMaxSnapshotsPerResource
+	}
 	if c.Network.Bridges == nil {
 		c.Network.Bridges = []string{}
 	}
@@ -152,6 +162,9 @@ func (c Config) validateConfinement() []error {
 			add("storage.dataset_root %q must be a dataset name relative to the pool, such as \"skep\"", c.Storage.DatasetRoot)
 			break
 		}
+	}
+	if n := c.Storage.MaxSnapshotsPerResource; n < 1 || n > MaxSnapshotsPerResource {
+		add("storage.max_snapshots_per_resource must be between 1 and %d", MaxSnapshotsPerResource)
 	}
 	if !c.DevMode && !filepath.IsAbs(c.Storage.MediaDir) {
 		add("storage.media_dir %q must be an absolute path", c.Storage.MediaDir)

@@ -947,6 +947,255 @@ paths:
           $ref: "#/components/responses/VMUnprocessable"
         "503":
           $ref: "#/components/responses/Unavailable"
+  /vms/{id}/snapshots:
+    parameters:
+      - $ref: "#/components/parameters/VMID"
+    get:
+      tags: [vms]
+      operationId: listSnapshots
+      summary: A VM's snapshots
+      x-skep-permission: vm:read
+      description: |
+        Requires `vm:read`. The VM's snapshots, oldest first, with what
+        ZFS shows of each now (`observed`) and the linked clones that
+        depend on each.
+      parameters:
+        - $ref: "#/components/parameters/Background"
+      responses:
+        "200":
+          description: The snapshots.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SnapshotList"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+    post:
+      tags: [vms]
+      operationId: createSnapshot
+      summary: Take a snapshot of a VM's disks
+      x-skep-permission: vm:snapshot
+      description: |
+        Requires `vm:snapshot`. Submits `vm.snapshot.create`, which takes
+        one atomic recursive ZFS snapshot of every disk of the VM and
+        copies its UEFI variable store (ADR 0010 decision 2). Memory is
+        not saved. Taken while the VM runs, the snapshot is
+        `crash_consistent`: what a power cut would leave on disk; taken
+        while it is stopped, `consistent`. The task can be cancelled until
+        the ZFS call.
+
+        Refused for a VM with no disks or with disks in more than one pool
+        (`storage_feature_unsupported`: ZFS snapshots are atomic within a
+        pool only), for a name the VM already uses
+        (`snapshot_name_taken`), beyond
+        `storage.max_snapshots_per_resource` (`snapshot_limit`, default
+        64), and when the encryption key of the VM's datasets is not
+        loaded (`storage_locked`).
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SnapshotCreate"
+      responses:
+        "202":
+          description: The snapshot, not yet taken, and its task.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SnapshotCreated"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/VMConflict"
+        "422":
+          $ref: "#/components/responses/VMUnprocessable"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /vms/{id}/snapshots/{sid}:
+    parameters:
+      - $ref: "#/components/parameters/VMID"
+      - $ref: "#/components/parameters/SnapshotID"
+    get:
+      tags: [vms]
+      operationId: getSnapshot
+      summary: One snapshot
+      x-skep-permission: vm:read
+      parameters:
+        - $ref: "#/components/parameters/Background"
+      responses:
+        "200":
+          description: The snapshot.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Snapshot"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+    delete:
+      tags: [vms]
+      operationId: deleteSnapshot
+      summary: Delete a snapshot
+      x-skep-permission: vm:snapshot
+      description: |
+        Requires `vm:snapshot`. Submits `vm.snapshot.delete`, which
+        destroys the snapshot on every disk of the VM and its copy of the
+        variable store. The VM may be running. Refused while a linked clone
+        depends on the snapshot (`snapshot_has_clones`, naming the
+        clones).
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "202":
+          description: The task.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Task"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/VMConflict"
+        "422":
+          $ref: "#/components/responses/VMUnprocessable"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /vms/{id}/snapshots/{sid}/rollback:
+    parameters:
+      - $ref: "#/components/parameters/VMID"
+      - $ref: "#/components/parameters/SnapshotID"
+    post:
+      tags: [vms]
+      operationId: rollbackSnapshot
+      summary: Roll a VM back to a snapshot
+      x-skep-permission: vm:snapshot
+      description: |
+        Requires `vm:snapshot`. Submits `vm.snapshot.rollback`, which
+        rolls every disk of the VM back and restores the variable store
+        copied with the snapshot. Only while the VM is stopped
+        (`vm_not_stopped`): a rollback never hides a power-off.
+
+        A rollback to a snapshot that is not the latest destroys every
+        newer one, and is refused without `"destroy_newer": true`
+        (`snapshot_not_latest`, listing them). The task result and the
+        audit entry name each snapshot destroyed. A newer snapshot with
+        linked clones refuses the rollback whatever the flag says
+        (`snapshot_has_clones`), and so does a newer snapshot Skep did not
+        take. A snapshot taken before a disk was added is refused
+        (`snapshot_incomplete`): rolling back to it would give the VM a
+        disk with contents from after the snapshot.
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SnapshotRollback"
+      responses:
+        "202":
+          description: The task.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Task"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/VMConflict"
+        "422":
+          $ref: "#/components/responses/VMUnprocessable"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /vms/{id}/clone:
+    parameters:
+      - $ref: "#/components/parameters/VMID"
+    post:
+      tags: [vms]
+      operationId: cloneVM
+      summary: Make a linked clone of a VM
+      x-skep-permission: vm:write
+      x-skep-also-requires: [vm:snapshot]
+      description: |
+        Requires `vm:write` and `vm:snapshot`. Submits `vm.clone`, which
+        makes a new VM whose disks are ZFS clones of one snapshot of the
+        source (ADR 0010 decision 3). Without `snapshot_id`, the task
+        takes a snapshot of the source first, named after the clone, and
+        leaves it behind. The clone gets a new ID (and so SMBIOS UUID),
+        the given name, and new MAC addresses; it has the source's CPU,
+        memory, and NICs, its disks are thin, and install media is not
+        attached.
+
+        **A clone is the same guest.** Skep does not change what is inside
+        the disks: the guest's hostname, its SSH host keys, and its
+        machine ID (`/etc/hostid`, `/etc/machine-id`, the Windows SID) are
+        the source's. Change them in the clone before it shares a network
+        with the source.
+
+        While the clone exists, its origin snapshot and the source VM
+        cannot be deleted (`snapshot_has_clones`). Clones stay in the
+        source's pool.
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VMClone"
+      responses:
+        "202":
+          description: The clone, not yet provisioned, and its task.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VMCreated"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/VMConflict"
+        "422":
+          $ref: "#/components/responses/VMUnprocessable"
+        "503":
+          $ref: "#/components/responses/Unavailable"
   /vms/{id}/console/serial:
     parameters:
       - $ref: "#/components/parameters/VMID"
@@ -1111,6 +1360,13 @@ components:
         pattern: "^[A-Za-z0-9._:-]{1,128}$"
     VMID:
       name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: "^[A-Za-z0-9._-]{1,64}$"
+    SnapshotID:
+      name: sid
       in: path
       required: true
       schema:
@@ -1363,6 +1619,9 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/VMNIC"
+        cloned_from_snapshot_id:
+          type: string
+          description: The snapshot a linked clone was made from. A clone is the same guest as its source (hostname, SSH host keys, machine ID).
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
     VMList:
@@ -1451,6 +1710,85 @@ components:
           minimum: 1
           maximum: 300
           description: Seconds a stop or restart waits for the guest to shut down. Default 90.
+    SnapshotClone:
+      type: object
+      required: [id, name]
+      properties:
+        id: { type: string }
+        name: { type: string }
+    Snapshot:
+      type: object
+      required: [id, resource_kind, resource_id, name, description, consistency, provisioned, created_at, clones]
+      properties:
+        id: { type: string }
+        resource_kind:
+          type: string
+          enum: [vm, container]
+        resource_id: { type: string }
+        name: { type: string }
+        description: { type: string }
+        consistency:
+          type: string
+          enum: [consistent, crash_consistent]
+        provisioned:
+          type: boolean
+          description: False while the snapshot task runs, and after it was interrupted; such a snapshot can only be deleted.
+        created_at: { type: string, format: date-time }
+        observed:
+          type: object
+          required: [exists, used_bytes]
+          properties:
+            exists: { type: boolean }
+            used_bytes: { type: integer, format: int64 }
+            at: { type: string, format: date-time }
+        clones:
+          type: array
+          items:
+            $ref: "#/components/schemas/SnapshotClone"
+    SnapshotList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Snapshot"
+    SnapshotCreate:
+      type: object
+      required: [name]
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+          pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$"
+        description: { type: string, maxLength: 1024 }
+    SnapshotCreated:
+      type: object
+      required: [snapshot, task]
+      properties:
+        snapshot:
+          $ref: "#/components/schemas/Snapshot"
+        task:
+          $ref: "#/components/schemas/Task"
+    SnapshotRollback:
+      type: object
+      additionalProperties: false
+      properties:
+        destroy_newer:
+          type: boolean
+          description: Allow a rollback to an older snapshot, which destroys every newer one.
+    VMClone:
+      type: object
+      required: [name]
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+          pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$"
+        description: { type: string, maxLength: 1024 }
+        snapshot_id:
+          type: string
+          description: The snapshot of the source to clone. Without it, the task takes one first.
     VMCreated:
       type: object
       required: [vm, task]

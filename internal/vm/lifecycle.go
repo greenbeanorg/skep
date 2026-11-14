@@ -23,7 +23,7 @@ func (s *Service) Definitions() []tasks.Definition {
 		{Type: models.TaskVMCreate, Cancellable: true, Timeout: 10 * time.Minute, Run: s.runCreate},
 		{Type: models.TaskVMUpdate, Timeout: time.Minute, Run: s.runUpdate},
 		{Type: models.TaskVMDelete, Timeout: 10 * time.Minute, Run: s.runDelete},
-	}, s.actionDefinitions()...)
+	}, append(s.actionDefinitions(), s.snapshotDefinitions()...)...)
 }
 
 // failure turns an error the user can act on into a task failure with its
@@ -372,7 +372,7 @@ func (s *Service) DeleteVM(ctx context.Context, id string, sub Submission) (mode
 		return models.Task{}, fmt.Errorf("vm %q: %w", id, models.ErrNotFound)
 	}
 	req := sub.request(models.TaskVMDelete, id, nil)
-	if _, err := s.stoppedVM(ctx, id); err != nil {
+	if _, err := s.deletableVM(ctx, id); err != nil {
 		return models.Task{}, s.refuse(ctx, req, err)
 	}
 	task, _, err := s.engine.Submit(ctx, req)
@@ -395,8 +395,36 @@ func (r DeleteResult) AuditDetails() map[string]any {
 	return map[string]any{"vm_name": r.Name, "datasets_destroyed": r.Datasets}
 }
 
+// deletableVM returns a VM that may be deleted: stopped, with no linked
+// clone depending on any of its snapshots, and not a clone that a running
+// vm.clone task is still making.
+func (s *Service) deletableVM(ctx context.Context, id string) (models.VM, error) {
+	vm, err := s.stoppedVM(ctx, id)
+	if err != nil {
+		return models.VM{}, err
+	}
+	clones, err := s.snaps.ResourceClones(ctx, models.VMResource, vm.ID)
+	if err != nil {
+		return models.VM{}, err
+	}
+	if len(clones) > 0 {
+		return models.VM{}, clonesError(clones)
+	}
+	if !vm.Provisioned && vm.ClonedFromSnapshotID != "" {
+		busy, err := s.snaps.CloneInProgress(ctx, vm.ID)
+		if err != nil {
+			return models.VM{}, err
+		}
+		if busy {
+			return models.VM{}, &models.Error{Code: models.CodeResourceBusy,
+				Message: "the clone task that makes this virtual machine has not finished"}
+		}
+	}
+	return vm, nil
+}
+
 func (s *Service) runDelete(ctx context.Context, task tasks.Task, report tasks.Reporter) (any, error) {
-	vm, err := s.stoppedVM(ctx, task.ResourceID)
+	vm, err := s.deletableVM(ctx, task.ResourceID)
 	if err != nil {
 		return nil, failure(err)
 	}

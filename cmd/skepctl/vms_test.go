@@ -82,6 +82,30 @@ func (f *fakeVMs) StorageDatasets(context.Context, models.DatasetListOptions) (m
 	return models.DatasetList{}, nil
 }
 
+func (f *fakeVMs) Snapshots(context.Context, string) (models.SnapshotList, error) {
+	return models.SnapshotList{Items: []models.Snapshot{}}, nil
+}
+
+func (f *fakeVMs) Snapshot(context.Context, string, string) (models.Snapshot, error) {
+	return models.Snapshot{}, models.ErrNotFound
+}
+
+func (f *fakeVMs) CreateSnapshot(context.Context, string, models.SnapshotCreate) (models.SnapshotCreated, error) {
+	return models.SnapshotCreated{}, models.ErrNotFound
+}
+
+func (f *fakeVMs) RollbackSnapshot(context.Context, string, string, models.SnapshotRollback) (models.Task, error) {
+	return models.Task{}, models.ErrNotFound
+}
+
+func (f *fakeVMs) DeleteSnapshot(context.Context, string, string) (models.Task, error) {
+	return models.Task{}, models.ErrNotFound
+}
+
+func (f *fakeVMs) CloneVM(context.Context, string, models.VMClone) (models.VMCreated, error) {
+	return models.VMCreated{}, models.ErrNotFound
+}
+
 func (f *fakeVMs) Media(context.Context) (models.MediaList, error) { return models.MediaList{}, nil }
 
 func TestVMCommands(t *testing.T) {

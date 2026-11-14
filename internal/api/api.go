@@ -124,31 +124,38 @@ type route struct {
 	// requires is requirePublic, requireSession, or a permission from
 	// internal/auth. Anything else, including the empty string, denies.
 	requires string
-	handler  http.HandlerFunc
+	// also lists further permissions the route requires, all of them:
+	// a clone needs vm:snapshot as well as vm:write (ADR 0010 decision
+	// 14).
+	also    []string
+	handler http.HandlerFunc
 }
+
+// permissions is everything a route requires.
+func (rt route) permissions() []string { return append([]string{rt.requires}, rt.also...) }
 
 // routes is the whole public API.
 func (h *handler) routes() []route {
 	return append([]route{
-		{http.MethodGet, "/health", requirePublic, h.health},
-		{http.MethodPost, "/auth/login", requirePublic, h.login},
-		{http.MethodPost, "/auth/logout", requireSession, h.logout},
-		{http.MethodGet, "/auth/session", requireSession, h.session},
-		{http.MethodPut, "/auth/password", requireSession, h.changePassword},
+		{http.MethodGet, "/health", requirePublic, nil, h.health},
+		{http.MethodPost, "/auth/login", requirePublic, nil, h.login},
+		{http.MethodPost, "/auth/logout", requireSession, nil, h.logout},
+		{http.MethodGet, "/auth/session", requireSession, nil, h.session},
+		{http.MethodPut, "/auth/password", requireSession, nil, h.changePassword},
 
-		{http.MethodGet, "/system", auth.PermSystemRead, h.system},
-		{http.MethodGet, "/nodes/{id}/hardware", auth.PermNodeRead, h.nodeHardware},
-		{http.MethodGet, "/tasks", auth.PermTaskRead, h.tasks},
-		{http.MethodGet, "/tasks/{id}", auth.PermTaskRead, h.task},
-		{http.MethodPost, "/tasks/{id}/cancel", auth.PermTaskCancel, h.cancelTask},
+		{http.MethodGet, "/system", auth.PermSystemRead, nil, h.system},
+		{http.MethodGet, "/nodes/{id}/hardware", auth.PermNodeRead, nil, h.nodeHardware},
+		{http.MethodGet, "/tasks", auth.PermTaskRead, nil, h.tasks},
+		{http.MethodGet, "/tasks/{id}", auth.PermTaskRead, nil, h.task},
+		{http.MethodPost, "/tasks/{id}/cancel", auth.PermTaskCancel, nil, h.cancelTask},
 
-		{http.MethodGet, "/users", auth.PermUserRead, h.listUsers},
-		{http.MethodPost, "/users", auth.PermUserManage, h.createUser},
-		{http.MethodGet, "/users/{id}", auth.PermUserRead, h.getUser},
-		{http.MethodPut, "/users/{id}", auth.PermUserManage, h.updateUser},
-		{http.MethodDelete, "/users/{id}", auth.PermUserManage, h.deleteUser},
-		{http.MethodGet, "/roles", auth.PermRoleRead, h.listRoles},
-		{http.MethodGet, "/audit", auth.PermAuditRead, h.listAudit},
+		{http.MethodGet, "/users", auth.PermUserRead, nil, h.listUsers},
+		{http.MethodPost, "/users", auth.PermUserManage, nil, h.createUser},
+		{http.MethodGet, "/users/{id}", auth.PermUserRead, nil, h.getUser},
+		{http.MethodPut, "/users/{id}", auth.PermUserManage, nil, h.updateUser},
+		{http.MethodDelete, "/users/{id}", auth.PermUserManage, nil, h.deleteUser},
+		{http.MethodGet, "/roles", auth.PermRoleRead, nil, h.listRoles},
+		{http.MethodGet, "/audit", auth.PermAuditRead, nil, h.listAudit},
 	}, h.vmRoutes()...)
 }
 
@@ -306,9 +313,11 @@ func (h *handler) serve(rt route, w http.ResponseWriter, r *http.Request) {
 			h.fail(w, r, auth.ErrUnauthenticated)
 			return
 		}
-		if !id.User.Role.Allows(rt.requires) {
-			h.deny(w, r, id, rt)
-			return
+		for _, p := range rt.permissions() {
+			if !id.User.Role.Allows(p) {
+				h.deny(w, r, id, rt, p)
+				return
+			}
 		}
 	}
 	rt.handler(w, r)
@@ -316,17 +325,17 @@ func (h *handler) serve(rt route, w http.ResponseWriter, r *http.Request) {
 
 // deny refuses a request for lack of a permission and audits the denial
 // with the actor, the permission, and the route.
-func (h *handler) deny(w http.ResponseWriter, r *http.Request, id auth.Identity, rt route) {
+func (h *handler) deny(w http.ResponseWriter, r *http.Request, id auth.Identity, rt route, permission string) {
 	h.writeAudit(r, audit.AccessEntry{
 		ActorID: id.User.ID, ActorName: id.User.Username, Action: auth.ActionDenied, Outcome: audit.Denied,
 		Details: map[string]any{
-			"permission": rt.requires, "method": rt.method, "route": Prefix + rt.path, "role": id.User.Role.Name,
+			"permission": permission, "method": rt.method, "route": Prefix + rt.path, "role": id.User.Role.Name,
 		},
 	})
 	h.log.WarnContext(r.Context(), "request denied", "user", id.User.Username, "role", id.User.Role.Name,
-		"permission", rt.requires, "method", rt.method, "route", Prefix+rt.path)
+		"permission", permission, "method", rt.method, "route", Prefix+rt.path)
 	httpkit.WriteErrorDetails(w, r, http.StatusForbidden, auth.CodeForbidden,
-		"your role does not allow this", map[string]any{"permission": rt.requires})
+		"your role does not allow this", map[string]any{"permission": permission})
 }
 
 type (

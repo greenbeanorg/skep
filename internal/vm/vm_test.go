@@ -82,7 +82,7 @@ func newFixture(t *testing.T) *fixture {
 	}
 	host := fake.Ops()
 	svc, err := New(Options{
-		NodeID: nodeID, Store: database.NewVMStore(db), Engine: engine, Host: host, Logger: quiet,
+		NodeID: nodeID, Store: database.NewVMStore(db), Snapshots: database.NewSnapshotStore(db), Engine: engine, Host: host, Logger: quiet,
 		Hypervisor: bhyve.New(bhyve.Options{Host: host, HostMemoryReserveBytes: gib, Logger: quiet}),
 	})
 	if err != nil {
