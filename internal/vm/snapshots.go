@@ -542,17 +542,40 @@ func (s *Service) runSnapshotRollback(ctx context.Context, task tasks.Task, repo
 		DatasetsDestroyed: datasetInfo(destroyed)}, nil
 }
 
-// refreshVolumes records what the VM's volumes look like now.
+// refreshVolumes records what the VM's volumes look like now, and makes
+// each disk's recorded size the zvol's: a rollback, or a clone, of a
+// snapshot taken before a disk grew gives the disk its earlier size.
 func (s *Service) refreshVolumes(ctx context.Context, vm models.VM) {
 	for _, pool := range diskPools(vm) {
 		list, err := s.host.ZFS.VMDatasets(ctx, pool, vm.ID)
 		if err == nil {
 			err = s.saveVolumes(ctx, list)
 		}
+		if err == nil {
+			err = s.syncDiskSizes(ctx, vm, list)
+		}
 		if err != nil {
 			s.log.Warn("vm: could not record the VM's volumes", "vm_id", vm.ID, "error", err)
 		}
 	}
+}
+
+func (s *Service) syncDiskSizes(ctx context.Context, vm models.VM, list []hostops.Dataset) error {
+	byName := map[string]hostops.Dataset{}
+	for _, d := range list {
+		byName[d.Name] = d
+	}
+	for _, d := range vm.Disks {
+		z, ok := byName[d.Dataset]
+		if d.ID == "" || !ok || z.Type != "volume" || z.VolSizeBytes == d.SizeBytes || z.VolSizeBytes <= 0 {
+			continue
+		}
+		s.log.Info("vm: a disk's size follows its zvol", "vm_id", vm.ID, "slot", d.Slot, "from", d.SizeBytes, "to", z.VolSizeBytes)
+		if err := s.store.ResizeDisk(ctx, vm.ID, d.ID, z.VolSizeBytes, s.now().UTC()); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // checkSnapshotDelete validates a snapshot delete: the snapshot exists and
@@ -831,9 +854,7 @@ func (s *Service) runClone(ctx context.Context, task tasks.Task, report tasks.Re
 		s.undoClone(target)
 		return nil, failure(err)
 	}
-	if err := s.saveVolumes(ctx, made); err != nil {
-		s.log.Warn("vm: could not record the observed volumes", "vm_id", target.ID, "error", err)
-	}
+	s.refreshVolumes(ctx, target)
 	if err := s.store.SetProvisioned(ctx, target.ID, s.now().UTC()); err != nil {
 		return nil, err
 	}

@@ -43,6 +43,7 @@ var StatusForCode = map[string]int{
 
 	// Storage management (ADR 0010).
 	models.CodeSnapshotLimit:             http.StatusConflict,
+	models.CodeDiskHasSnapshots:          http.StatusConflict,
 	models.CodeSnapshotNameTaken:         http.StatusConflict,
 	models.CodeSnapshotNotProvisioned:    http.StatusConflict,
 	models.CodeSnapshotHasClones:         http.StatusConflict,

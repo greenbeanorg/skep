@@ -427,6 +427,23 @@ export interface paths {
          *     are unchanged. Only a stopped, provisioned VM can be changed
          *     (`vm_not_stopped`, `vm_not_provisioned`). `media` replaces the
          *     attached install media; `[]` detaches all of it.
+         *
+         *     Disks (ADR 0010 decision 4): `add_disks` adds zvol-backed disks
+         *     with the rules of a create, each in the lowest free slot.
+         *     `resize_disks` grows a disk; a disk never shrinks, and the guest
+         *     grows its own partition and filesystem afterwards (the task result
+         *     says so). A disk with a reservation needs the growth to be
+         *     available in its pool (`insufficient_space`). `remove_disks`
+         *     destroys the disks in those slots and their zvols, and **needs
+         *     `vm:delete` as well**. It is refused while snapshots contain the
+         *     disk (`disk_has_snapshots`, naming them) unless
+         *     `"destroy_snapshots": true`, which destroys each such snapshot
+         *     whole, on every disk of the VM; snapshots taken before the disk
+         *     was added are kept. A snapshot with linked clones blocks the
+         *     removal whatever the flag says (`snapshot_has_clones`). The task
+         *     result and the audit entry list every dataset and snapshot
+         *     destroyed. Changing a disk's bus, block size, or reservation is
+         *     not offered, and nothing is hot-plugged.
          */
         put: operations["updateVM"];
         post?: never;
@@ -860,15 +877,7 @@ export interface components {
             cpu_count: number;
             memory: components["schemas"]["ByteSize"];
             config?: components["schemas"]["VMConfig"];
-            disks?: {
-                /** @enum {string} */
-                bus?: "virtio-blk" | "nvme" | "ahci-hd" | "ahci-cd";
-                size?: components["schemas"]["ByteSize"];
-                pool?: string;
-                thin?: boolean;
-                media?: string;
-                volblocksize?: components["schemas"]["ByteSize"];
-            }[];
+            disks?: components["schemas"]["VMDiskSpec"][];
             nics?: {
                 /** @enum {string} */
                 model?: "virtio-net" | "e1000";
@@ -883,6 +892,28 @@ export interface components {
             config?: components["schemas"]["VMConfig"];
             /** @description Replaces the attached install media; empty detaches all. */
             media?: string[];
+            /** @description Disks to add, as at create; install media is attached with `media`. */
+            add_disks?: components["schemas"]["VMDiskSpec"][];
+            /** @description Disks to grow. A disk never shrinks. */
+            resize_disks?: components["schemas"]["VMDiskResize"][];
+            /** @description Slots of the disks to destroy. Needs `vm:delete` as well as `vm:write`. */
+            remove_disks?: number[];
+            /** @description Allow removing a disk that snapshots contain, destroying each of them whole. */
+            destroy_snapshots?: boolean;
+        };
+        /** @description A zvol-backed disk (pool and size) or install media (media, bus ahci-cd). */
+        VMDiskSpec: {
+            /** @enum {string} */
+            bus?: "virtio-blk" | "nvme" | "ahci-hd" | "ahci-cd";
+            size?: components["schemas"]["ByteSize"];
+            pool?: string;
+            thin?: boolean;
+            media?: string;
+            volblocksize?: components["schemas"]["ByteSize"];
+        };
+        VMDiskResize: {
+            slot: number;
+            size: components["schemas"]["ByteSize"];
         };
         VMAction: {
             /** @enum {string} */
@@ -1460,7 +1491,8 @@ export interface components {
          *     `stop_timeout`, `console_busy`, `resource_busy`,
          *     `idempotency_key_conflict`, and for storage operations
          *     `storage_locked`, `snapshot_limit`, `snapshot_has_clones`,
-         *     `snapshot_not_latest`, `snapshot_incomplete`.
+         *     `snapshot_not_latest`, `snapshot_incomplete`, `snapshot_name_taken`,
+         *     `snapshot_not_provisioned`, `disk_has_snapshots`.
          */
         VMConflict: {
             headers: {

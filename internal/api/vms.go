@@ -226,6 +226,11 @@ func (h *handler) updateVM(w http.ResponseWriter, r *http.Request) {
 	if !decodeBody(w, r, &upd) {
 		return
 	}
+	// Removing a disk destroys its zvol: vm:delete as well (ADR 0010
+	// decision 4).
+	if upd.RemovesDisks() && !h.requireAlso(w, r, http.MethodPut, "/vms/{id}", auth.PermVMDelete) {
+		return
+	}
 	if r, ok = withIdempotencyKey(w, r); !ok {
 		return
 	}

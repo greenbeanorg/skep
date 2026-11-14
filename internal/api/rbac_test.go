@@ -459,3 +459,44 @@ func TestCloneNeedsBothPermissions(t *testing.T) {
 		t.Errorf("%d denials audited", n)
 	}
 }
+
+// TestRemovingADiskNeedsVMDelete: an update that removes a disk needs
+// vm:delete as well as vm:write; other updates do not (ADR 0010 decision
+// 4).
+func TestRemovingADiskNeedsVMDelete(t *testing.T) {
+	e := freshEnv(t)
+	ctx := t.Context()
+	if _, err := e.db.Exec(`INSERT INTO roles (id, name, permissions) VALUES ('writer', 'writer', '["vm:read","vm:write"]')`); err != nil {
+		t.Fatal(err)
+	}
+	u, err := e.users.Create(ctx, auth.Actor{Name: "local:0"}, auth.NewUser{Username: "writer1", Password: testPassword, RoleID: "writer"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := e.authn.Login(ctx, auth.LoginRequest{Username: u.Username, Password: testPassword, Kind: auth.BearerSession, SourceIP: "192.0.2.200"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.tokens["writer"] = res.Token
+	h := e.handler(newBackend(), nil)
+	path := Prefix + "/vms/" + e.ids[auth.RoleViewer]
+	rec := e.serve(h, request{method: http.MethodPut, path: path, role: "writer", body: `{"remove_disks":[1]}`})
+	body := wantError(t, rec, http.StatusForbidden, auth.CodeForbidden)
+	if body.Details["permission"] != auth.PermVMDelete {
+		t.Errorf("details = %v", body.Details)
+	}
+	if n := e.auditCount(t, `action = 'authz.deny' AND actor_id = ? AND details LIKE '%"permission":"vm:delete"%'`, u.ID); n != 1 {
+		t.Errorf("%d denials audited", n)
+	}
+	// Growing a disk is vm:write alone: past the permission check (the
+	// test backend has no VMs, so the answer is 404).
+	rec = e.serve(h, request{method: http.MethodPut, path: path, role: "writer", body: `{"resize_disks":[{"slot":0,"size":"20G"}]}`})
+	if rec.Code == http.StatusForbidden {
+		t.Errorf("grow refused: %d", rec.Code)
+	}
+	// An operator has vm:delete.
+	rec = e.serve(h, request{method: http.MethodPut, path: path, role: auth.RoleOperator, body: `{"remove_disks":[1]}`})
+	if rec.Code == http.StatusForbidden {
+		t.Errorf("operator refused: %d", rec.Code)
+	}
+}

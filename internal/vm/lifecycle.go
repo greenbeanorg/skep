@@ -21,7 +21,7 @@ import (
 func (s *Service) Definitions() []tasks.Definition {
 	return append([]tasks.Definition{
 		{Type: models.TaskVMCreate, Cancellable: true, Timeout: 10 * time.Minute, Run: s.runCreate},
-		{Type: models.TaskVMUpdate, Timeout: time.Minute, Run: s.runUpdate},
+		{Type: models.TaskVMUpdate, Timeout: 5 * time.Minute, Run: s.runUpdate},
 		{Type: models.TaskVMDelete, Timeout: 10 * time.Minute, Run: s.runDelete},
 	}, append(s.actionDefinitions(), s.snapshotDefinitions()...)...)
 }
@@ -272,33 +272,38 @@ func (s *Service) stoppedVM(ctx context.Context, id string) (models.VM, error) {
 }
 
 // checkUpdate validates an update against the VM as it is now and returns
-// the VM as the update would leave it.
-func (s *Service) checkUpdate(ctx context.Context, id string, upd models.VMUpdate) (models.VM, []string, error) {
+// the VM as the update would leave it, the fields that change, and what
+// happens to its disks, with the snapshots a disk removal destroys.
+func (s *Service) checkUpdate(ctx context.Context, id string, upd models.VMUpdate) (models.VM, []string, diskWork, error) {
 	vm, err := s.stoppedVM(ctx, id)
 	if err != nil {
-		return models.VM{}, nil, err
+		return models.VM{}, nil, diskWork{}, err
 	}
 	if !vm.Provisioned {
-		return models.VM{}, nil, &models.Error{
+		return models.VM{}, nil, diskWork{}, &models.Error{
 			Code:    models.CodeVMNotProvisioned,
 			Message: "the virtual machine was never provisioned; it can only be deleted",
 		}
 	}
-	next, changed, err := applyUpdate(vm, upd)
+	next, changed, plan, err := applyUpdate(vm, upd)
 	if err != nil {
-		return models.VM{}, nil, err
+		return models.VM{}, nil, diskWork{}, err
 	}
 	if _, err := s.hv.Validate(ctx, next); err != nil {
-		return models.VM{}, nil, err
+		return models.VM{}, nil, diskWork{}, err
 	}
 	if upd.Media != nil {
 		for _, d := range media(next) {
 			if _, err := s.host.Files.ResolveMedia(ctx, d.Media); err != nil {
-				return models.VM{}, nil, err
+				return models.VM{}, nil, diskWork{}, err
 			}
 		}
 	}
-	return next, changed, nil
+	work, err := s.checkDisks(ctx, vm, plan, upd.DestroySnapshots)
+	if err != nil {
+		return models.VM{}, nil, diskWork{}, err
+	}
+	return next, changed, work, nil
 }
 
 // UpdateVM submits a vm.update task. Only a stopped VM can be updated.
@@ -311,7 +316,7 @@ func (s *Service) UpdateVM(ctx context.Context, id string, upd models.VMUpdate, 
 		return models.Task{}, err
 	}
 	req := sub.request(models.TaskVMUpdate, id, payload)
-	if _, _, err := s.checkUpdate(ctx, id, upd); err != nil {
+	if _, _, _, err := s.checkUpdate(ctx, id, upd); err != nil {
 		return models.Task{}, s.refuse(ctx, req, err)
 	}
 	task, _, err := s.engine.Submit(ctx, req)
@@ -321,26 +326,56 @@ func (s *Service) UpdateVM(ctx context.Context, id string, upd models.VMUpdate, 
 	return task.Public(), nil
 }
 
-// UpdateResult is the result of a vm.update task.
+// UpdateResult is the result of a vm.update task. The disk lists name the
+// zvols added, grown, and destroyed, and the snapshots destroyed with a
+// removed disk.
 type UpdateResult struct {
-	VMID    string   `json:"vm_id"`
-	Changed []string `json:"changed"`
+	VMID               string        `json:"vm_id"`
+	Changed            []string      `json:"changed"`
+	DisksAdded         []DatasetInfo `json:"disks_added,omitempty"`
+	DisksGrown         []DatasetInfo `json:"disks_grown,omitempty"`
+	DisksRemoved       []DatasetInfo `json:"disks_removed,omitempty"`
+	SnapshotsDestroyed []SnapshotRef `json:"snapshots_destroyed,omitempty"`
+	// Notes are things the user should do next, such as growing the
+	// guest's filesystem.
+	Notes []string `json:"notes,omitempty"`
 }
 
-// AuditDetails implements tasks.Audited.
+// AuditDetails implements tasks.Audited: a removal's destroyed datasets
+// and snapshots stay on the record (decision 14).
 func (r UpdateResult) AuditDetails() map[string]any {
-	return map[string]any{"changed": r.Changed}
+	d := map[string]any{"changed": r.Changed}
+	if len(r.DisksAdded) > 0 {
+		d["disks_added"] = r.DisksAdded
+	}
+	if len(r.DisksGrown) > 0 {
+		d["disks_grown"] = r.DisksGrown
+	}
+	if len(r.DisksRemoved) > 0 {
+		d["datasets_destroyed"] = r.DisksRemoved
+	}
+	if len(r.SnapshotsDestroyed) > 0 {
+		d["snapshots_destroyed"] = r.SnapshotsDestroyed
+	}
+	return d
 }
 
-func (s *Service) runUpdate(ctx context.Context, task tasks.Task, _ tasks.Reporter) (any, error) {
+func (s *Service) runUpdate(ctx context.Context, task tasks.Task, report tasks.Reporter) (any, error) {
 	var upd models.VMUpdate
 	if err := json.Unmarshal(task.Payload, &upd); err != nil {
 		return nil, &tasks.Failure{Code: models.CodeInvalidRequest, Message: "the task payload is not a VM update"}
 	}
 	// Everything is checked again: the VM may have been started, or the
 	// media removed, since the request was accepted.
-	next, changed, err := s.checkUpdate(ctx, task.ResourceID, upd)
+	next, changed, work, err := s.checkUpdate(ctx, task.ResourceID, upd)
 	if err != nil {
+		return nil, failure(err)
+	}
+	result := UpdateResult{VMID: next.ID, Changed: changed}
+	if err := s.applyDisks(ctx, next, work, &result, report); err != nil {
+		// What was done is in the database and the result's log line;
+		// what failed is the task's error.
+		s.log.Warn("vm: a disk change failed part way", "vm_id", next.ID, "done", result)
 		return nil, failure(err)
 	}
 	change := database.VMChange{
@@ -358,11 +393,11 @@ func (s *Service) runUpdate(ctx context.Context, task tasks.Task, _ tasks.Report
 	if err := s.store.Update(ctx, next.ID, change, s.now().UTC()); err != nil {
 		return nil, err
 	}
-	if changed == nil {
-		changed = []string{}
+	if result.Changed == nil {
+		result.Changed = []string{}
 	}
-	s.log.Info("vm updated", "vm_id", next.ID, "changed", changed)
-	return UpdateResult{VMID: next.ID, Changed: changed}, nil
+	s.log.Info("vm updated", "vm_id", next.ID, "changed", result.Changed)
+	return result, nil
 }
 
 // DeleteVM submits a vm.delete task. Only a stopped VM can be deleted; one

@@ -323,6 +323,23 @@ func (h *handler) serve(rt route, w http.ResponseWriter, r *http.Request) {
 	rt.handler(w, r)
 }
 
+// requireAlso checks a permission that depends on the body of a request,
+// such as vm:delete for an update that removes disks (ADR 0010 decision
+// 4), after the route's own. A refusal is the same 403, audited the same
+// way, as the route check's.
+func (h *handler) requireAlso(w http.ResponseWriter, r *http.Request, method, path, permission string) bool {
+	id, ok := identityFrom(r.Context())
+	if !ok {
+		h.fail(w, r, auth.ErrUnauthenticated)
+		return false
+	}
+	if id.User.Role.Allows(permission) {
+		return true
+	}
+	h.deny(w, r, id, route{method: method, path: path, requires: permission}, permission)
+	return false
+}
+
 // deny refuses a request for lack of a permission and audits the denial
 // with the actor, the permission, and the route.
 func (h *handler) deny(w http.ResponseWriter, r *http.Request, id auth.Identity, rt route, permission string) {

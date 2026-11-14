@@ -823,3 +823,51 @@ something the text left open, or departs from it.
   unowned if Skep did not take it. Pages are 100 entries by default, 500
   at most, because a pool with snapshots has many more datasets than VMs.
   A pool that cannot be read is reported in `unavailable_pools`.
+
+### Step 2: snapshots, rollback, clones
+
+- **Snapshots go through hostops directly, not the hypervisor adapter.**
+  They are storage operations, the same for any engine; the adapter is
+  asked only whether the VM runs (for the consistency label and the
+  rollback refusal).
+- **A VM with disks in more than one pool cannot be snapshotted**
+  (`storage_feature_unsupported`). ZFS creates snapshots atomically only
+  within one pool, so such a VM cannot have the "one atomic snapshot of
+  every disk" of Decision 2a, and a weaker one is not offered.
+- **`vm.clone` holds the source VM** as its task resource, so the source
+  cannot be started, rolled back, or deleted while it is being cloned. The
+  clone is a new, unprovisioned VM inserted with the task; deleting it is
+  refused with `resource_busy` while its clone task runs. A clone has the
+  source's CPU, memory, and NICs (new MAC addresses), thin disks, and no
+  install media.
+- **Two more codes**: `snapshot_name_taken` (409) for a label the VM
+  already uses, and `snapshot_not_provisioned` (409) for a snapshot whose
+  task never finished, which can only be deleted.
+- **Size follows ZFS after a rollback or clone.** A zvol rolled back, or
+  cloned, from a snapshot taken before the disk grew has the snapshot's
+  size; the disk's recorded size is set to the zvol's after either.
+- The snapshot of a VM also carries `skep:vm_id`: user properties of a
+  dataset show on its snapshots (seen on `hearst`), though the inventory
+  judges a snapshot by its dataset in any case.
+
+### Step 3: disk changes
+
+- **The request shape**: `add_disks` (disk specs as at create),
+  `resize_disks` (`slot`, `size`), `remove_disks` (slots), and
+  `destroy_snapshots` on `PUT /vms/{id}`. New disks take the lowest slot
+  no disk or medium uses; a slot freed by the same request is not reused
+  by it. A removal is refused with `disk_has_snapshots` (409) while
+  snapshots contain the disk and the flag is not set, and also when the
+  disk has a snapshot Skep did not take.
+- **`vm:delete` is checked by skep-api from the body**: an update with
+  `remove_disks` needs it as well as the route's `vm:write`, refused and
+  audited like a route denial.
+- **Steps are recorded as they are done.** The task destroys the
+  snapshots, then removes, grows, and adds, writing each change to the
+  database as soon as it is done on the host, so a failure part way leaves
+  the database describing the disks that exist; the task fails naming the
+  step. `vm.update`'s time limit went from 1 to 5 minutes for this.
+- **Space for an update** is checked by the service, not by the adapter's
+  create-time check (which skips provisioned VMs): only the new
+  reservations count, that is full-reservation disks added and the growth
+  of full-reservation disks.

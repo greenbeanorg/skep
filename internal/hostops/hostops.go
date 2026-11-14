@@ -90,6 +90,13 @@ type ZFS interface {
 	// CloneVM makes a linked clone of every dataset of a VM's snapshot
 	// under a new VM ID and returns the clone's datasets.
 	CloneVM(ctx context.Context, spec CloneSpec) ([]Dataset, error)
+	// ResizeVolume grows the zvol of a VM's disk (ADR 0010 decision 4).
+	// It never shrinks one. A volume with a reservation keeps one equal
+	// to its size; the pool running out of room is insufficient_space.
+	ResizeVolume(ctx context.Context, spec VolumeSpec) (Dataset, error)
+	// DestroyVolume destroys the zvol of a VM's disk, only if it carries
+	// the VM's and the disk's IDs and has no snapshots left.
+	DestroyVolume(ctx context.Context, spec VolumeSpec) (Dataset, error)
 }
 
 // Pool is one allow-listed pool as observed.

@@ -104,6 +104,9 @@ const (
 	CodeStopTimeout         = "stop_timeout"
 	CodeVMStartFailed       = "vm_start_failed"
 	CodeConsoleBusy         = "console_busy"
+	// CodeDiskHasSnapshots refuses removing a disk that snapshots contain,
+	// unless destroy_snapshots says to destroy them.
+	CodeDiskHasSnapshots = "disk_has_snapshots"
 
 	// Storage management (ADR 0010).
 	CodeSnapshotLimit             = "snapshot_limit"
@@ -320,7 +323,30 @@ type VMUpdate struct {
 	// Media replaces the attached install media: a list of ISO file
 	// names, empty to detach everything.
 	Media *[]string `json:"media,omitempty"`
+
+	// AddDisks adds zvol-backed disks, with the rules of a create; each
+	// takes the lowest free slot (ADR 0010 decision 4).
+	AddDisks []VMDiskSpec `json:"add_disks,omitempty"`
+	// ResizeDisks grows disks. A disk never shrinks; the guest grows its
+	// own partition and filesystem afterwards.
+	ResizeDisks []VMDiskResize `json:"resize_disks,omitempty"`
+	// RemoveDisks destroys the disks in these slots and their zvols. It
+	// needs vm:delete as well as vm:write.
+	RemoveDisks []int `json:"remove_disks,omitempty"`
+	// DestroySnapshots allows removing a disk that snapshots contain:
+	// every such snapshot is destroyed whole, on every disk of the VM.
+	DestroySnapshots bool `json:"destroy_snapshots,omitempty"`
 }
+
+// VMDiskResize grows the disk in a slot to a new size.
+type VMDiskResize struct {
+	Slot int      `json:"slot"`
+	Size ByteSize `json:"size"`
+}
+
+// RemovesDisks reports whether an update destroys disks, which is what
+// needs vm:delete.
+func (u VMUpdate) RemovesDisks() bool { return len(u.RemoveDisks) > 0 }
 
 // VMAction is the body of POST /vms/{id}/actions.
 type VMAction struct {

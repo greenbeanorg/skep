@@ -230,7 +230,7 @@ func (f *Fake) Snapshot(_ context.Context, pool string, o hostops.Owner, snapsho
 	var made []hostops.Dataset
 	for _, d := range tree {
 		s := hostops.Dataset{Name: d.Name + "@" + short, Type: "snapshot", CreateTxg: f.txg,
-			ReferencedBytes: d.ReferencedBytes, VMID: d.VMID, DiskID: d.DiskID, ContainerID: d.ContainerID,
+			ReferencedBytes: d.ReferencedBytes, VolSizeBytes: d.VolSizeBytes, VMID: d.VMID, DiskID: d.DiskID, ContainerID: d.ContainerID,
 			SnapshotID: snapshotID}
 		f.snaps[s.Name] = s
 		made = append(made, s)
@@ -303,7 +303,10 @@ func (f *Fake) Rollback(_ context.Context, pool string, o hostops.Owner, snapsho
 	for _, t := range targets {
 		base, _, _ := strings.Cut(t.Name, "@")
 		d := f.datasets[base]
-		d.ReferencedBytes = t.ReferencedBytes
+		d.ReferencedBytes, d.VolSizeBytes = t.ReferencedBytes, t.VolSizeBytes
+		if d.RefReservationBytes > 0 {
+			d.RefReservationBytes = t.VolSizeBytes
+		}
 		f.datasets[base] = d
 	}
 	f.record("zfs rollback destroy_newer=%v %s@%s%s", destroyNewer, name, hostops.SnapshotPrefix, snapshotID)
@@ -389,7 +392,7 @@ func (f *Fake) CloneVM(_ context.Context, spec hostops.CloneSpec) ([]hostops.Dat
 	for _, d := range tree {
 		origin := d.Name + "@" + short
 		c := hostops.Dataset{Name: target + strings.TrimPrefix(d.Name, name), Type: d.Type,
-			VolSizeBytes: d.VolSizeBytes, VolMode: d.VolMode, VolBlockSize: d.VolBlockSize,
+			VolSizeBytes: f.snaps[origin].VolSizeBytes, VolMode: d.VolMode, VolBlockSize: d.VolBlockSize,
 			ReferencedBytes: f.snaps[origin].ReferencedBytes, Origin: origin, VMID: spec.TargetVMID}
 		if d.Type == "volume" {
 			slot, _ := strconv.Atoi(strings.TrimPrefix(d.Name, name+"/disk"))
@@ -406,4 +409,61 @@ func (f *Fake) CloneVM(_ context.Context, spec hostops.CloneSpec) ([]hostops.Dat
 	sort.Slice(made, func(i, j int) bool { return made[i].Name < made[j].Name })
 	f.record("zfs clone %s@%s %s", name, short, target)
 	return made, nil
+}
+
+// ResizeVolume implements hostops.ZFS.
+func (f *Fake) ResizeVolume(_ context.Context, spec hostops.VolumeSpec) (hostops.Dataset, error) {
+	name, err := f.conf.DiskDataset(spec.Pool, spec.VMID, spec.Slot)
+	if err != nil {
+		return hostops.Dataset{}, err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := f.zfsLoaded(); err != nil {
+		return hostops.Dataset{}, err
+	}
+	d, ok := f.datasets[name]
+	if !ok || d.Type != "volume" || d.VMID != spec.VMID || d.DiskID != spec.DiskID {
+		return hostops.Dataset{}, fmt.Errorf("hostfake: refusing %s: not the volume of disk %s", name, spec.DiskID)
+	}
+	if spec.SizeBytes <= d.VolSizeBytes || spec.SizeBytes%int64(d.VolBlockSize) != 0 {
+		return hostops.Dataset{}, models.Invalid("a disk only grows, by a multiple of its block size")
+	}
+	if d.RefReservationBytes > 0 {
+		grow := spec.SizeBytes - d.VolSizeBytes
+		if grow > f.pool(spec.Pool).AvailableBytes {
+			return hostops.Dataset{}, &models.Error{Code: models.CodeInsufficientSpace,
+				Message: "the pool " + spec.Pool + " does not have room to grow this disk"}
+		}
+		d.RefReservationBytes, d.UsedBytes = spec.SizeBytes, spec.SizeBytes
+	}
+	d.VolSizeBytes = spec.SizeBytes
+	f.datasets[name] = d
+	f.record("zfs set volsize=%d %s", spec.SizeBytes, name)
+	return d, nil
+}
+
+// DestroyVolume implements hostops.ZFS.
+func (f *Fake) DestroyVolume(_ context.Context, spec hostops.VolumeSpec) (hostops.Dataset, error) {
+	name, err := f.conf.DiskDataset(spec.Pool, spec.VMID, spec.Slot)
+	if err != nil {
+		return hostops.Dataset{}, err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := f.zfsLoaded(); err != nil {
+		return hostops.Dataset{}, err
+	}
+	d, ok := f.datasets[name]
+	if !ok || d.Type != "volume" || d.VMID != spec.VMID || d.DiskID != spec.DiskID {
+		return hostops.Dataset{}, fmt.Errorf("hostfake: refusing %s: not the volume of disk %s", name, spec.DiskID)
+	}
+	for snapName := range f.snaps {
+		if strings.HasPrefix(snapName, name+"@") {
+			return hostops.Dataset{}, fmt.Errorf("hostfake: refusing to destroy %s: it still has snapshots", name)
+		}
+	}
+	delete(f.datasets, name)
+	f.record("zfs destroy %s", name)
+	return d, nil
 }

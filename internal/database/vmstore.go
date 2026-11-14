@@ -592,3 +592,60 @@ func (s *VMStore) ActiveMemory(ctx context.Context, exceptID string) (int64, err
 	}
 	return total.Int64, nil
 }
+
+// AddDisk stores a disk added to a provisioned VM, with its volume row,
+// after its zvol was created (ADR 0010 decision 4).
+func (s *VMStore) AddDisk(ctx context.Context, vm models.VM, d models.VMDisk, datasetRoot string, at time.Time) error {
+	return s.inTx(ctx, func(tx *sql.Tx) error {
+		if err := insertDisk(ctx, tx, vm, d, datasetRoot, formatTime(at)); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `UPDATE virtual_machines SET updated_at = ? WHERE id = ?`, formatTime(at), vm.ID)
+		return err
+	})
+}
+
+// ResizeDisk records a disk's new size, in the disk and its volume row.
+func (s *VMStore) ResizeDisk(ctx context.Context, vmID, diskID string, sizeBytes int64, at time.Time) error {
+	return s.inTx(ctx, func(tx *sql.Tx) error {
+		res, err := tx.ExecContext(ctx, `UPDATE vm_disks SET size_bytes = ? WHERE id = ? AND vm_id = ?`, sizeBytes, diskID, vmID)
+		if err != nil {
+			return fmt.Errorf("database: resize disk: %w", err)
+		}
+		if err := mustAffect(res, diskID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE storage_volumes SET desired_size_bytes = ?, updated_at = ?
+			WHERE id = (SELECT storage_volume_id FROM vm_disks WHERE id = ?)`, sizeBytes, formatTime(at), diskID); err != nil {
+			return fmt.Errorf("database: resize volume: %w", err)
+		}
+		_, err = tx.ExecContext(ctx, `UPDATE virtual_machines SET updated_at = ? WHERE id = ?`, formatTime(at), vmID)
+		return err
+	})
+}
+
+// RemoveDisk removes a disk and its volume row, after its zvol was
+// destroyed.
+func (s *VMStore) RemoveDisk(ctx context.Context, vmID, diskID string, at time.Time) error {
+	return s.inTx(ctx, func(tx *sql.Tx) error {
+		var volume sql.NullString
+		err := tx.QueryRowContext(ctx, `SELECT storage_volume_id FROM vm_disks WHERE id = ? AND vm_id = ?`, diskID, vmID).Scan(&volume)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("database: read disk: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM vm_disks WHERE id = ?`, diskID); err != nil {
+			return fmt.Errorf("database: remove disk: %w", err)
+		}
+		if volume.Valid {
+			if _, err := tx.ExecContext(ctx, `DELETE FROM storage_volumes WHERE id = ?`, volume.String); err != nil {
+				return fmt.Errorf("database: remove volume: %w", err)
+			}
+		}
+		_, err = tx.ExecContext(ctx, `UPDATE virtual_machines SET updated_at = ? WHERE id = ?`, formatTime(at), vmID)
+		return err
+	})
+}
