@@ -1,9 +1,11 @@
 # ADR 0010: Storage management and jails (Milestone 7)
 
-- Status: **Proposed**. Waiting for Andy's answers to the
-  [questions for review](#questions-for-review). Not to be merged until
-  they are recorded here and the status is Accepted.
-- Date: 2026-11-14 (proposed)
+- Status: **Accepted** (not yet implemented). Every recommendation was
+  accepted; the review answers and the amendments made at acceptance are
+  under [Decisions](#decisions) and are worked into the text. The changes
+  `hearst` needs are under [Changes hearst needs](#changes-hearst-needs),
+  all approved.
+- Date: 2026-11-14 (proposed and accepted)
 - Depends on: [ADR 0003](0003-read-only-discovery.md) (discovery never
   changes the host), [ADR 0004](0004-privilege-boundary.md) (typed
   operations only, host confinement), [ADR 0005](0005-agent-task-engine.md)
@@ -32,12 +34,12 @@ both.
 | 1 | What "ZFS management" means | Skep manages datasets, zvols, and snapshots inside `<pool>/<root>` of allow-listed pools only; it never creates, imports, exports, or destroys a pool, and never touches a dataset outside its root |
 | 2 | Snapshots | Disk-only, atomic recursive snapshots of a VM's (or jail's) dataset, allowed while running and labelled crash-consistent; rollback only while stopped, to the latest snapshot unless the caller explicitly allows destroying newer ones; the UEFI variable store is saved with each VM snapshot |
 | 3 | Clones | Linked clones (`zfs clone`) of a whole VM from one of its snapshots; the origin snapshot cannot be deleted while a clone depends on it; full copies wait for send/receive in the backup milestone |
-| 4 | Disk changes after creation | Add a disk and grow a disk while stopped; never shrink; removing a disk destroys its zvol and needs `vm:delete` |
+| 4 | Disk changes after creation | Add a disk and grow a disk while stopped; never shrink; removing a disk destroys its zvol and needs `vm:delete`; with `destroy_snapshots` it destroys every snapshot containing the disk whole, never partially |
 | 5 | Encryption, quotas, compression | Skep sets none of them on VM storage; it honours what the operator set on `<pool>/<root>` and refuses to use a dataset whose key is not loaded; a jail gets a `refquota` |
 | 6 | Hosts without ZFS (UFS-root equivalence) | A `directory` pool type: an allow-listed directory, sparse raw files for VM disks, plain directories for jail roots; snapshots and clones are reported unsupported on it, never emulated |
-| 7 | Jail userland and templates | A template is a ZFS dataset snapshot (or a directory) of a FreeBSD userland built by a task from the host's own pkgbase repository configuration, or from an operator-placed `base.txz`; the release must equal the host's; no URL from a request |
+| 7 | Jail userland and templates | A template is a ZFS dataset snapshot (or a directory) of a FreeBSD userland built by a task from the host's own pkgbase repository configuration, or from an operator-placed `base.txz`; the release must equal the host's; no URL from a request; `pkg` runs with a cleared environment and fixed arguments, its cache is emptied before `@skep-base`, and the host's `/etc`, `/var/db/pkg`, and `/usr/share/certs` are checked unchanged |
 | 8 | How jails run | A generated per-jail `jail.conf` under the run directory and `jail(8)` with explicit arguments; no runner process; observed with `jls --libxo=json`; never `rc.conf`'s `jail_list` |
-| 9 | Jail parameters | A fixed hardened baseline (`enforce_statfs=2`, `children.max=0`, no `allow.*`, `securelevel=2`); a short typed list of opt-ins; never `exec.prestart`, `exec.poststart`, or any host-side command from a request |
+| 9 | Jail parameters | A fixed hardened baseline (`enforce_statfs=2`, `children.max=0`, no `allow.*`, `securelevel=2`); three typed opt-ins, `mlock` only with an RCTL memory limit; the parent directory of every jail root is `root:wheel 0700`; never `exec.prestart`, `exec.poststart`, or any host-side command from a request |
 | 10 | Jail networking | VNET only, one `epair` per NIC, the host end in an allow-listed bridge; addresses by DHCP or static, written into the jail before its first start; no shared-IP and no `inherit` |
 | 11 | Jail resource limits | RCTL limits (memory, processes, CPU percent, open files) when `kern.racct.enable=1`, refused with a clear code when not; disk by ZFS `refquota`, which needs nothing |
 | 12 | Getting into a jail | No interactive console in this milestone; an optional SSH public key and `sshd_enable` at create. `jexec` to a shell is never exposed |
@@ -192,6 +194,16 @@ in one task, `vm.clone`, and leaves the snapshot behind, named after the
 clone). A clone records `cloned_from_snapshot_id`. Same-pool only:
 `zfs clone` cannot cross pools.
 
+**A clone is the same guest.** Skep changes the VM's UUID (and so the
+SMBIOS UUID), name, and MAC addresses, but not what is inside the disks:
+the guest's hostname, its SSH host keys, and its machine ID
+(`/etc/hostid` on FreeBSD, `/etc/machine-id` on Linux, the SID on
+Windows) are those of the source. The UI says so on the clone form and
+on the clone's page, and the API documentation says it for `vm.clone`
+and `container.clone`. For a jail clone the same is true of its
+`rc.conf` hostname, `/etc/ssh` host keys, and `/etc/hostid`; Skep does
+not rewrite them, because a clone has been started before (Decision 13).
+
 ## Decision 4: disk changes after creation
 
 | Change | Recommendation |
@@ -199,8 +211,19 @@ clone). A clone records `cloned_from_snapshot_id`. Same-pool only:
 | Add a disk | `vm.update` while stopped, with the same rules as at create (slot, bus, size, thin, block size); `vm:write` |
 | Grow a disk | `vm.update` while stopped; the new size must be larger and a multiple of the block size; a full-reservation disk checks `available` space first, as at create; the guest grows its own partition and filesystem afterwards, which the UI says |
 | Shrink a disk | Never. ZFS would allow it and the guest's filesystem would be cut off |
-| Remove a disk | `vm.update` while stopped, with `vm:delete` as well as `vm:write`, because it destroys the zvol; refused while the VM has snapshots that contain the disk unless the request also says `"destroy_snapshots": true`; the audit entry names the dataset and size |
+| Remove a disk | `vm.update` while stopped, with `vm:delete` as well as `vm:write`, because it destroys the zvol; refused while the VM has snapshots that contain the disk unless the request also says `"destroy_snapshots": true`; the audit entry names the dataset and size. See below for what `destroy_snapshots` destroys |
 | Change bus, block size, or thin/full | Not offered. Block size cannot change; changing thin to full is a reservation change that can fail for lack of space and is not worth its edge cases yet |
+
+**`destroy_snapshots` destroys whole snapshots.** A snapshot is one
+recursive `zfs snapshot -r` across all of a VM's disks (Decision 2a).
+Removing only the removed disk's part would leave snapshots that roll
+back to a VM with a disk missing, which is not a state the VM was ever
+in. So every snapshot that contains the disk is destroyed entirely, on
+every dataset of the VM, together with its variable store copy and its
+row; the task result and the audit entry list each snapshot by ID and
+name. A snapshot taken after the disk was added contains it; one taken
+before does not and is kept. A snapshot with linked clones blocks the
+removal with `snapshot_has_clones`, whatever the flag says.
 
 Hot-plug of anything stays out: bhyve has no hot-plug for these devices.
 
@@ -230,7 +253,8 @@ with no pool at all.
 | B. Require ZFS, and tell UFS-root operators to make a file-backed pool, as `hearst` does | Works, but a file-backed pool on UFS is double copy-on-write layering nobody should run in production. |
 | C. Emulate snapshots on directory pools by copying files | A "snapshot" that takes minutes and doubles space, with no atomicity across disks. Rejected. |
 
-**Recommendation: A.** Rules: a directory pool must be on a local
+**Recommendation: A** (accepted; the UFS-root installer profile in
+Milestone 10 depends on it). Rules: a directory pool must be on a local
 filesystem (UFS or ZFS; checked with `statfs`, `nfs` and `tmpfs`
 refused); free space is `statfs` available space; disk files are created
 sparse with a fixed size (`truncate`-equivalent through `os.File`, no
@@ -257,9 +281,42 @@ flags are applied through `hostops` after the contents are written).
 
 **Recommendation: A and B**, chosen per template by `source: pkgbase` or
 `source: dist`. A host that is not pkgbase simply has no `pkgbase` source
-in its capabilities. Package scripts run inside `pkg --rootdir`; the
-packages come from the operator's signed repository, which is the trust
-the host already places in its own updates.
+in its capabilities. The packages come from the operator's signed
+repository, which is the trust the host already places in its own
+updates.
+
+Rules for running `pkg` (amendment at acceptance):
+
+- **Cleared environment, fixed arguments.** `/usr/sbin/pkg` (the
+  bootstrap, which execs `/usr/local/sbin/pkg`) is run by `hostops` with
+  an environment containing only fixed values (`PATH=/sbin:/bin:/usr/sbin:/usr/bin`,
+  `ASSUME_ALWAYS_YES=yes`, `IGNORE_OSVERSION` unset), never the agent's
+  inherited environment, and with a fixed argument list: `--rootdir
+  <template root>`, explicit `-o` options for the cache and database
+  locations (below), `install -y`, and the package names, each validated
+  against `^FreeBSD-[a-z0-9][a-z0-9-]*$` and taken only from
+  `storage.template_packages` in `agent.json`, never from a request.
+- **Scripts and triggers are verified, not assumed.** How `pkg --rootdir`
+  runs package shell scripts, Lua scripts, and triggers on the 15.1
+  host, whether chrooted into the root directory or run on the host with
+  only `PKG_ROOTDIR` set, is established at step 6 from the `pkg` source
+  of the version installed and from a traced build on `hearst`, and
+  documented in the administration guide and the security overview with
+  what was observed. If any script runs unchrooted against host paths,
+  that is raised before the template feature is enabled, not worked
+  around.
+- **Host state is checked unchanged.** The template check (Decision 16)
+  hashes every file under the host's `/etc`, `/var/db/pkg`, and
+  `/usr/share/certs` before and after a build, and the build passes only
+  if the hashes are identical. The `-o PKG_CACHEDIR=` and
+  `-o PKG_DBDIR=` options point inside the template's work area for
+  exactly this reason; if the first traced build shows `pkg` still
+  writing a host path, the fix is another fixed option, never dropping
+  the check.
+- **The cache does not ship.** The downloaded packages are deleted from
+  the template (`<template root>/var/cache/pkg` and any other
+  `PKG_CACHEDIR` used) before the `@skep-base` snapshot is taken, and the
+  check confirms the directory is empty in the snapshot.
 
 ### 7b. Templates
 
@@ -332,8 +389,13 @@ this milestone.
 `mount.fstab`, every `allow.*` off, `exec.clean`, `exec.consolelog` to
 `<RunDir>/jails/<id>/console.log` (root-only, served to `container:read`
 holders as a bounded tail). Opt-ins: `allow_raw_sockets`,
-`sysvipc` (`sysvshm`, `sysvsem`, `sysvmsg` = `new`), `allow_chflags`,
-`mlock`. Not offered: `allow.mount.*`, ZFS dataset delegation
+`sysvipc` (`sysvshm`, `sysvsem`, `sysvmsg` = `new`), and `mlock`. `mlock`
+is accepted only together with an RCTL `memoryuse` limit (Decision 11),
+because locked memory cannot be paged out and an unlimited jail could pin
+the host's memory; without the limit, or with RACCT disabled, the request
+is refused with `mlock_requires_memory_limit`. `allow.chflags` was
+proposed and dropped at acceptance: at `securelevel=2` it cannot clear
+system flags, so it does nothing useful. Not offered: `allow.mount.*`, ZFS dataset delegation
 (`jailed=on`), `allow.vmm` (bhyve in a jail), and Linux ABI; each is its
 own decision later.
 
@@ -341,7 +403,20 @@ own decision later.
 cannot be cleared, so updating the base system from inside the jail
 (`pkg upgrade` of `FreeBSD-*` packages) fails. That is intended while
 userland updates are not designed (Decision 7b); packages from ports
-install and upgrade normally. Review question 8 asks whether to keep it.
+install and upgrade normally. Kept at acceptance.
+
+**The parent of every jail root is closed to the host's users.** A jail's
+tree holds setuid binaries whose owner the jail controls; a host user who
+can reach one can run it with the jail root's IDs on the host. The
+directory that contains every jail root, the mountpoint of
+`<pool>/<root>/jail` and on a directory pool `<dir>/<root>/jail`, is
+`root:wheel 0700`, and so is the directory of templates
+(`<pool>/<root>/templates`, `<dir>/<root>/templates`), which hold the same
+binaries. `hostops` sets the mode when it creates the directory and
+checks it, with its owner, before every jail start and template build,
+refusing with `jail_parent_insecure` if it has changed. A check
+(Decision 16) runs as an unprivileged host user and confirms that a
+setuid file inside a running jail cannot be reached.
 
 ## Decision 10: jail networking
 
@@ -369,6 +444,17 @@ refuses a start with `epair_unavailable` when the module is absent. On
 `hearst`, jails join `bridge0` on VLAN 60, and the isolation check of ADR
 0009 is repeated for a jail.
 
+**Orphaned epairs.** If the agent dies between `jail -r` and destroying
+the host ends of a jail's epairs, they stay on the host. At every agent
+start, before the socket is served, the agent lists interfaces whose
+description starts with `skep:` (epairs and VM taps alike) and whose
+owner is not running. Each is reported: a warning event naming the
+interface and its owner, and the health check `orphaned_interfaces`
+(warning) until it is gone. It is destroyed by the next start, stop, or
+delete of its owner, or reported indefinitely if the owner no longer
+exists; Skep never destroys an interface without a `skep:` description,
+and never one whose owner is running.
+
 ## Decision 11: jail resource limits
 
 | Option | Notes |
@@ -383,6 +469,16 @@ refused with `rctl_unavailable`; a jail without such limits still runs,
 and the UI shows "no limits" plainly. The disk quota works regardless.
 RACCT costs a little on every process on the host; the administration
 guide says so, and enabling it is the operator's choice in `loader.conf`.
+
+**`memoryuse` deny is verified, not assumed** (amendment at acceptance).
+The limit check (Decision 16) must show that a process in a jail with a
+`memoryuse` deny limit really cannot allocate and touch memory past it.
+If it can (resident memory is accounted after the fact, so the kernel
+may page the jail out rather than refuse the allocation), that is
+recorded in the implementation notes with the observed behaviour, and
+`vmemoryuse` deny (which refuses address-space growth at the allocation)
+is evaluated as the memory limit, or as a second limit beside it, before
+the feature is called verified.
 
 ## Decision 12: getting into a jail
 
@@ -411,6 +507,12 @@ resolves on the host). Rules:
   so even a planted link cannot leave the root.
 - After the first start, Skep never writes into the jail's tree. Updates
   that would need it are refused with `container_started`.
+- `started_once` never goes back to 0: not after a rollback, even to a
+  snapshot taken before the first start, and not on a clone, which
+  inherits 1 from its source if the source had ever started, and 1 in any
+  case if the clone was taken from a running jail. Whether the tree on
+  disk has run code is not something Skep can tell after the fact, so it
+  assumes it has.
 
 ## Phase-wide decisions
 
@@ -459,14 +561,19 @@ recorded, under `tests/integration/storage/` for 7a and
 | Snapshot | Taken while running (crash-consistent) and while stopped (consistent); the VM's two disks share one snapshot; the variable store copy exists |
 | Rollback | Rollback of a guest that wrote a marker file after the snapshot removes the marker and the guest boots; rollback to an older snapshot is refused without `destroy_newer` and destroys exactly the listed snapshots with it |
 | Clone | A linked clone boots with new MACs and its own DHCP lease; deleting the origin snapshot or the source VM is refused with `snapshot_has_clones` |
-| Disk add, grow, remove | A second disk appears in the guest; a grown disk is grown with `gpart resize` and `growfs` in the guest; removal is refused for an `operator` without `vm:delete` |
+| Disk add, grow, remove | A second disk appears in the guest; a grown disk is grown with `gpart resize` and `growfs` in the guest; removal is refused for an `operator` without `vm:delete`; with `destroy_snapshots`, the snapshots taken after the disk was added are gone from every dataset of the VM and the older ones are intact |
 | Directory pool | A VM installs and boots from a file disk in a directory pool on `hearst`'s UFS root; snapshot and clone are refused with `storage_feature_unsupported` |
 | Template (pkgbase) | `container.template.create` builds a 15.1 userland from `FreeBSD-base`; the release recorded is `15.1-RELEASE-pN` |
 | Template (dist) | A `base.txz` whose SHA-256 does not match `MANIFEST` is refused; a matching one builds |
+| Template host safety | Before and after a pkgbase build, the hashes of every file under the host's `/etc`, `/var/db/pkg`, and `/usr/share/certs` are identical; `pkg` ran with the fixed environment (shown by `procstat -e` during the build); `var/cache/pkg` is empty in `@skep-base`; how scripts and triggers ran (chrooted or not) is recorded with the trace |
 | Jail lifecycle | Create, start, stop, restart, delete; `jls` shows it under `skep-<id>`; it survives `service skep_agent restart` and `kill -9` of the agent |
 | Jail networking | DHCP address on VLAN 60, internet reachable, `10.79.20.0/24` not reachable; the host epair has the `skep:` description and is gone after stop |
-| Jail baseline | Inside the jail: `sysctl security.jail.param` shows the baseline; `mount`, `kldload`, and raw sockets fail; with `allow_raw_sockets`, `ping` works |
-| Limits | With RACCT on: a jail with `memoryuse` 256 MiB cannot allocate past it; `pcpu` 50 throttles a busy loop; with RACCT off, a limit is refused with `rctl_unavailable` |
+| Jail baseline | Inside the jail: `sysctl security.jail.param` shows the baseline; `mount`, `kldload`, and raw sockets fail; with `allow_raw_sockets`, `ping` works; `mlock` without a memory limit is refused with `mlock_requires_memory_limit` |
+| Jail root parent | The jail and template parent directories are `root:wheel 0700`; as an unprivileged host user, a setuid file inside a running jail cannot be reached or executed; a start after `chmod 755` of the parent is refused with `jail_parent_insecure` |
+| Orphaned epairs | Killing the agent between `jail -r` and the epair destroy leaves an epair that the restarted agent reports (event and `orphaned_interfaces`) and the next start of the jail removes |
+| `started_once` | After a rollback of a started jail to a snapshot taken before its first start, an update that would write into the tree is still refused with `container_started` |
+| Limits | With RACCT on: a process in a jail with `memoryuse` 256 MiB cannot allocate and touch memory past it (if it can, the observed behaviour is recorded and `vmemoryuse` is evaluated, Decision 11); `pcpu` 50 throttles a busy loop; with RACCT off, a limit is refused with `rctl_unavailable` |
+| Clone identity | The clone form and page in the UI carry the note that a clone shares the source's hostname, SSH host keys, and machine ID (browser test) |
 | Symlink rule | A jail that was started cannot be updated in a way that writes into its tree; an `O_RESOLVE_BENEATH` test with a planted link fails safely (unit test natively on `hearst`) |
 | Monitoring | `/metrics` reports pool capacity and jail usage; `storage_capacity` warns when the threshold is lowered below the current use |
 | Permissions | `viewer` reads and is refused every write, each audited; `operator` is refused `storage:write` |
@@ -502,7 +609,7 @@ console; templates for VMs; metric history; NAT and bridge management
   operations, a `Jails` interface (`jail`, `jls`, `rctl`, `epair`), and
   the `openat`-based writer; the Linux fake gains the same.
 - New configuration in `agent.json`: `storage.directories`,
-  `storage.dist_dir`, `storage.template_packages`,
+  `storage.dist_dir`, `storage.template_packages` (names validated as `FreeBSD-*`),
   `storage.max_snapshots_per_resource`, `storage.capacity_warn_percent`,
   `storage.capacity_fail_percent`, and `containers.stop_timeout_seconds`.
 - No new Go or frontend dependency is planned. If `O_RESOLVE_BENEATH` or
@@ -530,8 +637,10 @@ Each step is one reviewable change that leaves the tree working.
 
 **7b, jails**
 
-6. Templates from pkgbase and dist (Decision 7). Validation: a template
-   builds on `hearst`.
+6. The `kern.racct.enable` reboot on `hearst` (hearst change 3), then
+   templates from pkgbase and dist (Decision 7), with the trace of how
+   `pkg --rootdir` runs scripts and triggers. Validation: a template
+   builds on `hearst` and the host-state hashes are unchanged.
 7. `hostops` Jails interface, the conf generator, the baseline, the
    `openat` writer; `container.create`, `start`, `stop`, `restart`,
    `delete` (Decisions 8, 9, 13).
@@ -543,68 +652,114 @@ Each step is one reviewable change that leaves the tree working.
 
 ## Changes hearst needs
 
-None of these is applied before acceptance. Each needs Andy's approval;
-they are listed in the order the build needs them.
+All approved at acceptance (review answer 12). They are applied in this
+order, and nothing else on `hearst` changes without asking.
 
-**On hearst, `/etc/rc.conf`** (persistent)
+**Before any change**
 
-1. `kld_list="if_epair"` (add to any existing list), for jail VNET
-   (Decision 10). Needed from step 8.
+1. The Proxmox snapshot `pre-m7` of `hearst`, taken before the first
+   change of this list and before any Milestone 7 build is deployed.
+   Skep will not rely on it.
 
-**On hearst, `/boot/loader.conf`** (boot configuration; the standing
-instructions say never to touch it without approval)
+**On hearst, modules, live and persistent** (from step 8, no reboot)
 
-2. `kern.racct.enable="1"`, then a reboot, for RCTL limits and jail
-   usage (Decisions 11, 15). Needed from step 9. Without it, the limit
-   checks are recorded as pending and only the `rctl_unavailable`
-   refusal is verified.
+2. `kldload if_epair` now, and `kld_list="if_epair"` in `/etc/rc.conf`
+   (added to any existing list) so it loads at the next boot. For jail
+   VNET (Decision 10).
+
+**On hearst, `/boot/loader.conf`** (boot configuration)
+
+3. `kern.racct.enable="1"`, then a reboot, at the **start of 7b** (step
+   6), so the template, jail, limit, and monitoring checks all run with
+   RACCT on. For Decisions 11 and 15.
 
 **On hearst, files and datasets**
 
-3. A directory pool for Decision 6 at `/var/tmp/skep/dirpool`
-   (`root:wheel 0700`), on the UFS root beside the existing
-   `skeptest.img`, listed in `storage.directories` of the test
-   installation. About 10 GiB of sparse files at most; 93 GiB are free.
-   Needed from step 4.
-4. Optional: an encrypted test dataset root on `skeptest`
-   (`skeptest/skep-enc`, `keyformat=passphrase`), to check the
-   `storage_locked` refusal with the key unloaded. Inside `skeptest`, so
-   within the pool Skep may touch, but a key and a second dataset root
-   are new state, so it is listed here.
-5. Outbound HTTPS from `hearst` to `pkg.FreeBSD.org` during template
-   builds (already used by `pkg` on the host; if Pi-hole blocks it, the
-   build stops and the `dist` source with a copied `base.txz` is used).
+4. A directory pool at `/var/tmp/skep/dirpool` (`root:wheel 0700`), on
+   the UFS root beside the existing `skeptest.img`, listed in
+   `storage.directories` of the test installation. About 10 GiB of sparse
+   files at most; 93 GiB are free. From step 4.
+5. An encrypted test dataset root on `skeptest` (`skeptest/skep-enc`,
+   `keyformat=passphrase`), to check the `storage_locked` refusal with
+   the key unloaded.
+6. Outbound HTTPS from `hearst` to `pkg.FreeBSD.org` during template
+   builds (already used by `pkg` on the host). If Pi-hole blocks it, the
+   build stops, Andy is told, and the `dist` source with a copied
+   `base.txz` is used; the block is not worked around.
 
-**On the Proxmox host**
+**Reboots**
 
-6. A Proxmox snapshot `pre-m7` of `hearst` before step 2 (Skep will not
-   rely on it).
+- The reboot budget for Milestone 7 is **two**. One is item 3; the other
+  is held for a check or a recovery that turns out to need it, and is
+  used only after saying why.
+- After **every** reboot of `hearst`, before any `vm.start`, confirm that
+  `sysctl hw.vmm.vmx.cap.virtual_interrupt_delivery` is `0` (the
+  nested-KVM workaround from ADR 0009's implementation notes; without it
+  the first `VMLAUNCH` stops the whole host). If it is not `0`, no VM is
+  started until it is.
 
-## Questions for review
+## Decisions
 
-1. **Two phases** (7a storage, 7b jails), each merged after its own
-   validation: agreed?
-2. **Snapshots while running**, labelled crash-consistent (Decision 2a),
-   or only while stopped?
-3. **Rollback to an older snapshot** only with an explicit
-   `destroy_newer` (Decision 2c): agreed?
-4. **Linked clones only** in this milestone, full copies with the backup
-   milestone (Decision 3)?
-5. **Encryption left to the operator** at `<pool>/skep`, with no Skep key
-   store yet (Decision 5)?
-6. **Directory pools** for hosts without ZFS, with snapshots and clones
-   reported unsupported (Decision 6), or defer UFS-only hosts again?
-7. **Jail userland sources**: pkgbase from the host's repositories and an
-   operator-placed `base.txz`, with the release pinned to the host's
-   (Decision 7). Is the root agent fetching from the host's own `pkg`
-   repositories acceptable?
-8. **The jail parameter baseline and the four opt-ins** (Decision 9):
-   anything to add or remove?
-9. **No jail console**, SSH key at create instead (Decision 12), or do
-   you want the `login(1)` console in this milestone?
-10. **Permissions** (Decision 14), in particular `storage:write` as
-    admin-only.
-11. **Monitoring as current values only** (Decision 15)?
-12. **The hearst changes** above: which are approved, especially
-    `kern.racct.enable` in `loader.conf` with a reboot, and the
-    directory pool on the UFS root?
+Accepted on 2026-11-14 with these answers to the twelve review
+questions.
+
+1. **Two phases**, 7a storage and 7b jails, each merged after its own
+   validation.
+2. **Snapshots while running are allowed**, labelled crash-consistent
+   (Decision 2a).
+3. **Rollback to an older snapshot only with `destroy_newer`**
+   (Decision 2c).
+4. **Linked clones only**; full copies with the backup milestone
+   (Decision 3).
+5. **Encryption left to the operator** at `<pool>/<root>`, no Skep key
+   store (Decision 5).
+6. **Directory pools**, with snapshots and clones reported unsupported
+   (Decision 6). Needed for the UFS-root installer later.
+7. **pkgbase and `base.txz` template sources, release pinned to the
+   host's** (Decision 7), with amendment a.
+8. **The hardened baseline with `securelevel=2`** (Decision 9), with
+   amendment b.
+9. **No jail console** (option C, Decision 12); the `login(1)` console is
+   a follow-up.
+10. **The permissions as proposed**, `storage:write` admin-only
+    (Decision 14).
+11. **Monitoring as current values only** (Decision 15).
+12. **Every hearst change approved**, with amendment c on how and when.
+
+Amendments made at acceptance, worked into the text:
+
+- **a. `pkg` runs confined and is checked** (Decision 7a, the template
+  host safety check of Decision 16). The exact way `pkg --rootdir` runs
+  shell scripts, Lua scripts, and triggers (chrooted, or with only
+  `PKG_ROOTDIR` set) is verified on `hearst` and documented. `pkg` runs
+  with a cleared environment and fixed arguments. The hashes of the
+  host's `/etc`, `/var/db/pkg`, and `/usr/share/certs` must be unchanged
+  after a build. The package cache is emptied out of the template before
+  `@skep-base`.
+- **b. Jail parameters** (Decision 9). `allow_chflags` is dropped: at
+  `securelevel=2` it cannot clear system flags. `mlock` is accepted only
+  together with an RCTL memory limit. The parent directory of every jail
+  root (and of the templates) is `root:wheel 0700`, checked before use,
+  with a check that an unprivileged host user cannot reach a setuid file
+  inside a jail.
+- **c. How the hearst changes are made** (Changes hearst needs).
+  `pre-m7` is taken before any change, not only before step 2.
+  `if_epair` is loaded live with `kldload` and persisted with `kld_list`,
+  without a reboot. The `kern.racct.enable` reboot happens at the start
+  of 7b. The reboot budget for Milestone 7 is two. After every reboot,
+  `hw.vmm.vmx.cap.virtual_interrupt_delivery` is confirmed `0` before any
+  `vm.start`.
+- **d. Clarifications requested at review:**
+  - Removing a disk with `destroy_snapshots` destroys each snapshot that
+    contains the disk whole, on every dataset, never leaving it partial
+    (Decision 4).
+  - Epairs (and taps) orphaned by an agent crash are reported at agent
+    start, as an event and the `orphaned_interfaces` health warning, and
+    removed by the owner's next start, stop, or delete (Decision 10).
+  - `started_once` stays 1 after a rollback, even to a snapshot taken
+    before the first start (Decision 13).
+  - The memory-limit check must show that `memoryuse` deny really stops
+    allocation; if it does not, that is recorded and `vmemoryuse` is
+    considered (Decision 11).
+  - The UI notes that a clone shares the source guest's hostname, SSH
+    host keys, and machine ID (Decision 3).

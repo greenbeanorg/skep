@@ -400,7 +400,8 @@ docs/                  architecture, security, and decision records
   [0006 API split, authentication, and TLS](docs/decisions/0006-api-split-authentication-tls.md),
   [0007 Retention](docs/decisions/0007-retention.md),
   [0008 The first web interface](docs/decisions/0008-web-ui.md),
-  [0009 The first working VM on bhyve](docs/decisions/0009-first-vm-bhyve.md)
+  [0009 The first working VM on bhyve](docs/decisions/0009-first-vm-bhyve.md),
+  [0010 Storage management and jails](docs/decisions/0010-storage-and-jails.md)
 
 ## Trademarks
 
