@@ -1,10 +1,12 @@
 package httpkit
 
 import (
+	"bufio"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"log/slog"
+	"net"
 	"net/http"
 	"regexp"
 	"runtime/debug"
@@ -72,6 +74,18 @@ func (s *statusRecorder) WriteHeader(code int) {
 		s.status = code
 	}
 	s.ResponseWriter.WriteHeader(code)
+}
+
+// Unwrap lets http.ResponseController reach the connection.
+func (s *statusRecorder) Unwrap() http.ResponseWriter { return s.ResponseWriter }
+
+// Hijack hands the connection to a WebSocket; the access log records 101.
+func (s *statusRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	conn, rw, err := http.NewResponseController(s.ResponseWriter).Hijack()
+	if err == nil && s.status == 0 {
+		s.status = http.StatusSwitchingProtocols
+	}
+	return conn, rw, err
 }
 
 func (s *statusRecorder) Write(b []byte) (int, error) {

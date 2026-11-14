@@ -19,6 +19,27 @@ var StatusForCode = map[string]int{
 	models.CodeQueueFull:           http.StatusServiceUnavailable,
 	models.CodeShuttingDown:        http.StatusServiceUnavailable,
 	models.CodeAgentUnavailable:    http.StatusServiceUnavailable,
+
+	// VM and storage operations (ADR 0009). A request that is well formed
+	// but names something this host does not offer is 422; one that the
+	// current state of the VM or the host refuses is 409.
+	models.CodeEngineUnsupported:   http.StatusUnprocessableEntity,
+	models.CodeFirmwareUnsupported: http.StatusUnprocessableEntity,
+	models.CodePoolNotAllowed:      http.StatusUnprocessableEntity,
+	models.CodeBridgeNotAllowed:    http.StatusUnprocessableEntity,
+	models.CodeMediaNotFound:       http.StatusUnprocessableEntity,
+	models.CodeNotImplemented:      http.StatusNotImplemented,
+	models.CodeInsufficientSpace:   http.StatusConflict,
+	models.CodeInsufficientMemory:  http.StatusConflict,
+	models.CodeBhyveUnavailable:    http.StatusConflict,
+	models.CodeStorageUnavailable:  http.StatusConflict,
+	models.CodeVMNameTaken:         http.StatusConflict,
+	models.CodeVMNotStopped:        http.StatusConflict,
+	models.CodeVMNotRunning:        http.StatusConflict,
+	models.CodeVMNotProvisioned:    http.StatusConflict,
+	models.CodeStopTimeout:         http.StatusConflict,
+	models.CodeVMStartFailed:       http.StatusConflict,
+	models.CodeConsoleBusy:         http.StatusConflict,
 }
 
 // Fail maps a service error to an error response. Internal error text is

@@ -60,12 +60,7 @@ export const NAV: NavGroup[] = [
   {
     label: "Workloads",
     items: [
-      {
-        path: "/vms",
-        label: "Virtual machines",
-        icon: VmIcon,
-        planned: { summary: "bhyve virtual machines: lifecycle, disks, console.", milestone: "Milestone 6" },
-      },
+      { path: "/vms", label: "Virtual machines", icon: VmIcon, permission: PERMISSIONS.vmRead },
       {
         path: "/containers",
         label: "Containers",

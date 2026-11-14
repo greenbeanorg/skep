@@ -47,6 +47,22 @@ export type PasswordChange = Schemas["PasswordChange"];
 export type SessionResponse = Schemas["SessionResponse"];
 export type SessionInfo = SessionResponse["session"];
 
+export type VM = Schemas["VM"];
+export type VMState = Schemas["VMState"];
+export type VMDisk = Schemas["VMDisk"];
+export type VMNIC = Schemas["VMNIC"];
+export type VMList = Schemas["VMList"];
+export type VMCreate = Schemas["VMCreate"];
+export type VMUpdate = Schemas["VMUpdate"];
+export type VMCreated = Schemas["VMCreated"];
+export type VMAction = Schemas["VMAction"];
+export type VMActionName = VMAction["action"];
+export type StoragePool = Schemas["StoragePool"];
+export type StoragePoolList = Schemas["StoragePoolList"];
+export type Media = Schemas["Media"];
+export type MediaList = Schemas["MediaList"];
+export type EngineCapabilities = Schemas["EngineCapabilities"];
+
 export type ErrorResponse = Schemas["ErrorResponse"];
 export type ErrorCode = ErrorResponse["error"]["code"];
 
@@ -70,6 +86,12 @@ export const PERMISSIONS = {
   userManage: "user:manage",
   roleRead: "role:read",
   auditRead: "audit:read",
+  vmRead: "vm:read",
+  vmWrite: "vm:write",
+  vmDelete: "vm:delete",
+  vmPower: "vm:power",
+  vmConsole: "vm:console",
+  storageRead: "storage:read",
   all: "*",
 } as const;
 

@@ -168,7 +168,7 @@ func TestPermissionMatrix(t *testing.T) {
 func TestDenyByDefault(t *testing.T) {
 	e := shared(t)
 	h := &handler{auth: e.authn, users: e.users, audit: e.access, log: quietLog()}
-	for _, requires := range []string{"", "vm:delete", "*", "Public", "admin"} {
+	for _, requires := range []string{"", "vm:migrate", "*", "Public", "admin"} {
 		called := false
 		rt := route{method: http.MethodGet, path: "/future", requires: requires,
 			handler: func(http.ResponseWriter, *http.Request) { called = true }}

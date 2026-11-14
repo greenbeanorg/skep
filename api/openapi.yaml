@@ -85,7 +85,11 @@ tags:
   - name: tasks
     description: |
       Asynchronous operations performed by the agent. Tasks can be read
-      and cancelled. They cannot be submitted over the API yet.
+      and cancelled. They are submitted by the VM endpoints, never directly.
+  - name: vms
+    description: Virtual machines (bhyve)
+  - name: storage
+    description: Storage pools and install media VMs may use
 paths:
   /health:
     get:
@@ -694,8 +698,373 @@ paths:
           $ref: "#/components/responses/Unauthenticated"
         "403":
           $ref: "#/components/responses/Forbidden"
+  /vms:
+    get:
+      tags: [vms]
+      operationId: listVMs
+      summary: List virtual machines
+      x-skep-permission: vm:read
+      description: |
+        Requires `vm:read`. Returns VMs ordered by name, cursor paginated
+        like tasks. Each VM carries what was asked for (`desired_state`,
+        the configuration) and what the agent last observed (`observed`),
+        never mixed in one field.
+      parameters:
+        - $ref: "#/components/parameters/Background"
+        - name: state
+          in: query
+          description: Only return VMs in this observed state.
+          schema:
+            $ref: "#/components/schemas/VMState"
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+        - name: cursor
+          in: query
+          schema: { type: string }
+      responses:
+        "200":
+          description: One page of VMs.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VMList"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+    post:
+      tags: [vms]
+      operationId: createVM
+      summary: Create a virtual machine
+      x-skep-permission: vm:write
+      description: |
+        Requires `vm:write`. Validates the request against the engine and
+        the host confinement, reserves the VM's name, and submits a
+        `vm.create` task that creates its datasets and zvols. The VM
+        exists, with `provisioned: false`, as soon as this returns; it can
+        be started once the task has succeeded.
+
+        Sizes are a number of bytes or a string with a binary suffix
+        (`"512M"`, `"8G"`). Disks and network interfaces are fixed at
+        creation. A disk reserves its full size unless `thin` is true.
+
+        Refusals that need the host to decide (`pool_not_allowed`,
+        `bridge_not_allowed`, `engine_unsupported`, `firmware_unsupported`,
+        `insufficient_space`, `media_not_found`) create no task and are
+        audited. An `Idempotency-Key` header makes a retry return the
+        first answer.
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VMCreate"
+      responses:
+        "202":
+          description: The VM, not yet provisioned, and the task that provisions it.
+          headers:
+            Location:
+              schema: { type: string }
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VMCreated"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/VMConflict"
+        "422":
+          $ref: "#/components/responses/VMUnprocessable"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /vms/{id}:
+    parameters:
+      - $ref: "#/components/parameters/VMID"
+    get:
+      tags: [vms]
+      operationId: getVM
+      summary: One virtual machine
+      x-skep-permission: vm:read
+      description: Requires `vm:read`.
+      parameters:
+        - $ref: "#/components/parameters/Background"
+      responses:
+        "200":
+          description: The VM with its disks, install media, and network interfaces.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VM"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+    put:
+      tags: [vms]
+      operationId: updateVM
+      summary: Change a stopped virtual machine
+      x-skep-permission: vm:write
+      description: |
+        Requires `vm:write`. Submits a `vm.update` task. Fields left out
+        are unchanged. Only a stopped, provisioned VM can be changed
+        (`vm_not_stopped`, `vm_not_provisioned`). `media` replaces the
+        attached install media; `[]` detaches all of it.
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VMUpdate"
+      responses:
+        "202":
+          description: The task.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Task"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/VMConflict"
+        "422":
+          $ref: "#/components/responses/VMUnprocessable"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+    delete:
+      tags: [vms]
+      operationId: deleteVM
+      summary: Delete a stopped virtual machine and its disks
+      x-skep-permission: vm:delete
+      description: |
+        Requires `vm:delete`. Submits a `vm.delete` task that destroys the
+        VM's datasets recursively, its persistent state, and its rows. The
+        VM must be stopped (`vm_not_stopped`). Install media files are
+        never touched. The finished audit entry lists every dataset
+        destroyed and its size.
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "202":
+          description: The task.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Task"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/VMConflict"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /vms/{id}/actions:
+    parameters:
+      - $ref: "#/components/parameters/VMID"
+    post:
+      tags: [vms]
+      operationId: vmAction
+      summary: Start, stop, force-stop, or restart a virtual machine
+      x-skep-permission: vm:power
+      description: |
+        Requires `vm:power`. Submits the task the action becomes:
+        `vm.start`, `vm.stop`, `vm.force_stop`, or `vm.restart`.
+
+        - `start` sets `desired_state` to `running`, starts the VM's runner,
+          and succeeds once the guest runs. Refused when bhyve is not
+          available (`bhyve_unavailable`), when the running VMs and this
+          one would exceed physical memory less the configured reserve
+          (`insufficient_memory`), or when the bridge holds a management
+          interface (`bridge_not_allowed`).
+        - `stop` sets `desired_state` to `stopped` and presses the guest's
+          ACPI power button. It waits `timeout` seconds (default 90, at
+          most 300); if the guest has not shut down by then the task fails
+          with `stop_timeout` and the VM keeps running. A stop never
+          escalates to a force stop.
+        - `force_stop` powers the guest off at once and destroys whatever
+          is left of the VM on the host.
+        - `restart` is a stop followed by a start, in one task.
+
+        Nothing restarts a VM by itself: a guest that powers off leaves
+        `desired_state` at `running` and `drift` true.
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VMAction"
+      responses:
+        "202":
+          description: The task.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Task"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/VMConflict"
+        "422":
+          $ref: "#/components/responses/VMUnprocessable"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /vms/{id}/console/serial:
+    parameters:
+      - $ref: "#/components/parameters/VMID"
+    get:
+      tags: [vms]
+      operationId: vmSerialConsole
+      summary: The serial console of a running VM (WebSocket)
+      x-skep-permission: vm:console
+      description: |
+        Requires `vm:console`: a console is a login on the guest. Upgrades
+        to a WebSocket (`Connection: Upgrade`, `Upgrade: websocket`);
+        OpenAPI cannot describe the stream itself. A browser authenticates
+        with its session cookie and must send a matching `Origin`; other
+        clients send `Authorization: Bearer`.
+
+        Messages are binary in both directions: the guest's output, and
+        keystrokes for the guest. No terminal emulation happens on the
+        server. On attach the client first receives up to 64 KiB of the
+        output the agent kept since the VM started.
+
+        At most 4 clients attach to one console; a fifth is refused with
+        `409 console_busy`, and a VM that is not running with
+        `409 vm_not_running`, both before the upgrade.
+
+        A console does not outlive its session: it is re-checked once a
+        minute, and when the session has ended, expired, or been revoked
+        the WebSocket closes with code 4001. Keystrokes count as use of
+        the session (at most once a minute); output from the guest does
+        not, so an unattended console idles out.
+
+        Attachment and detachment are recorded in the access audit log and
+        in the agent's operation audit log (`vm.console.attach`,
+        `vm.console.detach`), linked by the request ID.
+      responses:
+        "101":
+          description: Switching to the WebSocket protocol.
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/VMConflict"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /storage/pools:
+    get:
+      tags: [storage]
+      operationId: listStoragePools
+      summary: The pools VMs may use
+      x-skep-permission: storage:read
+      description: |
+        Requires `storage:read`. The pools in the agent's allow-list
+        (`storage.pools` in `agent.json`), as observed now. A pool that
+        cannot be read is listed with health `UNAVAILABLE` and an `error`.
+      parameters:
+        - $ref: "#/components/parameters/Background"
+      responses:
+        "200":
+          description: The allow-listed pools.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StoragePoolList"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /storage/media:
+    get:
+      tags: [storage]
+      operationId: listMedia
+      summary: Install media
+      x-skep-permission: storage:read
+      description: |
+        Requires `storage:read`. The ISO files an administrator placed in
+        the agent's media directory. Names only; the path is not exposed.
+        There is no upload.
+      parameters:
+        - $ref: "#/components/parameters/Background"
+      responses:
+        "200":
+          description: The media, ordered by name.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MediaList"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "503":
+          $ref: "#/components/responses/Unavailable"
 components:
   parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      description: |
+        Makes a retry safe: a second request with the same key and the
+        same body returns the task of the first; with a different body it
+        is refused with `idempotency_key_conflict`.
+      schema:
+        type: string
+        pattern: "^[A-Za-z0-9._:-]{1,128}$"
+    VMID:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: "^[A-Za-z0-9._-]{1,64}$"
     Background:
       name: X-Skep-Background
       in: header
@@ -724,6 +1093,33 @@ components:
       schema:
         type: string
   responses:
+    VMConflict:
+      description: |
+        The current state of the VM or the host refuses the request:
+        `vm_not_stopped`, `vm_not_provisioned`, `vm_name_taken`,
+        `insufficient_space`, `insufficient_memory`, `bhyve_unavailable`,
+        `storage_unavailable`, `vm_not_running`, `vm_start_failed`,
+        `stop_timeout`, `console_busy`, `resource_busy`,
+        `idempotency_key_conflict`.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    VMUnprocessable:
+      description: |
+        The request names something this host does not offer:
+        `engine_unsupported`, `firmware_unsupported`, `pool_not_allowed`,
+        `bridge_not_allowed`, `media_not_found`.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    NotImplemented:
+      description: The request asks for a feature that does not exist yet (`not_implemented`), such as the VNC console.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
     InvalidRequest:
       description: The request is malformed (`invalid_request`).
       content:
@@ -806,6 +1202,268 @@ components:
           schema:
             $ref: "#/components/schemas/ErrorResponse"
   schemas:
+    ByteSize:
+      description: A number of bytes, or a string with a binary suffix such as "512M", "8G", "1T". Always returned as a number.
+      oneOf:
+        - type: integer
+          format: int64
+          minimum: 0
+        - type: string
+          pattern: "^[0-9]+[MmGgTt]?$"
+    VMState:
+      type: string
+      enum: [unknown, stopped, starting, running, stopping, failed]
+    VMConfig:
+      type: object
+      description: The part of a VM's configuration the database does not constrain.
+      properties:
+        cpu:
+          type: object
+          description: CPU topology shown to the guest; sockets x cores x threads must equal cpu_count.
+          required: [sockets, cores, threads]
+          properties:
+            sockets: { type: integer, minimum: 1 }
+            cores: { type: integer, minimum: 1 }
+            threads: { type: integer, minimum: 1 }
+        console:
+          type: object
+          properties:
+            vnc:
+              type: object
+              description: Not implemented; enabling it is refused with `not_implemented`.
+              properties:
+                enabled: { type: boolean }
+    VMDisk:
+      type: object
+      required: [id, slot, bus, read_only]
+      properties:
+        id: { type: string }
+        slot: { type: integer }
+        bus:
+          type: string
+          enum: [virtio-blk, nvme, ahci-hd, ahci-cd]
+        read_only: { type: boolean }
+        size_bytes: { type: integer, format: int64 }
+        pool: { type: string }
+        thin: { type: boolean }
+        volblocksize: { type: integer }
+        dataset:
+          type: string
+          description: The zvol, `<pool>/skep/vm/<vm-id>/disk<slot>`.
+        media:
+          type: string
+          description: The ISO file name, for install media (`ahci-cd`).
+    VMNIC:
+      type: object
+      required: [id, slot, model, mac_address, bridge]
+      properties:
+        id: { type: string }
+        slot: { type: integer }
+        model:
+          type: string
+          enum: [virtio-net, e1000]
+        mac_address: { type: string }
+        bridge: { type: string }
+        tap:
+          type: string
+          description: The host's tap interface, while the VM runs.
+    VM:
+      type: object
+      required: [id, node_id, name, description, engine, cpu_count, memory_bytes, firmware, config,
+        provisioned, desired_state, observed, drift, disks, nics, created_at, updated_at]
+      properties:
+        id: { type: string }
+        node_id: { type: string }
+        name: { type: string }
+        description: { type: string }
+        engine: { type: string, enum: [bhyve, qemu] }
+        cpu_count: { type: integer }
+        memory_bytes: { type: integer, format: int64 }
+        firmware: { type: string, enum: [uefi, bios] }
+        config:
+          $ref: "#/components/schemas/VMConfig"
+        provisioned:
+          type: boolean
+          description: True once `vm.create` has finished. A VM that is not provisioned can only be deleted.
+        desired_state:
+          type: string
+          enum: [stopped, running]
+          description: Set by start and stop. Nothing reconciles it in this release.
+        observed:
+          type: object
+          required: [state]
+          properties:
+            state:
+              $ref: "#/components/schemas/VMState"
+            detail: { type: string }
+            pid: { type: integer }
+            at: { type: string, format: date-time }
+        drift:
+          type: boolean
+          description: True when the desired and observed states disagree. Information only; nothing acts on it.
+        disks:
+          type: array
+          items:
+            $ref: "#/components/schemas/VMDisk"
+        nics:
+          type: array
+          items:
+            $ref: "#/components/schemas/VMNIC"
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    VMList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/VM"
+        next_cursor: { type: string }
+    VMCreate:
+      type: object
+      required: [name, cpu_count, memory]
+      properties:
+        name:
+          type: string
+          pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$"
+        description: { type: string, maxLength: 1024 }
+        engine:
+          type: string
+          enum: [bhyve, qemu]
+          default: bhyve
+          description: Only bhyve is implemented; qemu is refused with `engine_unsupported`.
+        firmware:
+          type: string
+          enum: [uefi, bios]
+          default: uefi
+          description: bhyve boots with UEFI only; bios is refused with `firmware_unsupported`.
+        cpu_count: { type: integer, minimum: 1 }
+        memory:
+          $ref: "#/components/schemas/ByteSize"
+        config:
+          $ref: "#/components/schemas/VMConfig"
+        disks:
+          type: array
+          maxItems: 8
+          items:
+            type: object
+            description: A zvol-backed disk (pool and size) or install media (media, bus ahci-cd).
+            properties:
+              bus:
+                type: string
+                enum: [virtio-blk, nvme, ahci-hd, ahci-cd]
+              size:
+                $ref: "#/components/schemas/ByteSize"
+              pool: { type: string }
+              thin: { type: boolean }
+              media: { type: string }
+              volblocksize:
+                $ref: "#/components/schemas/ByteSize"
+        nics:
+          type: array
+          maxItems: 4
+          items:
+            type: object
+            required: [bridge]
+            properties:
+              model:
+                type: string
+                enum: [virtio-net, e1000]
+              mac_address: { type: string }
+              bridge: { type: string }
+    VMUpdate:
+      type: object
+      properties:
+        description: { type: string, maxLength: 1024 }
+        cpu_count: { type: integer, minimum: 1 }
+        memory:
+          $ref: "#/components/schemas/ByteSize"
+        config:
+          $ref: "#/components/schemas/VMConfig"
+        media:
+          type: array
+          description: Replaces the attached install media; empty detaches all.
+          items: { type: string }
+    VMAction:
+      type: object
+      required: [action]
+      properties:
+        action:
+          type: string
+          enum: [start, stop, force_stop, restart]
+        timeout:
+          type: integer
+          minimum: 1
+          maximum: 300
+          description: Seconds a stop or restart waits for the guest to shut down. Default 90.
+    VMCreated:
+      type: object
+      required: [vm, task]
+      properties:
+        vm:
+          $ref: "#/components/schemas/VM"
+        task:
+          $ref: "#/components/schemas/Task"
+    StoragePool:
+      type: object
+      required: [name, type, health, size_bytes, allocated_bytes, free_bytes, available_bytes]
+      properties:
+        name: { type: string }
+        type: { type: string }
+        health: { type: string }
+        error: { type: string }
+        size_bytes: { type: integer, format: int64 }
+        allocated_bytes: { type: integer, format: int64 }
+        free_bytes: { type: integer, format: int64 }
+        available_bytes: { type: integer, format: int64 }
+        observed_at: { type: string, format: date-time }
+    StoragePoolList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/StoragePool"
+    Media:
+      type: object
+      required: [name, size_bytes, modified_at]
+      properties:
+        name: { type: string }
+        size_bytes: { type: integer, format: int64 }
+        modified_at: { type: string, format: date-time }
+    MediaList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Media"
+    EngineCapabilities:
+      type: object
+      description: What bhyve can do on this host now; `reason` says what is missing when it cannot run a VM.
+      required: [available, reason, vmm_loaded, firmware_found, nmdm_available, max_vcpus_per_vm,
+        host_memory_bytes, guest_memory_bytes, pools, bridges]
+      properties:
+        available: { type: boolean }
+        reason: { type: string }
+        simulated:
+          type: boolean
+          description: True on a development machine, where VMs are simulated. Never on FreeBSD.
+        vmm_loaded: { type: boolean }
+        firmware_found: { type: boolean }
+        nmdm_available: { type: boolean }
+        max_vcpus_per_vm: { type: integer }
+        host_memory_bytes: { type: integer, format: int64 }
+        guest_memory_bytes: { type: integer, format: int64 }
+        pools:
+          type: array
+          items: { type: string }
+        bridges:
+          type: array
+          items: { type: string }
     ErrorResponse:
       type: object
       required: [error]
@@ -1244,6 +1902,8 @@ components:
               $ref: "#/components/schemas/Capability"
             zfs:
               $ref: "#/components/schemas/Capability"
+        bhyve:
+          $ref: "#/components/schemas/EngineCapabilities"
         started_at:
           type: string
           format: date-time

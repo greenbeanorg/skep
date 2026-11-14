@@ -28,5 +28,22 @@
     "tasks_days": 90,
     "audit_live_days": 0,
     "audit_archive": true
+  },
+  "hypervisor": {
+    "bhyve": {
+      "firmware_dir": "/usr/local/share/edk2-bhyve",
+      "host_memory_reserve_bytes": 1073741824,
+      "max_vcpus_per_vm": 0,
+      "watch_interval": "2s"
+    }
+  },
+  "storage": {
+    "pools": [],
+    "dataset_root": "skep",
+    "media_dir": "/var/db/skep/media"
+  },
+  "network": {
+    "bridges": [],
+    "management_interfaces": []
   }
 }

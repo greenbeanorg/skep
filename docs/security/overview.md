@@ -337,9 +337,11 @@ implemented:
   with 400 before any handler runs, reads included. The agent records the
   actor and the verified peer UID. It cannot verify the actor and makes no
   authorization decision from it; that is the API's job.
-- The internal API carries the read operations and one operation that
-  changes something: cancelling a task. There is no operation that takes
-  a command, a path, or a shell string.
+- The internal API carries the read operations, task cancellation, and
+  the VM operations (create, update, delete, the power actions, the
+  console). Every one is a typed request that becomes a task, or, for the
+  console, a byte stream to one VM. There is no operation that takes a
+  command, a path, or a shell string.
 - For a cancellation the agent writes its own audit entry with the actor
   the API named, the peer UID it read from the kernel, the client's
   address, and the request ID. That entry is in `agent.db`, which
@@ -353,6 +355,68 @@ implemented:
 The actor of a request is the authenticated user. The health check that
 `skep-api` makes without a user carries the actor `skep-api`. The socket
 and the two rc.d services are pending FreeBSD validation.
+
+## Host operations and confinement (Milestone 6)
+
+The agent changes the host for the first time in Milestone 6
+([ADR 0009](../decisions/0009-first-vm-bhyve.md)). How that is bounded:
+
+- **One package holds every privileged call** (`internal/hostops`): ZFS,
+  taps and bridges, `bhyvectl`, starting bhyve and the per-VM runner, and
+  the files under Skep's state directories. Every command is a fixed
+  absolute path (`/sbin/zfs`, `/sbin/ifconfig`, `/usr/sbin/bhyve`, ...) with
+  an explicit argument list, a minimal fixed environment, and no shell.
+- **Nothing from a request is a path or a name on the host.** Dataset
+  names, zvol devices, tap descriptions, console devices, and state files
+  are derived from Skep's UUIDs and the configuration. ISO files are named
+  by a pattern that cannot contain a separator and are resolved against
+  the directory listing first. A rendered bhyve configuration rejects any
+  value with a line break.
+- **The confinement is root-owned configuration** in `agent.json`:
+  `storage.pools`, `network.bridges`, `network.management_interfaces`,
+  the firmware and media directories. The API cannot change it. Empty
+  allow-lists, the default, mean no VM storage and no VM network. A
+  bridge that has a management interface as a member is refused at
+  create, at start, and again by the runner before a tap joins it. Skep
+  never creates, destroys, or re-addresses a bridge.
+- **Skep only destroys what it can prove is its own**: a dataset carries
+  `skep:vm_id`, and `zfs destroy -r` (never `-R`) runs on the VM's own
+  dataset only; a tap is destroyed only if its description names the VM.
+- **Runners are identified before they are signalled.** A VM's runner
+  is a root process in its own session. Before any signal the agent reads
+  the process's argument list from the kernel (`kern.proc.args`) and
+  compares it with the exact runner command for that VM, so a recycled
+  PID is never signalled.
+- **bhyve's configuration is passed in a root-only file** (`-k`), never
+  on the command line.
+- **Kernel modules are the operator's.** Skep loads neither `vmm` nor
+  `nmdm`; a start is refused with the reason when one is missing.
+- **Every write is a task with two audit entries** in the agent's log, and
+  refusals decided by the host (a pool or bridge not allowed, not enough
+  memory or space) are audited as denied without a task.
+
+### The serial console
+
+- A console is a login on the guest and has its own permission,
+  `vm:console`; `viewer` does not have it.
+- The browser reaches it as a WebSocket on the same origin. The handshake
+  goes through the same checks as any request: the session (cookie or
+  bearer, never both), the permission, and the `Origin` check of ADR 0006.
+- `skep-api` relays bytes; it never opens a device. The agent is the only
+  reader of the console device and writes `vm.console.attach` and
+  `vm.console.detach` (duration and byte counts) with the actor and the
+  verified peer; `skep-api` writes the same two actions to the access log
+  with the same request ID.
+- A console does not outlive its session: the session is re-checked every
+  minute and the WebSocket closed (code 4001) when it has ended. Typing
+  refreshes the session at most once a minute; guest output never does.
+- At most four clients per console. A client that cannot keep up is
+  disconnected rather than slowing the guest.
+- The web interface's CSP is unchanged (`style-src 'self'`): the terminal
+  draws with xterm.js's WebGL renderer only, because its default renderer
+  injects `<style>` elements the CSP would block. Without WebGL 2, or when
+  the context is lost, the console is shown as unavailable; it never falls
+  back to the other renderer.
 
 ## Audit logs and retention
 
@@ -406,9 +470,10 @@ its own log and archive, detectably; the agent's are out of its reach.
   the meaning of existing data.
 - **Long-lived API tokens** for automation are deferred to their own ADR;
   until then automation logs in for a bearer session.
-- **Host confinement configuration** for the agent (which pools,
-  interfaces, and devices Skep may touch): designed with the first
-  privileged operation.
+- **VNC** consoles are deferred until the agent can authenticate to
+  bhyve's framebuffer on the client's behalf (ADR 0009 decision 8a).
+- **Install media integrity** is the operator's: Skep lists what is in
+  the media directory and does not verify checksums.
 - **Root helper.** Whether to split a minimal root helper out of the agent
   is revisited before 1.0.
 - **Signed per-request tokens** replace the API-asserted identity before

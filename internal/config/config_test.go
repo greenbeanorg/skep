@@ -396,3 +396,65 @@ func TestAPIAuthDefaultsAndProxies(t *testing.T) {
 		t.Errorf("prefixes = %v, %v", prefixes, err)
 	}
 }
+
+func TestConfinementDefaultsAndValidation(t *testing.T) {
+	cfg, err := Load(LoadOptions{LookupEnv: noEnv, DefaultPath: noDefault})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A fresh install can touch nothing: no pool, no bridge.
+	if len(cfg.Storage.Pools) != 0 || len(cfg.Network.Bridges) != 0 {
+		t.Errorf("default confinement allows something: %+v %+v", cfg.Storage, cfg.Network)
+	}
+	if cfg.Storage.DatasetRoot != "skep" || cfg.Storage.MediaDir != "/var/db/skep/media" ||
+		cfg.Hypervisor.Bhyve.FirmwareDir != DefaultFirmwareDir ||
+		*cfg.Hypervisor.Bhyve.HostMemoryReserveBytes != 1<<30 ||
+		cfg.Hypervisor.Bhyve.WatchInterval.Std() != 2*time.Second {
+		t.Errorf("defaults = %+v %+v", cfg.Storage, cfg.Hypervisor.Bhyve)
+	}
+	if cfg.VMRunDir() != "/var/run/skep/vm" || cfg.VMStateDir() != "/var/db/skep/agent/vm" {
+		t.Errorf("VM directories = %q, %q", cfg.VMRunDir(), cfg.VMStateDir())
+	}
+
+	path := writeFile(t, `{
+		"hypervisor": {"bhyve": {"host_memory_reserve_bytes": 0, "max_vcpus_per_vm": 2}},
+		"storage": {"pools": ["skeptest"], "dataset_root": "skep/lab", "media_dir": "/srv/iso"},
+		"network": {"bridges": ["bridge0"], "management_interfaces": ["vtnet0"]}
+	}`)
+	cfg, err = Load(LoadOptions{Path: path, LookupEnv: noEnv})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(cfg.Storage.Pools, []string{"skeptest"}) || cfg.Storage.DatasetRoot != "skep/lab" ||
+		cfg.Storage.MediaDir != "/srv/iso" || !reflect.DeepEqual(cfg.Network.Bridges, []string{"bridge0"}) ||
+		*cfg.Hypervisor.Bhyve.HostMemoryReserveBytes != 0 || cfg.Hypervisor.Bhyve.MaxVCPUsPerVM != 2 {
+		t.Errorf("loaded = %+v %+v %+v", cfg.Storage, cfg.Network, cfg.Hypervisor.Bhyve)
+	}
+
+	for name, body := range map[string]string{
+		"pool with a slash":       `{"storage": {"pools": ["tank/data"]}}`,
+		"pool with a space":       `{"storage": {"pools": ["tank; reboot"]}}`,
+		"pool twice":              `{"storage": {"pools": ["tank", "tank"]}}`,
+		"root with dots":          `{"storage": {"dataset_root": "../zroot"}}`,
+		"absolute root":           `{"storage": {"dataset_root": "/skep"}}`,
+		"root with a snapshot":    `{"storage": {"dataset_root": "skep@now"}}`,
+		"relative media dir":      `{"storage": {"media_dir": "media"}}`,
+		"relative firmware dir":   `{"hypervisor": {"bhyve": {"firmware_dir": "firmware"}}}`,
+		"negative reserve":        `{"hypervisor": {"bhyve": {"host_memory_reserve_bytes": -1}}}`,
+		"bridge that is not one":  `{"network": {"bridges": ["bridge0; ifconfig"]}}`,
+		"management as a bridge":  `{"network": {"bridges": ["vtnet0"], "management_interfaces": ["vtnet0"]}}`,
+		"bad management":          `{"network": {"management_interfaces": ["VTNET 0"]}}`,
+		"watch interval too fast": `{"hypervisor": {"bhyve": {"watch_interval": "1ms"}}}`,
+	} {
+		if _, err := Load(LoadOptions{Path: writeFile(t, body), LookupEnv: noEnv}); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+	// The confinement cannot come from the environment.
+	cfg, err = Load(LoadOptions{DefaultPath: noDefault, LookupEnv: envMap(map[string]string{
+		"SKEP_STORAGE_POOLS": "zroot", "SKEP_POOLS": "zroot", "SKEP_NETWORK_BRIDGES": "bridge0",
+	})})
+	if err != nil || len(cfg.Storage.Pools) != 0 || len(cfg.Network.Bridges) != 0 {
+		t.Errorf("the environment changed the confinement: %+v %+v, %v", cfg.Storage, cfg.Network, err)
+	}
+}

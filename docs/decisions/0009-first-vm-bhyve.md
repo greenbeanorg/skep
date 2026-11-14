@@ -1,6 +1,7 @@
 # ADR 0009: The first working VM on bhyve (Milestone 6)
 
-- Status: **Accepted** (not yet implemented). Every recommendation was
+- Status: **Accepted**; implemented (steps 1 to 5 of the suggested order),
+  FreeBSD validation in progress, see [Implementation notes](#implementation-notes). Every recommendation was
   accepted, with `hearst`'s guest NIC on the lab's VLAN 60 instead of the
   management VLAN; the review answers and two amendments are under
   [Decisions](#decisions) and are worked into the text. The changes
@@ -842,3 +843,80 @@ Two amendments were made at acceptance and are worked into the text.
   11). The proposal counted no console traffic as activity, which would
   have logged out a user in the middle of a long session at the guest's
   console.
+
+## Implementation notes
+
+Recorded during the build (2026-11-14). The decisions above stand; these
+are the places where the implementation had to choose something the text
+left open, or departs from it.
+
+- **A third frontend dependency, `@xterm/addon-webgl`.** Decision 8b names
+  `@xterm/xterm` and its fit addon. xterm.js's default DOM renderer
+  injects `<style>` elements, which the web interface's CSP
+  (`style-src 'self'`, ADR 0008) blocks; the browser test caught six
+  violations. Loosening the CSP was not an option. The WebGL renderer
+  (same project, same licence) draws on a canvas and, loaded before the
+  terminal opens, xterm never creates the DOM renderer. The DOM renderer
+  is never used: without WebGL 2 (checked before the terminal is built),
+  if the WebGL canvas is not in place after opening, or when the context
+  is lost, the console shows "console unavailable" with Reconnect, and the
+  browser test checks the context-loss path for CSP violations.
+  `screenReaderMode` keeps the rows as text for assistive technology.
+- **Durable runtime writes.** After KVM stopped `hearst`, the writes of the
+  seconds before (0-byte binaries among them) were lost; every file the agent and
+  the runner write under the run and state directories (`spec.json`,
+  `state.json`, `runner.pid`, `bhyve.conf`, the per-VM `uefi-vars.fd`) is
+  written to a temporary file, fsynced, renamed, and the directory
+  fsynced; a new VM directory's entry is fsynced too. Lab deploys go
+  through `scripts/deploy-test.sh`, which verifies size and SHA-256 and
+  ends with `sync`.
+- **Runner identity.** The agent recognises a runner by its PID file and
+  by the process's own argument list from `kern.proc.args`, compared with
+  the exact command for that VM, before it sends any signal.
+- **The runner reads a spec, not the configuration.** The agent writes
+  `spec.json` (the VM, its derived paths, and the confinement) into the
+  root-only runtime directory; the runner never reads `agent.json` or the
+  database, so the agent's flags and data directory need not be repeated
+  on the runner's command line.
+- **A reboot loop ends the run.** More than 10 guest reboots in a minute
+  end it as `failed`. The ADR's runner restarted bhyve after every status
+  0 without a bound.
+- **A stop request that times out stays pending.** After `stop_timeout` the
+  VM keeps running, as decided; the runner still remembers the request, so
+  a guest that obeys the power button late is then stopped, not rebooted.
+  `desired_state` is already `stopped` at that point.
+- **Force stop removes a dead runner's record.** After it has destroyed a
+  runner-less instance and its taps, the leftover run state is removed, so
+  the VM shows `stopped` instead of the failure that no longer exists.
+- **The console is opened when the watcher first sees the VM running**,
+  not at the first attach, so the scrollback holds the boot from the
+  start. A client that falls more than 512 chunks behind is disconnected.
+- **HTTP status codes** of the new error codes: a request naming
+  something the host does not offer is 422 (`pool_not_allowed`,
+  `bridge_not_allowed`, `engine_unsupported`, `firmware_unsupported`,
+  `media_not_found`); one the state refuses is 409 (`vm_not_stopped`,
+  `vm_not_running`, `insufficient_*`, `bhyve_unavailable`, `stop_timeout`,
+  `console_busy`, and the new `vm_start_failed`); `not_implemented` is 501.
+- **Nested bhyve under KVM.** The first start on `hearst` stopped the whole
+  VM: KVM on `swearengen` failed to emulate bhyve's first `VMLAUNCH`
+  (QEMU: `KVM internal error. Suberror: 1`, `0f 01 c2`), a known
+  nested-virtualisation bug, not a Skep defect. The workaround is
+  `hw.vmm.vmx.cap.virtual_interrupt_delivery=0` on the nested host
+  (administration guide). **Follow-up:** a capability or health check
+  that recognises a FreeBSD host running under KVM with APIC virtual
+  interrupt delivery enabled and says so before a start, rather than
+  letting the first `VMLAUNCH` take the host down. Not in this milestone.
+- **Three assumptions of decision 11 did not hold, and the checks were
+  adjusted, not the product.** The edk2 bhyve firmware writes nothing to
+  COM1, so the browser shows the loader, kernel, and installer, but no
+  firmware text. Under UEFI the loader menu does not ignore the ACPI
+  power button (the firmware powers off), so the `stop_timeout` check used
+  an installed guest with `hw.acpi.power_button_state=NONE`. And the lab
+  network does not isolate VLAN 60 from the management VLAN: the guest
+  reaches `10.79.20.0/24` through the lab firewall, so the isolation part
+  of the networking check failed; nothing on `hearst` forwards or bridges
+  it.
+- **Validation.** After the nested-KVM workaround every check of decision
+  11 passed on `hearst` except guest network isolation (above); see
+  [tests/integration/vm](../../tests/integration/vm/README.md).
+

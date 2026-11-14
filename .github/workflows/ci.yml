@@ -70,6 +70,18 @@ jobs:
             echo "the shipped agent contains the test-only task type"
             exit 1
           fi
+          # Nor the in-memory fake of the privileged host operations
+          # (ADR 0009 decision 1b): a FreeBSD agent has only the real ones.
+          for b in bin/freebsd-amd64/skep-agent bin/freebsd-amd64-test/skep-agent-testbuild; do
+            if grep -a -q 'skep-hostfake' "$b"; then
+              echo "$b contains the simulated host operations"
+              exit 1
+            fi
+          done
+          if ! grep -a -q 'skep-hostfake' bin/skep-agent; then
+            echo "the development agent does not contain the simulated host operations"
+            exit 1
+          fi
 
       - name: Static analysis
         run: |

@@ -19,6 +19,8 @@ import { SettingsPage } from "@/pages/SettingsPage";
 import { TaskDetailPage } from "@/pages/TaskDetailPage";
 import { TasksPage } from "@/pages/TasksPage";
 import { UsersPage } from "@/pages/UsersPage";
+import { VMDetailPage } from "@/pages/vms/VMDetailPage";
+import { VMsPage } from "@/pages/vms/VMsPage";
 
 /** Renders a page only when the role allows it; the server still decides. */
 function Guarded({ permission, children }: { permission: string; children: React.ReactNode }) {
@@ -58,6 +60,22 @@ function Routed() {
             element={
               <Guarded permission={PERMISSIONS.nodeRead}>
                 <NodesPage />
+              </Guarded>
+            }
+          />
+          <Route
+            path="vms"
+            element={
+              <Guarded permission={PERMISSIONS.vmRead}>
+                <VMsPage />
+              </Guarded>
+            }
+          />
+          <Route
+            path="vms/:id"
+            element={
+              <Guarded permission={PERMISSIONS.vmRead}>
+                <VMDetailPage />
               </Guarded>
             }
           />

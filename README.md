@@ -36,8 +36,9 @@ VMs, jails, storage, or networks yet.
 | User management | `GET/POST /users`, `GET/PUT/DELETE /users/{id}`, `GET /roles`, `GET /audit`; the last administrator cannot be removed |
 | Retention | Finished tasks are deleted after 90 days; both audit logs are sealed monthly into hash-chained archive segments, and an entry leaves the live table only when it is in one (never by default for the agent's log, after 90 days for the access log); `audit verify` and `audit export` on the host |
 | `skepctl` | Command-line client on the public API: bearer-session login with the token in a `0600` file, the server's public key pinned on first use and never skipped, logout, and read-only `system`, `hardware`, `tasks`, and `audit` commands |
-| Web interface | Served by `skep-api` on the same address as the API, embedded in the binary; cookie-session login; dashboard, node, tasks (with cancel), users, roles, access audit log, settings, own account; the other sections are placeholders that name their milestone |
-| Not yet | VM or jail management, storage or network changes, clustering |
+| Web interface | Served by `skep-api` on the same address as the API, embedded in the binary; cookie-session login; dashboard, node, tasks (with cancel), virtual machines (with the serial console), users, roles, access audit log, settings, own account; the other sections are placeholders that name their milestone |
+| Virtual machines (Milestone 6) | bhyve UEFI guests with zvol disks, bridged virtio-net, and install media: create, update while stopped, delete, start, stop, force-stop, restart, all as tasks; a per-VM runner that survives the agent; the serial console in the browser; `skepctl vm`. Host confinement in `agent.json`. **Verified on FreeBSD 15.1** (`hearst`): every check of ADR 0009 decision 11 passed except guest network isolation, which the lab firewall does not provide (see [tests/integration/vm](tests/integration/vm/README.md) and the [guide](docs/administration/virtual-machines.md)) |
+| Not yet | Jails, storage and network management, graphical consoles, clustering |
 
 ## Platforms
 
@@ -150,9 +151,14 @@ decision logic. It does not prove runtime behaviour on FreeBSD; see below.
 
 ```sh
 make build-freebsd
-scp bin/freebsd-amd64/skep-agent bin/freebsd-amd64/skep-api hearst:skep-m4/
+scripts/deploy-test.sh hearst skep-m4      # copy, check size and SHA-256, rename, sync
 ssh hearst '~/skep-m4/skep-agent -dev -data-dir ~/skep-m4/data'
 ```
+
+`scripts/deploy-test.sh` ends with `sync` on the host. Without it, a hard
+reset shortly after a copy can leave an empty binary behind: that happened
+on `hearst` during Milestone 6 (see
+[tests/integration/vm](tests/integration/vm/results/step3-first-start-FAILED.txt)).
 
 A successful cross-compile proves that the code compiles for FreeBSD and
 nothing more. FreeBSD behaviour counts as validated only after it has run on
@@ -203,6 +209,15 @@ file, environment variables, command-line flags.
 | Task retention | `retention.tasks_days` | | | `90` days after a task finished; `0` keeps tasks forever, otherwise at least `7` |
 | Audit entries kept in the database | `retention.audit_live_days` | | | `0`: sealed, never removed; otherwise at least `35` days after the end of their month |
 | Audit archive | `retention.audit_archive` | | | `true`; `false` seals nothing and never removes an audit entry |
+| UEFI firmware directory | `hypervisor.bhyve.firmware_dir` | | | `/usr/local/share/edk2-bhyve` |
+| Memory left to the host | `hypervisor.bhyve.host_memory_reserve_bytes` | | | `1073741824` (1 GiB) |
+| CPUs per VM | `hypervisor.bhyve.max_vcpus_per_vm` | | | `0`: the lower of the host's CPUs and `hw.vmm.maxcpu` |
+| VM watch interval | `hypervisor.bhyve.watch_interval` | | | `2s` |
+| Pools VMs may use | `storage.pools` | | | none: no VM can be created |
+| Dataset root | `storage.dataset_root` | | | `skep`: everything under `<pool>/skep` |
+| Install media directory | `storage.media_dir` | | | `<data_dir>/media` |
+| Bridges NICs may join | `network.bridges` | | | none: no VM can have a NIC |
+| Management interfaces | `network.management_interfaces` | | | none; a bridge with one as a member is refused |
 
 `skep-api` (`/usr/local/etc/skep/api.json`):
 
@@ -375,6 +390,7 @@ docs/                  architecture, security, and decision records
 - [Running Skep as FreeBSD services](docs/installation/freebsd-service.md)
 - [skepctl](docs/administration/skepctl.md)
 - [The web interface](docs/administration/web-ui.md)
+- [Virtual machines](docs/administration/virtual-machines.md)
 - Decision records:
   [0001 Go toolchain and SQLite driver](docs/decisions/0001-go-toolchain-and-sqlite-driver.md),
   [0002 Discovery abstraction](docs/decisions/0002-discovery-abstraction.md),

@@ -181,8 +181,11 @@ type System struct {
 	Architecture   string            `json:"architecture"`
 	Skep           version.Info      `json:"skep"`
 	Capabilities   CapabilitySummary `json:"capabilities"`
-	StartedAt      time.Time         `json:"started_at"`
-	UptimeSeconds  int64             `json:"uptime_seconds"`
+	// Bhyve is what the bhyve engine can do on this host: the detail
+	// behind Capabilities.Bhyve, with the limits a VM is checked against.
+	Bhyve         *EngineCapabilities `json:"bhyve,omitempty"`
+	StartedAt     time.Time           `json:"started_at"`
+	UptimeSeconds int64               `json:"uptime_seconds"`
 	// API describes the API server that answered. The agent leaves it
 	// out; skep-api fills it in.
 	API *APIInfo `json:"api,omitempty"`

@@ -8,6 +8,7 @@
 package agentclient
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -89,7 +90,7 @@ func (c *Client) Close() { c.http.CloseIdleConnections() }
 // reached the result is an unavailable document saying so; it never fails.
 func (c *Client) Health(ctx context.Context) models.Health {
 	var h models.Health
-	if err := c.do(ctx, http.MethodGet, "/health", nil, &h); err != nil {
+	if err := c.do(ctx, http.MethodGet, "/health", nil, nil, &h); err != nil {
 		// Critical: without the agent nothing about the node can be
 		// answered.
 		h = models.Health{}
@@ -103,14 +104,14 @@ func (c *Client) Health(ctx context.Context) models.Health {
 // System returns the system document of the agent's node.
 func (c *Client) System(ctx context.Context) (models.System, error) {
 	var sys models.System
-	err := c.do(ctx, http.MethodGet, "/system", nil, &sys)
+	err := c.do(ctx, http.MethodGet, "/system", nil, nil, &sys)
 	return sys, err
 }
 
 // Hardware returns the discovered hardware of a node.
 func (c *Client) Hardware(ctx context.Context, nodeID string) (models.Hardware, error) {
 	var hw models.Hardware
-	err := c.do(ctx, http.MethodGet, "/nodes/"+url.PathEscape(nodeID)+"/hardware", nil, &hw)
+	err := c.do(ctx, http.MethodGet, "/nodes/"+url.PathEscape(nodeID)+"/hardware", nil, nil, &hw)
 	return hw, err
 }
 
@@ -127,14 +128,14 @@ func (c *Client) Tasks(ctx context.Context, opts models.TaskListOptions) (models
 		q.Set("cursor", opts.Cursor)
 	}
 	var list models.TaskList
-	err := c.do(ctx, http.MethodGet, "/tasks", q, &list)
+	err := c.do(ctx, http.MethodGet, "/tasks", q, nil, &list)
 	return list, err
 }
 
 // Task returns one task with its events.
 func (c *Client) Task(ctx context.Context, id string) (models.TaskDetail, error) {
 	var detail models.TaskDetail
-	err := c.do(ctx, http.MethodGet, "/tasks/"+url.PathEscape(id), nil, &detail)
+	err := c.do(ctx, http.MethodGet, "/tasks/"+url.PathEscape(id), nil, nil, &detail)
 	return detail, err
 }
 
@@ -142,12 +143,13 @@ func (c *Client) Task(ctx context.Context, id string) (models.TaskDetail, error)
 // returns the task as it is after the request.
 func (c *Client) CancelTask(ctx context.Context, id string) (models.Task, error) {
 	var task models.Task
-	err := c.do(ctx, http.MethodPost, "/tasks/"+url.PathEscape(id)+"/cancel", nil, &task)
+	err := c.do(ctx, http.MethodPost, "/tasks/"+url.PathEscape(id)+"/cancel", nil, nil, &task)
 	return task, err
 }
 
-// do performs one request and decodes the response into out.
-func (c *Client) do(ctx context.Context, method, path string, query url.Values, out any) error {
+// do performs one request, with in as its JSON body when not nil, and
+// decodes the response into out.
+func (c *Client) do(ctx context.Context, method, path string, query url.Values, in, out any) error {
 	caller, ok := agentproto.CallerFrom(ctx)
 	if !ok {
 		return errors.New("agentclient: the request context carries no caller")
@@ -160,9 +162,20 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 
 	// The host is a placeholder: the transport always dials the socket.
 	u := url.URL{Scheme: "http", Host: "agent", Path: agentproto.Prefix + path, RawQuery: query.Encode()}
-	req, err := http.NewRequestWithContext(ctx, method, u.String(), nil)
+	var reqBody io.Reader
+	if in != nil {
+		raw, err := json.Marshal(in)
+		if err != nil {
+			return fmt.Errorf("agentclient: encode the request: %w", err)
+		}
+		reqBody = bytes.NewReader(raw)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, u.String(), reqBody)
 	if err != nil {
 		return fmt.Errorf("agentclient: %w", err)
+	}
+	if in != nil {
+		req.Header.Set("Content-Type", "application/json")
 	}
 	caller.SetHeaders(req.Header)
 	req.Header.Set("Accept", "application/json")

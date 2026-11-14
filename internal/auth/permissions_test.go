@@ -20,7 +20,7 @@ func TestRoleAllows(t *testing.T) {
 	}
 	// Deny by default: what is not a declared permission is allowed to
 	// nobody, the wildcard included.
-	for _, p := range []string{"", "*", "vm:delete", "system:read ", "SYSTEM:READ"} {
+	for _, p := range []string{"", "*", "vm:migrate", "system:read ", "SYSTEM:READ"} {
 		if admin.Allows(p) || viewer.Allows(p) {
 			t.Errorf("undeclared permission %q was allowed", p)
 		}

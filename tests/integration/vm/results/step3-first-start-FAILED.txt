@@ -1,0 +1,77 @@
+# Step 3, first bhyve start on hearst: FAILED (host became unreachable)
+
+Date: 2026-11-14, build 16f4b54 (feat(vm): the runner, the watcher, ...)
+VM: fbsd1, c0e23174-3dc0-4503-a691-9af23f657078, 2 vCPUs, 1 GiB, 8 GiB thin
+zvol on skeptest, FreeBSD-15.1-RELEASE-amd64-disc1.iso (sha256 fa27646f...
+matches CHECKSUM.SHA256-FreeBSD-15.1-RELEASE-amd64), one virtio-net NIC on
+bridge0 (member vtnet1, VLAN 60).
+
+15:24:57Z  POST /vms/{id}/actions {"action":"start"} -> 202, task
+           56c786c5-5c12-47e0-ae41-bdf17b084a48 (vm.start, pending)
+~15:25:01Z next API call: curl: (7) Failed to connect to 10.79.20.170
+           port 8443; ssh: connect to host 10.79.20.170 port 22: No route
+           to host
+merrick:   ip neigh 10.79.20.170 FAILED; no ping answer for 6+ minutes.
+
+Nothing from hearst was captured after the start: the run state, runner.log,
+bhyve.log, and bhyve.conf are on hearst and are to be read after it is
+reset. Cause unknown; candidates to check from the Proxmox console and the
+files above: a panic or hang of hearst's kernel when vmm entered a nested
+guest (hearst is itself a KVM guest), or a loss of vtnet0.
+
+## After the reset (hearst back at 11:06 local, 16:06Z)
+
+Read-only findings, before anything was changed:
+
+- No crash dump: /var/crash holds only minfree (dumpdev="AUTO" is set), so
+  either the kernel hung without panicking, or it stopped at the debugger.
+- Writes from the seconds before the freeze were lost; nothing older:
+    - lost, all made between about 10:24:50 and the freeze at about
+      10:25:01 local: the binaries installed at 10:24 (0 bytes after the
+      reset, so both services crash-looped), the log lines and startup
+      tasks of the service restart, the API session from the login, and
+      the vm.start task;
+    - kept: everything before. /var/log/daemon.log ends at 10:09:47
+      because nothing ran on hearst between the end of the step 2 checks
+      (10:09:47) and the deploy at 10:24 (the step 3 code was being
+      written on merrick), not because writes went missing. The disc1
+      ISO, downloaded between 10:07 and about 10:19, is intact (sha256
+      matches).
+  hearst's virtual disk is cache=none on swearengen (the host honours
+  flushes), so this is the ordinary loss of data not yet flushed by the
+  guest when KVM stopped it. Earlier versions of this note said 15
+  minutes of writes were lost; that was wrong: the gap in the logs had
+  nothing in it to log.
+- bhyve.conf is missing for the same reason: it was written seconds
+  before the freeze. (The root cause, below, shows bhyve was started: KVM
+  failed on its first VMLAUNCH.)
+- The boot configuration works: vmm.ko, nmdm.ko, zfs.ko loaded from
+  loader.conf / rc.conf; skeptest re-imported at boot from the cache file
+  with its vdev under /var/tmp on the UFS root (ADR "Changes hearst
+  needs", item 7: confirmed); bridge0 up with vtnet1.
+
+Restored: the binaries reinstalled (with sync), both services running,
+bhyve reported available. fbsd1 is observed stopped. Reboots used: 1 of 2.
+
+## Root cause (found by Andy on swearengen, 2026-11-14)
+
+Not Skep. KVM on the Proxmox host hit an emulation failure on bhyve's
+first VMLAUNCH inside hearst: the QEMU journal shows "KVM internal error.
+Suberror: 1" with the instruction bytes 0f 01 c2 (VMLAUNCH). This is the
+known nested-bhyve-on-KVM bug; the guest VM (hearst) was stopped by KVM,
+which is why nothing inside FreeBSD logged or dumped anything. hearst was
+stopped and started from Proxmox: reboot 1 of the 2 allowed.
+
+Workaround to apply, pending approval: APIC virtual interrupt delivery off
+in vmm (hw.vmm.vmx.cap.virtual_interrupt_delivery=0; the older name
+hw.vmm.vmx.use_apic_vid is also read, both in
+/usr/src/sys/amd64/vmm/intel/vmx.c of 15.1-RELEASE-p6, lines 874-881).
+Before the change: hw.vmm.vmx.cap.virtual_interrupt_delivery: 1,
+hw.vmm.vmx.cap.posted_interrupts: 1.
+
+After the restart (11:08 local): binaries reinstalled, size and SHA-256
+equal to the build (skep-agent 12275882 bytes 925bd32c..., skep-api
+13971626 3ffce1ea..., skepctl 7184554 f6881be9...), sync run, both
+services stable (same PIDs after 20 s and later). The API shows fbsd1
+observed "stopped", desired "stopped", no drift, observed at
+16:08:36Z: not running after the host restart, as required.

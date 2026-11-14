@@ -155,7 +155,7 @@ func TestIdempotencyKeyLivesAsLongAsItsTask(t *testing.T) {
 			Payload: []byte(`{}`), CreatedAt: at,
 		}
 	}
-	first, isNew, err := store.Create(ctx, request("task-1", created), "")
+	first, isNew, err := store.Create(ctx, request("task-1", created), "", nil)
 	if err != nil || !isNew {
 		t.Fatalf("Create = %+v, %v, %v", first, isNew, err)
 	}
@@ -169,7 +169,7 @@ func TestIdempotencyKeyLivesAsLongAsItsTask(t *testing.T) {
 	}
 
 	// Before deletion: the replay is answered with the finished task.
-	replay, isNew, err := store.Create(ctx, request("task-2", created.Add(time.Hour)), "")
+	replay, isNew, err := store.Create(ctx, request("task-2", created.Add(time.Hour)), "", nil)
 	if err != nil || isNew || replay.ID != "task-1" || replay.Status != models.TaskSucceeded {
 		t.Fatalf("replay before deletion = %+v, new %v, %v", replay, isNew, err)
 	}
@@ -191,7 +191,7 @@ func TestIdempotencyKeyLivesAsLongAsItsTask(t *testing.T) {
 	}
 
 	// After deletion: the same key creates a second task.
-	second, isNew, err := store.Create(ctx, request("task-3", created.AddDate(0, 0, 91)), "")
+	second, isNew, err := store.Create(ctx, request("task-3", created.AddDate(0, 0, 91)), "", nil)
 	if err != nil || !isNew || second.ID != "task-3" {
 		t.Fatalf("replay after deletion = %+v, new %v, %v", second, isNew, err)
 	}
@@ -233,7 +233,7 @@ func TestFinishedAuditEntryCarriesErrorCodeAndDetails(t *testing.T) {
 		if _, _, err := store.Create(ctx, tasks.Task{
 			ID: id, Type: "x.y", RequestHash: "h", Actor: models.TaskActor{ID: "u1", Name: "andy"},
 			Payload: []byte(`{}`), CreatedAt: at,
-		}, ""); err != nil {
+		}, "", nil); err != nil {
 			t.Fatal(err)
 		}
 		if _, ok, err := store.Transition(ctx, id, tasks.Transition{From: models.TaskPending, To: models.TaskRunning, At: at}); err != nil || !ok {

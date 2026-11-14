@@ -1,0 +1,51 @@
+# Step 2 validation on hearst (FreeBSD 15.1-RELEASE-p6), 2026-11-14T15:10:03Z, build 66110df
+
+## zfs list after creating fbsd1 (thin 8G), and deleting thinbig and full1g
+NAME                                                         TYPE        VOLSIZE   USED  REFRESERV  VOLMODE  VOLBLOCK  SKEP:VM_ID                            SKEP:DISK_ID
+skeptest                                                     filesystem        -   280K       none  default         -  -                                     -
+skeptest/skep                                                filesystem        -    84K       none  default         -  -                                     -
+skeptest/skep/vm                                             filesystem        -    60K       none  default         -  -                                     -
+skeptest/skep/vm/c0e23174-3dc0-4503-a691-9af23f657078        filesystem        -    36K       none  default         -  c0e23174-3dc0-4503-a691-9af23f657078  -
+skeptest/skep/vm/c0e23174-3dc0-4503-a691-9af23f657078/disk0  volume           8G    12K       none  dev           16K  c0e23174-3dc0-4503-a691-9af23f657078  c8aef261-f1a4-4736-a6b0-c2307a6e03d4
+
+## agent audit log, vm.* entries
+vm.create|requested|denied|m6check|1002|m6-full|{"error":"the pool skeptest has 16517007872 bytes available and the disks reserve 16777216000; use a smaller disk, or thin: true to create it without a reservation","error_code":"insufficient_space"}
+vm.create|requested|denied|m6check|1002|m6-pool|{"error":"the pool is not in storage.pools of the agent's configuration","error_code":"pool_not_allowed"}
+vm.create|requested|denied|m6check|1002|m6-bridge|{"error":"the bridge is not in network.bridges of the agent's configuration","error_code":"bridge_not_allowed"}
+vm.create|requested|denied|m6check|1002|m6-1794668969|{"error":"the engine qemu is not supported; only bhyve is","error_code":"engine_unsupported"}
+vm.create|requested|success|m6check|1002|m6-thinbig|
+vm.create|requested|success|m6check|1002|m6-create|
+vm.create|requested|success|m6check|1002|m6-full1g|
+vm.create|finished|success|m6check|1002|m6-thinbig|{"datasets_created":[{"name":"skeptest/skep/vm/f4d427d7-5bef-4e3e-ab21-1c9112b7c239","type":"filesystem","used_bytes":24576},{"name":"skeptest/skep/vm/f4d427d7-5bef-4e3e-ab21-1c9112b7c239/disk0","type":"volume","size_bytes":16777216000,"used_bytes":12288}],"vm_name":"thinbig"}
+vm.create|finished|success|m6check|1002|m6-create|{"datasets_created":[{"name":"skeptest/skep/vm/c0e23174-3dc0-4503-a691-9af23f657078","type":"filesystem","used_bytes":24576},{"name":"skeptest/skep/vm/c0e23174-3dc0-4503-a691-9af23f657078/disk0","type":"volume","size_bytes":8589934592,"used_bytes":12288}],"vm_name":"fbsd1"}
+vm.create|finished|success|m6check|1002|m6-full1g|{"datasets_created":[{"name":"skeptest/skep/vm/8e39a39d-ed9b-424a-861b-603bc76295e1","type":"filesystem","used_bytes":24576},{"name":"skeptest/skep/vm/8e39a39d-ed9b-424a-861b-603bc76295e1/disk0","type":"volume","size_bytes":1073741824,"used_bytes":1092616192}],"vm_name":"full1g"}
+vm.delete|requested|success|m6check|1002|m6-del-f4d427d7-5bef-4e3e-ab21-1c9112b7c239|
+vm.delete|requested|success|m6check|1002|m6-del-8e39a39d-ed9b-424a-861b-603bc76295e1|
+vm.delete|finished|success|m6check|1002|m6-del-f4d427d7-5bef-4e3e-ab21-1c9112b7c239|{"datasets_destroyed":[{"name":"skeptest/skep/vm/f4d427d7-5bef-4e3e-ab21-1c9112b7c239","type":"filesystem","used_bytes":36864},{"name":"skeptest/skep/vm/f4d427d7-5bef-4e3e-ab21-1c9112b7c239/disk0","type":"volume","size_bytes":16777216000,"used_bytes":12288}],"vm_name":"thinbig"}
+vm.delete|finished|success|m6check|1002|m6-del-8e39a39d-ed9b-424a-861b-603bc76295e1|{"datasets_destroyed":[{"name":"skeptest/skep/vm/8e39a39d-ed9b-424a-861b-603bc76295e1","type":"filesystem","used_bytes":1092640768},{"name":"skeptest/skep/vm/8e39a39d-ed9b-424a-861b-603bc76295e1/disk0","type":"volume","size_bytes":1073741824,"used_bytes":1092616192}],"vm_name":"full1g"}
+
+## zfs list before the deletes (captured at 15:09Z, same session)
+NAME                                                         TYPE        VOLSIZE   USED  REFRESERV  VOLMODE  VOLBLOCK  SKEP:VM_ID                            SKEP:DISK_ID
+skeptest                                                     filesystem        -  1.02G       none  default         -  -                                     -
+skeptest/skep                                                filesystem        -  1.02G       none  default         -  -                                     -
+skeptest/skep/vm                                             filesystem        -  1.02G       none  default         -  -                                     -
+skeptest/skep/vm/8e39a39d-ed9b-424a-861b-603bc76295e1        filesystem        -  1.02G       none  default         -  8e39a39d-ed9b-424a-861b-603bc76295e1  -
+skeptest/skep/vm/8e39a39d-ed9b-424a-861b-603bc76295e1/disk0  volume           1G  1.02G      1.02G  dev           16K  8e39a39d-ed9b-424a-861b-603bc76295e1  589aaa32-f9f6-4990-a08a-eb13814de72f
+skeptest/skep/vm/c0e23174-3dc0-4503-a691-9af23f657078        filesystem        -    36K       none  default         -  c0e23174-3dc0-4503-a691-9af23f657078  -
+skeptest/skep/vm/c0e23174-3dc0-4503-a691-9af23f657078/disk0  volume           8G    12K       none  dev           16K  c0e23174-3dc0-4503-a691-9af23f657078  c8aef261-f1a4-4736-a6b0-c2307a6e03d4
+skeptest/skep/vm/f4d427d7-5bef-4e3e-ab21-1c9112b7c239        filesystem        -    36K       none  default         -  f4d427d7-5bef-4e3e-ab21-1c9112b7c239  -
+skeptest/skep/vm/f4d427d7-5bef-4e3e-ab21-1c9112b7c239/disk0  volume        15.6G    12K       none  dev           16K  f4d427d7-5bef-4e3e-ab21-1c9112b7c239  68b55b12-1363-4a7c-9e79-452d382c2439
+
+## API answers to the refused creates
+full 16000M disk:   409 insufficient_space (available 16517007872, required 16777216000)
+pool zroot:         422 pool_not_allowed
+bridge bridge1:     422 bridge_not_allowed
+engine qemu:        422 engine_unsupported
+thin 16000M disk:   202, task result warning "the thin disks on pool skeptest can grow to 16777216000 bytes, but only 16517007872 bytes are available: ..."
+
+## Host changes applied for this step (ADR 0009 "Changes hearst needs", items 4-9)
+/boot/loader.conf: vmm_load="YES", nmdm_load="YES", vfs.zfs.arc.max="1073741824" (also loaded live with kldload / sysctl)
+/etc/rc.conf: zfs_enable="YES", cloned_interfaces="bridge0", ifconfig_vtnet1="up", ifconfig_bridge0="addm vtnet1 up" (applied live)
+pkg install edk2-bhyve (edk2-bhyve-g202508_3; BHYVE_UEFI.fd and BHYVE_UEFI_CODE.fd are identical, md5 a9eb4333...)
+skeptest.img truncated to 16 GiB, zpool online -e: 1.88G -> 15.9G
+Backups: /boot/loader.conf.pre-m6, /etc/rc.conf.pre-m6

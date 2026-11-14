@@ -156,7 +156,7 @@ test("login, dashboard, every page in both themes, logout", async ({ page }) => 
   await expect(page.getByText(/sha256:[0-9a-f]{64}/)).toBeVisible();
   await shoot(page, "settings");
 
-  await nav.getByRole("link", { name: "Virtual machines" }).click();
+  await nav.getByRole("link", { name: "Containers" }).click();
   await expect(page.getByText("Not built yet")).toBeVisible();
   await shoot(page, "planned");
 
@@ -197,8 +197,28 @@ test("a viewer does not see Users and cannot open it", async ({ browser, request
   await page.getByRole("link", { name: /test\.sleep/ }).first().click();
   await expect(page.getByRole("heading", { name: "test.sleep" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Cancel task" })).toHaveCount(0);
+
+  // VMs: readable, with no power, console, create, or delete.
+  const origin = new URL(test.info().project.use.baseURL ?? "https://127.0.0.1:8443").origin;
+  const res = await request.post("/api/v1/vms", {
+    data: { name: "viewer-sees", cpu_count: 1, memory: "256M", disks: [{ size: "1G", pool: "devpool", thin: true }] },
+    headers: { Origin: origin },
+  });
+  expect(res.status(), await res.text()).toBe(202);
+  const { vm } = (await res.json()) as { vm: { id: string } };
+  await nav.getByRole("link", { name: "Virtual machines" }).click();
+  await expect(page.getByRole("link", { name: "viewer-sees" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Create VM" })).toHaveCount(0);
+  await page.getByRole("link", { name: "viewer-sees" }).click();
+  await expect(page.getByRole("heading", { name: "viewer-sees" })).toBeVisible();
+  await expect(page.getByText("Configuration")).toBeVisible();
+  for (const name of ["Start", "Console", "Delete"]) {
+    await expect(page.getByRole("button", { name, exact: true })).toHaveCount(0);
+  }
   expect(violations).toEqual([]);
   await context.close();
+  const del = await request.delete(`/api/v1/vms/${vm.id}`, { headers: { Origin: origin } });
+  expect([202, 409]).toContain(del.status());
 });
 
 test("an expired session returns to the login page and back to the same address", async ({ browser, request }) => {
@@ -246,4 +266,81 @@ test("an administrator cancels the running task", async ({ page }) => {
   await page.goto("/users/audit");
   await expect(page.getByText("task.cancel").first()).toBeVisible();
   expect(violations).toEqual([]);
+});
+
+test("an administrator creates a VM, starts it, types in its console, stops and deletes it", async ({ page }) => {
+  const { violations, errors } = watch(page);
+  await page.goto("/vms");
+  await login(page, ADMIN);
+  await expect(page.getByRole("heading", { name: "Virtual machines" })).toBeVisible();
+  await expect(page.getByText("Simulated host")).toBeVisible();
+
+  await page.getByRole("button", { name: "Create VM" }).click();
+  const dialog = page.getByRole("dialog");
+  await dialog.getByLabel("Name").fill("e2e-vm");
+  await dialog.getByLabel("Memory").fill("512M");
+  await dialog.getByLabel("Disk size").fill("2G");
+  await dialog.getByLabel("Install media").selectOption("test-install.iso");
+  await shoot(page, "vm-create");
+  await dialog.getByRole("button", { name: "Create" }).click();
+
+  // The detail page of the new VM.
+  await expect(page.getByRole("heading", { name: "e2e-vm" })).toBeVisible();
+  await expect(page.getByText("test-install.iso")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Start" })).toBeVisible({ timeout: 15_000 });
+  await page.getByRole("button", { name: "Start" }).click();
+  await expect(page.getByText("running", { exact: true }).first()).toBeVisible({ timeout: 15_000 });
+
+  await page.getByRole("button", { name: "Console" }).click();
+  await expect(page.getByText("connected", { exact: true })).toBeVisible();
+  // The fake guest's banner from before the attachment, then an echo.
+  const consoleBox = page.getByTestId("serial-console");
+  await expect(consoleBox).toContainText("simulated serial console", { timeout: 10_000 });
+  await consoleBox.click();
+  await page.keyboard.type("hello from the browser");
+  await expect(consoleBox).toContainText("hello from the browser");
+  await shoot(page, "vm-console");
+
+  // The GPU takes the WebGL context back: the console says it is
+  // unavailable, never falls back to the DOM renderer (which the CSP would
+  // block), and Reconnect brings it back.
+  await page.evaluate(() => {
+    // The renderer's canvas is the one already holding a WebGL 2 context;
+    // asking a 2D canvas for one would give null.
+    for (const canvas of document.querySelectorAll<HTMLCanvasElement>("[data-testid=serial-console] canvas")) {
+      let gl: WebGL2RenderingContext | null = null;
+      try {
+        gl = canvas.getContext("webgl2");
+      } catch {
+        continue;
+      }
+      const ext = gl?.getExtension("WEBGL_lose_context");
+      if (ext) {
+        ext.loseContext();
+        return;
+      }
+    }
+    throw new Error("the console has no WebGL 2 canvas");
+  });
+  await expect(page.getByText("console unavailable", { exact: true })).toBeVisible();
+  await expect(page.getByText(/lost its graphics context/)).toBeVisible();
+  await shoot(page, "vm-console-unavailable");
+  await page.getByRole("button", { name: "Reconnect" }).click();
+  await expect(page.getByText("connected", { exact: true })).toBeVisible();
+  await expect(consoleBox).toContainText("hello from the browser", { timeout: 10_000 });
+
+  await page.getByRole("button", { name: "Stop", exact: true }).click();
+  await expect(page.getByText("stopped", { exact: true }).first()).toBeVisible({ timeout: 15_000 });
+  // Media can be detached while it is stopped.
+  await page.getByRole("button", { name: "Detach" }).click();
+  await expect(page.getByText("None attached.")).toBeVisible({ timeout: 10_000 });
+  await shoot(page, "vm-detail");
+
+  await page.getByRole("button", { name: "Delete" }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "Delete VM and disks" }).click();
+  await expect(page.getByRole("heading", { name: "Virtual machines" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "e2e-vm" })).toHaveCount(0, { timeout: 15_000 });
+
+  expect(violations, "CSP violations").toEqual([]);
+  expect(errors, "console errors").toEqual([]);
 });

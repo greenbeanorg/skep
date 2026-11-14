@@ -80,17 +80,27 @@ func (h *handler) identify(r *http.Request) (auth.Identity, error) {
 	if r.Header.Get(BackgroundHeader) != "" {
 		authenticate = h.auth.AuthenticateBackground
 	}
+	token, kind, ok := sessionToken(r)
+	if !ok {
+		return auth.Identity{}, auth.ErrUnauthenticated
+	}
+	return authenticate(r.Context(), token, kind)
+}
+
+// sessionToken returns the session token a request presents and the
+// channel it came through.
+func sessionToken(r *http.Request) (string, auth.SessionKind, bool) {
 	if authz := r.Header.Get("Authorization"); authz != "" {
 		scheme, token, ok := strings.Cut(authz, " ")
 		if !ok || !strings.EqualFold(scheme, "Bearer") {
-			return auth.Identity{}, auth.ErrUnauthenticated
+			return "", auth.BearerSession, false
 		}
-		return authenticate(r.Context(), strings.TrimSpace(token), auth.BearerSession)
+		return strings.TrimSpace(token), auth.BearerSession, true
 	}
 	if c, err := r.Cookie(SessionCookie); err == nil {
-		return authenticate(r.Context(), c.Value, auth.CookieSession)
+		return c.Value, auth.CookieSession, true
 	}
-	return auth.Identity{}, auth.ErrUnauthenticated
+	return "", auth.CookieSession, false
 }
 
 // sameOrigin reports whether the request says it comes from this site: its

@@ -41,6 +41,9 @@ type Options struct {
 	// unavailable. For example the audit
 	// archive's. Optional.
 	Checks map[string]models.HealthProbe
+	// Bhyve reports what the bhyve engine can do on this host, for the
+	// system document. Optional.
+	Bhyve func(ctx context.Context) models.EngineCapabilities
 	// CacheTTL is how long a discovery result is reused. Zero disables
 	// caching.
 	CacheTTL time.Duration
@@ -59,6 +62,7 @@ type Service struct {
 	nodes    NodeStore
 	tasks    TaskReader
 	checks   map[string]models.HealthProbe
+	bhyve    func(ctx context.Context) models.EngineCapabilities
 	cacheTTL time.Duration
 	log      *slog.Logger
 	now      func() time.Time
@@ -93,6 +97,7 @@ func NewService(opts Options) (*Service, error) {
 		nodes:    opts.Nodes,
 		tasks:    opts.Tasks,
 		checks:   opts.Checks,
+		bhyve:    opts.Bhyve,
 		cacheTTL: opts.CacheTTL,
 		log:      opts.Logger,
 		now:      opts.Now,
@@ -137,7 +142,7 @@ func (s *Service) System(ctx context.Context) (models.System, error) {
 	if err != nil {
 		return models.System{}, err
 	}
-	return models.System{
+	sys := models.System{
 		NodeID:         s.nodeID,
 		Hostname:       hw.Host.Hostname,
 		Platform:       hw.Platform,
@@ -153,7 +158,14 @@ func (s *Service) System(ctx context.Context) (models.System, error) {
 		},
 		StartedAt:     s.started,
 		UptimeSeconds: s.uptime(),
-	}, nil
+	}
+	if s.bhyve != nil {
+		// The detail behind Capabilities.Bhyve: what a VM is checked
+		// against, so a client can explain a refusal before it happens.
+		caps := s.bhyve(ctx)
+		sys.Bhyve = &caps
+	}
+	return sys, nil
 }
 
 // Hardware returns the discovered hardware of a node. Only the local node

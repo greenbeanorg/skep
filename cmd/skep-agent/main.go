@@ -27,13 +27,17 @@ import (
 	"github.com/greenbeanorg/skep/internal/audit"
 	"github.com/greenbeanorg/skep/internal/auditarchive"
 	"github.com/greenbeanorg/skep/internal/config"
+	"github.com/greenbeanorg/skep/internal/console"
 	"github.com/greenbeanorg/skep/internal/database"
 	"github.com/greenbeanorg/skep/internal/hardware"
+	"github.com/greenbeanorg/skep/internal/hostops"
+	"github.com/greenbeanorg/skep/internal/hypervisor/bhyve"
 	"github.com/greenbeanorg/skep/internal/internalapi"
 	"github.com/greenbeanorg/skep/internal/logging"
 	"github.com/greenbeanorg/skep/internal/retention"
 	"github.com/greenbeanorg/skep/internal/sysaccount"
 	"github.com/greenbeanorg/skep/internal/tasks"
+	"github.com/greenbeanorg/skep/internal/vm"
 	"github.com/greenbeanorg/skep/migrations"
 	"github.com/greenbeanorg/skep/pkg/models"
 	"github.com/greenbeanorg/skep/pkg/version"
@@ -60,6 +64,9 @@ func main() {
 func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if len(args) > 0 && args[0] == "audit" {
 		return runAudit(ctx, args[1:], stdout, stderr)
+	}
+	if len(args) > 0 && args[0] == hostops.RunnerCommand {
+		return runRunner(args[1:], stderr)
 	}
 	flags := flag.NewFlagSet("skep-agent", flag.ContinueOnError)
 	flags.SetOutput(stderr)
@@ -138,6 +145,19 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		log.Warn("this is not a FreeBSD host: running as a development build only, never as a production host")
 	}
 
+	// Everything that needs root goes through hostops, bounded by the
+	// confinement in the root-owned configuration (ADR 0009 decision 1).
+	host, err := newHostOps(confinement(cfg), log)
+	if err != nil {
+		return err
+	}
+	log.Info("host confinement", "pools", cfg.Storage.Pools, "dataset_root", cfg.Storage.DatasetRoot,
+		"bridges", cfg.Network.Bridges, "management_interfaces", cfg.Network.ManagementInterfaces,
+		"media_dir", cfg.Storage.MediaDir, "firmware_dir", cfg.Hypervisor.Bhyve.FirmwareDir)
+	if len(cfg.Storage.Pools) == 0 {
+		log.Warn("storage.pools is empty: no VM can be created until the configuration names a pool")
+	}
+
 	taskStore := database.NewTaskStore(db)
 	engine, err := tasks.New(tasks.Options{
 		Store:     taskStore,
@@ -162,7 +182,34 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		// month is still unsealed 7 days into this one.
 		checks[models.CheckAuditArchive] = archive.Health
 	}
+	// The VM service: every write is a task, run against the bhyve
+	// adapter, which reaches the host through hostops only.
+	engineBhyve := bhyve.New(bhyve.Options{
+		Host:                   host,
+		HostMemoryReserveBytes: *cfg.Hypervisor.Bhyve.HostMemoryReserveBytes,
+		MaxVCPUsPerVM:          cfg.Hypervisor.Bhyve.MaxVCPUsPerVM,
+		Logger:                 log,
+	})
+	consoles := console.New(console.Options{Open: host.VMM.OpenConsole, Audit: database.NewAuditLog(db), Logger: log})
+	vms, err := vm.New(vm.Options{
+		Console:    consoles,
+		NodeID:     nodeID,
+		Store:      database.NewVMStore(db),
+		Engine:     engine,
+		Hypervisor: engineBhyve,
+		Host:       host,
+		Logger:     log,
+	})
+	if err != nil {
+		return err
+	}
+	for _, def := range vms.Definitions() {
+		if err := engine.Register(def); err != nil {
+			return err
+		}
+	}
 	svc, err := agent.NewService(agent.Options{
+		Bhyve:      vms.Capabilities,
 		NodeID:     nodeID,
 		DevMode:    cfg.DevMode,
 		Discoverer: disc,
@@ -233,6 +280,19 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		return err
 	}, log)
 
+	// Look at every VM before anything can ask about one: a restarted
+	// agent knows what is running before it serves its socket.
+	if err := vms.ObserveAll(ctx); err != nil {
+		log.Warn("could not observe the virtual machines", "error", err)
+	}
+	go vms.Watch(ctx, cfg.Hypervisor.Bhyve.WatchInterval.Std())
+	if caps := vms.Capabilities(ctx); caps.Available {
+		log.Info("bhyve is available", "reason", caps.Reason, "max_vcpus_per_vm", caps.MaxVCPUsPerVM,
+			"guest_memory_bytes", caps.GuestMemoryBytes)
+	} else {
+		log.Warn("bhyve is not available: no VM can be started", "reason", caps.Reason)
+	}
+
 	// The internal API on the Unix socket is the agent's only listener:
 	// skep-api reaches the agent through it, and nothing else does.
 	socket, err := listenSocket(cfg, log)
@@ -240,6 +300,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 	internal := internalapi.NewHandler(svc, internalapi.Options{
+		VMs:            vms,
+		Console:        consoles,
 		RequestTimeout: cfg.Socket.RequestTimeout.Std(),
 		Logger:         log,
 	})
@@ -256,6 +318,21 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		log.Info("stopped")
 	}
 	return serveErr
+}
+
+// confinement builds what Skep may touch on this host from the agent's
+// configuration, and from nothing else.
+func confinement(cfg config.Config) hostops.Confinement {
+	return hostops.Confinement{
+		Pools:                cfg.Storage.Pools,
+		DatasetRoot:          cfg.Storage.DatasetRoot,
+		MediaDir:             cfg.Storage.MediaDir,
+		Bridges:              cfg.Network.Bridges,
+		ManagementInterfaces: cfg.Network.ManagementInterfaces,
+		FirmwareDir:          cfg.Hypervisor.Bhyve.FirmwareDir,
+		RunDir:               cfg.VMRunDir(),
+		StateDir:             cfg.VMStateDir(),
+	}
 }
 
 // quietLogger is the logger of local commands: they report on stdout and

@@ -268,7 +268,7 @@ func (e *Engine) Submit(ctx context.Context, req Request) (task Task, created bo
 		return Task{}, false, rerr
 	}
 
-	stored, created, err := e.store.Create(ctx, t, req.SourceIP)
+	stored, created, err := e.store.Create(ctx, t, req.SourceIP, req.Companion)
 	if err != nil {
 		var me *models.Error
 		if errors.As(err, &me) {
@@ -315,6 +315,28 @@ func (e *Engine) validate(req Request) (Definition, json.RawMessage, *models.Err
 		}
 	}
 	return def, payload, nil
+}
+
+// Refuse records a submission that the caller refused before it reached
+// Submit, in the same way Submit records its own refusals: a "requested"
+// audit entry without a task. The services in front of the engine use it
+// for refusals that need more than the payload to decide, such as a pool
+// that is not allowed or a host without enough memory. outcome is
+// audit.Failure for an invalid request and audit.Denied for one refused
+// by a rule.
+func (e *Engine) Refuse(ctx context.Context, req Request, outcome audit.Outcome, cause *models.Error) {
+	if req.Actor.ID == "" || req.Actor.Name == "" {
+		return // nothing is ever written without an actor
+	}
+	e.refuse(ctx, req, outcome, cause)
+}
+
+// LookupKey returns the task that was created with an idempotency key.
+func (e *Engine) LookupKey(ctx context.Context, key string) (Task, bool, error) {
+	if !nameRE.MatchString(key) {
+		return Task{}, false, models.Invalid("invalid idempotency key: use 1 to 128 characters from A-Z a-z 0-9 . _ : -")
+	}
+	return e.store.GetByKey(ctx, key)
 }
 
 // refuse records a submission that did not become a task.

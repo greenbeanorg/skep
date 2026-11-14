@@ -144,7 +144,8 @@ func TestMigrateCreatesAgentSchema(t *testing.T) {
 		t.Fatalf("applied = %+v", applied)
 	}
 	got := tableNames(t, db)
-	if len(applied) != 3 || applied[1].Name != "task_engine" || applied[2].Name != "retention" {
+	if len(applied) != 4 || applied[1].Name != "task_engine" || applied[2].Name != "retention" ||
+		applied[3].Name != "virtual_machines" {
 		t.Fatalf("applied = %+v", applied)
 	}
 	want := []string{
@@ -320,7 +321,9 @@ func TestAgentSchemaConstraints(t *testing.T) {
 	}
 
 	// Deleting a VM removes its disks and NICs.
-	mustExec(t, db, `INSERT INTO vm_disks (id, vm_id, slot, bus) VALUES ('d1', 'v1', 0, 'virtio-blk')`)
+	mustExec(t, db, `INSERT INTO storage_pools (id, node_id, name, type) VALUES ('p1', 'n1', 'tank', 'zfs')`)
+	mustExec(t, db, `INSERT INTO storage_volumes (id, pool_id, name, kind) VALUES ('vol1', 'p1', 'skep/vm/v1/disk0', 'zvol')`)
+	mustExec(t, db, `INSERT INTO vm_disks (id, vm_id, storage_volume_id, slot, bus) VALUES ('d1', 'v1', 'vol1', 0, 'virtio-blk')`)
 	mustExec(t, db, `INSERT INTO vm_networks (id, vm_id, slot, bridge) VALUES ('nic1', 'v1', 0, 'bridge0')`)
 	mustExec(t, db, `DELETE FROM virtual_machines WHERE id = 'v1'`)
 	var n int
