@@ -18,3 +18,35 @@ bhyve.log, and bhyve.conf are on hearst and are to be read after it is
 reset. Cause unknown; candidates to check from the Proxmox console and the
 files above: a panic or hang of hearst's kernel when vmm entered a nested
 guest (hearst is itself a KVM guest), or a loss of vtnet0.
+
+## After the reset (hearst back at 11:06 local, 16:06Z)
+
+Read-only findings, before anything was changed:
+
+- No crash dump: /var/crash holds only minfree (dumpdev="AUTO" is set), so
+  either the kernel hung without panicking, or it stopped at the debugger.
+- Writes after about 10:10 local (15:10Z) are missing from disk, although
+  the host was demonstrably alive until 10:24:57 (an scp, a service
+  restart, and the API's 202 answer to vm.start all happened after 10:10):
+    - /var/log/daemon.log ends at 10:09:47;
+    - the agent database has no vm.start task, the API database no session
+      from 10:24;
+    - /home/aba/skep-m6/skep-agent and skep-api, installed at 10:24, are 0
+      bytes, so both services crash-looped after the reset;
+    - bhyve.conf (written by the runner just before bhyve starts) and the
+      runtime directory do not exist (/var/run is cleared at boot anyway).
+  The disc1 ISO, downloaded between 10:07 and about 10:19, is intact
+  (sha256 matches). Losing 15 minutes of ordinary writes on a reset is not
+  what UFS with soft updates does; it suggests either the virtual disk's
+  cache on swearengen or a kernel that stopped flushing well before the
+  network went down. Unresolved.
+- Because bhyve.conf is missing, it is not known whether bhyve was started
+  at all, or whether the hang came at tap creation or `ifconfig bridge0
+  addm`.
+- The boot configuration works: vmm.ko, nmdm.ko, zfs.ko loaded from
+  loader.conf / rc.conf; skeptest re-imported at boot from the cache file
+  with its vdev under /var/tmp on the UFS root (ADR "Changes hearst
+  needs", item 7: confirmed); bridge0 up with vtnet1.
+
+Restored: the binaries reinstalled (with sync), both services running,
+bhyve reported available. fbsd1 is observed stopped. Reboots used: 1 of 2.
