@@ -1,0 +1,20 @@
+# Step 3, first bhyve start on hearst: FAILED (host became unreachable)
+
+Date: 2026-11-14, build 16f4b54 (feat(vm): the runner, the watcher, ...)
+VM: fbsd1, c0e23174-3dc0-4503-a691-9af23f657078, 2 vCPUs, 1 GiB, 8 GiB thin
+zvol on skeptest, FreeBSD-15.1-RELEASE-amd64-disc1.iso (sha256 fa27646f...
+matches CHECKSUM.SHA256-FreeBSD-15.1-RELEASE-amd64), one virtio-net NIC on
+bridge0 (member vtnet1, VLAN 60).
+
+15:24:57Z  POST /vms/{id}/actions {"action":"start"} -> 202, task
+           56c786c5-5c12-47e0-ae41-bdf17b084a48 (vm.start, pending)
+~15:25:01Z next API call: curl: (7) Failed to connect to 10.79.20.170
+           port 8443; ssh: connect to host 10.79.20.170 port 22: No route
+           to host
+merrick:   ip neigh 10.79.20.170 FAILED; no ping answer for 6+ minutes.
+
+Nothing from hearst was captured after the start: the run state, runner.log,
+bhyve.log, and bhyve.conf are on hearst and are to be read after it is
+reset. Cause unknown; candidates to check from the Proxmox console and the
+files above: a panic or hang of hearst's kernel when vmm entered a nested
+guest (hearst is itself a KVM guest), or a loss of vtnet0.
