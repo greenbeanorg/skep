@@ -85,6 +85,9 @@ Virtual machines:
   vm list | show VM | create -f FILE | start VM | stop VM [--timeout S]
      | force-stop VM | restart VM | delete VM      [--wait] [--json]
                                              VM is an ID or a name; see "skepctl vm"
+  vm clone VM NAME [--snapshot SNAPSHOT]     a linked clone
+  vm snapshot list | create | rollback | delete
+                                             see "skepctl vm snapshot"
 
 Every command takes --server; without it, the server of the last login is used.
 skepctl keeps its state in $SKEPCTL_CONFIG_DIR or ~/.config/skepctl.`
