@@ -29,8 +29,12 @@ interface with Playwright from merrick, and with skepctl on hearst.
    Undo: sudo zfs destroy -r skeptest/skep-enc
 3. Test installation only (not hearst's own configuration):
    - users m7a5admin (skep-api admin create), m7a5operator, m7a5viewer
-     (POST /users) in /home/aba/skep-m5/state. Undo: skep-api admin
-     delete --username NAME --yes -data-dir /home/aba/skep-m5/state
+     (POST /users) in skep-api's data directory, /home/aba/skep-m5/state.
+     That path is right although it says m5: it is skep_api_data_dir in
+     hearst's rc.conf, kept from Milestone 5, and the running skep-api
+     has "-data-dir /home/aba/skep-m5/state" (checked 2026-11-15).
+     Undo: sudo /home/aba/skep-m6/skep-api admin delete --username NAME
+     --yes -data-dir /home/aba/skep-m5/state
    - /home/aba/skep-m6/agent.json changed twice for checks (capacity
      thresholds; dataset_root skep-enc) and restored each time from
      agent.json.pre-step5 (cmp identical). The backup is left beside it.

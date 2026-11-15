@@ -1,0 +1,106 @@
+# hearst: test installation binaries and configuration made root-owned, 2026-11-15
+
+Before 7b, at Andy's request. scripts/deploy-test.sh now installs with
+sudo: programs root:wheel 0555, agent.json root:wheel 0600 (only the root
+agent reads it; skep-api reads its own api.json and reaches the agent
+through the socket), into a directory it makes root:wheel 0755. It warns
+when a directory above the target is not root's. Times are UTC.
+
+## The script, checked on hearst against scratch directories (13:35 UTC)
+== refusal of a non-agent json:
+deploy-test: refusing /home/aba/.claude/jobs/b8b2b85b/tmp/api.json: only programs and agent.json are installed
+exit 2
+== refusal of a relative DIR:
+deploy-test: DIR must be an absolute path
+exit 2
+== scratch deploy under /tmp:
+deploy-test: hearst:/tmp/skep-deploy-check/skepctl root:wheel 0555 7217322 bytes sha256 37be8d0e552105bd83d64ff412da1193e1a6f8e16cd329455574723c9ae93422
+deploy-test: synced
+exit 0
+== scratch deploy under /home/aba (parent warning):
+deploy-test: warning: /home/aba is owned by aba, who can replace /home/aba/skep-deploy-check
+deploy-test: hearst:/home/aba/skep-deploy-check/skepctl root:wheel 0555 7217322 bytes sha256 37be8d0e552105bd83d64ff412da1193e1a6f8e16cd329455574723c9ae93422
+deploy-test: synced
+exit 0
+drwxr-xr-x  2 root wheel 512 Nov 15 08:35 /home/aba/skep-deploy-check
+drwxr-xr-x  2 root wheel 512 Nov 15 08:35 /tmp/skep-deploy-check
+/home/aba/skep-deploy-check:
+total 7104
+-r-xr-xr-x  1 root wheel 7217322 Nov 15 08:35 skepctl
+
+/tmp/skep-deploy-check:
+total 7104
+-r-xr-xr-x  1 root wheel 7217322 Nov 15 08:35 skepctl
+no staging dirs left
+skepctl 0.1.0 (commit a84b8f6, built 2026-11-15T13:35:51Z, go1.27.4 freebsd/amd64)
+deploy-test: hearst:/tmp/skep-deploy-check/agent.json root:wheel 0600 3 bytes sha256 ca3d163bab055381827226140568f3bef7eaac187cebd76878e0b63e9e442356
+deploy-test: synced
+-rw-------  1 root wheel 3 Nov 15 08:36 /tmp/skep-deploy-check/agent.json
+ls: /home/aba/skep-deploy-check: No such file or directory
+ls: /tmp/skep-deploy-check: No such file or directory
+(both scratch directories removed afterwards)
+
+## The test installation (13:36 UTC)
+Services stopped (no VM running), main a84b8f6 installed with the new
+script, the old binaries in m6-bin fixed by hand, services started.
+13:36:21Z
+-- before:
+root:aba 755 /home/aba/skep-m6
+root:wheel 600 /home/aba/skep-m6/agent.json
+root:wheel 600 /home/aba/skep-m6/agent.json.pre-step4
+root:wheel 600 /home/aba/skep-m6/agent.json.pre-step5
+root:aba 755 /home/aba/skep-m6/m6-bin
+root:wheel 700 /home/aba/skep-m6/media
+aba:aba 755 /home/aba/skep-m6/skep-agent
+aba:aba 755 /home/aba/skep-m6/skep-api
+aba:aba 755 /home/aba/skep-m6/skepctl
+aba:aba 755 /home/aba/skep-m6/m6-bin/skep-agent
+aba:aba 755 /home/aba/skep-m6/m6-bin/skep-api
+aba:aba 755 /home/aba/skep-m6/m6-bin/skepctl
+no bhyve running
+Stopping skep_api.
+Waiting for PIDS: 9138.
+Stopping skep_agent.
+Waiting for PIDS: 9341.
+deploy-test: warning: /home/aba is owned by aba, who can replace /home/aba/skep-m6
+deploy-test: hearst:/home/aba/skep-m6/skep-agent root:wheel 0555 12746922 bytes sha256 6092526af5975fd04f00725243952803d442efc5f067ed52d52e11a95d45e588
+deploy-test: hearst:/home/aba/skep-m6/skep-api root:wheel 0555 14045354 bytes sha256 db3e7d5e2549eacb59e6143d211dcb55ef1b3fd0dc833248011ffe35faaeaf88
+deploy-test: hearst:/home/aba/skep-m6/skepctl root:wheel 0555 7217322 bytes sha256 37be8d0e552105bd83d64ff412da1193e1a6f8e16cd329455574723c9ae93422
+deploy-test: synced
+-- after:
+root:wheel 755 /home/aba/skep-m6
+root:wheel 600 /home/aba/skep-m6/agent.json
+root:wheel 600 /home/aba/skep-m6/agent.json.pre-step4
+root:wheel 600 /home/aba/skep-m6/agent.json.pre-step5
+root:wheel 755 /home/aba/skep-m6/m6-bin
+root:wheel 700 /home/aba/skep-m6/media
+root:wheel 555 /home/aba/skep-m6/skep-agent
+root:wheel 555 /home/aba/skep-m6/skep-api
+root:wheel 555 /home/aba/skep-m6/skepctl
+root:wheel 555 /home/aba/skep-m6/m6-bin/skep-agent
+root:wheel 555 /home/aba/skep-m6/m6-bin/skep-api
+root:wheel 555 /home/aba/skep-m6/m6-bin/skepctl
+skep-agent 0.1.0 (commit a84b8f6, built 2026-11-15T13:35:51Z, go1.27.4 freebsd/amd64)
+Starting skep_agent.
+Starting skep_api.
+skep_agent is running as pid 10605 (supervisor pid 10603).
+skep_api is running as pid 10661 (supervisor pid 10660).
+GET /health as m7a5viewer: ok, 0.1.0; access_audit_archive, agent,
+audit_archive, database, storage_capacity, storage_locked all ok
+
+## Undo
+sudo chown root:aba /home/aba/skep-m6 /home/aba/skep-m6/m6-bin
+sudo chown aba:aba /home/aba/skep-m6/skep-agent /home/aba/skep-m6/skep-api /home/aba/skep-m6/skepctl /home/aba/skep-m6/m6-bin/*
+sudo chmod 0755 /home/aba/skep-m6/skep-agent /home/aba/skep-m6/skep-api /home/aba/skep-m6/skepctl /home/aba/skep-m6/m6-bin/*
+(agent.json and its backups were already root:wheel 0600 and are unchanged.)
+
+## Not closed by this change
+/home/aba is aba:aba, and it is the parent of /home/aba/skep-m6 (the
+binaries and agent.json that rc.conf names: skep_agent_bin,
+skep_agent_config, skep_api_bin) and of /home/aba/skep-m5 (aba:aba, which
+holds skep-api's data directory state/). aba can rename either directory
+and put another in its place; the next service start then runs that
+skep-agent as root. Closing it needs the installation moved to a path
+whose every directory is root's (for example /usr/local/libexec/skep-test
+and /var/db/skep-test-api) and rc.conf pointed there: an rc.conf change,
+not made without Andy's approval.
