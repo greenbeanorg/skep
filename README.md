@@ -6,11 +6,13 @@ with QEMU as an optional secondary engine), jails, OpenZFS storage, and
 networking on single hosts and, later, multi-node clusters, through a REST
 API, a web UI, and a CLI.
 
-**Status: 0.1.0, Milestone 5 "First frontend".** The code contains the host
-agent, the API server with TLS, accounts, sessions, and permissions, the
-`skepctl` command-line client, the web interface, read-only host discovery,
-a task engine with history, and two audit logs. It cannot create or manage
-VMs, jails, storage, or networks yet.
+**Status: 0.1.0, Milestone 7 phase 7a "Storage".** The code contains the
+host agent, the API server with TLS, accounts, sessions, and permissions,
+the `skepctl` command-line client, the web interface, read-only host
+discovery, a task engine with history, two audit logs, bhyve virtual
+machines (Milestone 6), and storage management: snapshots, rollback,
+clones, disk changes, directory pools, and resource monitoring (phase 7a).
+It cannot manage jails (phase 7b) or networks yet.
 
 > **Security notice:** this is pre-release software. `skep-api` listens on
 > loopback by default; opening it to a network is an explicit
@@ -35,10 +37,11 @@ VMs, jails, storage, or networks yet.
 | Permissions | One role per user; every endpoint requires a permission and is denied by default; `admin`, `operator`, and `viewer` are built in; every denial is audited |
 | User management | `GET/POST /users`, `GET/PUT/DELETE /users/{id}`, `GET /roles`, `GET /audit`; the last administrator cannot be removed |
 | Retention | Finished tasks are deleted after 90 days; both audit logs are sealed monthly into hash-chained archive segments, and an entry leaves the live table only when it is in one (never by default for the agent's log, after 90 days for the access log); `audit verify` and `audit export` on the host |
-| `skepctl` | Command-line client on the public API: bearer-session login with the token in a `0600` file, the server's public key pinned on first use and never skipped, logout, and read-only `system`, `hardware`, `tasks`, and `audit` commands |
-| Web interface | Served by `skep-api` on the same address as the API, embedded in the binary; cookie-session login; dashboard, node, tasks (with cancel), virtual machines (with the serial console), users, roles, access audit log, settings, own account; the other sections are placeholders that name their milestone |
+| `skepctl` | Command-line client on the public API: bearer-session login with the token in a `0600` file, the server's public key pinned on first use and never skipped, logout, read-only `system`, `hardware`, `tasks`, and `audit` commands, `vm` (Milestone 6), and `vm snapshot` and `vm clone` (phase 7a) |
+| Web interface | Served by `skep-api` on the same address as the API, embedded in the binary; cookie-session login; dashboard, node, tasks (with cancel), virtual machines (with the serial console and snapshots), storage, users, roles, access audit log, settings, own account; the other sections are placeholders that name their milestone |
 | Virtual machines (Milestone 6) | bhyve UEFI guests with zvol disks, bridged virtio-net, and install media: create, update while stopped, delete, start, stop, force-stop, restart, all as tasks; a per-VM runner that survives the agent; the serial console in the browser; `skepctl vm`. Host confinement in `agent.json`. **Verified on FreeBSD 15.1** (`hearst`): every check of ADR 0009 decision 11 passed (guest network isolation after a fix to the lab firewall) (see [tests/integration/vm](tests/integration/vm/README.md) and the [guide](docs/administration/virtual-machines.md)) |
-| Not yet | Jails, storage and network management, graphical consoles, clustering |
+| Storage (Milestone 7, phase 7a) | Snapshots of VMs (also while running, crash-consistent), rollback, linked clones, disks added, grown, and removed after creation, directory pools for hosts without ZFS, the dataset inventory, current resource use (`GET /metrics`) with the `storage_capacity` and `storage_locked` health checks; the Storage section and a VM's snapshots in the web interface; `skepctl vm snapshot` and `vm clone`. **Verified on FreeBSD 15.1** (`hearst`): every 7a check of ADR 0010 decision 16 (see [tests/integration/storage](tests/integration/storage/README.md) and the [guide](docs/administration/storage.md)) |
+| Not yet | Jails (phase 7b), network management, graphical consoles, metric history, clustering |
 
 ## Platforms
 
@@ -214,8 +217,11 @@ file, environment variables, command-line flags.
 | CPUs per VM | `hypervisor.bhyve.max_vcpus_per_vm` | | | `0`: the lower of the host's CPUs and `hw.vmm.maxcpu` |
 | VM watch interval | `hypervisor.bhyve.watch_interval` | | | `2s` |
 | Pools VMs may use | `storage.pools` | | | none: no VM can be created |
+| Directory pools VMs may use | `storage.directories` | | | none; each is `{"name", "path"}`, the path `root` `0700` on local UFS or ZFS |
 | Dataset root | `storage.dataset_root` | | | `skep`: everything under `<pool>/skep` |
 | Install media directory | `storage.media_dir` | | | `<data_dir>/media` |
+| Snapshots per VM | `storage.max_snapshots_per_resource` | | | `64` (at most 1000) |
+| Capacity warning, failure | `storage.capacity_warn_percent`, `storage.capacity_fail_percent` | | | `80`, `90`: the `storage_capacity` health check; 1 ≤ warn < fail ≤ 100 |
 | Bridges NICs may join | `network.bridges` | | | none: no VM can have a NIC |
 | Management interfaces | `network.management_interfaces` | | | none; a bridge with one as a member is refused |
 
@@ -391,6 +397,7 @@ docs/                  architecture, security, and decision records
 - [skepctl](docs/administration/skepctl.md)
 - [The web interface](docs/administration/web-ui.md)
 - [Virtual machines](docs/administration/virtual-machines.md)
+- [Storage](docs/administration/storage.md)
 - Decision records:
   [0001 Go toolchain and SQLite driver](docs/decisions/0001-go-toolchain-and-sqlite-driver.md),
   [0002 Discovery abstraction](docs/decisions/0002-discovery-abstraction.md),

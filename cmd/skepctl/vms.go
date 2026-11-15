@@ -24,6 +24,8 @@ const vmUsage = `usage:
   skepctl vm force-stop VM [--wait] [--json]
   skepctl vm restart VM [--timeout SECONDS] [--wait] [--json]
   skepctl vm delete VM [--wait] [--json]
+  skepctl vm clone VM NAME [--snapshot SNAPSHOT] [--wait] [--json]
+  skepctl vm snapshot list|create|rollback|delete ...   see "skepctl vm snapshot"
 
 VM is a VM's ID or its name. --wait follows the task until it ends and fails
 when the task fails. Every command takes --server.`
@@ -44,6 +46,10 @@ func cmdVM(ctx context.Context, args []string, e env) error {
 	}
 	sub, rest := args[0], args[1:]
 	switch sub {
+	case "snapshot":
+		return cmdSnapshot(ctx, rest, e)
+	case "clone":
+		return cmdClone(ctx, rest, e)
 	case "list":
 		f := newReadFlags("skepctl vm list", e)
 		if _, err := f.parse(rest, 0); err != nil {

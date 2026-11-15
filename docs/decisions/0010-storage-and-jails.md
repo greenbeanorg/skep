@@ -1,6 +1,7 @@
 # ADR 0010: Storage management and jails (Milestone 7)
 
-- Status: **Accepted** (not yet implemented). Every recommendation was
+- Status: **Accepted**; phase 7a implemented and validated on `hearst`
+  (pull request #26), phase 7b not started. Every recommendation was
   accepted; the review answers and the amendments made at acceptance are
   under [Decisions](#decisions) and are worked into the text. The changes
   `hearst` needs are under [Changes hearst needs](#changes-hearst-needs),
@@ -763,3 +764,219 @@ Amendments made at acceptance, worked into the text:
     considered (Decision 11).
   - The UI notes that a clone shares the source guest's hostname, SSH
     host keys, and machine ID (Decision 3).
+
+## Implementation notes
+
+Recorded during the build of 7a (from 2026-11-14). The decisions above
+stand; these are the places where the implementation had to choose
+something the text left open, or departs from it.
+
+### Step 1: schema, hostops, inventory
+
+- **`agent/0005` also creates `container_templates`**, because the
+  container amendment's `template_id` needs a table to reference; its
+  columns are those Decision 7b lists (source, packages or archive
+  checksum, release, size). `snapshots` gains a `provisioned` flag like
+  VMs, so a row left by an interrupted snapshot task is recognisable.
+  Snapshot rows are deleted with their resource by trigger; a clone's
+  `cloned_from_snapshot_id` is `ON DELETE RESTRICT`, so the database
+  refuses to delete an origin snapshot, or its VM, while a clone exists,
+  independently of the ZFS check.
+- **Permissions are granted in `api/0005` and declared when enforced.**
+  `api/0005` gives the built-in roles every permission of Decision 14 at
+  once, as the ADR orders. `internal/auth` declares each one only when a
+  route requires it (`vm:snapshot` with step 2, the `container:*` ones in
+  7b), because the route table test requires every declared permission
+  to be enforced. Until then the string sits in the role and
+  `Role.Allows` denies it, as it denies every undeclared permission.
+- **Two error codes the text did not name.** A rollback to a snapshot
+  that is not the latest, without `destroy_newer`, is
+  `snapshot_not_latest` (409), with the newer snapshot IDs in the
+  details. A rollback or clone of a snapshot that lacks a dataset the
+  resource has now (a disk added after the snapshot) is
+  `snapshot_incomplete` (409). The ADR does not cover the second case;
+  using the snapshot would give a VM a disk with post-snapshot contents,
+  a state it was never in (the same reasoning as Decision 4's), so it is
+  refused before anything changes, and the message says to remove the
+  disks added since. A `snapshot_has_clones` also comes from `DestroyVM`,
+  which before this milestone would have failed in `zfs destroy` with an
+  unnamed error.
+- **Snapshots Skep did not take block a rollback past them.** A newer
+  snapshot without a matching `skep:snapshot_id` (made by hand under a
+  VM's dataset) is not Skep's to destroy, so `destroy_newer` refuses with
+  `snapshot_not_latest` and names it, instead of letting `zfs rollback -r`
+  take it.
+- **Rollback is one `zfs rollback` per dataset.** ZFS has no recursive
+  rollback (`-r` destroys newer snapshots; it does not descend). Every
+  precondition is checked for every dataset first, so a refusal changes
+  nothing; a failure of the second or later command (I/O error, pool
+  suspended) leaves the earlier datasets rolled back. The task reports
+  that as a failure naming the dataset.
+- **Clone properties are set, not inherited.** A ZFS clone does not
+  copy the origin's local properties. `CloneVM` sets `skep:vm_id`,
+  `skep:disk_id`, `canmount=off`, and `volmode=dev` explicitly. A linked
+  clone has no reservation whatever the source had: it is thin.
+- **The inventory's owner kinds** are `vm`, `container`, `template`,
+  `skep` (the datasets that only hold others: `<root>`, `<root>/vm`,
+  `<root>/jail`, `<root>/templates`), and `unowned` with a reason. A
+  dataset is owned only when its place in the tree, its owner property,
+  and a database row agree; a snapshot is judged by its dataset and is
+  unowned if Skep did not take it. Pages are 100 entries by default, 500
+  at most, because a pool with snapshots has many more datasets than VMs.
+  A pool that cannot be read is reported in `unavailable_pools`.
+
+### Step 2: snapshots, rollback, clones
+
+- **Snapshots go through hostops directly, not the hypervisor adapter.**
+  They are storage operations, the same for any engine; the adapter is
+  asked only whether the VM runs (for the consistency label and the
+  rollback refusal).
+- **A VM with disks in more than one pool cannot be snapshotted**
+  (`storage_feature_unsupported`). ZFS creates snapshots atomically only
+  within one pool, so such a VM cannot have the "one atomic snapshot of
+  every disk" of Decision 2a, and a weaker one is not offered.
+- **`vm.clone` holds the source VM** as its task resource, so the source
+  cannot be started, rolled back, or deleted while it is being cloned. The
+  clone is a new, unprovisioned VM inserted with the task; deleting it is
+  refused with `resource_busy` while its clone task runs. A clone has the
+  source's CPU, memory, and NICs (new MAC addresses), thin disks, and no
+  install media.
+- **Two more codes**: `snapshot_name_taken` (409) for a label the VM
+  already uses, and `snapshot_not_provisioned` (409) for a snapshot whose
+  task never finished, which can only be deleted.
+- **Size follows ZFS after a rollback or clone.** A zvol rolled back, or
+  cloned, from a snapshot taken before the disk grew has the snapshot's
+  size; the disk's recorded size is set to the zvol's after either.
+- The snapshot of a VM also carries `skep:vm_id`: user properties of a
+  dataset show on its snapshots (seen on `hearst`), though the inventory
+  judges a snapshot by its dataset in any case.
+
+### Step 3: disk changes
+
+- **The request shape**: `add_disks` (disk specs as at create),
+  `resize_disks` (`slot`, `size`), `remove_disks` (slots), and
+  `destroy_snapshots` on `PUT /vms/{id}`. New disks take the lowest slot
+  no disk or medium uses; a slot freed by the same request is not reused
+  by it. A removal is refused with `disk_has_snapshots` (409) while
+  snapshots contain the disk and the flag is not set, and also when the
+  disk has a snapshot Skep did not take.
+- **`vm:delete` is checked by skep-api from the body**: an update with
+  `remove_disks` needs it as well as the route's `vm:write`, refused and
+  audited like a route denial.
+- **Steps are recorded as they are done.** The task destroys the
+  snapshots, then removes, grows, and adds, writing each change to the
+  database as soon as it is done on the host, so a failure part way leaves
+  the database describing the disks that exist; the task fails naming the
+  step. `vm.update`'s time limit went from 1 to 5 minutes for this.
+- **Space for an update** is checked by the service, not by the adapter's
+  create-time check (which skips provisioned VMs): only the new
+  reservations count, that is full-reservation disks added and the growth
+  of full-reservation disks.
+
+### Step 4: directory pools
+
+- **`storage.directories` is a list of `{"name", "path"}`**, not of bare
+  paths: a disk names its pool in a request as it names a ZFS pool, so a
+  directory pool needs a name, and names are one namespace with
+  `storage.pools` (a repeat is refused at load, as are relative, unclean,
+  duplicate, and nested paths). The checks of the directory itself (not
+  a symbolic link, `root`, mode `0700`, `statfs` type `ufs` or `zfs`) run
+  on every use, not at load, so a pool that goes missing reports
+  `storage_unavailable` with the reason instead of stopping the agent.
+  The file system types are an allow-list (`ufs`, `zfs`) rather than a
+  deny-list of `nfs` and `tmpfs`.
+- **Every file operation goes through `os.Root`** (Go 1.24+, standard
+  library) opened on the pool's directory, so no derived name can resolve
+  outside it, even through a planted link; disk files are also opened
+  with `O_NOFOLLOW` and checked with `lstat` as regular files. No new
+  dependency.
+- **One router, `hostops.Disks`**, sends create, grow, remove, delete,
+  listing, and pool reads to ZFS or to the directory implementation by the
+  pool's kind; the bhyve adapter and the VM service use it. Snapshots,
+  rollback, and clones stay ZFS calls; the service refuses them first
+  with `storage_feature_unsupported` for a VM with a disk in a directory
+  pool (a VM with disks in both kinds was already refused as multi-pool).
+  `GET /storage/datasets?pool=<directory pool>` is refused the same way;
+  the inventory is of ZFS datasets.
+- **A file disk has no ownership marker.** A zvol carries `skep:vm_id`
+  and `skep:disk_id`; extended attributes could do the same for a file,
+  but the path is already derived from the VM's ID inside a directory
+  only root can open, so the path is the ownership. A VM's directory is
+  removed only when it holds nothing but `disk<N>.img` regular files;
+  anything else fails the delete and is left in place.
+- **The database records the pool's kind.** `storage_pools.type` (already
+  allowing `directory`) is set from the configuration, and a volume in a
+  directory pool is `kind = 'file'` named `<root>/vm/<id>/disk<slot>.img`
+  relative to the pool, with no `desired_volblocksize`. A pool name whose
+  row has the other type is refused (`storage_unavailable`), and so is a
+  VM disk recorded in one kind whose pool name is now configured as the
+  other: a disk is never looked for in the wrong place. A disk shows
+  `pool_type` and, in a directory pool, `file` instead of `dataset`;
+  `GET /storage/pools` shows `type` and `capabilities`. No migration was
+  needed.
+- **Preallocation and its limits.** A disk that is not thin is checked
+  against `statfs` available space, then written with zeros in 1 MiB
+  chunks, checking cancellation between chunks; a failed or cancelled
+  create removes the file, and a failed growth truncates it back to its
+  old size. On a ZFS file system with compression the zeros are not
+  stored, so the space is not truly held; this is documented, not worked
+  around. `volblocksize` is refused for a directory pool rather than
+  ignored.
+
+### Step 5: monitoring, health checks, interface, CLI
+
+- **The sampler has its own 30-second loop**, not the VM watcher's
+  2 seconds: a `zfs list` of every pool that often would cost more than
+  the values are worth. `GET /metrics` and both health probes read the
+  latest sample, which is never more than a minute old (an older one is
+  replaced before answering), so a health request runs no ZFS command.
+  Per-jail values come with 7b.
+- **bhyve's CPU time and memory come from `ps(1)`** (`/bin/ps -o rss=
+  -o time= -o comm= -p <pid>`), not from decoding `struct kinfo_proc`:
+  `golang.org/x/sys` has no FreeBSD binding for it and its layout is not
+  an interface. Before `ps` runs, `kern.proc.args` of the PID the watcher
+  observed must be `bhyve: skep-<vm-id>` (bhyve's `setproctitle(3)`
+  title, seen on `hearst`), so a recycled PID is never reported as the
+  VM. On `hearst` the first version, with `-o rss=,time=,comm=`, failed:
+  FreeBSD's `ps` takes everything after `=` as the header, commas
+  included. A FreeBSD-only test now runs the real `ps`.
+- **Capacity** is allocated / size for a ZFS pool, as `zpool list` shows
+  it, and used / (used + available) for a directory pool, as `df` shows
+  it (the root reserve is not available to Skep's files either).
+- **One `degraded` level for both thresholds.** The health document has
+  no "warning" status, and making `storage_capacity` critical would make
+  `skep-api` answer 503 for a full pool, taking a working service away
+  from a load balancer. So a pool past either threshold makes the check
+  `degraded`; its message names the threshold, and `/metrics` gives
+  `capacity` as `ok`, `warning`, `failing`, or `unavailable`. A pool that
+  cannot be read also degrades `storage_capacity`.
+- **`GET /metrics` needs `system:read`, `vm:read`, and `storage:read`**:
+  it names VMs and pools.
+- **Start is refused with `storage_locked` too.** Steps 1 to 3 refused
+  create, snapshot, rollback, clone, and disk changes in a locked
+  dataset, but not start; on `hearst` a VM whose key was unloaded failed
+  in bhyve ("Device emulation initialization error"). The start check
+  now reads the VM's ZFS datasets and refuses before a task exists, and
+  again when the task runs.
+- **The `storage_locked` check used `skeptest/skep-enc` as the dataset
+  root** (hearst change 5). The test installation's `dataset_root` was
+  switched to it for the check and back afterwards, because the check is
+  of an encrypted `<pool>/<root>` and a sibling dataset is outside the
+  root.
+- **`storage:write` is still undeclared.** No 7a route needs it (step 1's
+  rule: a permission is declared when a route enforces it), so "operator
+  is refused `storage:write`" is shown by the role and the route table
+  test until 7b adds templates.
+- **The interface**: the Storage section replaces its placeholder (pools
+  with capacity against the thresholds, per-VM use, the paged inventory
+  with owners); the VM page gains a Snapshots card. A rollback to an
+  older snapshot asks for confirmation naming the snapshots it destroys
+  and sends `destroy_newer` only then. The clone form and a clone's page
+  carry the identity note of decision 3. `skepctl vm clone` prints it
+  too, on standard error with `--json` so the JSON stays parseable.
+- **The browser check against a real host** is
+  `web/e2e/clone-note.spec.ts`, skipped unless pointed at one; the local
+  browser suite covers the same note against the simulated host.
+- **`/var/tmp/skep` on `hearst` is now `root:wheel`** (approved for this
+  step). The device-and-inode comparison of step 4 stays: it is what
+  protects a directory pool whose parent is not root's.

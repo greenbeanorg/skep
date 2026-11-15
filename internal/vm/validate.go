@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"regexp"
+	"sort"
 	"unicode/utf8"
 
 	"github.com/greenbeanorg/skep/internal/config"
@@ -197,14 +198,126 @@ func normalizeDisk(slot int, spec models.VMDiskSpec) (models.VMDisk, error) {
 	return d, nil
 }
 
-// applyUpdate returns the VM as an update would leave it, and the names of
-// the fields that change. The VM's disks and NICs are fixed; only its
-// install media can be replaced.
-func applyUpdate(vm models.VM, upd models.VMUpdate) (models.VM, []string, error) {
+// diskPlan is what an update does to a VM's zvol-backed disks (ADR 0010
+// decision 4), in the order the task does it: remove, grow, add.
+type diskPlan struct {
+	Remove []models.VMDisk
+	Grow   []diskGrow
+	Add    []models.VMDisk
+}
+
+type diskGrow struct {
+	Disk     models.VMDisk
+	NewBytes int64
+}
+
+func (p diskPlan) empty() bool { return len(p.Remove)+len(p.Grow)+len(p.Add) == 0 }
+
+// planDisks validates the disk changes of an update against the VM and
+// returns the VM's disks as they will be, and the plan. New disks have no
+// ID yet.
+func planDisks(vm models.VM, upd models.VMUpdate) ([]models.VMDisk, diskPlan, error) {
+	var plan diskPlan
+	bySlot := map[int]models.VMDisk{}
+	used := map[int]bool{}
+	for _, d := range vm.Disks {
+		used[d.Slot] = true
+		if d.Bus != models.BusAHCICD {
+			bySlot[d.Slot] = d
+		}
+	}
+	removed := map[int]bool{}
+	for i, slot := range upd.RemoveDisks {
+		d, ok := bySlot[slot]
+		switch {
+		case !ok:
+			return nil, plan, invalidf("remove_disks[%d]: the VM has no disk in slot %d", i, slot)
+		case removed[slot]:
+			return nil, plan, invalidf("remove_disks[%d]: slot %d is listed twice", i, slot)
+		}
+		removed[slot] = true
+		plan.Remove = append(plan.Remove, d)
+	}
+	grown := map[int]bool{}
+	for i, r := range upd.ResizeDisks {
+		d, ok := bySlot[r.Slot]
+		size := int64(r.Size)
+		switch {
+		case !ok:
+			return nil, plan, invalidf("resize_disks[%d]: the VM has no disk in slot %d", i, r.Slot)
+		case removed[r.Slot]:
+			return nil, plan, invalidf("resize_disks[%d]: slot %d is also being removed", i, r.Slot)
+		case grown[r.Slot]:
+			return nil, plan, invalidf("resize_disks[%d]: slot %d is listed twice", i, r.Slot)
+		case size <= d.SizeBytes:
+			return nil, plan, invalidf("resize_disks[%d]: a disk only grows; slot %d has %d bytes", i, r.Slot, d.SizeBytes)
+		case size%mib != 0 || (d.VolBlockSize > 0 && size%int64(d.VolBlockSize) != 0):
+			return nil, plan, invalidf("resize_disks[%d].size must be a multiple of 1 MiB and of the disk's block size", i)
+		}
+		grown[r.Slot] = true
+		plan.Grow = append(plan.Grow, diskGrow{Disk: d, NewBytes: size})
+	}
+	if len(vm.Disks)-len(plan.Remove)+len(upd.AddDisks) > models.MaxVMDisks {
+		return nil, plan, invalidf("a VM has at most %d disks and install media together", models.MaxVMDisks)
+	}
+	// New disks take the lowest slots nobody uses now. A slot freed in
+	// the same update is not reused by it.
+	next := 0
+	for i, spec := range upd.AddDisks {
+		for used[next] {
+			next++
+		}
+		if next > hostops.MaxSlot {
+			return nil, plan, invalidf("add_disks[%d]: no free slot is left", i)
+		}
+		if spec.Media != "" || spec.Bus == models.BusAHCICD {
+			return nil, plan, invalidf("add_disks[%d]: install media is attached with media, not add_disks", i)
+		}
+		d, err := normalizeDisk(next, spec)
+		if err != nil {
+			return nil, plan, invalidf("add_disks[%d]: %s", i, err.(*models.Error).Message)
+		}
+		used[next] = true
+		plan.Add = append(plan.Add, d)
+	}
+	disks := []models.VMDisk{}
+	for _, d := range vm.Disks {
+		if removed[d.Slot] {
+			continue
+		}
+		for _, g := range plan.Grow {
+			if g.Disk.Slot == d.Slot {
+				d.SizeBytes = g.NewBytes
+			}
+		}
+		disks = append(disks, d)
+	}
+	disks = append(disks, plan.Add...)
+	sort.Slice(disks, func(i, j int) bool { return disks[i].Slot < disks[j].Slot })
+	return disks, plan, nil
+}
+
+// applyUpdate returns the VM as an update would leave it, the names of
+// the fields that change, and what happens to its disks. NICs are fixed.
+func applyUpdate(vm models.VM, upd models.VMUpdate) (models.VM, []string, diskPlan, error) {
 	var changed []string
+	disks, plan, err := planDisks(vm, upd)
+	if err != nil {
+		return vm, nil, plan, err
+	}
+	vm.Disks = disks
+	if len(plan.Add) > 0 {
+		changed = append(changed, "disks_added")
+	}
+	if len(plan.Grow) > 0 {
+		changed = append(changed, "disks_grown")
+	}
+	if len(plan.Remove) > 0 {
+		changed = append(changed, "disks_removed")
+	}
 	if upd.Description != nil && *upd.Description != vm.Description {
 		if err := checkDescription(*upd.Description); err != nil {
-			return vm, nil, err
+			return vm, nil, plan, err
 		}
 		vm.Description, changed = *upd.Description, append(changed, "description")
 	}
@@ -223,7 +336,7 @@ func applyUpdate(vm models.VM, upd models.VMUpdate) (models.VM, []string, error)
 		vm.Config, changed = *upd.Config, append(changed, "config")
 	}
 	if err := checkCPUAndMemory(vm.CPUCount, vm.MemoryBytes, vm.Config.CPU); err != nil {
-		return vm, nil, err
+		return vm, nil, plan, err
 	}
 	if upd.Media != nil {
 		disks := []models.VMDisk{}
@@ -237,22 +350,22 @@ func applyUpdate(vm models.VM, upd models.VMUpdate) (models.VM, []string, error)
 			}
 		}
 		if len(disks)+len(*upd.Media) > models.MaxVMDisks {
-			return vm, nil, invalidf("a VM has at most %d disks and install media together", models.MaxVMDisks)
+			return vm, nil, plan, invalidf("a VM has at most %d disks and install media together", models.MaxVMDisks)
 		}
 		seen := map[string]bool{}
 		for i, name := range *upd.Media {
 			if !hostops.ValidMediaName(name) {
-				return vm, nil, invalidf("media[%d] must be the name of an ISO file in the media directory", i)
+				return vm, nil, plan, invalidf("media[%d] must be the name of an ISO file in the media directory", i)
 			}
 			if seen[name] {
-				return vm, nil, invalidf("media[%d] is attached twice", i)
+				return vm, nil, plan, invalidf("media[%d] is attached twice", i)
 			}
 			seen[name] = true
 			disks = append(disks, models.VMDisk{Slot: next + i, Bus: models.BusAHCICD, ReadOnly: true, Media: name})
 		}
 		vm.Disks, changed = disks, append(changed, "media")
 	}
-	return vm, changed, nil
+	return vm, changed, plan, nil
 }
 
 // media returns the install media of a VM.

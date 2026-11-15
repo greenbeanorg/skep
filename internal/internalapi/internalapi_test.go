@@ -120,6 +120,12 @@ func socketDir(t *testing.T) string {
 // start serves the internal API on a fresh socket and returns its path.
 func start(t *testing.T, backend internalapi.Backend, allowed []uint32) string {
 	t.Helper()
+	return startWith(t, backend, allowed, internalapi.Options{})
+}
+
+// startWith is start with handler options.
+func startWith(t *testing.T, backend internalapi.Backend, allowed []uint32, opts internalapi.Options) string {
+	t.Helper()
 	path := filepath.Join(socketDir(t), "agent.sock")
 	ln, err := internalapi.Listen(internalapi.ListenOptions{
 		Path: path, Mode: 0o600, GID: -1, AllowedUIDs: allowed, MaxConnections: 8, Logger: quiet(),
@@ -127,9 +133,8 @@ func start(t *testing.T, backend internalapi.Backend, allowed []uint32) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv := internalapi.NewServer(internalapi.NewHandler(backend, internalapi.Options{
-		RequestTimeout: 5 * time.Second, Logger: quiet(),
-	}), 5*time.Second, quiet())
+	opts.RequestTimeout, opts.Logger = 5*time.Second, quiet()
+	srv := internalapi.NewServer(internalapi.NewHandler(backend, opts), 5*time.Second, quiet())
 	go srv.Serve(ln)
 	t.Cleanup(func() {
 		srv.Close()

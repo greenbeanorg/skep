@@ -125,6 +125,20 @@ paths:
         when the previous month is still unsealed 7 days into the new
         one. Neither is critical. A check is absent when archiving is
         turned off.
+
+        Two concern storage (ADR 0010 decision 15), both from the agent's
+        resource sample (`GET /metrics`, at most a minute old):
+        `storage_capacity` is `degraded` when an allow-listed pool or
+        directory pool is past `storage.capacity_warn_percent` (default
+        80) or `storage.capacity_fail_percent` (default 90) of its space
+        in use, or cannot be read; its `error` says which pool, how full,
+        and which threshold it passed. `storage_locked` is `degraded` when
+        a dataset under a pool's dataset root has its encryption key
+        unloaded, naming the datasets. Neither is critical: a full or
+        locked pool stops what needs it, not the service. The health
+        document has no separate "warning" status, so a pool past either
+        threshold reads `degraded`; `GET /metrics` tells `warning` from
+        `failing`.
       responses:
         "200":
           description: The service serves requests. The status is `ok` or `degraded`.
@@ -828,6 +842,23 @@ paths:
         are unchanged. Only a stopped, provisioned VM can be changed
         (`vm_not_stopped`, `vm_not_provisioned`). `media` replaces the
         attached install media; `[]` detaches all of it.
+
+        Disks (ADR 0010 decision 4): `add_disks` adds zvol-backed disks
+        with the rules of a create, each in the lowest free slot.
+        `resize_disks` grows a disk; a disk never shrinks, and the guest
+        grows its own partition and filesystem afterwards (the task result
+        says so). A disk with a reservation needs the growth to be
+        available in its pool (`insufficient_space`). `remove_disks`
+        destroys the disks in those slots and their zvols, and **needs
+        `vm:delete` as well**. It is refused while snapshots contain the
+        disk (`disk_has_snapshots`, naming them) unless
+        `"destroy_snapshots": true`, which destroys each such snapshot
+        whole, on every disk of the VM; snapshots taken before the disk
+        was added are kept. A snapshot with linked clones blocks the
+        removal whatever the flag says (`snapshot_has_clones`). The task
+        result and the audit entry list every dataset and snapshot
+        destroyed. Changing a disk's bus, block size, or reservation is
+        not offered, and nothing is hot-plugged.
       parameters:
         - $ref: "#/components/parameters/IdempotencyKey"
       requestBody:
@@ -947,6 +978,255 @@ paths:
           $ref: "#/components/responses/VMUnprocessable"
         "503":
           $ref: "#/components/responses/Unavailable"
+  /vms/{id}/snapshots:
+    parameters:
+      - $ref: "#/components/parameters/VMID"
+    get:
+      tags: [vms]
+      operationId: listSnapshots
+      summary: A VM's snapshots
+      x-skep-permission: vm:read
+      description: |
+        Requires `vm:read`. The VM's snapshots, oldest first, with what
+        ZFS shows of each now (`observed`) and the linked clones that
+        depend on each.
+      parameters:
+        - $ref: "#/components/parameters/Background"
+      responses:
+        "200":
+          description: The snapshots.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SnapshotList"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+    post:
+      tags: [vms]
+      operationId: createSnapshot
+      summary: Take a snapshot of a VM's disks
+      x-skep-permission: vm:snapshot
+      description: |
+        Requires `vm:snapshot`. Submits `vm.snapshot.create`, which takes
+        one atomic recursive ZFS snapshot of every disk of the VM and
+        copies its UEFI variable store (ADR 0010 decision 2). Memory is
+        not saved. Taken while the VM runs, the snapshot is
+        `crash_consistent`: what a power cut would leave on disk; taken
+        while it is stopped, `consistent`. The task can be cancelled until
+        the ZFS call.
+
+        Refused for a VM with no disks or with disks in more than one pool
+        (`storage_feature_unsupported`: ZFS snapshots are atomic within a
+        pool only), for a name the VM already uses
+        (`snapshot_name_taken`), beyond
+        `storage.max_snapshots_per_resource` (`snapshot_limit`, default
+        64), and when the encryption key of the VM's datasets is not
+        loaded (`storage_locked`).
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SnapshotCreate"
+      responses:
+        "202":
+          description: The snapshot, not yet taken, and its task.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SnapshotCreated"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/VMConflict"
+        "422":
+          $ref: "#/components/responses/VMUnprocessable"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /vms/{id}/snapshots/{sid}:
+    parameters:
+      - $ref: "#/components/parameters/VMID"
+      - $ref: "#/components/parameters/SnapshotID"
+    get:
+      tags: [vms]
+      operationId: getSnapshot
+      summary: One snapshot
+      x-skep-permission: vm:read
+      parameters:
+        - $ref: "#/components/parameters/Background"
+      responses:
+        "200":
+          description: The snapshot.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Snapshot"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+    delete:
+      tags: [vms]
+      operationId: deleteSnapshot
+      summary: Delete a snapshot
+      x-skep-permission: vm:snapshot
+      description: |
+        Requires `vm:snapshot`. Submits `vm.snapshot.delete`, which
+        destroys the snapshot on every disk of the VM and its copy of the
+        variable store. The VM may be running. Refused while a linked clone
+        depends on the snapshot (`snapshot_has_clones`, naming the
+        clones).
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "202":
+          description: The task.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Task"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/VMConflict"
+        "422":
+          $ref: "#/components/responses/VMUnprocessable"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /vms/{id}/snapshots/{sid}/rollback:
+    parameters:
+      - $ref: "#/components/parameters/VMID"
+      - $ref: "#/components/parameters/SnapshotID"
+    post:
+      tags: [vms]
+      operationId: rollbackSnapshot
+      summary: Roll a VM back to a snapshot
+      x-skep-permission: vm:snapshot
+      description: |
+        Requires `vm:snapshot`. Submits `vm.snapshot.rollback`, which
+        rolls every disk of the VM back and restores the variable store
+        copied with the snapshot. Only while the VM is stopped
+        (`vm_not_stopped`): a rollback never hides a power-off.
+
+        A rollback to a snapshot that is not the latest destroys every
+        newer one, and is refused without `"destroy_newer": true`
+        (`snapshot_not_latest`, listing them). The task result and the
+        audit entry name each snapshot destroyed. A newer snapshot with
+        linked clones refuses the rollback whatever the flag says
+        (`snapshot_has_clones`), and so does a newer snapshot Skep did not
+        take. A snapshot taken before a disk was added is refused
+        (`snapshot_incomplete`): rolling back to it would give the VM a
+        disk with contents from after the snapshot.
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SnapshotRollback"
+      responses:
+        "202":
+          description: The task.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Task"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/VMConflict"
+        "422":
+          $ref: "#/components/responses/VMUnprocessable"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /vms/{id}/clone:
+    parameters:
+      - $ref: "#/components/parameters/VMID"
+    post:
+      tags: [vms]
+      operationId: cloneVM
+      summary: Make a linked clone of a VM
+      x-skep-permission: vm:write
+      x-skep-also-requires: [vm:snapshot]
+      description: |
+        Requires `vm:write` and `vm:snapshot`. Submits `vm.clone`, which
+        makes a new VM whose disks are ZFS clones of one snapshot of the
+        source (ADR 0010 decision 3). Without `snapshot_id`, the task
+        takes a snapshot of the source first, named after the clone, and
+        leaves it behind. The clone gets a new ID (and so SMBIOS UUID),
+        the given name, and new MAC addresses; it has the source's CPU,
+        memory, and NICs, its disks are thin, and install media is not
+        attached.
+
+        **A clone is the same guest.** Skep does not change what is inside
+        the disks: the guest's hostname, its SSH host keys, and its
+        machine ID (`/etc/hostid`, `/etc/machine-id`, the Windows SID) are
+        the source's. Change them in the clone before it shares a network
+        with the source.
+
+        While the clone exists, its origin snapshot and the source VM
+        cannot be deleted (`snapshot_has_clones`). Clones stay in the
+        source's pool.
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VMClone"
+      responses:
+        "202":
+          description: The clone, not yet provisioned, and its task.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VMCreated"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/VMConflict"
+        "422":
+          $ref: "#/components/responses/VMUnprocessable"
+        "503":
+          $ref: "#/components/responses/Unavailable"
   /vms/{id}/console/serial:
     parameters:
       - $ref: "#/components/parameters/VMID"
@@ -1020,6 +1300,91 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "503":
           $ref: "#/components/responses/Unavailable"
+  /storage/datasets:
+    get:
+      tags: [storage]
+      operationId: listStorageDatasets
+      summary: What Skep owns in its pools
+      x-skep-permission: storage:read
+      description: |
+        Requires `storage:read`. Every filesystem, volume, and snapshot
+        under `<pool>/<root>` of the allow-listed pools, ordered by pool
+        (in allow-list order) and name, cursor paginated, read from ZFS on
+        each request. Each entry names its owner: a VM, a jail, a
+        template, `skep` for the datasets that only hold others, or
+        `unowned` with a reason. A dataset is owned only when its place in
+        the tree, its `skep:` owner property, and the agent's database
+        agree; anything else (an interrupted create, a hand-made dataset,
+        a snapshot Skep did not take) is listed as unowned and never
+        removed automatically (ADR 0010 decision 1). Encryption,
+        compression, and key status are what the operator set and Skep
+        inherits (decision 5). A pool that cannot be read is named in
+        `unavailable_pools` instead of failing the list. Directory pools
+        have no datasets and are not listed; naming one in `pool` is
+        `storage_feature_unsupported`.
+      parameters:
+        - $ref: "#/components/parameters/Background"
+        - name: pool
+          in: query
+          description: Only list this allow-listed pool.
+          schema: { type: string }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 500, default: 100 }
+        - name: cursor
+          in: query
+          schema: { type: string }
+      responses:
+        "200":
+          description: One page of the inventory.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DatasetList"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/VMConflict"
+        "422":
+          $ref: "#/components/responses/VMUnprocessable"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /metrics:
+    get:
+      tags: [storage]
+      operationId: getMetrics
+      summary: Current resource use of the node
+      x-skep-permission: system:read
+      x-skep-also-requires: [vm:read, storage:read]
+      description: |
+        Requires `system:read`, `vm:read`, and `storage:read`: the values
+        name pools and VMs. Current values only, with no history (ADR 0010
+        decision 15): the space and capacity of every allow-listed pool
+        and directory pool against the `storage_capacity` thresholds, the
+        datasets whose key is not loaded, each VM's disk use, and, while a
+        VM runs, the CPU time and resident memory of its bhyve process.
+        The agent samples every 30 seconds; a sample older than a minute
+        is replaced before answering. `observed_at` says when the values
+        were read. Per-jail values come with jails (phase 7b).
+      parameters:
+        - $ref: "#/components/parameters/Background"
+      responses:
+        "200":
+          description: The latest sample.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Metrics"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "503":
+          $ref: "#/components/responses/Unavailable"
   /storage/media:
     get:
       tags: [storage]
@@ -1065,6 +1430,13 @@ components:
       schema:
         type: string
         pattern: "^[A-Za-z0-9._-]{1,64}$"
+    SnapshotID:
+      name: sid
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: "^[A-Za-z0-9._-]{1,64}$"
     Background:
       name: X-Skep-Background
       in: header
@@ -1100,7 +1472,10 @@ components:
         `insufficient_space`, `insufficient_memory`, `bhyve_unavailable`,
         `storage_unavailable`, `vm_not_running`, `vm_start_failed`,
         `stop_timeout`, `console_busy`, `resource_busy`,
-        `idempotency_key_conflict`.
+        `idempotency_key_conflict`, and for storage operations
+        `storage_locked`, `snapshot_limit`, `snapshot_has_clones`,
+        `snapshot_not_latest`, `snapshot_incomplete`, `snapshot_name_taken`,
+        `snapshot_not_provisioned`, `disk_has_snapshots`.
       content:
         application/json:
           schema:
@@ -1109,7 +1484,8 @@ components:
       description: |
         The request names something this host does not offer:
         `engine_unsupported`, `firmware_unsupported`, `pool_not_allowed`,
-        `bridge_not_allowed`, `media_not_found`.
+        `bridge_not_allowed`, `media_not_found`,
+        `storage_feature_unsupported`.
       content:
         application/json:
           schema:
@@ -1245,11 +1621,21 @@ components:
         read_only: { type: boolean }
         size_bytes: { type: integer, format: int64 }
         pool: { type: string }
+        pool_type:
+          type: string
+          enum: [zfs, directory]
         thin: { type: boolean }
-        volblocksize: { type: integer }
+        volblocksize:
+          type: integer
+          description: The zvol's block size; absent in a directory pool.
         dataset:
           type: string
-          description: The zvol, `<pool>/skep/vm/<vm-id>/disk<slot>`.
+          description: The zvol, `<pool>/skep/vm/<vm-id>/disk<slot>`, in a ZFS pool.
+        file:
+          type: string
+          description: |
+            The disk's file in a directory pool, relative to the pool's
+            directory: `skep/vm/<vm-id>/disk<slot>.img`.
         media:
           type: string
           description: The ISO file name, for install media (`ahci-cd`).
@@ -1309,6 +1695,9 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/VMNIC"
+        cloned_from_snapshot_id:
+          type: string
+          description: The snapshot a linked clone was made from. A clone is the same guest as its source (hostname, SSH host keys, machine ID).
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
     VMList:
@@ -1347,19 +1736,7 @@ components:
           type: array
           maxItems: 8
           items:
-            type: object
-            description: A zvol-backed disk (pool and size) or install media (media, bus ahci-cd).
-            properties:
-              bus:
-                type: string
-                enum: [virtio-blk, nvme, ahci-hd, ahci-cd]
-              size:
-                $ref: "#/components/schemas/ByteSize"
-              pool: { type: string }
-              thin: { type: boolean }
-              media: { type: string }
-              volblocksize:
-                $ref: "#/components/schemas/ByteSize"
+            $ref: "#/components/schemas/VMDiskSpec"
         nics:
           type: array
           maxItems: 4
@@ -1385,6 +1762,52 @@ components:
           type: array
           description: Replaces the attached install media; empty detaches all.
           items: { type: string }
+        add_disks:
+          type: array
+          description: Disks to add, as at create; install media is attached with `media`.
+          items:
+            $ref: "#/components/schemas/VMDiskSpec"
+        resize_disks:
+          type: array
+          description: Disks to grow. A disk never shrinks.
+          items:
+            $ref: "#/components/schemas/VMDiskResize"
+        remove_disks:
+          type: array
+          description: Slots of the disks to destroy. Needs `vm:delete` as well as `vm:write`.
+          items: { type: integer, minimum: 0 }
+        destroy_snapshots:
+          type: boolean
+          description: Allow removing a disk that snapshots contain, destroying each of them whole.
+    VMDiskSpec:
+      type: object
+      description: |
+        A disk on a pool (pool and size) or install media (media, bus
+        ahci-cd). In a ZFS pool the disk is a zvol; in a directory pool it
+        is a raw file, created sparse, or written with zeros when `thin`
+        is false so its blocks are allocated (on a ZFS file system with
+        compression, zeros take little space whatever is written).
+      properties:
+        bus:
+          type: string
+          enum: [virtio-blk, nvme, ahci-hd, ahci-cd]
+        size:
+          $ref: "#/components/schemas/ByteSize"
+        pool:
+          type: string
+          description: An allow-listed ZFS pool or directory pool.
+        thin: { type: boolean }
+        media: { type: string }
+        volblocksize:
+          $ref: "#/components/schemas/ByteSize"
+          description: ZFS pools only; refused for a directory pool.
+    VMDiskResize:
+      type: object
+      required: [slot, size]
+      properties:
+        slot: { type: integer, minimum: 0 }
+        size:
+          $ref: "#/components/schemas/ByteSize"
     VMAction:
       type: object
       required: [action]
@@ -1397,6 +1820,85 @@ components:
           minimum: 1
           maximum: 300
           description: Seconds a stop or restart waits for the guest to shut down. Default 90.
+    SnapshotClone:
+      type: object
+      required: [id, name]
+      properties:
+        id: { type: string }
+        name: { type: string }
+    Snapshot:
+      type: object
+      required: [id, resource_kind, resource_id, name, description, consistency, provisioned, created_at, clones]
+      properties:
+        id: { type: string }
+        resource_kind:
+          type: string
+          enum: [vm, container]
+        resource_id: { type: string }
+        name: { type: string }
+        description: { type: string }
+        consistency:
+          type: string
+          enum: [consistent, crash_consistent]
+        provisioned:
+          type: boolean
+          description: False while the snapshot task runs, and after it was interrupted; such a snapshot can only be deleted.
+        created_at: { type: string, format: date-time }
+        observed:
+          type: object
+          required: [exists, used_bytes]
+          properties:
+            exists: { type: boolean }
+            used_bytes: { type: integer, format: int64 }
+            at: { type: string, format: date-time }
+        clones:
+          type: array
+          items:
+            $ref: "#/components/schemas/SnapshotClone"
+    SnapshotList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Snapshot"
+    SnapshotCreate:
+      type: object
+      required: [name]
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+          pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$"
+        description: { type: string, maxLength: 1024 }
+    SnapshotCreated:
+      type: object
+      required: [snapshot, task]
+      properties:
+        snapshot:
+          $ref: "#/components/schemas/Snapshot"
+        task:
+          $ref: "#/components/schemas/Task"
+    SnapshotRollback:
+      type: object
+      additionalProperties: false
+      properties:
+        destroy_newer:
+          type: boolean
+          description: Allow a rollback to an older snapshot, which destroys every newer one.
+    VMClone:
+      type: object
+      required: [name]
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+          pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$"
+        description: { type: string, maxLength: 1024 }
+        snapshot_id:
+          type: string
+          description: The snapshot of the source to clone. Without it, the task takes one first.
     VMCreated:
       type: object
       required: [vm, task]
@@ -1407,10 +1909,30 @@ components:
           $ref: "#/components/schemas/Task"
     StoragePool:
       type: object
-      required: [name, type, health, size_bytes, allocated_bytes, free_bytes, available_bytes]
+      description: |
+        An allow-listed pool: a ZFS pool (`storage.pools`) or a directory
+        pool (`storage.directories`, ADR 0010 decision 6), whose disks are
+        sparse raw files. A usable directory pool reports health `ONLINE`
+        and the sizes of its file system; one that cannot be used
+        (missing, a symbolic link, not `root` 0700, not on local UFS or
+        ZFS) reports `UNAVAILABLE` with the reason in `error`.
+      required: [name, type, capabilities, health, size_bytes, allocated_bytes, free_bytes, available_bytes]
       properties:
         name: { type: string }
-        type: { type: string }
+        type:
+          type: string
+          enum: [zfs, directory]
+        capabilities:
+          type: object
+          description: |
+            What the pool's kind can do. A directory pool has none of
+            these; snapshots and clones of a VM with a disk in one are
+            refused with `storage_feature_unsupported`, never emulated.
+          required: [snapshots, clones, quotas]
+          properties:
+            snapshots: { type: boolean }
+            clones: { type: boolean }
+            quotas: { type: boolean }
         health: { type: string }
         error: { type: string }
         size_bytes: { type: integer, format: int64 }
@@ -1418,6 +1940,137 @@ components:
         free_bytes: { type: integer, format: int64 }
         available_bytes: { type: integer, format: int64 }
         observed_at: { type: string, format: date-time }
+    DatasetOwner:
+      type: object
+      required: [kind]
+      properties:
+        kind:
+          type: string
+          enum: [vm, container, template, skep, unowned]
+        id:
+          type: string
+          description: The owning resource, for vm, container, and template.
+        reason:
+          type: string
+          description: Why the dataset is unowned.
+    Dataset:
+      type: object
+      required: [name, pool, type, owner, used_bytes, referenced_bytes]
+      properties:
+        name: { type: string, description: The full ZFS name. }
+        pool: { type: string }
+        type:
+          type: string
+          enum: [filesystem, volume, snapshot]
+        owner:
+          $ref: "#/components/schemas/DatasetOwner"
+        snapshot_id:
+          type: string
+          description: Set on a snapshot Skep took.
+        used_bytes: { type: integer, format: int64 }
+        referenced_bytes: { type: integer, format: int64 }
+        volsize_bytes: { type: integer, format: int64, description: Volumes only. }
+        refreservation_bytes: { type: integer, format: int64, description: Volumes only; absent for a thin volume. }
+        volblocksize: { type: integer, description: Volumes only. }
+        origin: { type: string, description: The snapshot a linked clone was made from. }
+        clones:
+          type: array
+          description: On a snapshot, the datasets cloned from it.
+          items: { type: string }
+        encryption: { type: string }
+        keystatus:
+          type: string
+          description: "`available` or `unavailable`; absent when the dataset is not encrypted."
+        compression: { type: string }
+        compressratio: { type: string }
+    Metrics:
+      type: object
+      required: [node_id, observed_at, capacity_warn_percent, capacity_fail_percent, pools, vms]
+      properties:
+        node_id: { type: string }
+        observed_at: { type: string, format: date-time }
+        capacity_warn_percent: { type: integer }
+        capacity_fail_percent: { type: integer }
+        pools:
+          type: array
+          items: { $ref: "#/components/schemas/PoolMetrics" }
+        vms:
+          type: array
+          items: { $ref: "#/components/schemas/VMMetrics" }
+    PoolMetrics:
+      type: object
+      required: [name, type, health, size_bytes, allocated_bytes, available_bytes, capacity_percent, capacity]
+      properties:
+        name: { type: string }
+        type: { type: string, enum: [zfs, directory] }
+        health:
+          type: string
+          description: What zpool(8) reports, `ONLINE` for a usable directory pool, or `UNAVAILABLE` with `error`.
+        error: { type: string }
+        size_bytes: { type: integer, format: int64 }
+        allocated_bytes: { type: integer, format: int64 }
+        available_bytes: { type: integer, format: int64 }
+        capacity_percent:
+          type: number
+          description: |
+            The share in use, to one decimal: allocated of size for a ZFS
+            pool, as `zpool list` shows it; used of used plus available
+            for a directory pool, as df(1) shows it.
+        capacity:
+          type: string
+          enum: [ok, warning, failing, unavailable]
+        locked_datasets:
+          type: array
+          items: { type: string }
+          description: Datasets under the pool's dataset root whose encryption key is not loaded.
+    VMMetrics:
+      type: object
+      required: [id, name, state, disk_used_bytes, disk_referenced_bytes, disks]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        state: { type: string }
+        cpu_time_seconds:
+          type: number
+          description: User and system CPU time of the bhyve process, while the VM runs.
+        resident_memory_bytes:
+          type: integer
+          format: int64
+          description: Resident set of the bhyve process, while the VM runs.
+        disk_used_bytes:
+          type: integer
+          format: int64
+          description: Space the VM holds in its pools, snapshots included.
+        disk_referenced_bytes:
+          type: integer
+          format: int64
+          description: Space the VM's disks reference now.
+        disks:
+          type: array
+          items: { $ref: "#/components/schemas/DiskMetrics" }
+        error:
+          type: string
+          description: Which values could not be read.
+    DiskMetrics:
+      type: object
+      required: [slot, pool, used_bytes, referenced_bytes]
+      properties:
+        slot: { type: integer }
+        pool: { type: string }
+        used_bytes: { type: integer, format: int64 }
+        referenced_bytes: { type: integer, format: int64 }
+    DatasetList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Dataset"
+        next_cursor: { type: string }
+        unavailable_pools:
+          type: array
+          items: { type: string }
     StoragePoolList:
       type: object
       required: [items]

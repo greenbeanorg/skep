@@ -1,0 +1,166 @@
+# ADR 0010 phase 7a, step 4 on hearst: directory pools, 2026-11-15
+
+Build ca7a609, deployed with scripts/deploy-test.sh (size and SHA-256
+checked) into /home/aba/skep-m6, services stopped and restarted around the
+swap. hw.vmm.vmx.cap.virtual_interrupt_delivery: 0 (no reboot since the
+last check).
+
+Hearst change 4 (approved at acceptance): /var/tmp/skep/dirpool created
+root:wheel 0700 on the UFS root (/dev/da0s1a), and listed in
+/home/aba/skep-m6/agent.json as
+  "directories": [{"name": "dirpool", "path": "/var/tmp/skep/dirpool"}]
+(the previous file kept as agent.json.pre-step4). /var/tmp/skep itself is
+aba's (it holds skeptest.img); a pool path swapped by the owner of its
+parent is refused since ca7a609 (device and inode compared after the
+open). The only other change: a temporary chmod 0755 of the pool
+directory, restored to 0700 at once (Pool checks).
+
+Driven through the public API with curl (server key pinned) as
+m6operator; the guest through tests/integration/vm/consolectl in tmux.
+Times are UTC.
+
+## Unit tests natively (cross-compiled, run on hearst as aba)
+hostops.test: PASS
+hostfake.test: PASS
+vm.test: PASS
+(TestStatDirNative: StatDir(/tmp/...): fstype ufs, size 128945909760,
+free 110249373696, available 99933704192. TestDirPoolNative: a thin
+1 GiB file allocates 98304 bytes; a preallocated 8 MiB file allocates
+8421376.)
+
+## Pools (build ca7a609, 07:31 UTC)
+drwx------  2 root wheel 512 Nov 15 02:30 /var/tmp/skep/dirpool
+/dev/da0s1a		/			ufs	rw		1 1
+HTTP200
+{"name": "skeptest", "type": "zfs", "capabilities": {"snapshots": true, "clones": true, "quotas": true}, "health": "ONLINE", "error": null, "available_bytes": 16037680640}
+{"name": "dirpool", "type": "directory", "capabilities": {"snapshots": false, "clones": false, "quotas": false}, "health": "ONLINE", "error": null, "available_bytes": 99937525760}
+-- inventory of the directory pool:
+HTTP422
+storage_feature_unsupported - the inventory lists ZFS datasets; dirpool is a directory pool, whose disk files are listed with their VMs
+-- media:
+HTTP200
+['FreeBSD-15.1-RELEASE-amd64-disc1.iso']
+
+## Create (07:32 UTC)
+-- volblocksize refused:
+HTTP400
+invalid_request - the request body is not the expected JSON object
+(this probe was malformed: ByteSize takes M, G, and T suffixes, not K;
+repeated below with 16384)
+-- create:
+HTTP202
+ed72e03f-7664-4229-b8c4-78d6b85c9c51
+task vm.create succeeded None {"datasets": [{"name": "/var/tmp/skep/dirpool/skep/vm/ed72e03f-7664-4229-b8c4-78d6b85c9c51", "type": "directory", "used_bytes": 0}, {"name": "/var/tmp/skep/dirpool/skep/vm/ed72e03f-7664-4229-b8c4-78d6b85c9c51/disk0.img", "size_bytes": 6442450944, "type": "file", "used_bytes": 98304}], "name": "dirvm", "vm_id": "ed72e03f-7664-4229-b8c4-78d6b85c9c51"}
+HTTP200
+[{'slot': 0, 'bus': 'virtio-blk', 'pool': 'dirpool', 'pool_type': 'directory', 'size_bytes': 6442450944, 'thin': True, 'file': 'skep/vm/ed72e03f-7664-4229-b8c4-78d6b85c9c51/disk0.img', 'dataset': None, 'volblocksize': None, 'media': None}, {'slot': 1, 'bus': 'ahci-cd', 'pool': None, 'pool_type': None, 'size_bytes': None, 'thin': None, 'file': None, 'dataset': None, 'volblocksize': None, 'media': 'FreeBSD-15.1-RELEASE-amd64-disc1.iso'}]
+total 24
+drwx------  3 root wheel 512 Nov 15 02:31 .
+drwxr-xr-x  3 aba  wheel 512 Nov 15 02:30 ..
+drwx------  3 root wheel 512 Nov 15 02:31 skep
+/var/tmp/skep/dirpool/skep:
+total 24
+drwx------  3 root wheel 512 Nov 15 02:31 .
+drwx------  3 root wheel 512 Nov 15 02:31 ..
+drwx------  3 root wheel 512 Nov 15 02:31 vm
+/var/tmp/skep/dirpool/skep/vm:
+total 24
+drwx------  3 root wheel 512 Nov 15 02:31 .
+drwx------  3 root wheel 512 Nov 15 02:31 ..
+drwx------  2 root wheel 512 Nov 15 02:31 ed72e03f-7664-4229-b8c4-78d6b85c9c51
+/var/tmp/skep/dirpool/skep/vm/ed72e03f-7664-4229-b8c4-78d6b85c9c51:
+total 208
+drwx------  2 root wheel        512 Nov 15 02:31 .
+drwx------  3 root wheel        512 Nov 15 02:31 ..
+-rw-------  1 root wheel 6442450944 Nov 15 02:31 disk0.img
+-- volblocksize refused (integer):
+HTTP400
+invalid_request - disks[0].volblocksize applies to ZFS pools only; dirpool is a directory pool
+-- snapshot refused (stopped):
+HTTP422
+storage_feature_unsupported - the virtual machine's disks are in the directory pool dirpool, which has no snapshots or clones; only ZFS pools do {'pool': 'dirpool', 'pool_type': 'directory'}
+-- clone refused:
+HTTP422
+storage_feature_unsupported - the virtual machine's disks are in the directory pool dirpool, which has no snapshots or clones; only ZFS pools do
+
+task vm.start succeeded None {"pid": 5569, "state": "running", "vm_id": "ed72e03f-7664-4229-b8c4-78d6b85c9c51"}
+
+## Installed from the ISO's offline pkgbase repository onto the file disk (FreeBSD-set-minimal, FreeBSD-kernel-generic; gpart, newfs, pkg --rootdir in the installer shell)
+-- detach media:
+HTTP202
+task vm.update succeeded None {"changed": ["media"], "vm_id": "ed72e03f-7664-4229-b8c4-78d6b85c9c51"}
+/var/tmp/skep/dirpool/skep/vm/ed72e03f-7664-4229-b8c4-78d6b85c9c51/disk0.img size=6442450944 blocks=740032
+-- start from the file disk:
+HTTP202
+task vm.start succeeded None {"pid": 5670, "state": "running", "vm_id": "ed72e03f-7664-4229-b8c4-78d6b85c9c51"}
+pci.0.0.0.device=hostbridge
+pci.0.31.0.device=lpc
+pci.0.2.0.device=virtio-blk
+pci.0.2.0.path=/var/tmp/skep/dirpool/skep/vm/ed72e03f-7664-4229-b8c4-78d6b85c9c51/disk0.img
+pci.0.10.0.device=virtio-net
+Trying to mount root from ufs:/dev/vtbd0p2 [rw]...
+/dev/vtbd0p2: FILE SYSTEM CLEAN; SKIPPING CHECKS
+/dev/vtbd0p2: clean, 1366968 free (192 frags, 170847 blocks, 0.0% fragmentation)
+DHCPACK from 10.79.60.1
+bound to 10.79.60.102 -- renewal in 2000 seconds.
+route: message indicates error: File exists
+route: message indicates error: File exists
+login:
+login:
+15.1-RELEASE
+Geom name: vtbd0
+   Mediasize: 6442450944 (6.0G)
+   descr:
+Filesystem      Size    Used   Avail Capacity  Mounted on
+/dev/vtbd0p2    5.6G    348M    4.8G     7%    /
+-rw-r--r--  1 root wheel 0 Nov 15 07:38 /marker-dirpool
+root@dirvm:~ #
+
+## Changes (07:38 UTC)
+-- snapshot while running:
+HTTP422
+storage_feature_unsupported
+-- stop (ACPI):
+HTTP202
+task vm.stop succeeded None {"state": "stopped", "vm_id": "ed72e03f-7664-4229-b8c4-78d6b85c9c51"}
+-- grow disk0 6G -> 7G, add a 64 MiB disk that is not thin:
+HTTP202
+task vm.update succeeded None {"changed": ["disks_added", "disks_grown"], "disks_added": [{"name": "/var/tmp/skep/dirpool/skep/vm/ed72e03f-7664-4229-b8c4-78d6b85c9c51/disk1.img", "size_bytes": 67108864, "type": "file", "used_bytes": 67141632}], "disks_grown": [{"name": "/var/tmp/skep/dirpool/skep/vm/ed72e03f-7664-4229-b8c4-78d6b85c9c51/disk0.img", "size_bytes": 7516192768, "type": "file", "used_bytes": 379158528}], "notes": ["the guest sees the larger disk at its next start; grow its partition and filesystem inside the guest (for example gpart recover, gpart resize, growfs on FreeBSD)"], "vm_id": "ed72e03f-7664-4229-b8c4-7
+stat: /var/tmp/skep/dirpool/skep/vm/ed72e03f-7664-4229-b8c4-78d6b85c9c51/*.img: No such file or directory
+/var/tmp/skep/dirpool/skep/vm/ed72e03f-7664-4229-b8c4-78d6b85c9c51/disk0.img size=7516192768 blocks=740544
+/var/tmp/skep/dirpool/skep/vm/ed72e03f-7664-4229-b8c4-78d6b85c9c51/disk1.img size=67108864 blocks=131136
+task vm.start succeeded None {"pid": 5760, "state": "running", "vm_id": "ed72e03f-7664-4229-b8c4-78d6b85c9c51"}
+Geom name: vtbd0
+   Mediasize: 7516192768 (7.0G)
+Geom name: vtbd1
+   Mediasize: 67108864 (64M)
+-rw-r--r--  1 root wheel 0 Nov 15 07:38 /marker-dirpool
+
+## Remove and delete (07:39 UTC)
+-- remove disk1:
+HTTP202
+task vm.update succeeded None {"changed": ["disks_removed"], "disks_removed": [{"name": "/var/tmp/skep/dirpool/skep/vm/ed72e03f-7664-4229-b8c4-78d6b85c9c51/disk1.img", "size_bytes": 67108864, "type": "file", "used_bytes": 67141632}], "vm_id": "ed72e03f-7664-4229-b8c4-78d6b85c9c51"}
+total 740544
+-rw-------  1 root wheel 7516192768 Nov 15 02:39 disk0.img
+-- delete the VM:
+HTTP202
+task vm.delete succeeded None {"datasets": [{"name": "/var/tmp/skep/dirpool/skep/vm/ed72e03f-7664-4229-b8c4-78d6b85c9c51/disk0.img", "size_bytes": 7516192768, "type": "file", "used_bytes": 379158528}, {"name": "/var/tmp/skep/dirpool/skep/vm/ed72e03f-7664-4229-b8c4-78d6b85c9c51", "type": "directory", "used_bytes": 0}], "name": "dirvm", "vm_id": "ed72e03f-7664-4229-b8c4-78d6b85c9c51"}
+total 16
+drwx------  2 root wheel 512 Nov 15 02:39 .
+drwx------  3 root wheel 512 Nov 15 02:31 ..
+ls: /var/db/skep/agent/vm/ed72e03f-7664-4229-b8c4-78d6b85c9c51: No such file or directory
+HTTP404
+not_found
+
+## Pool checks (07:39 UTC)
+-- mode 0755:
+HTTP200
+dirpool UNAVAILABLE /var/tmp/skep/dirpool has mode 0755; it must be 0700
+HTTP409
+storage_unavailable - the directory pool dirpool cannot be used: /var/tmp/skep/dirpool has mode 0755; it must be 0700
+drwx------  3 root wheel 512 Nov 15 02:31 /var/tmp/skep/dirpool
+HTTP200
+dirpool ONLINE None
+-- agent.db:
+dirpool|directory
+skeptest|zfs
+

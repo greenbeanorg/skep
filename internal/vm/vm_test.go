@@ -58,7 +58,8 @@ func newFixture(t *testing.T) *fixture {
 	}
 	conf := hostops.Confinement{
 		Pools: []string{"devpool"}, DatasetRoot: "skep", MediaDir: filepath.Join(dir, "media"),
-		Bridges: []string{"bridge0"}, ManagementInterfaces: []string{"vtnet0"},
+		Directories: []hostops.DirPool{{Name: "dirpool", Path: "/srv/dirpool"}},
+		Bridges:     []string{"bridge0"}, ManagementInterfaces: []string{"vtnet0"},
 		FirmwareDir: filepath.Join(dir, "firmware"),
 		RunDir:      filepath.Join(dir, "run", "vm"), StateDir: filepath.Join(dir, "agent", "vm"),
 	}
@@ -82,7 +83,7 @@ func newFixture(t *testing.T) *fixture {
 	}
 	host := fake.Ops()
 	svc, err := New(Options{
-		NodeID: nodeID, Store: database.NewVMStore(db), Engine: engine, Host: host, Logger: quiet,
+		NodeID: nodeID, Store: database.NewVMStore(db), Snapshots: database.NewSnapshotStore(db), Engine: engine, Host: host, Logger: quiet,
 		Hypervisor: bhyve.New(bhyve.Options{Host: host, HostMemoryReserveBytes: gib, Logger: quiet}),
 	})
 	if err != nil {
@@ -181,9 +182,16 @@ func TestCreateProvisionsAVM(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The VM exists at once, not provisioned, with its name reserved.
+	// The VM exists at once, with its name reserved. It is not
+	// provisioned unless a worker already ran the task between the submit
+	// and the read that built the answer.
 	vm := created.VM
-	if vm.ID == "" || vm.Provisioned || vm.Name != "web-1" || vm.Engine != "bhyve" || vm.Firmware != "uefi" ||
+	if vm.Provisioned {
+		if task, err := f.engine.Get(ctx, created.Task.ID); err != nil || task.Status != models.TaskSucceeded {
+			t.Fatalf("the VM was provisioned before its task succeeded: %+v, %v", task, err)
+		}
+	}
+	if vm.ID == "" || vm.Name != "web-1" || vm.Engine != "bhyve" || vm.Firmware != "uefi" ||
 		vm.DesiredState != models.VMStopped || len(vm.Disks) != 2 || len(vm.NICs) != 1 {
 		t.Fatalf("created VM = %+v", vm)
 	}
@@ -350,7 +358,7 @@ func TestCreateWarnsAboutThinDisksAndReservesFullOnes(t *testing.T) {
 	full.Disks = []models.VMDiskSpec{{Pool: "devpool", Size: models.ByteSize(15 * gib)}}
 	f.create(full)
 	pools, err := f.svc.StoragePools(ctx)
-	if err != nil || len(pools.Items) != 1 || pools.Items[0].AvailableBytes != 5*gib || pools.Items[0].Health != "ONLINE" {
+	if err != nil || len(pools.Items) != 2 || pools.Items[0].Name != "devpool" || pools.Items[0].AvailableBytes != 5*gib || pools.Items[0].Health != "ONLINE" {
 		t.Fatalf("pools = %+v, %v", pools, err)
 	}
 	// A second full disk that does not fit is refused; a thin one of the

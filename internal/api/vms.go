@@ -24,22 +24,42 @@ type VMBackend interface {
 	DeleteVM(ctx context.Context, id string) (models.Task, error)
 	VMAction(ctx context.Context, id string, act models.VMAction) (models.Task, error)
 	StoragePools(ctx context.Context) (models.StoragePoolList, error)
+	StorageDatasets(ctx context.Context, opts models.DatasetListOptions) (models.DatasetList, error)
 	Media(ctx context.Context) (models.MediaList, error)
+
+	Snapshots(ctx context.Context, vmID string) (models.SnapshotList, error)
+	Snapshot(ctx context.Context, vmID, id string) (models.Snapshot, error)
+	CreateSnapshot(ctx context.Context, vmID string, req models.SnapshotCreate) (models.SnapshotCreated, error)
+	RollbackSnapshot(ctx context.Context, vmID, id string, req models.SnapshotRollback) (models.Task, error)
+	DeleteSnapshot(ctx context.Context, vmID, id string) (models.Task, error)
+	CloneVM(ctx context.Context, vmID string, req models.VMClone) (models.VMCreated, error)
+
+	Metrics(ctx context.Context) (models.Metrics, error)
 }
 
 // vmRoutes is the VM and storage part of the route table (ADR 0009
 // decisions 9 and 10).
 func (h *handler) vmRoutes() []route {
 	return []route{
-		{http.MethodGet, "/vms", auth.PermVMRead, h.listVMs},
-		{http.MethodPost, "/vms", auth.PermVMWrite, h.createVM},
-		{http.MethodGet, "/vms/{id}", auth.PermVMRead, h.getVM},
-		{http.MethodPut, "/vms/{id}", auth.PermVMWrite, h.updateVM},
-		{http.MethodDelete, "/vms/{id}", auth.PermVMDelete, h.deleteVM},
-		{http.MethodPost, "/vms/{id}/actions", auth.PermVMPower, h.vmAction},
-		{http.MethodGet, "/vms/{id}/console/serial", auth.PermVMConsole, h.vmConsole},
-		{http.MethodGet, "/storage/pools", auth.PermStorageRead, h.listPools},
-		{http.MethodGet, "/storage/media", auth.PermStorageRead, h.listMedia},
+		{http.MethodGet, "/vms", auth.PermVMRead, nil, h.listVMs},
+		{http.MethodPost, "/vms", auth.PermVMWrite, nil, h.createVM},
+		{http.MethodGet, "/vms/{id}", auth.PermVMRead, nil, h.getVM},
+		{http.MethodPut, "/vms/{id}", auth.PermVMWrite, nil, h.updateVM},
+		{http.MethodDelete, "/vms/{id}", auth.PermVMDelete, nil, h.deleteVM},
+		{http.MethodPost, "/vms/{id}/actions", auth.PermVMPower, nil, h.vmAction},
+		{http.MethodGet, "/vms/{id}/console/serial", auth.PermVMConsole, nil, h.vmConsole},
+		{http.MethodGet, "/vms/{id}/snapshots", auth.PermVMRead, nil, h.listSnapshots},
+		{http.MethodPost, "/vms/{id}/snapshots", auth.PermVMSnapshot, nil, h.createSnapshot},
+		{http.MethodGet, "/vms/{id}/snapshots/{sid}", auth.PermVMRead, nil, h.getSnapshot},
+		{http.MethodDelete, "/vms/{id}/snapshots/{sid}", auth.PermVMSnapshot, nil, h.deleteSnapshot},
+		{http.MethodPost, "/vms/{id}/snapshots/{sid}/rollback", auth.PermVMSnapshot, nil, h.rollbackSnapshot},
+		{http.MethodPost, "/vms/{id}/clone", auth.PermVMWrite, []string{auth.PermVMSnapshot}, h.cloneVM},
+		{http.MethodGet, "/storage/pools", auth.PermStorageRead, nil, h.listPools},
+		{http.MethodGet, "/storage/datasets", auth.PermStorageRead, nil, h.listDatasets},
+		{http.MethodGet, "/storage/media", auth.PermStorageRead, nil, h.listMedia},
+		// The metrics name VMs and pools, so they need what reading
+		// either needs (ADR 0010 decision 15).
+		{http.MethodGet, "/metrics", auth.PermSystemRead, []string{auth.PermVMRead, auth.PermStorageRead}, h.metrics},
 	}
 }
 
@@ -66,8 +86,32 @@ func (noVMs) VMAction(context.Context, string, models.VMAction) (models.Task, er
 func (noVMs) StoragePools(context.Context) (models.StoragePoolList, error) {
 	return models.StoragePoolList{Items: []models.StoragePool{}}, nil
 }
+func (noVMs) StorageDatasets(context.Context, models.DatasetListOptions) (models.DatasetList, error) {
+	return models.DatasetList{Items: []models.Dataset{}}, nil
+}
+func (noVMs) Metrics(context.Context) (models.Metrics, error) {
+	return models.Metrics{Pools: []models.PoolMetrics{}, VMs: []models.VMMetrics{}}, nil
+}
 func (noVMs) Media(context.Context) (models.MediaList, error) {
 	return models.MediaList{Items: []models.Media{}}, nil
+}
+func (noVMs) Snapshots(context.Context, string) (models.SnapshotList, error) {
+	return models.SnapshotList{}, models.ErrNotFound
+}
+func (noVMs) Snapshot(context.Context, string, string) (models.Snapshot, error) {
+	return models.Snapshot{}, models.ErrNotFound
+}
+func (noVMs) CreateSnapshot(context.Context, string, models.SnapshotCreate) (models.SnapshotCreated, error) {
+	return models.SnapshotCreated{}, models.ErrNotFound
+}
+func (noVMs) RollbackSnapshot(context.Context, string, string, models.SnapshotRollback) (models.Task, error) {
+	return models.Task{}, models.ErrNotFound
+}
+func (noVMs) DeleteSnapshot(context.Context, string, string) (models.Task, error) {
+	return models.Task{}, models.ErrNotFound
+}
+func (noVMs) CloneVM(context.Context, string, models.VMClone) (models.VMCreated, error) {
+	return models.VMCreated{}, models.ErrNotFound
 }
 
 func vmID(w http.ResponseWriter, r *http.Request) (string, bool) {
@@ -190,6 +234,11 @@ func (h *handler) updateVM(w http.ResponseWriter, r *http.Request) {
 	if !decodeBody(w, r, &upd) {
 		return
 	}
+	// Removing a disk destroys its zvol: vm:delete as well (ADR 0010
+	// decision 4).
+	if upd.RemovesDisks() && !h.requireAlso(w, r, http.MethodPut, "/vms/{id}", auth.PermVMDelete) {
+		return
+	}
 	if r, ok = withIdempotencyKey(w, r); !ok {
 		return
 	}
@@ -264,4 +313,35 @@ func (h *handler) listMedia(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpkit.WriteJSON(w, r, http.StatusOK, list)
+}
+
+// listDatasets is the storage inventory (ADR 0010 decision 1): what Skep
+// owns under <pool>/<root>, unowned datasets flagged.
+func (h *handler) listDatasets(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	opts := models.DatasetListOptions{Pool: q.Get("pool"), Cursor: q.Get("cursor")}
+	if raw := q.Get("limit"); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n < 1 {
+			httpkit.WriteError(w, r, http.StatusBadRequest, httpkit.CodeInvalidRequest, "limit must be a positive integer")
+			return
+		}
+		opts.Limit = n
+	}
+	list, err := h.vms.StorageDatasets(r.Context(), opts)
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	httpkit.WriteJSON(w, r, http.StatusOK, list)
+}
+
+// metrics is the node's current resource use (ADR 0010 decision 15).
+func (h *handler) metrics(w http.ResponseWriter, r *http.Request) {
+	m, err := h.vms.Metrics(r.Context())
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	httpkit.WriteJSON(w, r, http.StatusOK, m)
 }

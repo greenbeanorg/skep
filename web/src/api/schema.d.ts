@@ -38,6 +38,20 @@ export interface paths {
          *     when the previous month is still unsealed 7 days into the new
          *     one. Neither is critical. A check is absent when archiving is
          *     turned off.
+         *
+         *     Two concern storage (ADR 0010 decision 15), both from the agent's
+         *     resource sample (`GET /metrics`, at most a minute old):
+         *     `storage_capacity` is `degraded` when an allow-listed pool or
+         *     directory pool is past `storage.capacity_warn_percent` (default
+         *     80) or `storage.capacity_fail_percent` (default 90) of its space
+         *     in use, or cannot be read; its `error` says which pool, how full,
+         *     and which threshold it passed. `storage_locked` is `degraded` when
+         *     a dataset under a pool's dataset root has its encryption key
+         *     unloaded, naming the datasets. Neither is critical: a full or
+         *     locked pool stops what needs it, not the service. The health
+         *     document has no separate "warning" status, so a pool past either
+         *     threshold reads `degraded`; `GET /metrics` tells `warning` from
+         *     `failing`.
          */
         get: operations["getHealth"];
         put?: never;
@@ -427,6 +441,23 @@ export interface paths {
          *     are unchanged. Only a stopped, provisioned VM can be changed
          *     (`vm_not_stopped`, `vm_not_provisioned`). `media` replaces the
          *     attached install media; `[]` detaches all of it.
+         *
+         *     Disks (ADR 0010 decision 4): `add_disks` adds zvol-backed disks
+         *     with the rules of a create, each in the lowest free slot.
+         *     `resize_disks` grows a disk; a disk never shrinks, and the guest
+         *     grows its own partition and filesystem afterwards (the task result
+         *     says so). A disk with a reservation needs the growth to be
+         *     available in its pool (`insufficient_space`). `remove_disks`
+         *     destroys the disks in those slots and their zvols, and **needs
+         *     `vm:delete` as well**. It is refused while snapshots contain the
+         *     disk (`disk_has_snapshots`, naming them) unless
+         *     `"destroy_snapshots": true`, which destroys each such snapshot
+         *     whole, on every disk of the VM; snapshots taken before the disk
+         *     was added are kept. A snapshot with linked clones blocks the
+         *     removal whatever the flag says (`snapshot_has_clones`). The task
+         *     result and the audit entry list every dataset and snapshot
+         *     destroyed. Changing a disk's bus, block size, or reservation is
+         *     not offered, and nothing is hot-plugged.
          */
         put: operations["updateVM"];
         post?: never;
@@ -479,6 +510,151 @@ export interface paths {
          *     `desired_state` at `running` and `drift` true.
          */
         post: operations["vmAction"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/vms/{id}/snapshots": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["VMID"];
+            };
+            cookie?: never;
+        };
+        /**
+         * A VM's snapshots
+         * @description Requires `vm:read`. The VM's snapshots, oldest first, with what
+         *     ZFS shows of each now (`observed`) and the linked clones that
+         *     depend on each.
+         */
+        get: operations["listSnapshots"];
+        put?: never;
+        /**
+         * Take a snapshot of a VM's disks
+         * @description Requires `vm:snapshot`. Submits `vm.snapshot.create`, which takes
+         *     one atomic recursive ZFS snapshot of every disk of the VM and
+         *     copies its UEFI variable store (ADR 0010 decision 2). Memory is
+         *     not saved. Taken while the VM runs, the snapshot is
+         *     `crash_consistent`: what a power cut would leave on disk; taken
+         *     while it is stopped, `consistent`. The task can be cancelled until
+         *     the ZFS call.
+         *
+         *     Refused for a VM with no disks or with disks in more than one pool
+         *     (`storage_feature_unsupported`: ZFS snapshots are atomic within a
+         *     pool only), for a name the VM already uses
+         *     (`snapshot_name_taken`), beyond
+         *     `storage.max_snapshots_per_resource` (`snapshot_limit`, default
+         *     64), and when the encryption key of the VM's datasets is not
+         *     loaded (`storage_locked`).
+         */
+        post: operations["createSnapshot"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/vms/{id}/snapshots/{sid}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["VMID"];
+                sid: components["parameters"]["SnapshotID"];
+            };
+            cookie?: never;
+        };
+        /** One snapshot */
+        get: operations["getSnapshot"];
+        put?: never;
+        post?: never;
+        /**
+         * Delete a snapshot
+         * @description Requires `vm:snapshot`. Submits `vm.snapshot.delete`, which
+         *     destroys the snapshot on every disk of the VM and its copy of the
+         *     variable store. The VM may be running. Refused while a linked clone
+         *     depends on the snapshot (`snapshot_has_clones`, naming the
+         *     clones).
+         */
+        delete: operations["deleteSnapshot"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/vms/{id}/snapshots/{sid}/rollback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["VMID"];
+                sid: components["parameters"]["SnapshotID"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Roll a VM back to a snapshot
+         * @description Requires `vm:snapshot`. Submits `vm.snapshot.rollback`, which
+         *     rolls every disk of the VM back and restores the variable store
+         *     copied with the snapshot. Only while the VM is stopped
+         *     (`vm_not_stopped`): a rollback never hides a power-off.
+         *
+         *     A rollback to a snapshot that is not the latest destroys every
+         *     newer one, and is refused without `"destroy_newer": true`
+         *     (`snapshot_not_latest`, listing them). The task result and the
+         *     audit entry name each snapshot destroyed. A newer snapshot with
+         *     linked clones refuses the rollback whatever the flag says
+         *     (`snapshot_has_clones`), and so does a newer snapshot Skep did not
+         *     take. A snapshot taken before a disk was added is refused
+         *     (`snapshot_incomplete`): rolling back to it would give the VM a
+         *     disk with contents from after the snapshot.
+         */
+        post: operations["rollbackSnapshot"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/vms/{id}/clone": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["VMID"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Make a linked clone of a VM
+         * @description Requires `vm:write` and `vm:snapshot`. Submits `vm.clone`, which
+         *     makes a new VM whose disks are ZFS clones of one snapshot of the
+         *     source (ADR 0010 decision 3). Without `snapshot_id`, the task
+         *     takes a snapshot of the source first, named after the clone, and
+         *     leaves it behind. The clone gets a new ID (and so SMBIOS UUID),
+         *     the given name, and new MAC addresses; it has the source's CPU,
+         *     memory, and NICs, its disks are thin, and install media is not
+         *     attached.
+         *
+         *     **A clone is the same guest.** Skep does not change what is inside
+         *     the disks: the guest's hostname, its SSH host keys, and its
+         *     machine ID (`/etc/hostid`, `/etc/machine-id`, the Windows SID) are
+         *     the source's. Change them in the clone before it shares a network
+         *     with the source.
+         *
+         *     While the clone exists, its origin snapshot and the source VM
+         *     cannot be deleted (`snapshot_has_clones`). Clones stay in the
+         *     source's pool.
+         */
+        post: operations["cloneVM"];
         delete?: never;
         options?: never;
         head?: never;
@@ -552,6 +728,68 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/storage/datasets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * What Skep owns in its pools
+         * @description Requires `storage:read`. Every filesystem, volume, and snapshot
+         *     under `<pool>/<root>` of the allow-listed pools, ordered by pool
+         *     (in allow-list order) and name, cursor paginated, read from ZFS on
+         *     each request. Each entry names its owner: a VM, a jail, a
+         *     template, `skep` for the datasets that only hold others, or
+         *     `unowned` with a reason. A dataset is owned only when its place in
+         *     the tree, its `skep:` owner property, and the agent's database
+         *     agree; anything else (an interrupted create, a hand-made dataset,
+         *     a snapshot Skep did not take) is listed as unowned and never
+         *     removed automatically (ADR 0010 decision 1). Encryption,
+         *     compression, and key status are what the operator set and Skep
+         *     inherits (decision 5). A pool that cannot be read is named in
+         *     `unavailable_pools` instead of failing the list. Directory pools
+         *     have no datasets and are not listed; naming one in `pool` is
+         *     `storage_feature_unsupported`.
+         */
+        get: operations["listStorageDatasets"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/metrics": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Current resource use of the node
+         * @description Requires `system:read`, `vm:read`, and `storage:read`: the values
+         *     name pools and VMs. Current values only, with no history (ADR 0010
+         *     decision 15): the space and capacity of every allow-listed pool
+         *     and directory pool against the `storage_capacity` thresholds, the
+         *     datasets whose key is not loaded, each VM's disk use, and, while a
+         *     VM runs, the CPU time and resident memory of its bhyve process.
+         *     The agent samples every 30 seconds; a sample older than a minute
+         *     is replaced before answering. `observed_at` says when the values
+         *     were read. Per-jail values come with jails (phase 7b).
+         */
+        get: operations["getMetrics"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/storage/media": {
         parameters: {
             query?: never;
@@ -606,10 +844,18 @@ export interface components {
             /** Format: int64 */
             size_bytes?: number;
             pool?: string;
+            /** @enum {string} */
+            pool_type?: "zfs" | "directory";
             thin?: boolean;
+            /** @description The zvol's block size; absent in a directory pool. */
             volblocksize?: number;
-            /** @description The zvol, `<pool>/skep/vm/<vm-id>/disk<slot>`. */
+            /** @description The zvol, `<pool>/skep/vm/<vm-id>/disk<slot>`, in a ZFS pool. */
             dataset?: string;
+            /**
+             * @description The disk's file in a directory pool, relative to the pool's
+             *     directory: `skep/vm/<vm-id>/disk<slot>.img`.
+             */
+            file?: string;
             /** @description The ISO file name, for install media (`ahci-cd`). */
             media?: string;
         };
@@ -654,6 +900,8 @@ export interface components {
             drift: boolean;
             disks: components["schemas"]["VMDisk"][];
             nics: components["schemas"]["VMNIC"][];
+            /** @description The snapshot a linked clone was made from. A clone is the same guest as its source (hostname, SSH host keys, machine ID). */
+            cloned_from_snapshot_id?: string;
             /** Format: date-time */
             created_at: string;
             /** Format: date-time */
@@ -681,15 +929,7 @@ export interface components {
             cpu_count: number;
             memory: components["schemas"]["ByteSize"];
             config?: components["schemas"]["VMConfig"];
-            disks?: {
-                /** @enum {string} */
-                bus?: "virtio-blk" | "nvme" | "ahci-hd" | "ahci-cd";
-                size?: components["schemas"]["ByteSize"];
-                pool?: string;
-                thin?: boolean;
-                media?: string;
-                volblocksize?: components["schemas"]["ByteSize"];
-            }[];
+            disks?: components["schemas"]["VMDiskSpec"][];
             nics?: {
                 /** @enum {string} */
                 model?: "virtio-net" | "e1000";
@@ -704,6 +944,36 @@ export interface components {
             config?: components["schemas"]["VMConfig"];
             /** @description Replaces the attached install media; empty detaches all. */
             media?: string[];
+            /** @description Disks to add, as at create; install media is attached with `media`. */
+            add_disks?: components["schemas"]["VMDiskSpec"][];
+            /** @description Disks to grow. A disk never shrinks. */
+            resize_disks?: components["schemas"]["VMDiskResize"][];
+            /** @description Slots of the disks to destroy. Needs `vm:delete` as well as `vm:write`. */
+            remove_disks?: number[];
+            /** @description Allow removing a disk that snapshots contain, destroying each of them whole. */
+            destroy_snapshots?: boolean;
+        };
+        /**
+         * @description A disk on a pool (pool and size) or install media (media, bus
+         *     ahci-cd). In a ZFS pool the disk is a zvol; in a directory pool it
+         *     is a raw file, created sparse, or written with zeros when `thin`
+         *     is false so its blocks are allocated (on a ZFS file system with
+         *     compression, zeros take little space whatever is written).
+         */
+        VMDiskSpec: {
+            /** @enum {string} */
+            bus?: "virtio-blk" | "nvme" | "ahci-hd" | "ahci-cd";
+            size?: components["schemas"]["ByteSize"];
+            /** @description An allow-listed ZFS pool or directory pool. */
+            pool?: string;
+            thin?: boolean;
+            media?: string;
+            /** @description ZFS pools only; refused for a directory pool. */
+            volblocksize?: components["schemas"]["ByteSize"];
+        };
+        VMDiskResize: {
+            slot: number;
+            size: components["schemas"]["ByteSize"];
         };
         VMAction: {
             /** @enum {string} */
@@ -711,13 +981,79 @@ export interface components {
             /** @description Seconds a stop or restart waits for the guest to shut down. Default 90. */
             timeout?: number;
         };
+        SnapshotClone: {
+            id: string;
+            name: string;
+        };
+        Snapshot: {
+            id: string;
+            /** @enum {string} */
+            resource_kind: "vm" | "container";
+            resource_id: string;
+            name: string;
+            description: string;
+            /** @enum {string} */
+            consistency: "consistent" | "crash_consistent";
+            /** @description False while the snapshot task runs, and after it was interrupted; such a snapshot can only be deleted. */
+            provisioned: boolean;
+            /** Format: date-time */
+            created_at: string;
+            observed?: {
+                exists: boolean;
+                /** Format: int64 */
+                used_bytes: number;
+                /** Format: date-time */
+                at?: string;
+            };
+            clones: components["schemas"]["SnapshotClone"][];
+        };
+        SnapshotList: {
+            items: components["schemas"]["Snapshot"][];
+        };
+        SnapshotCreate: {
+            name: string;
+            description?: string;
+        };
+        SnapshotCreated: {
+            snapshot: components["schemas"]["Snapshot"];
+            task: components["schemas"]["Task"];
+        };
+        SnapshotRollback: {
+            /** @description Allow a rollback to an older snapshot, which destroys every newer one. */
+            destroy_newer?: boolean;
+        };
+        VMClone: {
+            name: string;
+            description?: string;
+            /** @description The snapshot of the source to clone. Without it, the task takes one first. */
+            snapshot_id?: string;
+        };
         VMCreated: {
             vm: components["schemas"]["VM"];
             task: components["schemas"]["Task"];
         };
+        /**
+         * @description An allow-listed pool: a ZFS pool (`storage.pools`) or a directory
+         *     pool (`storage.directories`, ADR 0010 decision 6), whose disks are
+         *     sparse raw files. A usable directory pool reports health `ONLINE`
+         *     and the sizes of its file system; one that cannot be used
+         *     (missing, a symbolic link, not `root` 0700, not on local UFS or
+         *     ZFS) reports `UNAVAILABLE` with the reason in `error`.
+         */
         StoragePool: {
             name: string;
-            type: string;
+            /** @enum {string} */
+            type: "zfs" | "directory";
+            /**
+             * @description What the pool's kind can do. A directory pool has none of
+             *     these; snapshots and clones of a VM with a disk in one are
+             *     refused with `storage_feature_unsupported`, never emulated.
+             */
+            capabilities: {
+                snapshots: boolean;
+                clones: boolean;
+                quotas: boolean;
+            };
             health: string;
             error?: string;
             /** Format: int64 */
@@ -730,6 +1066,121 @@ export interface components {
             available_bytes: number;
             /** Format: date-time */
             observed_at?: string;
+        };
+        DatasetOwner: {
+            /** @enum {string} */
+            kind: "vm" | "container" | "template" | "skep" | "unowned";
+            /** @description The owning resource, for vm, container, and template. */
+            id?: string;
+            /** @description Why the dataset is unowned. */
+            reason?: string;
+        };
+        Dataset: {
+            /** @description The full ZFS name. */
+            name: string;
+            pool: string;
+            /** @enum {string} */
+            type: "filesystem" | "volume" | "snapshot";
+            owner: components["schemas"]["DatasetOwner"];
+            /** @description Set on a snapshot Skep took. */
+            snapshot_id?: string;
+            /** Format: int64 */
+            used_bytes: number;
+            /** Format: int64 */
+            referenced_bytes: number;
+            /**
+             * Format: int64
+             * @description Volumes only.
+             */
+            volsize_bytes?: number;
+            /**
+             * Format: int64
+             * @description Volumes only; absent for a thin volume.
+             */
+            refreservation_bytes?: number;
+            /** @description Volumes only. */
+            volblocksize?: number;
+            /** @description The snapshot a linked clone was made from. */
+            origin?: string;
+            /** @description On a snapshot, the datasets cloned from it. */
+            clones?: string[];
+            encryption?: string;
+            /** @description `available` or `unavailable`; absent when the dataset is not encrypted. */
+            keystatus?: string;
+            compression?: string;
+            compressratio?: string;
+        };
+        Metrics: {
+            node_id: string;
+            /** Format: date-time */
+            observed_at: string;
+            capacity_warn_percent: number;
+            capacity_fail_percent: number;
+            pools: components["schemas"]["PoolMetrics"][];
+            vms: components["schemas"]["VMMetrics"][];
+        };
+        PoolMetrics: {
+            name: string;
+            /** @enum {string} */
+            type: "zfs" | "directory";
+            /** @description What zpool(8) reports, `ONLINE` for a usable directory pool, or `UNAVAILABLE` with `error`. */
+            health: string;
+            error?: string;
+            /** Format: int64 */
+            size_bytes: number;
+            /** Format: int64 */
+            allocated_bytes: number;
+            /** Format: int64 */
+            available_bytes: number;
+            /**
+             * @description The share in use, to one decimal: allocated of size for a ZFS
+             *     pool, as `zpool list` shows it; used of used plus available
+             *     for a directory pool, as df(1) shows it.
+             */
+            capacity_percent: number;
+            /** @enum {string} */
+            capacity: "ok" | "warning" | "failing" | "unavailable";
+            /** @description Datasets under the pool's dataset root whose encryption key is not loaded. */
+            locked_datasets?: string[];
+        };
+        VMMetrics: {
+            /** Format: uuid */
+            id: string;
+            name: string;
+            state: string;
+            /** @description User and system CPU time of the bhyve process, while the VM runs. */
+            cpu_time_seconds?: number;
+            /**
+             * Format: int64
+             * @description Resident set of the bhyve process, while the VM runs.
+             */
+            resident_memory_bytes?: number;
+            /**
+             * Format: int64
+             * @description Space the VM holds in its pools, snapshots included.
+             */
+            disk_used_bytes: number;
+            /**
+             * Format: int64
+             * @description Space the VM's disks reference now.
+             */
+            disk_referenced_bytes: number;
+            disks: components["schemas"]["DiskMetrics"][];
+            /** @description Which values could not be read. */
+            error?: string;
+        };
+        DiskMetrics: {
+            slot: number;
+            pool: string;
+            /** Format: int64 */
+            used_bytes: number;
+            /** Format: int64 */
+            referenced_bytes: number;
+        };
+        DatasetList: {
+            items: components["schemas"]["Dataset"][];
+            next_cursor?: string;
+            unavailable_pools?: string[];
         };
         StoragePoolList: {
             items: components["schemas"]["StoragePool"][];
@@ -1184,7 +1635,10 @@ export interface components {
          *     `insufficient_space`, `insufficient_memory`, `bhyve_unavailable`,
          *     `storage_unavailable`, `vm_not_running`, `vm_start_failed`,
          *     `stop_timeout`, `console_busy`, `resource_busy`,
-         *     `idempotency_key_conflict`.
+         *     `idempotency_key_conflict`, and for storage operations
+         *     `storage_locked`, `snapshot_limit`, `snapshot_has_clones`,
+         *     `snapshot_not_latest`, `snapshot_incomplete`, `snapshot_name_taken`,
+         *     `snapshot_not_provisioned`, `disk_has_snapshots`.
          */
         VMConflict: {
             headers: {
@@ -1197,7 +1651,8 @@ export interface components {
         /**
          * @description The request names something this host does not offer:
          *     `engine_unsupported`, `firmware_unsupported`, `pool_not_allowed`,
-         *     `bridge_not_allowed`, `media_not_found`.
+         *     `bridge_not_allowed`, `media_not_found`,
+         *     `storage_feature_unsupported`.
          */
         VMUnprocessable: {
             headers: {
@@ -1328,6 +1783,7 @@ export interface components {
          */
         IdempotencyKey: string;
         VMID: string;
+        SnapshotID: string;
         /**
          * @description Marks a request the client made by itself (a timer, a refetch on
          *     focus). Any non-empty value. The request is authenticated as any
@@ -2146,6 +2602,233 @@ export interface operations {
             503: components["responses"]["Unavailable"];
         };
     };
+    listSnapshots: {
+        parameters: {
+            query?: never;
+            header?: {
+                /**
+                 * @description Marks a request the client made by itself (a timer, a refetch on
+                 *     focus). Any non-empty value. The request is authenticated as any
+                 *     other, the idle timeout included, but does not extend the idle
+                 *     timeout.
+                 */
+                "X-Skep-Background"?: components["parameters"]["Background"];
+            };
+            path: {
+                id: components["parameters"]["VMID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The snapshots. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SnapshotList"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
+    createSnapshot: {
+        parameters: {
+            query?: never;
+            header?: {
+                /**
+                 * @description Makes a retry safe: a second request with the same key and the
+                 *     same body returns the task of the first; with a different body it
+                 *     is refused with `idempotency_key_conflict`.
+                 */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                id: components["parameters"]["VMID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SnapshotCreate"];
+            };
+        };
+        responses: {
+            /** @description The snapshot, not yet taken, and its task. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SnapshotCreated"];
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["VMConflict"];
+            422: components["responses"]["VMUnprocessable"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
+    getSnapshot: {
+        parameters: {
+            query?: never;
+            header?: {
+                /**
+                 * @description Marks a request the client made by itself (a timer, a refetch on
+                 *     focus). Any non-empty value. The request is authenticated as any
+                 *     other, the idle timeout included, but does not extend the idle
+                 *     timeout.
+                 */
+                "X-Skep-Background"?: components["parameters"]["Background"];
+            };
+            path: {
+                id: components["parameters"]["VMID"];
+                sid: components["parameters"]["SnapshotID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The snapshot. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Snapshot"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
+    deleteSnapshot: {
+        parameters: {
+            query?: never;
+            header?: {
+                /**
+                 * @description Makes a retry safe: a second request with the same key and the
+                 *     same body returns the task of the first; with a different body it
+                 *     is refused with `idempotency_key_conflict`.
+                 */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                id: components["parameters"]["VMID"];
+                sid: components["parameters"]["SnapshotID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The task. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Task"];
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["VMConflict"];
+            422: components["responses"]["VMUnprocessable"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
+    rollbackSnapshot: {
+        parameters: {
+            query?: never;
+            header?: {
+                /**
+                 * @description Makes a retry safe: a second request with the same key and the
+                 *     same body returns the task of the first; with a different body it
+                 *     is refused with `idempotency_key_conflict`.
+                 */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                id: components["parameters"]["VMID"];
+                sid: components["parameters"]["SnapshotID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SnapshotRollback"];
+            };
+        };
+        responses: {
+            /** @description The task. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Task"];
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["VMConflict"];
+            422: components["responses"]["VMUnprocessable"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
+    cloneVM: {
+        parameters: {
+            query?: never;
+            header?: {
+                /**
+                 * @description Makes a retry safe: a second request with the same key and the
+                 *     same body returns the task of the first; with a different body it
+                 *     is refused with `idempotency_key_conflict`.
+                 */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                id: components["parameters"]["VMID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["VMClone"];
+            };
+        };
+        responses: {
+            /** @description The clone, not yet provisioned, and its task. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VMCreated"];
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["VMConflict"];
+            422: components["responses"]["VMUnprocessable"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
     vmSerialConsole: {
         parameters: {
             query?: never;
@@ -2196,6 +2879,76 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["StoragePoolList"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
+    listStorageDatasets: {
+        parameters: {
+            query?: {
+                /** @description Only list this allow-listed pool. */
+                pool?: string;
+                limit?: number;
+                cursor?: string;
+            };
+            header?: {
+                /**
+                 * @description Marks a request the client made by itself (a timer, a refetch on
+                 *     focus). Any non-empty value. The request is authenticated as any
+                 *     other, the idle timeout included, but does not extend the idle
+                 *     timeout.
+                 */
+                "X-Skep-Background"?: components["parameters"]["Background"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description One page of the inventory. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DatasetList"];
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["VMConflict"];
+            422: components["responses"]["VMUnprocessable"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
+    getMetrics: {
+        parameters: {
+            query?: never;
+            header?: {
+                /**
+                 * @description Marks a request the client made by itself (a timer, a refetch on
+                 *     focus). Any non-empty value. The request is authenticated as any
+                 *     other, the idle timeout included, but does not extend the idle
+                 *     timeout.
+                 */
+                "X-Skep-Background"?: components["parameters"]["Background"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The latest sample. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Metrics"];
                 };
             };
             401: components["responses"]["Unauthenticated"];

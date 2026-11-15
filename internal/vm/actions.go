@@ -105,11 +105,41 @@ func (s *Service) checkAction(ctx context.Context, id, taskType string) error {
 		if caps := s.hv.Capabilities(ctx); !caps.Available {
 			return &models.Error{Code: models.CodeBhyveUnavailable, Message: "bhyve cannot run a VM on this host: " + caps.Reason}
 		}
+		if err := s.checkUnlocked(ctx, vm); err != nil {
+			return err
+		}
 		return s.checkMemory(ctx, vm)
 	default:
 		if !obs.Active {
 			return &models.Error{Code: models.CodeVMNotRunning,
 				Message: "the virtual machine is " + obs.State, Details: map[string]any{"state": obs.State}}
+		}
+	}
+	return nil
+}
+
+// checkUnlocked refuses to start a VM with a ZFS dataset whose encryption
+// key is not loaded (ADR 0010 decision 5): its zvols have no device, and
+// bhyve would fail to open them. Skep holds no key and loads none.
+func (s *Service) checkUnlocked(ctx context.Context, vm models.VM) error {
+	seen := map[string]bool{}
+	for _, d := range vm.Disks {
+		if d.Bus == models.BusAHCICD || d.Pool == "" || d.PoolType == hostops.PoolKindDirectory || seen[d.Pool] {
+			continue
+		}
+		seen[d.Pool] = true
+		list, err := s.host.Disks().VMVolumes(ctx, d.Pool, vm.ID)
+		if err != nil {
+			return err
+		}
+		for _, ds := range list {
+			if ds.Locked() {
+				return &models.Error{
+					Code:    models.CodeStorageLocked,
+					Message: "the encryption key of " + ds.Name + " is not loaded; an administrator loads it, Skep does not",
+					Details: map[string]any{"dataset": ds.Name},
+				}
+			}
 		}
 	}
 	return nil

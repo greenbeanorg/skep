@@ -373,7 +373,8 @@ The agent changes the host for the first time in Milestone 6
   the directory listing first. A rendered bhyve configuration rejects any
   value with a line break.
 - **The confinement is root-owned configuration** in `agent.json`:
-  `storage.pools`, `network.bridges`, `network.management_interfaces`,
+  `storage.pools`, `storage.directories`, `network.bridges`,
+  `network.management_interfaces`,
   the firmware and media directories. The API cannot change it. Empty
   allow-lists, the default, mean no VM storage and no VM network. A
   bridge that has a management interface as a member is refused at
@@ -382,6 +383,15 @@ The agent changes the host for the first time in Milestone 6
 - **Skep only destroys what it can prove is its own**: a dataset carries
   `skep:vm_id`, and `zfs destroy -r` (never `-R`) runs on the VM's own
   dataset only; a tap is destroyed only if its description names the VM.
+- **Directory pools are reached only through `os.Root`** (ADR 0010
+  decision 6). The pool's directory is checked on every use (not a
+  symbolic link, owned by root, mode `0700`, on local UFS or ZFS), then
+  opened as a root that no path can leave, even through a symbolic link.
+  Disk files are opened with `O_NOFOLLOW`, created with `O_EXCL` and mode
+  `0600`, and a VM's directory is removed only when it holds nothing but
+  `disk<N>.img` regular files. A file disk carries no ownership marker of
+  its own, as a dataset carries `skep:vm_id`: its path, derived from the
+  VM's ID inside a root-only directory, is the ownership.
 - **Runners are identified before they are signalled.** A VM's runner
   is a root process in its own session. Before any signal the agent reads
   the process's argument list from the kernel (`kern.proc.args`) and

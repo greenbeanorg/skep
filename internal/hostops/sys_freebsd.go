@@ -23,7 +23,7 @@ func New(conf Confinement, opts Options) (Ops, error) {
 	}
 	h := newHost(conf, execRunner{timeout: timeout}, kernel{}, opts.Logger)
 	h.spawn, h.self = execSpawner{}, opts.Self
-	return Ops{Conf: conf, ZFS: h, Net: h, VMM: h, Files: h, Procs: h}, nil
+	return Ops{Conf: conf, ZFS: h, Dirs: newDirs(conf, kernel{}, opts.Logger), Net: h, VMM: h, Files: h, Procs: h}, nil
 }
 
 // kernel is the real system binding.
@@ -83,3 +83,30 @@ func (kernel) ProcessArgs(pid int) ([]string, error) {
 }
 
 func (kernel) Kill(pid int, sig syscall.Signal) error { return unix.Kill(pid, sig) }
+
+// StatDir reads a directory pool's directory with lstat(2), never
+// following a final symbolic link, and its file system with statfs(2).
+func (kernel) StatDir(path string) (DirStat, error) {
+	fi, err := os.Lstat(path)
+	if err != nil {
+		return DirStat{}, err
+	}
+	st := DirStat{Mode: fi.Mode()}
+	id, ok := fileIdentity(fi)
+	if !ok {
+		return DirStat{}, fmt.Errorf("lstat %s: no owner", path)
+	}
+	st.UID, st.Dev, st.Ino = id.UID, id.Dev, id.Ino
+	if !fi.IsDir() {
+		return st, nil
+	}
+	var fs unix.Statfs_t
+	if err := unix.Statfs(path, &fs); err != nil {
+		return DirStat{}, err
+	}
+	st.FSType = unix.ByteSliceToString(fs.Fstypename[:])
+	bs := int64(fs.Bsize)
+	st.SizeBytes, st.FreeBytes = int64(fs.Blocks)*bs, int64(fs.Bfree)*bs
+	st.AvailableBytes = max(fs.Bavail*bs, 0)
+	return st, nil
+}

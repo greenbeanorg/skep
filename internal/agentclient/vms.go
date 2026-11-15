@@ -76,3 +76,77 @@ func (c *Client) Media(ctx context.Context) (models.MediaList, error) {
 	err := c.do(ctx, http.MethodGet, "/storage/media", nil, nil, &list)
 	return list, err
 }
+
+// StorageDatasets returns a page of the storage inventory.
+func (c *Client) StorageDatasets(ctx context.Context, opts models.DatasetListOptions) (models.DatasetList, error) {
+	q := url.Values{}
+	if opts.Pool != "" {
+		q.Set("pool", opts.Pool)
+	}
+	if opts.Limit != 0 {
+		q.Set("limit", strconv.Itoa(opts.Limit))
+	}
+	if opts.Cursor != "" {
+		q.Set("cursor", opts.Cursor)
+	}
+	var list models.DatasetList
+	err := c.do(ctx, http.MethodGet, "/storage/datasets", q, nil, &list)
+	return list, err
+}
+
+// Metrics returns the node's current resource use (ADR 0010 decision 15).
+func (c *Client) Metrics(ctx context.Context) (models.Metrics, error) {
+	var m models.Metrics
+	err := c.do(ctx, http.MethodGet, "/metrics", nil, nil, &m)
+	return m, err
+}
+
+func snapshotPath(vmID, snapID string) string {
+	p := "/vms/" + url.PathEscape(vmID) + "/snapshots"
+	if snapID != "" {
+		p += "/" + url.PathEscape(snapID)
+	}
+	return p
+}
+
+// Snapshots returns a VM's snapshots, oldest first.
+func (c *Client) Snapshots(ctx context.Context, vmID string) (models.SnapshotList, error) {
+	var list models.SnapshotList
+	err := c.do(ctx, http.MethodGet, snapshotPath(vmID, ""), nil, nil, &list)
+	return list, err
+}
+
+// Snapshot returns one snapshot of a VM.
+func (c *Client) Snapshot(ctx context.Context, vmID, id string) (models.Snapshot, error) {
+	var snap models.Snapshot
+	err := c.do(ctx, http.MethodGet, snapshotPath(vmID, id), nil, nil, &snap)
+	return snap, err
+}
+
+// CreateSnapshot asks the agent to snapshot a VM.
+func (c *Client) CreateSnapshot(ctx context.Context, vmID string, req models.SnapshotCreate) (models.SnapshotCreated, error) {
+	var created models.SnapshotCreated
+	err := c.do(ctx, http.MethodPost, snapshotPath(vmID, ""), nil, req, &created)
+	return created, err
+}
+
+// RollbackSnapshot asks the agent to roll a VM back to a snapshot.
+func (c *Client) RollbackSnapshot(ctx context.Context, vmID, id string, req models.SnapshotRollback) (models.Task, error) {
+	var task models.Task
+	err := c.do(ctx, http.MethodPost, snapshotPath(vmID, id)+"/rollback", nil, req, &task)
+	return task, err
+}
+
+// DeleteSnapshot asks the agent to delete a snapshot.
+func (c *Client) DeleteSnapshot(ctx context.Context, vmID, id string) (models.Task, error) {
+	var task models.Task
+	err := c.do(ctx, http.MethodDelete, snapshotPath(vmID, id), nil, nil, &task)
+	return task, err
+}
+
+// CloneVM asks the agent for a linked clone of a VM.
+func (c *Client) CloneVM(ctx context.Context, vmID string, req models.VMClone) (models.VMCreated, error) {
+	var created models.VMCreated
+	err := c.do(ctx, http.MethodPost, "/vms/"+url.PathEscape(vmID)+"/clone", nil, req, &created)
+	return created, err
+}

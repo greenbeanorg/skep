@@ -30,6 +30,15 @@ const (
 	// VMStateDirName is the directory of per-VM persistent state, next to
 	// the agent's database.
 	VMStateDirName = "vm"
+	// DefaultMaxSnapshotsPerResource and MaxSnapshotsPerResource bound
+	// storage.max_snapshots_per_resource.
+	DefaultMaxSnapshotsPerResource = 64
+	MaxSnapshotsPerResource        = 1000
+	// DefaultCapacityWarnPercent and DefaultCapacityFailPercent are the
+	// thresholds of the storage_capacity health check (ADR 0010
+	// decision 15).
+	DefaultCapacityWarnPercent = 80
+	DefaultCapacityFailPercent = 90
 )
 
 // HypervisorConfig configures the hypervisor engines.
@@ -63,6 +72,29 @@ type StorageConfig struct {
 	// MediaDir holds the ISO files an operator placed on the host. Skep
 	// only reads it.
 	MediaDir string `json:"media_dir"`
+	// MaxSnapshotsPerResource bounds the snapshots of one VM or jail
+	// (ADR 0010 decision 2d). 0 means the default, 64.
+	MaxSnapshotsPerResource int `json:"max_snapshots_per_resource"`
+	// Directories is the allow-list of directory pools (ADR 0010
+	// decision 6): storage for hosts without ZFS. Their names share one
+	// namespace with Pools.
+	Directories []DirectoryPool `json:"directories"`
+	// CapacityWarnPercent and CapacityFailPercent are the thresholds of
+	// the storage_capacity health check, in percent of a pool in use
+	// (ADR 0010 decision 15). 0 means the defaults, 80 and 90.
+	CapacityWarnPercent int `json:"capacity_warn_percent"`
+	CapacityFailPercent int `json:"capacity_fail_percent"`
+}
+
+// DirectoryPool is one allow-listed directory that holds VM disks as
+// files. The directory must exist, be owned by root with mode 0700, and
+// be on a local UFS or ZFS file system; the agent checks that each time
+// it uses it, not at load.
+type DirectoryPool struct {
+	// Name is how requests refer to the pool, as they name a ZFS pool.
+	Name string `json:"name"`
+	// Path is the absolute, clean path of the directory.
+	Path string `json:"path"`
 }
 
 // NetworkConfig says which network interfaces Skep may use.
@@ -111,6 +143,18 @@ func (c *Config) applyConfinementDefaults() {
 	if c.Storage.Pools == nil {
 		c.Storage.Pools = []string{}
 	}
+	if c.Storage.Directories == nil {
+		c.Storage.Directories = []DirectoryPool{}
+	}
+	if c.Storage.MaxSnapshotsPerResource == 0 {
+		c.Storage.MaxSnapshotsPerResource = DefaultMaxSnapshotsPerResource
+	}
+	if c.Storage.CapacityWarnPercent == 0 {
+		c.Storage.CapacityWarnPercent = DefaultCapacityWarnPercent
+	}
+	if c.Storage.CapacityFailPercent == 0 {
+		c.Storage.CapacityFailPercent = DefaultCapacityFailPercent
+	}
 	if c.Network.Bridges == nil {
 		c.Network.Bridges = []string{}
 	}
@@ -147,11 +191,39 @@ func (c Config) validateConfinement() []error {
 		}
 		seen[p] = true
 	}
+	paths := map[string]bool{}
+	for _, d := range c.Storage.Directories {
+		switch {
+		case !poolNameRE.MatchString(d.Name):
+			add("storage.directories: %q is not a pool name", d.Name)
+		case seen[d.Name]:
+			add("storage.directories: the name %q is already used by another pool", d.Name)
+		case !filepath.IsAbs(d.Path) || filepath.Clean(d.Path) != d.Path || d.Path == "/":
+			add("storage.directories: the path %q of %q must be an absolute, clean path other than /", d.Path, d.Name)
+		case paths[d.Path]:
+			add("storage.directories: the path %q is listed twice", d.Path)
+		}
+		seen[d.Name] = true
+		paths[d.Path] = true
+	}
+	for i, a := range c.Storage.Directories {
+		for j, b := range c.Storage.Directories {
+			if i != j && a.Path != b.Path && strings.HasPrefix(b.Path, a.Path+"/") {
+				add("storage.directories: the path of %q is inside the path of %q", b.Name, a.Name)
+			}
+		}
+	}
 	for _, part := range strings.Split(c.Storage.DatasetRoot, "/") {
 		if !datasetComponentRE.MatchString(part) {
 			add("storage.dataset_root %q must be a dataset name relative to the pool, such as \"skep\"", c.Storage.DatasetRoot)
 			break
 		}
+	}
+	if n := c.Storage.MaxSnapshotsPerResource; n < 1 || n > MaxSnapshotsPerResource {
+		add("storage.max_snapshots_per_resource must be between 1 and %d", MaxSnapshotsPerResource)
+	}
+	if w, f := c.Storage.CapacityWarnPercent, c.Storage.CapacityFailPercent; w < 1 || f > 100 || w >= f {
+		add("storage.capacity_warn_percent (%d) and storage.capacity_fail_percent (%d) must satisfy 1 <= warn < fail <= 100", w, f)
 	}
 	if !c.DevMode && !filepath.IsAbs(c.Storage.MediaDir) {
 		add("storage.media_dir %q must be an absolute path", c.Storage.MediaDir)

@@ -59,12 +59,21 @@ type Fake struct {
 	BridgeMembers  map[string][]string
 	// FailCreateVolume makes the next CreateVolume calls fail.
 	FailCreateVolume error
+	// UnusableDirs maps a directory pool to why it cannot be used.
+	UnusableDirs map[string]string
 
 	// IgnoreACPI lists the VMs whose guest ignores the ACPI power
 	// button, as an installer menu does.
 	IgnoreACPI map[string]bool
 
-	datasets  map[string]hostops.Dataset
+	datasets map[string]hostops.Dataset
+	// diskFiles and dirs are the simulated disk files and VM directories
+	// of the directory pools, by path.
+	diskFiles map[string]hostops.Dataset
+	dirs      map[string]bool
+	// snaps holds the snapshots by full name; txg orders them.
+	snaps     map[string]hostops.Dataset
+	txg       int64
 	instances map[string]bool
 	calls     []string
 	// taps maps a tap to its description and bridge.
@@ -117,13 +126,17 @@ func New(conf hostops.Confinement, opts Options) *Fake {
 		MissingBridges: map[string]bool{},
 		BridgeMembers:  map[string][]string{},
 		datasets:       map[string]hostops.Dataset{},
+		diskFiles:      map[string]hostops.Dataset{},
+		dirs:           map[string]bool{},
+		UnusableDirs:   map[string]string{},
+		snaps:          map[string]hostops.Dataset{},
 		instances:      map[string]bool{},
 	}
 }
 
 // Ops returns the fake as the hostops surface.
 func (f *Fake) Ops() hostops.Ops {
-	return hostops.Ops{Conf: f.conf, ZFS: f, Net: f, VMM: f, Files: fakeFiles{Files: f.files, f: f}, Procs: f}
+	return hostops.Ops{Conf: f.conf, ZFS: f, Dirs: fakeDirs{f}, Net: f, VMM: f, Files: fakeFiles{Files: f.files, f: f}, Procs: f}
 }
 
 // Calls returns what was called so far, one line per mutating call.
@@ -232,7 +245,11 @@ func (f *Fake) CreateVMDataset(_ context.Context, pool, vmID string) (hostops.Da
 	if d, ok := f.datasets[name]; ok {
 		return d, nil
 	}
-	d := hostops.Dataset{Name: name, Type: "filesystem", VMID: vmID}
+	if err := f.lockedAbove(name); err != nil {
+		return hostops.Dataset{}, err
+	}
+	f.txg++
+	d := hostops.Dataset{Name: name, Type: "filesystem", VMID: vmID, CreateTxg: f.txg}
 	f.datasets[name] = d
 	f.record("zfs create %s", name)
 	return d, nil
@@ -259,9 +276,13 @@ func (f *Fake) CreateVolume(_ context.Context, spec hostops.VolumeSpec) (hostops
 	if _, ok := f.datasets[name]; ok {
 		return hostops.Dataset{}, fmt.Errorf("hostfake: dataset %s already exists", name)
 	}
+	if err := f.lockedAbove(name); err != nil {
+		return hostops.Dataset{}, err
+	}
+	f.txg++
 	d := hostops.Dataset{
 		Name: name, Type: "volume", VolSizeBytes: spec.SizeBytes, VolMode: "dev",
-		VolBlockSize: spec.BlockSize, VMID: spec.VMID, DiskID: spec.DiskID,
+		VolBlockSize: spec.BlockSize, VMID: spec.VMID, DiskID: spec.DiskID, CreateTxg: f.txg,
 	}
 	if !spec.Thin {
 		if spec.SizeBytes > f.pool(spec.Pool).AvailableBytes {
@@ -312,8 +333,19 @@ func (f *Fake) DestroyVM(_ context.Context, pool, vmID string) ([]hostops.Datase
 		return nil, err
 	}
 	list := f.vmDatasets(name)
+	if clones := f.clonesUnder(name); len(clones) > 0 {
+		return nil, &models.Error{Code: models.CodeSnapshotHasClones,
+			Message: "a linked clone depends on the snapshot; delete the clone first",
+			Details: map[string]any{"clones": clones}}
+	}
 	for _, d := range list {
 		delete(f.datasets, d.Name)
+		f.dropOrigin(d)
+	}
+	for snapName := range f.snaps {
+		if under(snapName, name) {
+			delete(f.snaps, snapName)
+		}
 	}
 	if len(list) > 0 {
 		f.record("zfs destroy -r %s", name)

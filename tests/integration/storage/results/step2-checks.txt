@@ -1,0 +1,208 @@
+# ADR 0010 phase 7a, first validation on hearst (steps 1 and 2), 2026-11-14
+
+Build 1091c14, deployed with scripts/deploy-test.sh (size and SHA-256
+checked, synced) into the test installation /home/aba/skep-m6 (the
+binaries rc.conf already points at; the M6 binaries kept in
+/home/aba/skep-m6/m6-bin). Both services stopped first and their databases
+copied to /var/db/skep/backup-pre-m7a. On start: agent.db and api.db at
+schema 5, one migration applied each (agent/0005_storage_and_jails,
+api/0005_storage_permissions).
+
+hw.vmm.vmx.cap.virtual_interrupt_delivery: 0 and posted_interrupts: 0,
+checked before the first vm.start. No hearst configuration changed. The
+only datasets touched are under skeptest/skep.
+
+Driven through the public API with curl (server key pinned) as m6check
+(admin), m6operator (operator), and m6viewer (viewer); guests through
+tests/integration/vm/consolectl in tmux. Disk contents of the two-disk test
+VM read and written on the host with dd on the zvol device (volmode=dev).
+Times are UTC.
+
+## Inventory (21:59 UTC)
+skeptest/skep/handmade	filesystem
+HTTP200
+skeptest/skep filesystem {'kind': 'skep'}  off on 2.01
+skeptest/skep/handmade filesystem {'kind': 'unowned', 'reason': 'not a place where Skep creates datasets'}  off on 1.00
+skeptest/skep/vm filesystem {'kind': 'skep'}  off on 2.01
+skeptest/skep/vm/c0e23174-3dc0-4503-a691-9af23f657078 filesystem {'kind': 'vm', 'id': 'c0e23174-3dc0-4503-a691-9af23f657078'}  off on 2.01
+skeptest/skep/vm/c0e23174-3dc0-4503-a691-9af23f657078/disk0 volume {'kind': 'vm', 'id': 'c0e23174-3dc0-4503-a691-9af23f657078'} 8589934592 off on 2.01
+unavailable: None
+--- after listing:
+skeptest/skep
+skeptest/skep/handmade
+skeptest/skep/vm
+skeptest/skep/vm/c0e23174-3dc0-4503-a691-9af23f657078
+skeptest/skep/vm/c0e23174-3dc0-4503-a691-9af23f657078/disk0
+
+## Snapshot of a stopped two-disk VM (22:00 UTC), VM snaptest fc8640f3-205c-404d-855b-1376c792d86e
+disk0: MARKER-A-disk0
+disk1: MARKER-A-disk1
+HTTP202
+b4b27599-01fb-46a8-b87a-d53ec3407c23 consistent False vm.snapshot.create
+task vm.snapshot.create succeeded None {"consistency": "consistent", "datasets": [{"name": "skeptest/skep/vm/fc8640f3-205c-404d-855b-1376c792d86e@skep-b4b27599-01fb-46a8-b87a-d53ec3407c23", "type": "snapshot", "used_bytes": 0}, {"name": "skeptest/skep/vm/fc8640f3-205c-404d-855b-1376c792d86e/disk0@skep-b4b27599-01fb-46a8-b87a-d53ec3407c23", "size_bytes": 1073741824, "type": "snapshot", "used_bytes": 0}, {"name": "skeptest/skep/vm/fc8640f3-205c-404d-855b-1376c792d86e/disk1@skep-b4b27599-01fb-46a8-b87a-d53ec3407c23", "size_bytes": 1073741824, "type": "snapshot", "used_bytes": 0}], "name": "s1", "snapshot_id": "b4b27599-01fb-46a8-b87a-
+skeptest/skep/vm/fc8640f3-205c-404d-855b-1376c792d86e@skep-b4b27599-01fb-46a8-b87a-d53ec3407c23	4394	0	b4b27599-01fb-46a8-b87a-d53ec3407c23	fc8640f3-205c-404d-855b-1376c792d86e
+skeptest/skep/vm/fc8640f3-205c-404d-855b-1376c792d86e/disk0@skep-b4b27599-01fb-46a8-b87a-d53ec3407c23	4394	0	b4b27599-01fb-46a8-b87a-d53ec3407c23	fc8640f3-205c-404d-855b-1376c792d86e
+skeptest/skep/vm/fc8640f3-205c-404d-855b-1376c792d86e/disk1@skep-b4b27599-01fb-46a8-b87a-d53ec3407c23	4394	0	b4b27599-01fb-46a8-b87a-d53ec3407c23	fc8640f3-205c-404d-855b-1376c792d86e
+total 1168
+drwx------  2 root wheel    512 Nov 14 17:00 .
+drwx------  3 root wheel    512 Nov 14 17:00 ..
+-rw-------  1 root wheel 540672 Nov 14 17:00 b4b27599-01fb-46a8-b87a-d53ec3407c23.fd
+
+## Rollback (22:00 UTC)
+HTTP202
+s2 443e9066-891e-4e4f-b9af-903ff97809be
+task vm.snapshot.create succeeded None {"consistency": "consistent", "datasets": [{"name": "skeptest/skep/vm/fc8640f3-205c-404d-855b-1376c792d86e@skep-443e9066-891e-4e4f-b9af-903ff97809be", "type": "snapshot", "used_bytes": 0}, {"name": "skeptest/skep/vm/fc8640f3-205c-404d-855b-1376c792d86e/disk0@skep-443e9066-891e-4e4f-b9af-903ff97809be", "size_bytes": 1073741824, "type": "snapshot", "used_bytes": 0}, {"name": "skeptest/skep/vm/fc8640f3-205c-404d-855b-1376c792d86e/disk1@skep-443e9066-891e-4e4f-b9af-903ff97809be", "size_bytes": 1073741824, "type": "snapshot", "used_bytes": 0}], "name": "s2", "snapshot_id": "443e9066-891e-4e4f-b9af-
+disk0: MARKER-C-disk0
+disk1: MARKER-C-disk1
+-- rollback to s1 without destroy_newer:
+HTTP409
+{"error": {"code": "snapshot_not_latest", "message": "the snapshot is not the latest; rolling back to it destroys the newer ones, which needs destroy_newer", "request_id": "a54b6af6a659289d410e23c3", "details": {"newer_snapshot_ids": ["443e9066-891e-4e4f-b9af-903ff97809be"], "snapshot_id": "b4b27599-01fb-46a8-b87a-d53ec3407c23"}}}
+-- rollback to s2 (the latest):
+HTTP202
+task vm.snapshot.rollback succeeded None {"datasets_destroyed": [], "destroyed_snapshots": [], "name": "s2", "snapshot_id": "443e9066-891e-4e4f-b9af-903ff97809be", "vm_id": "fc8640f3-205c-404d-855b-1376c792d86e"}
+disk0: MARKER-B-disk0
+disk1: MARKER-B-disk1
+-- rollback to s1 with destroy_newer:
+HTTP202
+task vm.snapshot.rollback succeeded None {"datasets_destroyed": [{"name": "skeptest/skep/vm/fc8640f3-205c-404d-855b-1376c792d86e/disk0@skep-443e9066-891e-4e4f-b9af-903ff97809be", "size_bytes": 1073741824, "type": "snapshot", "used_bytes": 1024}, {"name": "skeptest/skep/vm/fc8640f3-205c-404d-855b-1376c792d86e/disk1@skep-443e9066-891e-4e4f-b9af-903ff97809be", "size_bytes": 1073741824, "type": "snapshot", "used_bytes": 1024}, {"name": "skeptest/skep/vm/fc8640f3-205c-404d-855b-1376c792d86e@skep-443e9066-891e-4e4f-b9af-903ff97809be", "type": "snapshot", "used_bytes": 0}], "destroyed_snapshots": [{"id": "443e9066-891e-4e4f-b9af-903ff97809b
+disk0: MARKER-A-disk0
+disk1: MARKER-A-disk1
+skeptest/skep/vm/fc8640f3-205c-404d-855b-1376c792d86e@skep-b4b27599-01fb-46a8-b87a-d53ec3407c23
+skeptest/skep/vm/fc8640f3-205c-404d-855b-1376c792d86e/disk0@skep-b4b27599-01fb-46a8-b87a-d53ec3407c23
+skeptest/skep/vm/fc8640f3-205c-404d-855b-1376c792d86e/disk1@skep-b4b27599-01fb-46a8-b87a-d53ec3407c23
+b4b27599-01fb-46a8-b87a-d53ec3407c23.fd
+-- agent audit entry of the rollback:
+requested|success|m6operator|
+finished|success|m6operator|{"datasets_destroyed":[{"name":"skeptest/skep/vm/fc8640f3-205c-404d-855b-1376c792d86e/disk0@skep-443e9066-891e-4e4f-b9af-903ff97809be","type":"snapshot","size_bytes":1073741824,"used_bytes":1024},{"name":"skeptest/skep/vm/fc8640f3-205c-404d-855b-1376c792d86e/disk1@skep-443e9066-891e-4e4f-b9af-903ff97809be","type":"snapshot","size_bytes":1073741824,"used_bytes":1024},{"name":"skeptest/skep/vm/fc8640f3-205c-404d-855b-1376c792d86e@skep-443e9066-891e-4e4f-b9af-903ff97809be","type":"snapshot","used_bytes":0}],"snapshot_id":"b4b27599-01fb-46a8-b87a-d53ec3407c23","snapshot_name":"s1","snapshots_destroyed":[{"id":"443e9066-891e-4e4f-b9af-903ff97809be","name":"s2"}]}
+HTTP200
+[('s1', 'consistent', True)]
+
+## Guest rollback with fbsd1 (22:01 UTC)
+-- guest before: /root/skep-marker does not exist (console)
+HTTP202
+c22f6b04-effa-4d22-8d7e-9db3a6aa09a1 crash_consistent
+task vm.snapshot.create succeeded None {"consistency": "crash_consistent", "datasets": [{"name": "skeptest/skep/vm/c0e23174-3dc0-4503-a691-9af23f657078@skep-c22f6b04-effa-4d22-8d7e-9db3a6aa09a1", "type": "snapshot", "used_bytes": 0}, {"name": "skeptest/skep/vm/c0e23174-3dc0-4503-a691-9af23f657078/disk0@skep-c22f6b04-effa-4d22-8d7e-9db3a6aa09a1", "size_bytes": 8589934592, "type": "snapshot", "used_bytes": 0}], "name": "before-marker", "snapshot_id": "c22f6b04-effa-4d22-8d7e-9db3a6aa09a1", "vm_id": "c0e23174-3dc0-4503-a691-9af23f657078"}
+skeptest/skep/vm/c0e23174-3dc0-4503-a691-9af23f657078@skep-c22f6b04-effa-4d22-8d7e-9db3a6aa09a1	c22f6b04-effa-4d22-8d7e-9db3a6aa09a1
+skeptest/skep/vm/c0e23174-3dc0-4503-a691-9af23f657078/disk0@skep-c22f6b04-effa-4d22-8d7e-9db3a6aa09a1	c22f6b04-effa-4d22-8d7e-9db3a6aa09a1
+total 1168
+drwx------  2 root wheel    512 Nov 14 17:01 .
+drwx------  3 root wheel    512 Nov 14 17:01 ..
+-rw-------  1 root wheel 540672 Nov 14 17:01 c22f6b04-effa-4d22-8d7e-9db3a6aa09a1.fd
+root@fbsd1:~ # echo "written after the snapshot" > /root/skep-marker; sync; cat /root/skep-marker
+written after the snapshot
+root@fbsd1:~ #
+-- rollback while running:
+HTTP409
+vm_not_stopped the virtual machine is running; stop it first
+HTTP200
+observed: stopped the guest powered off
+-- guest powered off from inside; rollback to before-marker:
+HTTP202
+task vm.snapshot.rollback succeeded None {"datasets_destroyed": [], "destroyed_snapshots": [], "name": "before-marker", "snapshot_id": "c22f6b04-effa-4d22-8d7e-9db3a6aa09a1", "vm_id": "c0e23174-3dc0-4503-a691-9af23f657078"}
+HTTP202
+task vm.start succeeded None {"pid": 3206, "state": "running", "vm_id": "c0e23174-3dc0-4503-a691-9af23f657078"}
+** Processing journal entries.
+** 86 journal records in 6144 bytes for 44.79% utilization
+**** FILE SYSTEM MARKED CLEAN ****
+/dev/vtbd0p1: MARKING FILE SYSTEM CLEAN
+Mounting local filesystems:.
+Mounting late filesystems:.
+Starting background file system checks in 60 seconds.
+login:
+root@fbsd1:~ # unset HISTFILE; ls -la /root/skep-marker; uptime
+ls: /root/skep-marker: No such file or directory
+10:03PM  up 40 secs, 1 user, load averages: 0.11, 0.03, 0.01
+root@fbsd1:~ #
+
+## Linked clone (22:04 UTC)
+-- viewer may not clone; an operator may:
+HTTP403
+forbidden {'permission': 'vm:write'}
+HTTP202
+a8eb0db9-35b0-4481-8b66-f9c17a7e74a9 fbsd1-clone False c22f6b04-effa-4d22-8d7e-9db3a6aa09a1 ['02:a1:39:bc:4d:4c'] [(0, True, 8589934592)]
+task vm.clone succeeded None {"datasets": [{"name": "skeptest/skep/vm/a8eb0db9-35b0-4481-8b66-f9c17a7e74a9", "type": "filesystem", "used_bytes": 1024}, {"name": "skeptest/skep/vm/a8eb0db9-35b0-4481-8b66-f9c17a7e74a9/disk0", "size_bytes": 8589934592, "type": "volume", "used_bytes": 1024}], "name": "fbsd1-clone", "snapshot_id": "c22f6b04-effa-4d22-8d7e-9db3a6aa09a1", "snapshot_taken": false, "source_vm_id": "c0e23174-3dc0-4503-a691-9af23f657078", "vm_id": "a8eb0db9-35b0-4481-8b66-f9c17a7e74a9"}
+skeptest/skep/vm/a8eb0db9-35b0-4481-8b66-f9c17a7e74a9	skeptest/skep/vm/c0e23174-3dc0-4503-a691-9af23f657078@skep-c22f6b04-effa-4d22-8d7e-9db3a6aa09a1	none	default	a8eb0db9-35b0-4481-8b66-f9c17a7e74a9	-
+skeptest/skep/vm/a8eb0db9-35b0-4481-8b66-f9c17a7e74a9/disk0	skeptest/skep/vm/c0e23174-3dc0-4503-a691-9af23f657078/disk0@skep-c22f6b04-effa-4d22-8d7e-9db3a6aa09a1	none	dev	a8eb0db9-35b0-4481-8b66-f9c17a7e74a9	9d855e08-17e8-444f-86a6-f8376d02bd3d
+volmode	dev	local
+skep:snapshot_id	-	-
+skeptest/skep/vm/c0e23174-3dc0-4503-a691-9af23f657078/disk0@skep-c22f6b04-effa-4d22-8d7e-9db3a6aa09a1	skeptest/skep/vm/a8eb0db9-35b0-4481-8b66-f9c17a7e74a9/disk0
+total 1168
+drwx------  2 root wheel    512 Nov 14 17:04 .
+drwx------  5 root wheel    512 Nov 14 17:04 ..
+-rw-------  1 root wheel 540672 Nov 14 17:04 uefi-vars.fd
+-- origin snapshot and source are protected:
+HTTP409
+snapshot_has_clones {'clones': [{'id': 'a8eb0db9-35b0-4481-8b66-f9c17a7e74a9', 'name': 'fbsd1-clone'}]}
+HTTP409
+vm_not_stopped {'state': 'running'}
+HTTP202
+task vm.start succeeded None {"pid": 3309, "state": "running", "vm_id": "a8eb0db9-35b0-4481-8b66-f9c17a7e74a9"}
+root@fbsd1:~ # unset HISTFILE; hostname; ifconfig vtnet0 | grep -E "ether|inet "; ping -c 2 -t 5 9.9.9.9 | tail -2; ls /root/skep-marker
+fbsd1
+        ether 02:a1:39:bc:4d:4c
+        inet 10.79.60.101 netmask 0xffffff00 broadcast 10.79.60.255
+2 packets transmitted, 2 packets received, 0.0% packet loss
+round-trip min/avg/max/stddev = 14.070/14.310/14.551/0.241 ms
+ls: /root/skep-marker: No such file or directory
+root@fbsd1:~ #
+-- source at the same time:
+        ether 02:1e:08:e9:9d:7c
+        inet 10.79.60.100 netmask 0xffffff00 broadcast 10.79.60.255
+root@fbsd1:~ #
+-- both powered off from inside:
+HTTP200
+fbsd1 stopped
+HTTP200
+fbsd1-clone stopped
+-- delete the stopped source while the clone exists:
+HTTP409
+snapshot_has_clones {'clones': [{'id': 'a8eb0db9-35b0-4481-8b66-f9c17a7e74a9', 'name': 'fbsd1-clone'}]}
+-- delete the clone, then the origin snapshot can go:
+HTTP202
+task vm.delete succeeded None {"datasets": [{"name": "skeptest/skep/vm/a8eb0db9-35b0-4481-8b66-f9c17a7e74a9", "type": "filesystem", "used_bytes": 1040384}, {"name": "skeptest/skep/vm/a8eb0db9-35b0-4481-8b66-f9c17a7e74a9/disk0", "size_bytes": 8589934592, "type": "volume", "used_bytes": 1040384}], "name": "fbsd1-clone", "vm_id": "a8eb0db9-35b0-4481-8b66-f9c17a7e74a9"}
+HTTP202
+task vm.snapshot.delete succeeded None {"datasets_destroyed": [{"name": "skeptest/skep/vm/c0e23174-3dc0-4503-a691-9af23f657078/disk0@skep-c22f6b04-effa-4d22-8d7e-9db3a6aa09a1", "size_bytes": 8589934592, "type": "snapshot", "used_bytes": 1051648}, {"name": "skeptest/skep/vm/c0e23174-3dc0-4503-a691-9af23f657078@skep-c22f6b04-effa-4d22-8d7e-9db3a6aa09a1", "type": "snapshot", "used_bytes": 0}], "name": "before-marker", "snapshot_id": "c22f6b04-effa-4d22-8d7e-9db3a6aa09a1", "vm_id": "c0e23174-3dc0-4503-a691-9af23f657078"}
+skeptest/skep/vm
+skeptest/skep/vm/c0e23174-3dc0-4503-a691-9af23f657078
+skeptest/skep/vm/c0e23174-3dc0-4503-a691-9af23f657078/disk0
+skeptest/skep/vm/fc8640f3-205c-404d-855b-1376c792d86e
+skeptest/skep/vm/fc8640f3-205c-404d-855b-1376c792d86e@skep-b4b27599-01fb-46a8-b87a-d53ec3407c23
+skeptest/skep/vm/fc8640f3-205c-404d-855b-1376c792d86e/disk0
+skeptest/skep/vm/fc8640f3-205c-404d-855b-1376c792d86e/disk0@skep-b4b27599-01fb-46a8-b87a-d53ec3407c23
+skeptest/skep/vm/fc8640f3-205c-404d-855b-1376c792d86e/disk1
+skeptest/skep/vm/fc8640f3-205c-404d-855b-1376c792d86e/disk1@skep-b4b27599-01fb-46a8-b87a-d53ec3407c23
+total 32
+drwx------  4 root wheel 512 Nov 14 17:05 .
+drwx------  3 root wheel 512 Nov 14 16:58 ..
+drwx------  3 root wheel 512 Nov 14 17:02 c0e23174-3dc0-4503-a691-9af23f657078
+drwx------  3 root wheel 512 Nov 14 17:00 fc8640f3-205c-404d-855b-1376c792d86e
+       0
+
+## Clone without a snapshot ID, and a hand-made snapshot (22:06 UTC)
+HTTP202
+b20b2343-b712-425f-9ee1-5d5ae2621b8e 8d347601-c546-41ce-a078-650a21438fca
+task vm.clone succeeded None {"datasets": [{"name": "skeptest/skep/vm/b20b2343-b712-425f-9ee1-5d5ae2621b8e", "type": "filesystem", "used_bytes": 0}, {"name": "skeptest/skep/vm/b20b2343-b712-425f-9ee1-5d5ae2621b8e/disk0", "size_bytes": 1073741824, "type": "volume", "used_bytes": 0}, {"name": "skeptest/skep/vm/b20b2343-b712-425f-9ee1-5d5ae2621b8e/disk1", "size_bytes": 1073741824, "type": "volume", "used_bytes": 0}], "name": "snaptest-c2", "snapshot_id": "8d347601-c546-41ce-a078-650a21438fca", "snapshot_taken": true, "source_vm_id": "fc8640f3-205c-404d-855b-1376c792d86e", "vm_id": "b20b2343-b712-425f-9ee1-5d5ae2621b8e"}
+HTTP200
+[('s1', True, []), ('snaptest-c2', True, ['snaptest-c2'])]
+skeptest/skep/vm/b20b2343-b712-425f-9ee1-5d5ae2621b8e	skeptest/skep/vm/fc8640f3-205c-404d-855b-1376c792d86e@skep-8d347601-c546-41ce-a078-650a21438fca
+skeptest/skep/vm/b20b2343-b712-425f-9ee1-5d5ae2621b8e/disk0	skeptest/skep/vm/fc8640f3-205c-404d-855b-1376c792d86e/disk0@skep-8d347601-c546-41ce-a078-650a21438fca
+skeptest/skep/vm/b20b2343-b712-425f-9ee1-5d5ae2621b8e/disk1	skeptest/skep/vm/fc8640f3-205c-404d-855b-1376c792d86e/disk1@skep-8d347601-c546-41ce-a078-650a21438fca
+HTTP202
+task vm.delete succeeded None {"datasets": [{"name": "skeptest/skep/vm/b20b2343-b712-425f-9ee1-5d5ae2621b8e", "type": "filesystem", "used_bytes": 0}, {"name": "skeptest/skep/vm/b20b2343-b712-425f-9ee1-5d5ae2621b8e/disk0", "size_bytes": 1073741824, "type": "volume", "used_bytes": 0}, {"name": "skeptest/skep/vm/b20b2343-b712-425f-9ee1-5d5ae2621b8e/disk1", "size_bytes": 1073741824, "type": "volume", "used_bytes": 0}], "name": "snaptest-c2", "vm_id": "b20b2343-b712-425f-9ee1-5d5ae2621b8e"}
+-- a snapshot made by hand under the VM's dataset:
+skeptest/skep/vm/fc8640f3-205c-404d-855b-1376c792d86e@manual
+HTTP202
+task vm.snapshot.rollback failed {'code': 'snapshot_not_latest', 'message': 'newer snapshots that Skep did not take exist; an administrator removes them first'} null
+HTTP200
+[('fc8640f3-205c-404d-855b-1376c792d86e@manual', {'kind': 'unowned', 'reason': 'a snapshot Skep did not take'})]
+skeptest/skep/vm/fc8640f3-205c-404d-855b-1376c792d86e@manual
+removed by hand
+
+## Unit tests natively (cross-compiled, run on hearst as aba)
+api.test: PASS
+database.test: PASS
+hostops.test: PASS
+hostops_hostfake.test: PASS
+internalapi.test: PASS
+storage.test: PASS
+vm.test: PASS

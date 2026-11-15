@@ -25,6 +25,13 @@ type VMBackend interface {
 	Action(ctx context.Context, id string, act models.VMAction, sub vm.Submission) (models.Task, error)
 	StoragePools(ctx context.Context) (models.StoragePoolList, error)
 	Media(ctx context.Context) (models.MediaList, error)
+
+	Snapshots(ctx context.Context, vmID string) (models.SnapshotList, error)
+	Snapshot(ctx context.Context, vmID, id string) (models.Snapshot, error)
+	CreateSnapshot(ctx context.Context, vmID string, req models.SnapshotCreate, sub vm.Submission) (models.SnapshotCreated, error)
+	RollbackSnapshot(ctx context.Context, vmID, id string, req models.SnapshotRollback, sub vm.Submission) (models.Task, error)
+	DeleteSnapshot(ctx context.Context, vmID, id string, sub vm.Submission) (models.Task, error)
+	CloneVM(ctx context.Context, vmID string, req models.VMClone, sub vm.Submission) (models.VMCreated, error)
 }
 
 // registerVMs adds the VM and storage routes. Like every route of the
@@ -37,6 +44,10 @@ func (h *handler) registerVMs(mux *http.ServeMux) {
 	if h.console != nil {
 		mux.Handle(agentproto.Prefix+"/vms/{id}/console/serial", httpkit.Methods(h.vmConsole, http.MethodGet))
 	}
+	mux.Handle(agentproto.Prefix+"/vms/{id}/snapshots", httpkit.Methods(h.snapshotCollection, http.MethodGet, http.MethodHead, http.MethodPost))
+	mux.Handle(agentproto.Prefix+"/vms/{id}/snapshots/{sid}", httpkit.Methods(h.snapshotItem, http.MethodGet, http.MethodHead, http.MethodDelete))
+	mux.Handle(agentproto.Prefix+"/vms/{id}/snapshots/{sid}/rollback", httpkit.Methods(h.snapshotRollback, http.MethodPost))
+	mux.Handle(agentproto.Prefix+"/vms/{id}/clone", httpkit.Methods(h.vmClone, http.MethodPost))
 	mux.Handle(agentproto.Prefix+"/storage/pools", httpkit.ReadOnly(h.storagePools))
 	mux.Handle(agentproto.Prefix+"/storage/media", httpkit.ReadOnly(h.storageMedia))
 }

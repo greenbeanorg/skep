@@ -144,12 +144,13 @@ func TestMigrateCreatesAgentSchema(t *testing.T) {
 		t.Fatalf("applied = %+v", applied)
 	}
 	got := tableNames(t, db)
-	if len(applied) != 4 || applied[1].Name != "task_engine" || applied[2].Name != "retention" ||
-		applied[3].Name != "virtual_machines" {
+	if len(applied) != 5 || applied[1].Name != "task_engine" || applied[2].Name != "retention" ||
+		applied[3].Name != "virtual_machines" || applied[4].Name != "storage_and_jails" {
 		t.Fatalf("applied = %+v", applied)
 	}
 	want := []string{
-		"audit_log", "audit_segments", "containers", "network_interfaces", "nodes", "schema_migrations",
+		"audit_log", "audit_segments", "container_networks", "container_templates", "containers",
+		"network_interfaces", "nodes", "schema_migrations", "snapshots",
 		"storage_pools", "storage_volumes", "system_config", "task_events", "tasks",
 		"virtual_machines", "vm_disks", "vm_networks",
 	}

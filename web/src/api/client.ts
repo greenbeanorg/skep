@@ -34,6 +34,13 @@ import type {
   VMCreated,
   VMList,
   VMUpdate,
+  DatasetList,
+  Metrics,
+  SnapshotCreate,
+  SnapshotCreated,
+  SnapshotList,
+  SnapshotRollback,
+  VMClone,
 } from "./types";
 
 export const API_PREFIX = "/api/v1";
@@ -238,6 +245,21 @@ export function auditPath(q: AuditQuery = {}): string {
   return qs ? `/audit?${qs}` : "/audit";
 }
 
+export interface DatasetQuery {
+  pool?: string;
+  limit?: number;
+  cursor?: string;
+}
+
+export function datasetsPath(q: DatasetQuery = {}): string {
+  const params = new URLSearchParams();
+  if (q.pool) params.set("pool", q.pool);
+  if (q.limit) params.set("limit", String(q.limit));
+  if (q.cursor) params.set("cursor", q.cursor);
+  const qs = params.toString();
+  return qs ? `/storage/datasets?${qs}` : "/storage/datasets";
+}
+
 /** Options of a read call. */
 export interface ReadOptions {
   signal?: AbortSignal;
@@ -284,6 +306,21 @@ export const api = {
     request<Task>(`/vms/${enc(id)}/actions`, { method: "POST", body: timeout ? { action, timeout } : { action } }),
   storagePools: (o: ReadOptions = {}) => request<StoragePoolList>("/storage/pools", o),
   media: (o: ReadOptions = {}) => request<MediaList>("/storage/media", o),
+
+  // Snapshots, rollback, and linked clones (ADR 0010 decisions 2 and 3).
+  snapshots: (vmId: string, o: ReadOptions = {}) => request<SnapshotList>(`/vms/${enc(vmId)}/snapshots`, o),
+  createSnapshot: (vmId: string, req: SnapshotCreate) =>
+    request<SnapshotCreated>(`/vms/${enc(vmId)}/snapshots`, { method: "POST", body: req }),
+  rollbackSnapshot: (vmId: string, snapId: string, req: SnapshotRollback) =>
+    request<Task>(`/vms/${enc(vmId)}/snapshots/${enc(snapId)}/rollback`, { method: "POST", body: req }),
+  deleteSnapshot: (vmId: string, snapId: string) =>
+    request<Task>(`/vms/${enc(vmId)}/snapshots/${enc(snapId)}`, { method: "DELETE" }),
+  cloneVM: (vmId: string, req: VMClone) => request<VMCreated>(`/vms/${enc(vmId)}/clone`, { method: "POST", body: req }),
+
+  // The storage inventory and current resource use (ADR 0010 decisions 1
+  // and 15).
+  datasets: (q: DatasetQuery = {}, o: ReadOptions = {}) => request<DatasetList>(datasetsPath(q), o),
+  metrics: (o: ReadOptions = {}) => request<Metrics>("/metrics", o),
 };
 
 /**

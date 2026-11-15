@@ -34,6 +34,7 @@ import (
 type Ops struct {
 	Conf  Confinement
 	ZFS   ZFS
+	Dirs  Dirs
 	Net   Net
 	VMM   VMM
 	Files Files
@@ -60,13 +61,50 @@ type ZFS interface {
 	// without a dataset yields an empty list.
 	VMDatasets(ctx context.Context, pool, vmID string) ([]Dataset, error)
 	// DestroyVM destroys the dataset of a VM recursively and returns what
-	// existed. It refuses a dataset that does not carry the VM's ID.
+	// existed. It refuses a dataset that does not carry the VM's ID, and
+	// a VM with a snapshot a linked clone depends on
+	// (snapshot_has_clones).
 	DestroyVM(ctx context.Context, pool, vmID string) ([]Dataset, error)
+
+	// Inventory lists every filesystem, volume, and snapshot under
+	// <pool>/<root>, ordered by name (ADR 0010 decision 1).
+	Inventory(ctx context.Context, pool string) ([]Dataset, error)
+	// Snapshot takes one atomic recursive snapshot of a resource's
+	// dataset, <dataset>@skep-<snapshot-id>, carrying skep:snapshot_id,
+	// and returns it as one entry per dataset. A locked dataset is
+	// storage_locked.
+	Snapshot(ctx context.Context, pool string, o Owner, snapshotID string) ([]Dataset, error)
+	// Snapshots lists every snapshot of a resource's datasets, oldest
+	// first, Skep's or not.
+	Snapshots(ctx context.Context, pool string, o Owner) ([]Dataset, error)
+	// Rollback rolls every dataset of a resource back to a snapshot and
+	// returns the newer snapshots it destroyed. A snapshot that is not
+	// the latest is snapshot_not_latest unless destroyNewer is set; a
+	// newer snapshot with clones is snapshot_has_clones; a snapshot that
+	// lacks a dataset the resource has now is snapshot_incomplete. The
+	// caller makes sure the resource is stopped.
+	Rollback(ctx context.Context, pool string, o Owner, snapshotID string, destroyNewer bool) ([]Dataset, error)
+	// DestroySnapshot destroys a snapshot on every dataset of a resource
+	// and returns what it destroyed. A snapshot with clones is
+	// snapshot_has_clones.
+	DestroySnapshot(ctx context.Context, pool string, o Owner, snapshotID string) ([]Dataset, error)
+	// CloneVM makes a linked clone of every dataset of a VM's snapshot
+	// under a new VM ID and returns the clone's datasets.
+	CloneVM(ctx context.Context, spec CloneSpec) ([]Dataset, error)
+	// ResizeVolume grows the zvol of a VM's disk (ADR 0010 decision 4).
+	// It never shrinks one. A volume with a reservation keeps one equal
+	// to its size; the pool running out of room is insufficient_space.
+	ResizeVolume(ctx context.Context, spec VolumeSpec) (Dataset, error)
+	// DestroyVolume destroys the zvol of a VM's disk, only if it carries
+	// the VM's and the disk's IDs and has no snapshots left.
+	DestroyVolume(ctx context.Context, spec VolumeSpec) (Dataset, error)
 }
 
 // Pool is one allow-listed pool as observed.
 type Pool struct {
 	Name string
+	// Kind is PoolKindZFS or PoolKindDirectory.
+	Kind string
 	// Health is what zpool(8) reports; empty when Error is set.
 	Health string
 	// Error says why the pool cannot be used. Empty when it can.
@@ -96,7 +134,8 @@ type VolumeSpec struct {
 // Dataset is a filesystem or volume as zfs(8) lists it.
 type Dataset struct {
 	Name string
-	// Type is "filesystem" or "volume".
+	// Type is "filesystem", "volume", or "snapshot"; for a directory
+	// pool, "directory" or "file" (TypeFile), with Name the full path.
 	Type            string
 	VolSizeBytes    int64
 	UsedBytes       int64
@@ -105,11 +144,37 @@ type Dataset struct {
 	RefReservationBytes int64
 	VolMode             string
 	VolBlockSize        int
-	// VMID and DiskID are the user properties skep:vm_id and
-	// skep:disk_id.
-	VMID   string
-	DiskID string
+	// CreateTxg is the transaction group that created the dataset or
+	// snapshot: the order of snapshots.
+	CreateTxg int64
+	// Origin is the snapshot a clone was made from; Clones, on a
+	// snapshot, lists the clones made from it.
+	Origin string
+	Clones []string
+	// Encryption, KeyStatus, Compression, and CompressRatio are what the
+	// operator set on <pool>/<root> and Skep inherits (ADR 0010 decision
+	// 5). KeyStatus is "available", "unavailable", or empty when the
+	// dataset is not encrypted.
+	Encryption    string
+	KeyStatus     string
+	Compression   string
+	CompressRatio string
+	// The skep: user properties: skep:vm_id, skep:disk_id,
+	// skep:container_id, skep:template_id, and, on snapshots,
+	// skep:snapshot_id.
+	VMID        string
+	DiskID      string
+	ContainerID string
+	TemplateID  string
+	SnapshotID  string
 }
+
+// IsSnapshot reports whether the dataset is a snapshot.
+func (d Dataset) IsSnapshot() bool { return d.Type == "snapshot" }
+
+// Locked reports whether the dataset is encrypted and its key is not
+// loaded.
+func (d Dataset) Locked() bool { return d.KeyStatus == "unavailable" }
 
 // Net inspects the bridges guests may join and keeps the taps of VMs.
 // Skep never creates, destroys, or re-addresses a bridge.
@@ -200,6 +265,19 @@ type Procs interface {
 	Runner(vmID string) (pid int, ok bool)
 	// SignalRunner sends a request to the VM's live runner.
 	SignalRunner(vmID string, sig RunnerSignal) error
+	// BhyveUsage reads the CPU time and resident memory of a VM's bhyve
+	// process (ADR 0010 decision 15). The process must be named bhyve and
+	// carry the VM's vmm instance name, so a recycled PID is not
+	// reported as the VM; otherwise it is ErrNotFound.
+	BhyveUsage(ctx context.Context, vmID string, pid int) (ProcessUsage, error)
+}
+
+// ProcessUsage is what a process has used so far.
+type ProcessUsage struct {
+	// CPUTime is the user and system time the process has accumulated.
+	CPUTime time.Duration
+	// ResidentBytes is its resident set size.
+	ResidentBytes int64
 }
 
 // VMMInfo is the state of the hypervisor on this host.
@@ -254,6 +332,20 @@ type Files interface {
 	StateFilePath(vmID, name string) (string, error)
 	// LogTail returns the end of the VM's bhyve.log, at most maxBytes.
 	LogTail(vmID string, maxBytes int) string
+
+	// SaveVarsSnapshot copies a VM's UEFI variable store to
+	// <state>/<vm-id>/snapshots/<snapshot-id>.fd, durably (ADR 0010
+	// decision 2b).
+	SaveVarsSnapshot(ctx context.Context, vmID, snapshotID string) error
+	// RestoreVarsSnapshot replaces a VM's variable store with the copy
+	// taken with a snapshot.
+	RestoreVarsSnapshot(ctx context.Context, vmID, snapshotID string) error
+	// RemoveVarsSnapshot removes the copy taken with a snapshot. A copy
+	// that does not exist is not an error.
+	RemoveVarsSnapshot(vmID, snapshotID string) error
+	// CloneVars creates the persistent directory of a linked clone with
+	// the variable store copied from the source's snapshot.
+	CloneVars(ctx context.Context, sourceVMID, snapshotID, targetVMID string) error
 }
 
 // MediaFile is one ISO file in the media directory.

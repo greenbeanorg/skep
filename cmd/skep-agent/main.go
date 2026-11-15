@@ -34,7 +34,9 @@ import (
 	"github.com/greenbeanorg/skep/internal/hypervisor/bhyve"
 	"github.com/greenbeanorg/skep/internal/internalapi"
 	"github.com/greenbeanorg/skep/internal/logging"
+	"github.com/greenbeanorg/skep/internal/monitoring"
 	"github.com/greenbeanorg/skep/internal/retention"
+	"github.com/greenbeanorg/skep/internal/storage"
 	"github.com/greenbeanorg/skep/internal/sysaccount"
 	"github.com/greenbeanorg/skep/internal/tasks"
 	"github.com/greenbeanorg/skep/internal/vm"
@@ -192,13 +194,15 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	})
 	consoles := console.New(console.Options{Open: host.VMM.OpenConsole, Audit: database.NewAuditLog(db), Logger: log})
 	vms, err := vm.New(vm.Options{
-		Console:    consoles,
-		NodeID:     nodeID,
-		Store:      database.NewVMStore(db),
-		Engine:     engine,
-		Hypervisor: engineBhyve,
-		Host:       host,
-		Logger:     log,
+		Console:      consoles,
+		NodeID:       nodeID,
+		Store:        database.NewVMStore(db),
+		Snapshots:    database.NewSnapshotStore(db),
+		MaxSnapshots: cfg.Storage.MaxSnapshotsPerResource,
+		Engine:       engine,
+		Hypervisor:   engineBhyve,
+		Host:         host,
+		Logger:       log,
 	})
 	if err != nil {
 		return err
@@ -208,6 +212,32 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 			return err
 		}
 	}
+	// The storage inventory reads the host and the database; it changes
+	// nothing.
+	storageSvc, err := storage.New(storage.Options{
+		Host:   host,
+		Owners: database.NewStorageStore(db),
+		Logger: log,
+	})
+	if err != nil {
+		return err
+	}
+	// Current resource use (ADR 0010 decision 15), which also feeds the
+	// two storage health checks.
+	sampler, err := monitoring.New(monitoring.Options{
+		NodeID:      nodeID,
+		Host:        host,
+		VMs:         vms,
+		WarnPercent: cfg.Storage.CapacityWarnPercent,
+		FailPercent: cfg.Storage.CapacityFailPercent,
+		MaxAge:      2 * monitoring.DefaultInterval,
+		Logger:      log,
+	})
+	if err != nil {
+		return err
+	}
+	checks[models.CheckStorageCapacity] = sampler.CapacityProbe
+	checks[models.CheckStorageLocked] = sampler.LockedProbe
 	svc, err := agent.NewService(agent.Options{
 		Bhyve:      vms.Capabilities,
 		NodeID:     nodeID,
@@ -286,6 +316,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		log.Warn("could not observe the virtual machines", "error", err)
 	}
 	go vms.Watch(ctx, cfg.Hypervisor.Bhyve.WatchInterval.Std())
+	go sampler.Run(ctx, monitoring.DefaultInterval)
 	if caps := vms.Capabilities(ctx); caps.Available {
 		log.Info("bhyve is available", "reason", caps.Reason, "max_vcpus_per_vm", caps.MaxVCPUsPerVM,
 			"guest_memory_bytes", caps.GuestMemoryBytes)
@@ -302,6 +333,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	internal := internalapi.NewHandler(svc, internalapi.Options{
 		VMs:            vms,
 		Console:        consoles,
+		Storage:        storageSvc,
+		Metrics:        sampler,
 		RequestTimeout: cfg.Socket.RequestTimeout.Std(),
 		Logger:         log,
 	})
@@ -323,8 +356,13 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 // confinement builds what Skep may touch on this host from the agent's
 // configuration, and from nothing else.
 func confinement(cfg config.Config) hostops.Confinement {
+	dirs := make([]hostops.DirPool, 0, len(cfg.Storage.Directories))
+	for _, d := range cfg.Storage.Directories {
+		dirs = append(dirs, hostops.DirPool{Name: d.Name, Path: d.Path})
+	}
 	return hostops.Confinement{
 		Pools:                cfg.Storage.Pools,
+		Directories:          dirs,
 		DatasetRoot:          cfg.Storage.DatasetRoot,
 		MediaDir:             cfg.Storage.MediaDir,
 		Bridges:              cfg.Network.Bridges,

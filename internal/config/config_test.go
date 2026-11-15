@@ -412,6 +412,9 @@ func TestConfinementDefaultsAndValidation(t *testing.T) {
 		cfg.Hypervisor.Bhyve.WatchInterval.Std() != 2*time.Second {
 		t.Errorf("defaults = %+v %+v", cfg.Storage, cfg.Hypervisor.Bhyve)
 	}
+	if cfg.Storage.CapacityWarnPercent != 80 || cfg.Storage.CapacityFailPercent != 90 {
+		t.Errorf("capacity thresholds = %d, %d", cfg.Storage.CapacityWarnPercent, cfg.Storage.CapacityFailPercent)
+	}
 	if cfg.VMRunDir() != "/var/run/skep/vm" || cfg.VMStateDir() != "/var/db/skep/agent/vm" {
 		t.Errorf("VM directories = %q, %q", cfg.VMRunDir(), cfg.VMStateDir())
 	}
@@ -425,6 +428,22 @@ func TestConfinementDefaultsAndValidation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if !reflect.DeepEqual(cfg.Storage.Directories, []DirectoryPool{}) {
+		t.Errorf("directories = %#v", cfg.Storage.Directories)
+	}
+	path = writeFile(t, `{
+		"hypervisor": {"bhyve": {"host_memory_reserve_bytes": 0, "max_vcpus_per_vm": 2}},
+		"storage": {"pools": ["skeptest"], "dataset_root": "skep/lab", "media_dir": "/srv/iso",
+			"directories": [{"name": "dirpool", "path": "/var/tmp/skep/dirpool"}]},
+		"network": {"bridges": ["bridge0"], "management_interfaces": ["vtnet0"]}
+	}`)
+	cfg, err = Load(LoadOptions{Path: path, LookupEnv: noEnv})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(cfg.Storage.Directories, []DirectoryPool{{Name: "dirpool", Path: "/var/tmp/skep/dirpool"}}) {
+		t.Errorf("directories = %+v", cfg.Storage.Directories)
+	}
 	if !reflect.DeepEqual(cfg.Storage.Pools, []string{"skeptest"}) || cfg.Storage.DatasetRoot != "skep/lab" ||
 		cfg.Storage.MediaDir != "/srv/iso" || !reflect.DeepEqual(cfg.Network.Bridges, []string{"bridge0"}) ||
 		*cfg.Hypervisor.Bhyve.HostMemoryReserveBytes != 0 || cfg.Hypervisor.Bhyve.MaxVCPUsPerVM != 2 {
@@ -432,19 +451,30 @@ func TestConfinementDefaultsAndValidation(t *testing.T) {
 	}
 
 	for name, body := range map[string]string{
-		"pool with a slash":       `{"storage": {"pools": ["tank/data"]}}`,
-		"pool with a space":       `{"storage": {"pools": ["tank; reboot"]}}`,
-		"pool twice":              `{"storage": {"pools": ["tank", "tank"]}}`,
-		"root with dots":          `{"storage": {"dataset_root": "../zroot"}}`,
-		"absolute root":           `{"storage": {"dataset_root": "/skep"}}`,
-		"root with a snapshot":    `{"storage": {"dataset_root": "skep@now"}}`,
-		"relative media dir":      `{"storage": {"media_dir": "media"}}`,
-		"relative firmware dir":   `{"hypervisor": {"bhyve": {"firmware_dir": "firmware"}}}`,
-		"negative reserve":        `{"hypervisor": {"bhyve": {"host_memory_reserve_bytes": -1}}}`,
-		"bridge that is not one":  `{"network": {"bridges": ["bridge0; ifconfig"]}}`,
-		"management as a bridge":  `{"network": {"bridges": ["vtnet0"], "management_interfaces": ["vtnet0"]}}`,
-		"bad management":          `{"network": {"management_interfaces": ["VTNET 0"]}}`,
-		"watch interval too fast": `{"hypervisor": {"bhyve": {"watch_interval": "1ms"}}}`,
+		"pool with a slash":         `{"storage": {"pools": ["tank/data"]}}`,
+		"pool with a space":         `{"storage": {"pools": ["tank; reboot"]}}`,
+		"pool twice":                `{"storage": {"pools": ["tank", "tank"]}}`,
+		"root with dots":            `{"storage": {"dataset_root": "../zroot"}}`,
+		"absolute root":             `{"storage": {"dataset_root": "/skep"}}`,
+		"root with a snapshot":      `{"storage": {"dataset_root": "skep@now"}}`,
+		"relative media dir":        `{"storage": {"media_dir": "media"}}`,
+		"relative firmware dir":     `{"hypervisor": {"bhyve": {"firmware_dir": "firmware"}}}`,
+		"negative reserve":          `{"hypervisor": {"bhyve": {"host_memory_reserve_bytes": -1}}}`,
+		"bridge that is not one":    `{"network": {"bridges": ["bridge0; ifconfig"]}}`,
+		"management as a bridge":    `{"network": {"bridges": ["vtnet0"], "management_interfaces": ["vtnet0"]}}`,
+		"bad management":            `{"network": {"management_interfaces": ["VTNET 0"]}}`,
+		"watch interval too fast":   `{"hypervisor": {"bhyve": {"watch_interval": "1ms"}}}`,
+		"directory named as a pool": `{"storage": {"pools": ["tank"], "directories": [{"name": "tank", "path": "/srv/a"}]}}`,
+		"directory relative":        `{"storage": {"directories": [{"name": "d", "path": "srv/a"}]}}`,
+		"directory not clean":       `{"storage": {"directories": [{"name": "d", "path": "/srv/../etc"}]}}`,
+		"directory root":            `{"storage": {"directories": [{"name": "d", "path": "/"}]}}`,
+		"directory bad name":        `{"storage": {"directories": [{"name": "d/x", "path": "/srv/a"}]}}`,
+		"directory path twice":      `{"storage": {"directories": [{"name": "a", "path": "/srv/a"}, {"name": "b", "path": "/srv/a"}]}}`,
+		"directory nested":          `{"storage": {"directories": [{"name": "a", "path": "/srv/a"}, {"name": "b", "path": "/srv/a/b"}]}}`,
+		"capacity warn above fail":  `{"storage": {"capacity_warn_percent": 95}}`,
+		"capacity fail above 100":   `{"storage": {"capacity_fail_percent": 101}}`,
+		"capacity warn negative":    `{"storage": {"capacity_warn_percent": -5}}`,
+		"capacity equal":            `{"storage": {"capacity_warn_percent": 70, "capacity_fail_percent": 70}}`,
 	} {
 		if _, err := Load(LoadOptions{Path: writeFile(t, body), LookupEnv: noEnv}); err == nil {
 			t.Errorf("%s: accepted", name)

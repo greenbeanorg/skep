@@ -219,7 +219,40 @@ func TestPoolsAreReadWithFixedArguments(t *testing.T) {
 	}
 }
 
-const listCols = "name,type,volsize,used,referenced,refreservation,volmode,volblocksize,skep:vm_id,skep:disk_id"
+var listCols = datasetColumns
+
+// zline is one line of zfs list -H -p output in datasetColumns order. Any
+// column not given prints "-", as zfs prints a property that does not
+// apply.
+func zline(name, typ string, kv ...string) string {
+	cols := strings.Split(datasetColumns, ",")
+	vals := map[string]string{"name": name, "type": typ}
+	for i := 0; i+1 < len(kv); i += 2 {
+		vals[kv[i]] = kv[i+1]
+	}
+	out := make([]string, len(cols))
+	for i, c := range cols {
+		out[i] = "-"
+		if v, ok := vals[c]; ok {
+			out[i] = v
+		}
+	}
+	return strings.Join(out, "\t") + "\n"
+}
+
+// vol is a zvol line of a VM's disk.
+func vol(name, vmID, diskID string, txg int) string {
+	return zline(name, "volume", "volsize", "8589934592", "used", "57344", "referenced", "57344", "refreservation", "0",
+		"volmode", "dev", "volblocksize", "16384", "createtxg", fmt.Sprint(txg), "encryption", "off",
+		"compression", "on", "compressratio", "1.00", "skep:vm_id", vmID, "skep:disk_id", diskID)
+}
+
+// fsys is a filesystem line.
+func fsys(name, vmID string, txg int) string {
+	return zline(name, "filesystem", "used", "98304", "referenced", "24576", "refreservation", "0",
+		"volmode", "default", "createtxg", fmt.Sprint(txg), "encryption", "off", "compression", "on",
+		"compressratio", "1.00", "skep:vm_id", vmID)
+}
 
 func TestCreateDatasetsAndVolumes(t *testing.T) {
 	vmDS := "skeptest/skep/vm/" + vmA
@@ -246,15 +279,15 @@ func TestCreateDatasetsAndVolumes(t *testing.T) {
 	}
 
 	run.calls = nil
-	run.answers[list+vmDS+"/disk0"] = vmDS + "/disk0\tvolume\t8589934592\t57344\t57344\t0\tdev\t16384\t" + vmA + "\t" + diskA + "\n"
+	run.answers[list+vmDS+"/disk0"] = vol(vmDS+"/disk0", vmA, diskA, 77)
 	d, err := h.CreateVolume(ctx, VolumeSpec{Pool: "skeptest", VMID: vmA, DiskID: diskA, Slot: 0,
 		SizeBytes: 8 << 30, BlockSize: 16384, Thin: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if run.calls[0] != "zfs create -s -V 8589934592 -o volblocksize=16384 -o volmode=dev -o skep:vm_id="+vmA+
+	if firstCreate(run.calls) != "zfs create -s -V 8589934592 -o volblocksize=16384 -o volmode=dev -o skep:vm_id="+vmA+
 		" -o skep:disk_id="+diskA+" "+vmDS+"/disk0" {
-		t.Errorf("create = %q", run.calls[0])
+		t.Errorf("create = %q", firstCreate(run.calls))
 	}
 	if d.Type != "volume" || d.VolSizeBytes != 8<<30 || d.RefReservationBytes != 0 || d.VolMode != "dev" ||
 		d.VolBlockSize != 16384 || d.VMID != vmA || d.DiskID != diskA {
@@ -264,8 +297,8 @@ func TestCreateDatasetsAndVolumes(t *testing.T) {
 	// A full reservation has no -s.
 	run.calls = nil
 	_, _ = h.CreateVolume(ctx, VolumeSpec{Pool: "skeptest", VMID: vmA, DiskID: diskA, Slot: 1, SizeBytes: 1 << 30, BlockSize: 16384})
-	if strings.Contains(run.calls[0], " -s ") || !strings.HasSuffix(run.calls[0], "/disk1") {
-		t.Errorf("create = %q", run.calls[0])
+	if strings.Contains(firstCreate(run.calls), " -s ") || !strings.HasSuffix(firstCreate(run.calls), "/disk1") {
+		t.Errorf("create = %q", firstCreate(run.calls))
 	}
 
 	// Typed values are checked before anything runs.
@@ -299,8 +332,7 @@ func TestDestroyVMChecksOwnershipAndNeverUsesBigR(t *testing.T) {
 	vmDS := "skeptest/skep/vm/" + vmA
 	list := "zfs list -H -p -t filesystem,volume -o " + listCols + " -r " + vmDS
 	run := &script{answers: map[string]any{
-		list: vmDS + "\tfilesystem\t-\t98304\t24576\t0\t-\t-\t" + vmA + "\t-\n" +
-			vmDS + "/disk0\tvolume\t8589934592\t57344\t57344\t0\tdev\t16384\t" + vmA + "\t" + diskA + "\n",
+		list: fsys(vmDS, vmA, 73) + vol(vmDS+"/disk0", vmA, diskA, 77),
 	}}
 	h := testHost(t, run, true)
 	ctx := context.Background()
@@ -320,7 +352,7 @@ func TestDestroyVMChecksOwnershipAndNeverUsesBigR(t *testing.T) {
 
 	// A dataset that does not say it belongs to this VM is left alone.
 	run.calls = nil
-	run.answers[list] = vmDS + "\tfilesystem\t-\t98304\t24576\t0\t-\t-\t-\t-\n"
+	run.answers[list] = fsys(vmDS, "", 73)
 	if _, err := h.DestroyVM(ctx, "skeptest", vmA); err == nil {
 		t.Error("a dataset without the owner property was destroyed")
 	}
@@ -474,4 +506,15 @@ func TestPrepareAndRemoveVM(t *testing.T) {
 	if _, err := os.Stat(template); err != nil {
 		t.Error("the template was touched")
 	}
+}
+
+// firstCreate is the first zfs create among the calls; the listings that
+// check the parent's key come before it.
+func firstCreate(calls []string) string {
+	for _, c := range calls {
+		if strings.HasPrefix(c, "zfs create") {
+			return c
+		}
+	}
+	return ""
 }

@@ -40,6 +40,17 @@ var StatusForCode = map[string]int{
 	models.CodeStopTimeout:         http.StatusConflict,
 	models.CodeVMStartFailed:       http.StatusConflict,
 	models.CodeConsoleBusy:         http.StatusConflict,
+
+	// Storage management (ADR 0010).
+	models.CodeSnapshotLimit:             http.StatusConflict,
+	models.CodeDiskHasSnapshots:          http.StatusConflict,
+	models.CodeSnapshotNameTaken:         http.StatusConflict,
+	models.CodeSnapshotNotProvisioned:    http.StatusConflict,
+	models.CodeSnapshotHasClones:         http.StatusConflict,
+	models.CodeSnapshotNotLatest:         http.StatusConflict,
+	models.CodeSnapshotIncomplete:        http.StatusConflict,
+	models.CodeStorageLocked:             http.StatusConflict,
+	models.CodeStorageFeatureUnsupported: http.StatusUnprocessableEntity,
 }
 
 // Fail maps a service error to an error response. Internal error text is

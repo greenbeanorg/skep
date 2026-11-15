@@ -47,7 +47,7 @@ func (a *Adapter) spec(ctx context.Context, vm models.VM) (Spec, error) {
 			}
 			sd.Path = path
 		} else {
-			path, err := a.host.Conf.DiskDevice(d.Pool, vm.ID, d.Slot)
+			path, err := a.host.Conf.DiskPath(d.Pool, vm.ID, d.Slot)
 			if err != nil {
 				return Spec{}, err
 			}

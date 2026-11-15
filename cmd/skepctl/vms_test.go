@@ -13,10 +13,14 @@ import (
 // fakeVMs is the VM side of the API, in memory. Every write answers with
 // task-1, which fakeBackend reports as succeeded.
 type fakeVMs struct {
-	mu   sync.Mutex
-	vms  []models.VM
-	acts []string
+	mu    sync.Mutex
+	vms   []models.VM
+	acts  []string
+	snaps []models.Snapshot
 }
+
+const fakeSnapID = "5a5a6f4e-5d0c-4a52-9a43-0d2f8a1f3c99"
+const fakeCloneID = "6b6b6f4e-5d0c-4a52-9a43-0d2f8a1f3c88"
 
 const fakeVMID = "0b0b6f4e-5d0c-4a52-9a43-0d2f8a1f3c11"
 
@@ -78,6 +82,58 @@ func (f *fakeVMs) StoragePools(context.Context) (models.StoragePoolList, error) 
 	return models.StoragePoolList{}, nil
 }
 
+func (f *fakeVMs) StorageDatasets(context.Context, models.DatasetListOptions) (models.DatasetList, error) {
+	return models.DatasetList{}, nil
+}
+
+func (f *fakeVMs) Snapshots(context.Context, string) (models.SnapshotList, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return models.SnapshotList{Items: append([]models.Snapshot{}, f.snaps...)}, nil
+}
+
+func (f *fakeVMs) Snapshot(context.Context, string, string) (models.Snapshot, error) {
+	return models.Snapshot{}, models.ErrNotFound
+}
+
+func (f *fakeVMs) CreateSnapshot(_ context.Context, vmID string, req models.SnapshotCreate) (models.SnapshotCreated, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	sn := models.Snapshot{ID: fakeSnapID, ResourceKind: "vm", ResourceID: vmID, Name: req.Name, Description: req.Description,
+		Consistency: "crash_consistent", Provisioned: true, Clones: []models.SnapshotClone{}}
+	f.snaps = append(f.snaps, sn)
+	f.acts = append(f.acts, "snapshot "+req.Name)
+	return models.SnapshotCreated{Snapshot: sn, Task: f.task(models.TaskVMSnapshotCreate, vmID)}, nil
+}
+
+func (f *fakeVMs) RollbackSnapshot(_ context.Context, vmID, id string, req models.SnapshotRollback) (models.Task, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	a := "rollback " + id
+	if req.DestroyNewer {
+		a += " destroy_newer"
+	}
+	f.acts = append(f.acts, a)
+	return f.task(models.TaskVMSnapshotRollback, vmID), nil
+}
+
+func (f *fakeVMs) DeleteSnapshot(_ context.Context, vmID, id string) (models.Task, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.acts = append(f.acts, "delete-snapshot "+id)
+	return f.task(models.TaskVMSnapshotDelete, vmID), nil
+}
+
+func (f *fakeVMs) CloneVM(_ context.Context, vmID string, req models.VMClone) (models.VMCreated, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.acts = append(f.acts, "clone "+req.Name+" from "+req.SnapshotID)
+	vm := models.VM{ID: fakeCloneID, Name: req.Name, Observed: models.VMObserved{State: "stopped"}}
+	return models.VMCreated{VM: vm, Task: f.task(models.TaskVMClone, vmID)}, nil
+}
+
+func (f *fakeVMs) Metrics(context.Context) (models.Metrics, error) { return models.Metrics{}, nil }
+
 func (f *fakeVMs) Media(context.Context) (models.MediaList, error) { return models.MediaList{}, nil }
 
 func TestVMCommands(t *testing.T) {
@@ -131,5 +187,64 @@ func TestVMCommands(t *testing.T) {
 	}
 	if out, _, err := skepctl(viewerDir, nil, "", "vm", "list"); err != nil || !strings.Contains(out, "web1") {
 		t.Errorf("a viewer cannot list VMs: %v", err)
+	}
+}
+
+func TestSnapshotCommands(t *testing.T) {
+	s := newStack(t)
+	stateDir := filepath.Join(t.TempDir(), "skepctl")
+	login(t, s, stateDir, "andy")
+	def := `{"name":"web1","cpu_count":1,"memory":"1G","disks":[{"size":"8G","pool":"skeptest"}]}`
+	if _, _, err := skepctl(stateDir, nil, def, "vm", "create", "-f", "-"); err != nil {
+		t.Fatal(err)
+	}
+
+	out, errOut, err := skepctl(stateDir, nil, "", "vm", "snapshot", "create", "web1", "before-upgrade", "--description", "x", "--wait")
+	if err != nil || !strings.Contains(out, "snapshot before-upgrade ("+fakeSnapID+") of web1, crash-consistent (taken while running); task task-1 is succeeded") {
+		t.Fatalf("create: %v\n%s%s", err, out, errOut)
+	}
+	out, _, err = skepctl(stateDir, nil, "", "vm", "snapshot", "list", "web1")
+	if err != nil || !strings.Contains(out, "before-upgrade") || !strings.Contains(out, fakeSnapID) || !strings.Contains(out, "CONSISTENCY") {
+		t.Fatalf("list: %v\n%s", err, out)
+	}
+	for _, args := range [][]string{
+		{"vm", "snapshot", "rollback", "web1", "before-upgrade"},
+		{"vm", "snapshot", "rollback", fakeVMID, fakeSnapID, "--destroy-newer", "--wait"},
+		{"vm", "snapshot", "delete", "web1", "before-upgrade", "--json"},
+	} {
+		if out, errOut, err := skepctl(stateDir, nil, "", args...); err != nil {
+			t.Errorf("%v: %v\n%s%s", args, err, out, errOut)
+		}
+	}
+	if _, _, err := skepctl(stateDir, nil, "", "vm", "snapshot", "delete", "web1", "nope"); err == nil || !strings.Contains(err.Error(), `no snapshot "nope"`) {
+		t.Errorf("unknown snapshot: %v", err)
+	}
+	if _, _, err := skepctl(stateDir, nil, "", "vm", "snapshot", "create", "web1"); err == nil {
+		t.Error("create without a name was accepted")
+	}
+
+	out, errOut, err = skepctl(stateDir, nil, "", "vm", "clone", "web1", "web2", "--snapshot", "before-upgrade")
+	if err != nil || !strings.Contains(out, "VM web2 ("+fakeCloneID+") cloned from web1") || !strings.Contains(out, "same guest") || !strings.Contains(out, "SSH host keys") {
+		t.Fatalf("clone: %v\n%s%s", err, out, errOut)
+	}
+	out, errOut, err = skepctl(stateDir, nil, "", "vm", "clone", "web1", "web3", "--json")
+	if err != nil || strings.Contains(out, "same guest") || !strings.Contains(errOut, "same guest") || !strings.Contains(out, `"name": "web3"`) {
+		t.Fatalf("clone --json: %v\n%s%s", err, out, errOut)
+	}
+
+	want := []string{"snapshot before-upgrade", "rollback " + fakeSnapID, "rollback " + fakeSnapID + " destroy_newer",
+		"delete-snapshot " + fakeSnapID, "clone web2 from " + fakeSnapID, "clone web3 from "}
+	if got := strings.Join(s.vms(t).acts, ","); got != strings.Join(want, ",") {
+		t.Errorf("actions = %s\nwant      %s", got, strings.Join(want, ","))
+	}
+
+	// A viewer lists, and the server refuses its snapshot.
+	viewerDir := filepath.Join(t.TempDir(), "viewer")
+	login(t, s, viewerDir, "vera")
+	if out, _, err := skepctl(viewerDir, nil, "", "vm", "snapshot", "list", "web1"); err != nil || !strings.Contains(out, "before-upgrade") {
+		t.Errorf("a viewer cannot list snapshots: %v", err)
+	}
+	if _, _, err := skepctl(viewerDir, nil, "", "vm", "snapshot", "create", "web1", "v"); err == nil {
+		t.Error("a viewer took a snapshot")
 	}
 }

@@ -104,6 +104,17 @@ const (
 	CodeStopTimeout         = "stop_timeout"
 	CodeVMStartFailed       = "vm_start_failed"
 	CodeConsoleBusy         = "console_busy"
+	// CodeDiskHasSnapshots refuses removing a disk that snapshots contain,
+	// unless destroy_snapshots says to destroy them.
+	CodeDiskHasSnapshots = "disk_has_snapshots"
+
+	// Storage management (ADR 0010).
+	CodeSnapshotLimit             = "snapshot_limit"
+	CodeSnapshotHasClones         = "snapshot_has_clones"
+	CodeSnapshotNotLatest         = "snapshot_not_latest"
+	CodeSnapshotIncomplete        = "snapshot_incomplete"
+	CodeStorageLocked             = "storage_locked"
+	CodeStorageFeatureUnsupported = "storage_feature_unsupported"
 )
 
 // ByteSize is a number of bytes. In JSON it is a number, or a string with
@@ -198,14 +209,21 @@ type VMDisk struct {
 	Bus  string `json:"bus"`
 	// ReadOnly is always true for install media.
 	ReadOnly bool `json:"read_only"`
-	// SizeBytes, Pool, Thin, VolBlockSize, and Dataset describe a
-	// zvol-backed disk. They are zero for install media.
-	SizeBytes    int64  `json:"size_bytes,omitempty"`
-	Pool         string `json:"pool,omitempty"`
-	Thin         bool   `json:"thin,omitempty"`
-	VolBlockSize int    `json:"volblocksize,omitempty"`
+	// SizeBytes, Pool, PoolType, and Thin describe a disk on a pool:
+	// a zvol in a ZFS pool, a file in a directory pool (ADR 0010
+	// decision 6). They are zero for install media.
+	SizeBytes int64  `json:"size_bytes,omitempty"`
+	Pool      string `json:"pool,omitempty"`
+	// PoolType is "zfs" or "directory".
+	PoolType string `json:"pool_type,omitempty"`
+	Thin     bool   `json:"thin,omitempty"`
+	// VolBlockSize is the zvol's block size; zero in a directory pool.
+	VolBlockSize int `json:"volblocksize,omitempty"`
 	// Dataset is the zvol, derived from the pool, the VM, and the slot.
 	Dataset string `json:"dataset,omitempty"`
+	// File is the disk's file in a directory pool, relative to the
+	// pool's directory: <root>/vm/<vm-id>/disk<slot>.img.
+	File string `json:"file,omitempty"`
 	// Media is the name of the ISO file, for install media.
 	Media string `json:"media,omitempty"`
 }
@@ -241,11 +259,15 @@ type VM struct {
 	Observed     VMObserved `json:"observed"`
 	// Drift is true when the VM should be running and is not, or the
 	// reverse. It is information; nothing acts on it.
-	Drift     bool      `json:"drift"`
-	Disks     []VMDisk  `json:"disks"`
-	NICs      []VMNIC   `json:"nics"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	Drift bool     `json:"drift"`
+	Disks []VMDisk `json:"disks"`
+	NICs  []VMNIC  `json:"nics"`
+	// ClonedFromSnapshotID is the snapshot a linked clone was made from.
+	// A clone is the same guest as its source: its hostname, SSH host
+	// keys, and machine ID are the source's (ADR 0010 decision 3).
+	ClonedFromSnapshotID string    `json:"cloned_from_snapshot_id,omitempty"`
+	CreatedAt            time.Time `json:"created_at"`
+	UpdatedAt            time.Time `json:"updated_at"`
 }
 
 // VMList is one page of VMs, ordered by name.
@@ -308,7 +330,30 @@ type VMUpdate struct {
 	// Media replaces the attached install media: a list of ISO file
 	// names, empty to detach everything.
 	Media *[]string `json:"media,omitempty"`
+
+	// AddDisks adds zvol-backed disks, with the rules of a create; each
+	// takes the lowest free slot (ADR 0010 decision 4).
+	AddDisks []VMDiskSpec `json:"add_disks,omitempty"`
+	// ResizeDisks grows disks. A disk never shrinks; the guest grows its
+	// own partition and filesystem afterwards.
+	ResizeDisks []VMDiskResize `json:"resize_disks,omitempty"`
+	// RemoveDisks destroys the disks in these slots and their zvols. It
+	// needs vm:delete as well as vm:write.
+	RemoveDisks []int `json:"remove_disks,omitempty"`
+	// DestroySnapshots allows removing a disk that snapshots contain:
+	// every such snapshot is destroyed whole, on every disk of the VM.
+	DestroySnapshots bool `json:"destroy_snapshots,omitempty"`
 }
+
+// VMDiskResize grows the disk in a slot to a new size.
+type VMDiskResize struct {
+	Slot int      `json:"slot"`
+	Size ByteSize `json:"size"`
+}
+
+// RemovesDisks reports whether an update destroys disks, which is what
+// needs vm:delete.
+func (u VMUpdate) RemovesDisks() bool { return len(u.RemoveDisks) > 0 }
 
 // VMAction is the body of POST /vms/{id}/actions.
 type VMAction struct {
@@ -328,7 +373,11 @@ type VMCreated struct {
 // StoragePool is one allow-listed pool as the agent last observed it.
 type StoragePool struct {
 	Name string `json:"name"`
+	// Type is "zfs" or "directory".
 	Type string `json:"type"`
+	// Capabilities says what the pool's kind can do: a directory pool
+	// has no snapshots, clones, or quotas (ADR 0010 decision 6).
+	Capabilities StoragePoolCapabilities `json:"capabilities"`
 	// Health is the pool's health as zpool(8) reports it, or "UNAVAILABLE"
 	// when the pool could not be read; Error says why.
 	Health         string `json:"health"`
@@ -340,6 +389,21 @@ type StoragePool struct {
 	// a disk's reservation is checked against.
 	AvailableBytes int64      `json:"available_bytes"`
 	ObservedAt     *time.Time `json:"observed_at,omitempty"`
+}
+
+// StoragePoolCapabilities says which storage features a pool has.
+type StoragePoolCapabilities struct {
+	Snapshots bool `json:"snapshots"`
+	Clones    bool `json:"clones"`
+	Quotas    bool `json:"quotas"`
+}
+
+// PoolCapabilities returns the capabilities of a kind of pool.
+func PoolCapabilities(poolType string) StoragePoolCapabilities {
+	if poolType == "zfs" {
+		return StoragePoolCapabilities{Snapshots: true, Clones: true, Quotas: true}
+	}
+	return StoragePoolCapabilities{}
 }
 
 // StoragePoolList is the list of allow-listed pools.

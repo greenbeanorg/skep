@@ -39,6 +39,12 @@ skepctl vm stop VM [--timeout SECONDS] [--wait] [--json]
 skepctl vm force-stop VM [--wait] [--json]
 skepctl vm restart VM [--timeout SECONDS] [--wait] [--json]
 skepctl vm delete VM [--wait] [--json]
+skepctl vm clone VM NAME [--snapshot SNAPSHOT] [--description TEXT] [--wait] [--json]
+
+skepctl vm snapshot list VM [--json]
+skepctl vm snapshot create VM NAME [--description TEXT] [--wait] [--json]
+skepctl vm snapshot rollback VM SNAPSHOT [--destroy-newer] [--wait] [--json]
+skepctl vm snapshot delete VM SNAPSHOT [--wait] [--json]
 ```
 
 - The port defaults to `8443`. Only `https` is accepted.
@@ -55,6 +61,14 @@ skepctl vm delete VM [--wait] [--json]
   unknown field in it is an error. The definition is the body of
   `POST /api/v1/vms` (see [Virtual machines](virtual-machines.md)).
   `skepctl` does not attach to consoles yet.
+- `SNAPSHOT` is a snapshot's ID or its name. A snapshot of a running VM
+  is crash-consistent. A rollback needs the VM stopped and goes to an
+  older snapshot only with `--destroy-newer`, which destroys every newer
+  one (ADR 0010 decision 2). `vm clone` without `--snapshot` takes a
+  snapshot first, named after the clone, and leaves it behind. It prints
+  the reminder that a clone is the same guest, with the source's
+  hostname, SSH host keys, and machine ID. With `--json`, the reminder
+  goes to standard error. Snapshots and clones need a ZFS pool.
 
 ## First login: trusting the server's key
 

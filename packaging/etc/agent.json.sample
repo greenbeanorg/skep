@@ -39,8 +39,12 @@
   },
   "storage": {
     "pools": [],
+    "directories": [],
     "dataset_root": "skep",
-    "media_dir": "/var/db/skep/media"
+    "media_dir": "/var/db/skep/media",
+    "max_snapshots_per_resource": 64,
+    "capacity_warn_percent": 80,
+    "capacity_fail_percent": 90
   },
   "network": {
     "bridges": [],

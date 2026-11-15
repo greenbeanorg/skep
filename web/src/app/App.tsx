@@ -16,6 +16,7 @@ import { NodesPage } from "@/pages/NodesPage";
 import { NotFoundPage } from "@/pages/NotFoundPage";
 import { PlannedPage } from "@/pages/PlannedPage";
 import { SettingsPage } from "@/pages/SettingsPage";
+import { StoragePage } from "@/pages/StoragePage";
 import { TaskDetailPage } from "@/pages/TaskDetailPage";
 import { TasksPage } from "@/pages/TasksPage";
 import { UsersPage } from "@/pages/UsersPage";
@@ -76,6 +77,14 @@ function Routed() {
             element={
               <Guarded permission={PERMISSIONS.vmRead}>
                 <VMDetailPage />
+              </Guarded>
+            }
+          />
+          <Route
+            path="storage"
+            element={
+              <Guarded permission={PERMISSIONS.storageRead}>
+                <StoragePage />
               </Guarded>
             }
           />

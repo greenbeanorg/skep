@@ -14,6 +14,9 @@ import (
 type Confinement struct {
 	// Pools is the allow-list of ZFS pools.
 	Pools []string
+	// Directories is the allow-list of directory pools (ADR 0010
+	// decision 6). Their names never repeat a name in Pools.
+	Directories []DirPool
 	// DatasetRoot is the dataset under each pool that holds everything
 	// Skep creates, for example "skep".
 	DatasetRoot string
@@ -30,6 +33,19 @@ type Confinement struct {
 	RunDir   string
 	StateDir string
 }
+
+// DirPool is an allow-listed directory that holds VM disks as files.
+type DirPool struct {
+	Name string
+	// Path is absolute and clean.
+	Path string
+}
+
+// Pool kinds.
+const (
+	PoolKindZFS       = "zfs"
+	PoolKindDirectory = "directory"
+)
 
 // Fixed names of the firmware files in FirmwareDir (the edk2-bhyve
 // package) and of the per-VM files.
@@ -80,6 +96,101 @@ func (c Confinement) CheckPool(pool string) error {
 		Message: "the pool is not in storage.pools of the agent's configuration",
 		Details: map[string]any{"pool": printable(pool)},
 	}
+}
+
+// PoolKind says whether an allow-listed pool is a ZFS pool or a
+// directory pool, and refuses a name that is neither.
+func (c Confinement) PoolKind(pool string) (string, error) {
+	for _, p := range c.Pools {
+		if p == pool {
+			return PoolKindZFS, nil
+		}
+	}
+	for _, d := range c.Directories {
+		if d.Name == pool {
+			return PoolKindDirectory, nil
+		}
+	}
+	return "", &models.Error{
+		Code:    models.CodePoolNotAllowed,
+		Message: "the pool is not in storage.pools or storage.directories of the agent's configuration",
+		Details: map[string]any{"pool": printable(pool)},
+	}
+}
+
+// IsDirectory reports whether pool is an allow-listed directory pool.
+func (c Confinement) IsDirectory(pool string) bool {
+	kind, err := c.PoolKind(pool)
+	return err == nil && kind == PoolKindDirectory
+}
+
+// dirPool returns an allow-listed directory pool.
+func (c Confinement) dirPool(pool string) (DirPool, error) {
+	for _, d := range c.Directories {
+		if d.Name == pool {
+			return d, nil
+		}
+	}
+	return DirPool{}, &models.Error{
+		Code:    models.CodePoolNotAllowed,
+		Message: "the pool is not in storage.directories of the agent's configuration",
+		Details: map[string]any{"pool": printable(pool)},
+	}
+}
+
+// DirVMRel is the directory of a VM in a directory pool, relative to the
+// pool's path: <root>/vm/<vm-id>.
+func (c Confinement) DirVMRel(pool, vmID string) (DirPool, string, error) {
+	d, err := c.dirPool(pool)
+	if err != nil {
+		return DirPool{}, "", err
+	}
+	if c.DatasetRoot == "" {
+		return DirPool{}, "", fmt.Errorf("hostops: the dataset root is not configured")
+	}
+	if err := checkVMID(vmID); err != nil {
+		return DirPool{}, "", err
+	}
+	return d, c.DatasetRoot + "/vm/" + vmID, nil
+}
+
+// DiskFileName is the file name of a disk in a VM's directory.
+func DiskFileName(slot int) (string, error) {
+	if slot < 0 || slot > MaxSlot {
+		return "", invalid("invalid disk slot")
+	}
+	return "disk" + strconv.Itoa(slot) + ".img", nil
+}
+
+// DirDiskRel is the file of a disk in a directory pool, relative to the
+// pool's path: <root>/vm/<vm-id>/disk<slot>.img.
+func (c Confinement) DirDiskRel(pool, vmID string, slot int) (DirPool, string, error) {
+	d, dir, err := c.DirVMRel(pool, vmID)
+	if err != nil {
+		return DirPool{}, "", err
+	}
+	name, err := DiskFileName(slot)
+	if err != nil {
+		return DirPool{}, "", err
+	}
+	return d, dir + "/" + name, nil
+}
+
+// DiskPath is what bhyve opens for a disk: the zvol's device node in a
+// ZFS pool, the disk's file in a directory pool.
+func (c Confinement) DiskPath(pool, vmID string, slot int) (string, error) {
+	kind, err := c.PoolKind(pool)
+	if err != nil {
+		return "", err
+	}
+	if kind == PoolKindZFS {
+		return c.DiskDevice(pool, vmID, slot)
+	}
+	d, rel, err := c.DirDiskRel(pool, vmID, slot)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(d.Path, rel), nil
 }
 
 // CheckBridge refuses a bridge that is not on the allow-list.
@@ -199,3 +310,55 @@ func (c Confinement) VMVarsPath(vmID string) (string, error) {
 	}
 	return filepath.Join(dir, VMVarsFile), nil
 }
+
+// Owner kinds: what a dataset under <pool>/<root> belongs to (ADR 0010
+// decision 1).
+const (
+	OwnerVM        = "vm"
+	OwnerContainer = "container"
+)
+
+// Owner is the resource a tree of datasets belongs to: a VM or a jail.
+type Owner struct {
+	Kind string
+	ID   string
+}
+
+// ownerPlaces maps an owner kind to the dataset under <root> that holds
+// one dataset per resource, and to the user property naming the owner.
+var ownerPlaces = map[string]struct{ dir, prop string }{
+	OwnerVM:        {"vm", propVMID},
+	OwnerContainer: {"jail", propContainerID},
+}
+
+// OwnerDataset is the dataset of a resource: <pool>/<root>/vm/<id> for a
+// VM, <pool>/<root>/jail/<id> for a jail.
+func (c Confinement) OwnerDataset(pool string, o Owner) (string, error) {
+	place, ok := ownerPlaces[o.Kind]
+	if !ok {
+		return "", invalid("invalid owner kind")
+	}
+	root, err := c.rootDataset(pool)
+	if err != nil {
+		return "", err
+	}
+	if !ValidID(o.ID) {
+		return "", invalid("invalid %s ID", o.Kind)
+	}
+	return root + "/" + place.dir + "/" + o.ID, nil
+}
+
+// SnapshotPrefix starts the ZFS name of every snapshot Skep takes.
+const SnapshotPrefix = "skep-"
+
+// SnapshotName is the ZFS short name of a snapshot: skep-<snapshot-id>.
+// The user's label is never part of it.
+func SnapshotName(snapshotID string) (string, error) {
+	if !ValidID(snapshotID) {
+		return "", invalid("invalid snapshot ID")
+	}
+	return SnapshotPrefix + snapshotID, nil
+}
+
+// RootDataset is <pool>/<root>, the top of what Skep owns in a pool.
+func (c Confinement) RootDataset(pool string) (string, error) { return c.rootDataset(pool) }

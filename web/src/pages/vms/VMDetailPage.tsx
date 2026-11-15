@@ -18,6 +18,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { formatBytes, formatDateTime } from "@/lib/format";
 
 import { SerialConsole } from "./SerialConsole";
+import { CLONE_IDENTITY_NOTE, SnapshotsCard } from "./SnapshotsCard";
 import { hasConsole, isActive, vmErrorHint } from "./vm";
 
 const ACTION_LABEL: Record<VMActionName, string> = {
@@ -148,6 +149,12 @@ export function VMDetailPage() {
         </div>
       ) : null}
 
+      {v.cloned_from_snapshot_id ? (
+        <Notice tone="info" title="A linked clone" className="mb-4" data-testid="clone-identity-note">
+          {CLONE_IDENTITY_NOTE}
+        </Notice>
+      ) : null}
+
       {showConsole && hasConsole(v) ? (
         <Card className="mb-4">
           <CardContent className="pt-4">
@@ -211,7 +218,10 @@ export function VMDetailPage() {
                         {formatBytes(d.size_bytes ?? 0)}
                         {d.thin ? <span className="text-xs text-muted-foreground"> thin</span> : null}
                       </TableCell>
-                      <TableCell className="font-mono text-xs break-all">{d.dataset}</TableCell>
+                      <TableCell className="font-mono text-xs break-all">
+                        {d.dataset ?? d.file}
+                        {d.pool_type === "directory" ? <span className="font-sans text-muted-foreground"> in {d.pool}</span> : null}
+                      </TableCell>
                     </TableRow>
                   ))}
               </TableBody>
@@ -251,6 +261,10 @@ export function VMDetailPage() {
             )}
           </CardContent>
         </Card>
+      </div>
+
+      <div className="mt-4 grid gap-4 lg:grid-cols-2">
+        {v.provisioned ? <SnapshotsCard vm={v} onTask={setTask} /> : null}
       </div>
 
       <Dialog
