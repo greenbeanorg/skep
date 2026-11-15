@@ -1,0 +1,202 @@
+# ADR 0010 phase 7a, step 5 on hearst: monitoring, health checks, permissions, browser, skepctl, 2026-11-15
+
+Builds e2bccce, then c7c2f7a (ps fix) and 1296f78 (start refused when a
+key is unloaded), each copied with scripts/deploy-test.sh (size and
+SHA-256 checked) to ~/skep-m7a-stage and installed into /home/aba/skep-m6
+with the services stopped. No reboot of hearst (up 15:30 at the start);
+hw.vmm.vmx.cap.virtual_interrupt_delivery read 0 before every vm.start.
+Times are UTC. Driven through the public API with curl (server key pinned,
+sha256:779cc5ec…69dd) as the step-5 test users below, through the web
+interface with Playwright from merrick, and with skepctl on hearst.
+
+## Hearst changes in this step
+
+1. chown root:wheel /var/tmp/skep (approved for this step). It held
+   skeptest.img and the directory pool and was aba's.
+     11:47:46Z
+     -- before:
+     drwxr-xr-x  3 aba wheel 512 Nov 15 02:30 /var/tmp/skep
+     -- after:
+     drwxr-xr-x  3 root wheel         512 Nov 15 02:30 .
+     drwx------  3 root wheel         512 Nov 15 02:31 dirpool
+     -rw-r--r--  1 aba  wheel 17179869184 Nov 15 02:12 skeptest.img
+   Undo: sudo chown aba:wheel /var/tmp/skep
+   The directory pool stayed ONLINE (metrics below, 11:50).
+2. skeptest/skep-enc (hearst change 5 of ADR 0010, approved at
+   acceptance): encryption=aes-256-gcm, keyformat=passphrase,
+   keylocation=prompt, canmount=off. Left in place, empty but for
+   skeptest/skep-enc/vm, key loaded. The passphrase is not recorded here.
+   Undo: sudo zfs destroy -r skeptest/skep-enc
+3. Test installation only (not hearst's own configuration):
+   - users m7a5admin (skep-api admin create), m7a5operator, m7a5viewer
+     (POST /users) in /home/aba/skep-m5/state. Undo: skep-api admin
+     delete --username NAME --yes -data-dir /home/aba/skep-m5/state
+   - /home/aba/skep-m6/agent.json changed twice for checks (capacity
+     thresholds; dataset_root skep-enc) and restored each time from
+     agent.json.pre-step5 (cmp identical). The backup is left beside it.
+
+Correction to the deploy log: at 11:48:22 "service skep_agent status" run
+as aba said "not running"; it cannot read the root-owned pid file. The
+step-4 build had been running since 02:30. Both services were then stopped
+and started properly (11:48:37) on the new build.
+
+## Unit tests natively (cross-compiled, run on hearst as aba)
+hostops.test: PASS  (c7c2f7a; incl. TestPSNative: ps: "6588 0:00.00 hostops.test")
+hostfake.test: PASS  (e2bccce)
+monitoring.test: PASS  (e2bccce)
+vm.test: PASS  (1296f78)
+config.test: PASS with -test.skip SampleConfigMatchesDefaults  (e2bccce)
+  (the two skipped tests read packaging/etc/*.sample from the source
+  tree, which is not on hearst; they fail with "no such file" there and
+  pass on merrick)
+
+## Monitoring: GET /metrics against the host (11:50 UTC, all VMs stopped)
+{"observed_at":"2026-11-15T11:50:08.533856816Z","capacity_warn_percent":80,"capacity_fail_percent":90,
+ "pools":[{"name":"skeptest","type":"zfs","health":"ONLINE","size_bytes":17045651456,"allocated_bytes":479488512,
+           "available_bytes":16037680640,"capacity_percent":2.8,"capacity":"ok"},
+          {"name":"dirpool","type":"directory","health":"ONLINE","size_bytes":128945909760,"allocated_bytes":18705563648,
+           "available_bytes":99924676608,"capacity_percent":15.8,"capacity":"ok"}],
+ "vms":[{"name":"fbsd1","state":"stopped","disk_used_bytes":478612480,"disk_referenced_bytes":477539328,
+         "disks":[{"slot":0,"pool":"skeptest","used_bytes":478587904,"referenced_bytes":477539328}]},
+        {"name":"snaptest","state":"stopped","disk_used_bytes":51200,"disk_referenced_bytes":24576,
+         "disks":[{"slot":0,"used_bytes":13312,"referenced_bytes":12288},{"slot":1,"used_bytes":13312,"referenced_bytes":12288}]}]}
+-- the host's own view:
+NAME             SIZE      ALLOC         FREE    CAP    HEALTH
+skeptest  17045651456  479488512  16566162944      2    ONLINE
+skeptest/skep/vm/c0e23174-…	used 478612480  referenced 24576
+skeptest/skep/vm/c0e23174-…/disk0	used 478587904  referenced 477539328
+Filesystem  1024-blocks     Used    Avail Capacity  Mounted on
+/dev/da0s1a   125923740 18267260 97582584    16%    /
+(zpool rounds the capacity down; df's used is 18705674240 bytes, Skep's
+18705563648 a few seconds earlier; both are used / (used + available).)
+
+## Monitoring: a running VM's bhyve process
+11:50:41Z virtual_interrupt_delivery: 0; vm.start fbsd1 as m7a5operator
+task vm.start succeeded {'pid': 7821, 'state': 'running'}
+procstat -c 7821:  7821 bhyve  bhyve: skep-c0e23174-3dc0-4503-a691-9af23f657078
+(kern.proc.args is the setproctitle(3) title, which BhyveUsage accepts.)
+
+FAILED with build e2bccce, 11:51:08:
+  fbsd1 running  cpu None  rss None  error "its bhyve process could not be read"
+  agent log: "ps: unexpected output \",time=,comm=\""
+FreeBSD's ps takes everything after "=" as the header, commas included:
+"-o rss=,time=,comm=" is one column. Fixed in c7c2f7a (one -o per column)
+with a FreeBSD-only test that runs the real ps. Redeployed 11:52:44; the
+agent restart left fbsd1 running (pid 7821 before and after).
+
+With build c7c2f7a:
+  sample 11:52:44  fbsd1 running  cpu_time_seconds 30.44  resident_memory_bytes 84860928 (82872 KiB)
+  ps    11:52:56   7821 RSS 83240 KiB  TIME 0:30.57  bhyve
+
+## storage_capacity: thresholds lowered below current use (11:53 UTC)
+agent.json: "capacity_warn_percent": 2, "capacity_fail_percent": 10; agent restarted
+GET /health without a session: {"status":"degraded"} HTTP200
+GET /health as m7a5viewer: degraded
+  storage_capacity {'status': 'degraded', 'critical': False, 'error': 'pool skeptest is 2.8% full, past the 2% warning threshold; pool dirpool is 15.8% full, past the 10% failure threshold'}
+  storage_locked {'status': 'ok', 'critical': False}
+GET /metrics: 2 10 / skeptest 2.8 warning / dirpool 15.8 failing
+-- restored (11:53:33): agent.json cmp-identical to agent.json.pre-step5, agent restarted:
+ok / storage_capacity ok / storage_locked ok
+
+## Permissions (11:53 UTC)
+m7a5operator took snapshot perm-check of snaptest: HTTP202, consistent,
+task succeeded.
+-- viewer reads:
+GET /vms HTTP200; GET /vms/{snaptest} HTTP200; GET /vms/{snaptest}/snapshots HTTP200;
+GET /vms/{snaptest}/snapshots/{perm-check} HTTP200; GET /storage/pools HTTP200;
+GET /storage/datasets?limit=5 HTTP200; GET /storage/media HTTP200; GET /metrics HTTP200;
+GET /health HTTP200; GET /tasks HTTP200
+-- viewer writes (each 403 with the permission it lacks):
+POST /vms/{snaptest}/snapshots                     HTTP403 forbidden vm:snapshot
+POST /vms/{snaptest}/snapshots/{sid}/rollback      HTTP403 forbidden vm:snapshot
+DELETE /vms/{snaptest}/snapshots/{sid}             HTTP403 forbidden vm:snapshot
+POST /vms/{snaptest}/clone                         HTTP403 forbidden vm:write
+PUT /vms/{snaptest} (add_disks)                    HTTP403 forbidden vm:write
+PUT /vms/{snaptest} (remove_disks)                 HTTP403 forbidden vm:write
+POST /vms                                          HTTP403 forbidden vm:write
+DELETE /vms/{snaptest}                             HTTP403 forbidden vm:delete
+POST /vms/{fbsd1}/actions                          HTTP403 forbidden vm:power
+-- access audit log (GET /audit as m7a5admin): authz.deny entries for m7a5viewer: 9
+denied POST /api/v1/vms/{id}/snapshots vm:snapshot
+denied POST /api/v1/vms/{id}/snapshots/{sid}/rollback vm:snapshot
+denied DELETE /api/v1/vms/{id}/snapshots/{sid} vm:snapshot
+denied POST /api/v1/vms/{id}/clone vm:write
+denied PUT /api/v1/vms/{id} vm:write
+denied PUT /api/v1/vms/{id} vm:write
+denied POST /api/v1/vms vm:write
+denied DELETE /api/v1/vms/{id} vm:delete
+denied POST /api/v1/vms/{id}/actions vm:power
+-- roles (GET /roles):
+operator: audit:read container:delete container:power container:read container:snapshot container:write
+          node:read role:read storage:read system:read task:cancel task:read user:read vm:console
+          vm:delete vm:power vm:read vm:snapshot vm:write        (no storage:write)
+viewer:   container:read node:read role:read storage:read system:read task:read vm:read
+No route of phase 7a requires storage:write (templates and unowned-dataset
+removal come with 7b), so "operator is refused storage:write" is shown by
+the role and by the route table test, not by a request.
+m7a5operator deleted perm-check: vm.snapshot.delete succeeded.
+
+## Browser: the clone identity note (11:54 UTC)
+web/e2e/clone-note.spec.ts from merrick, SKEP_E2E_EXTERNAL=1 against
+https://10.79.20.170:8443 as m7a5operator: snaptest, snapshot perm-check,
+clone step5-clone.
+form note: The clone is the same guest
+A clone is the same guest as its source. Skep gives it a new ID, name, and MAC addresses, but its hostname, SSH host keys, and machine ID (/etc/hostid, /etc/machine-id, or the Windows SID) are the source's until you change them inside the clone.
+clone page: https://10.79.20.170:8443/vms/e5fcfa92-a61d-455a-934c-801b188db2fc
+page note: A linked clone
+A clone is the same guest as its source. Skep gives it a new ID, name, and MAC addresses, but its hostname, SSH host keys, and machine ID (/etc/hostid, /etc/machine-id, or the Windows SID) are the source's until you change them inside the clone.
+  ✓  1 [chromium] › e2e/clone-note.spec.ts:18:1 › the clone form and the clone's page carry the clone identity note (4.5s)
+tasks: 11:54:42 vm.clone succeeded, 11:54:42 vm.delete succeeded (m7a5operator)
+zfs: no dataset of e5fcfa92 left; no snapshot of snaptest has clones.
+
+## storage_locked: an encrypted <pool>/<root> with its key unloaded (11:55 UTC)
+fbsd1 stopped first (vm.stop succeeded). skeptest/skep-enc created
+(hearst change 5); agent.json dataset_root "skep-enc"; agent restarted.
+VM encvm (d0d7111f) created with the key loaded; every dataset inherits:
+  skeptest/skep-enc/vm/d0d7111f-…/disk0  aes-256-gcm  available  (encryptionroot skeptest/skep-enc)
+11:56:02Z sudo zfs unload-key -r skeptest/skep-enc: 1 / 1 key(s) successfully unloaded
+  all four datasets keystatus unavailable; /dev/zvol/…/disk0 gone
+-- after the next sample (11:56:49):
+health: degraded
+  storage_locked {'status': 'degraded', 'critical': False, 'error': 'the encryption key is not loaded for skeptest/skep-enc, skeptest/skep-enc/vm, skeptest/skep-enc/vm/d0d7111f-32fc-4f34-8c14-d7653f6f1f59, skeptest/skep-enc/vm/d0d7111f-32fc-4f34-8c14-d7653f6f1f59/disk0'}
+metrics: skeptest locked_datasets: the same four
+inventory: skeptest/skep-enc filesystem skep aes-256-gcm unavailable
+           skeptest/skep-enc/vm filesystem skep aes-256-gcm unavailable
+           skeptest/skep-enc/vm/d0d7111f-… filesystem vm aes-256-gcm unavailable
+           skeptest/skep-enc/vm/d0d7111f-…/disk0 volume vm aes-256-gcm unavailable
+-- refusals (each accepted as a task, which failed before changing anything):
+vm.snapshot.create failed storage_locked - the encryption key of skeptest/skep-enc/vm/d0d7111f-… is not loaded; an administrator loads it, Skep does not
+vm.update (grow to 128M) failed storage_locked - the encryption key of …/disk0 is not loaded (size still 67108864)
+vm.create encvm2 failed storage_locked - the encryption key of skeptest/skep-enc is not loaded (no VM row left)
+-- start with build c7c2f7a (11:57:09Z, virtual_interrupt_delivery 0):
+vm.start failed vm_start_failed - bhyve exited with an error (status 4): Device emulation initialization error: No such file or directory
+(safe: bhyve stopped in device setup; but decision 5 says storage_locked.)
+Fixed in 1296f78: the start check reads the VM's ZFS datasets. Redeployed
+11:58:50 (vm.test PASS natively first), key still unloaded:
+POST /vms/{encvm}/actions start: HTTP409
+storage_locked - the encryption key of skeptest/skep-enc/vm/d0d7111f-… is not loaded; an administrator loads it, Skep does not {'dataset': 'skeptest/skep-enc/vm/d0d7111f-…'}
+no bhyve running
+agent audit log: 2026-11-15T11:58:55.312Z|vm.start|requested|denied|m7a5operator|{"error":"the encryption key of …","error_code":"storage_locked"…
+-- restored (11:59): zfs load-key -r (1 / 1 key(s) successfully loaded);
+vm.delete encvm succeeded; agent.json restored (cmp identical, dataset_root
+skep); agent restarted; health ok, every check ok; fbsd1 and snaptest
+listed, stopped.
+
+## skepctl on hearst (12:00 UTC), as m7a5operator, a temporary config dir
+Logged in to https://10.79.20.170:8443 as m7a5operator (role operator).
+snapshot skepctl-check (73fb3ae3-…) of snaptest, consistent; task 9ff04ab7-… is succeeded
+NAME           CREATED               CONSISTENCY  USED     CLONES  ID
+s1             2026-11-14 22:00:05Z  consistent   2.0 KiB  0       b4b27599-…
+snaptest-c2    2026-11-14 22:06:04Z  consistent   0 B      0       8d347601-…
+skepctl-check  2026-11-15 11:59:58Z  consistent   0 B      0       73fb3ae3-…
+VM skepctl-clone (e96da5be-…) cloned from snaptest; task f1ec9481-… is succeeded
+Note: a clone is the same guest. It keeps the source's hostname, SSH host keys, and machine ID; change them inside the clone.
+skepctl: a linked clone depends on the snapshot; delete the clone first (HTTP 409, snapshot_has_clones), request d2431ff7cc164f7457a19e76
+vm.delete skepctl-clone: task 968364f7-… is succeeded
+vm.snapshot.delete skepctl-check of snaptest: task f3ec5b4e-… is succeeded
+(list afterwards: s1 and snaptest-c2 only)
+Logged out of https://10.79.20.170:8443.
+
+## State left on hearst
+Services running build 1296f78 from /home/aba/skep-m6; VMs fbsd1 and
+snaptest stopped, as found; the changes listed at the top.
