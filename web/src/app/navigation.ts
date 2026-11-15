@@ -72,16 +72,7 @@ export const NAV: NavGroup[] = [
   {
     label: "Infrastructure",
     items: [
-      {
-        path: "/storage",
-        label: "Storage",
-        icon: StorageIcon,
-        planned: {
-          summary:
-            "OpenZFS pools, datasets, volumes, and snapshots. The pools discovered on this node are already listed under Nodes.",
-          milestone: "Milestone 7",
-        },
-      },
+      { path: "/storage", label: "Storage", icon: StorageIcon, permission: PERMISSIONS.storageRead },
       {
         path: "/networking",
         label: "Networking",

@@ -151,6 +151,13 @@ test("login, dashboard, every page in both themes, logout", async ({ page }) => 
   await expect(page.getByText("auth.login").first()).toBeVisible();
   await shoot(page, "audit");
 
+  await nav.getByRole("link", { name: "Storage" }).click();
+  await expect(page.getByRole("heading", { name: "Storage" })).toBeVisible();
+  await expect(page.getByTestId("pool-devpool")).toBeVisible();
+  await expect(page.getByText(/Capacity warns at 80% and fails at 90%/)).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Datasets" })).toBeVisible();
+  await shoot(page, "storage");
+
   await nav.getByRole("link", { name: "Settings" }).click();
   await expect(page.getByRole("heading", { name: "Settings" })).toBeVisible();
   await expect(page.getByText(/sha256:[0-9a-f]{64}/)).toBeVisible();
@@ -340,6 +347,61 @@ test("an administrator creates a VM, starts it, types in its console, stops and 
   await page.getByRole("dialog").getByRole("button", { name: "Delete VM and disks" }).click();
   await expect(page.getByRole("heading", { name: "Virtual machines" })).toBeVisible();
   await expect(page.getByRole("link", { name: "e2e-vm" })).toHaveCount(0, { timeout: 15_000 });
+
+  expect(violations, "CSP violations").toEqual([]);
+  expect(errors, "console errors").toEqual([]);
+});
+
+test("snapshots and a linked clone, with the note that a clone is the same guest", async ({ page }) => {
+  const { violations, errors } = watch(page);
+  await page.goto("/vms");
+  await login(page, ADMIN);
+  await page.getByRole("button", { name: "Create VM" }).click();
+  const create = page.getByRole("dialog");
+  await create.getByLabel("Name").fill("e2e-src");
+  await create.getByLabel("Memory").fill("512M");
+  await create.getByLabel("Disk size").fill("1G");
+  await create.getByRole("button", { name: "Create" }).click();
+  await expect(page.getByRole("heading", { name: "e2e-src" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Take snapshot" })).toBeVisible({ timeout: 15_000 });
+
+  // A snapshot of the stopped VM is consistent.
+  await page.getByRole("button", { name: "Take snapshot" }).click();
+  await page.getByRole("dialog").getByLabel("Name").fill("first");
+  await page.getByRole("dialog").getByRole("button", { name: "Take snapshot" }).click();
+  const row = page.getByRole("row", { name: /first/ });
+  await expect(row).toBeVisible({ timeout: 15_000 });
+  await expect(row.getByText("consistent", { exact: true })).toBeVisible();
+
+  // The clone form says what a clone shares with its source.
+  await row.getByRole("button", { name: "Clone" }).click();
+  const clone = page.getByRole("dialog");
+  await expect(clone.getByTestId("clone-identity-note")).toContainText("hostname, SSH host keys, and machine ID");
+  await shoot(page, "vm-clone");
+  await clone.getByLabel("Name of the new VM").fill("e2e-clone");
+  await clone.getByRole("button", { name: "Clone" }).click();
+
+  // The clone's page says it too.
+  await expect(page.getByRole("heading", { name: "e2e-clone" })).toBeVisible();
+  await expect(page.getByTestId("clone-identity-note")).toContainText("same guest");
+  await shoot(page, "vm-clone-page");
+
+  // The origin snapshot cannot be deleted while the clone exists.
+  await expect(page.getByRole("button", { name: "Delete" })).toBeVisible({ timeout: 15_000 });
+  await page.getByRole("button", { name: "Delete" }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "Delete VM and disks" }).click();
+  await expect(page.getByRole("heading", { name: "Virtual machines" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "e2e-clone" })).toHaveCount(0, { timeout: 15_000 });
+
+  await page.getByRole("link", { name: "e2e-src" }).click();
+  const snapRow = page.getByRole("row", { name: /first/ });
+  await expect(snapRow.getByRole("button", { name: "Delete" })).toBeEnabled({ timeout: 15_000 });
+  await snapRow.getByRole("button", { name: "Delete" }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "Delete snapshot" }).click();
+  await expect(page.getByText("No snapshots.")).toBeVisible({ timeout: 15_000 });
+  await page.getByRole("button", { name: "Delete", exact: true }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "Delete VM and disks" }).click();
+  await expect(page.getByRole("link", { name: "e2e-src" })).toHaveCount(0, { timeout: 15_000 });
 
   expect(violations, "CSP violations").toEqual([]);
   expect(errors, "console errors").toEqual([]);

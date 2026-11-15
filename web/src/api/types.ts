@@ -63,6 +63,19 @@ export type Media = Schemas["Media"];
 export type MediaList = Schemas["MediaList"];
 export type EngineCapabilities = Schemas["EngineCapabilities"];
 
+export type Snapshot = Schemas["Snapshot"];
+export type SnapshotList = Schemas["SnapshotList"];
+export type SnapshotCreate = Schemas["SnapshotCreate"];
+export type SnapshotCreated = Schemas["SnapshotCreated"];
+export type SnapshotRollback = Schemas["SnapshotRollback"];
+export type VMClone = Schemas["VMClone"];
+export type Dataset = Schemas["Dataset"];
+export type DatasetOwner = Schemas["DatasetOwner"];
+export type DatasetList = Schemas["DatasetList"];
+export type Metrics = Schemas["Metrics"];
+export type PoolMetrics = Schemas["PoolMetrics"];
+export type VMMetrics = Schemas["VMMetrics"];
+
 export type ErrorResponse = Schemas["ErrorResponse"];
 export type ErrorCode = ErrorResponse["error"]["code"];
 
@@ -92,6 +105,7 @@ export const PERMISSIONS = {
   vmPower: "vm:power",
   vmConsole: "vm:console",
   storageRead: "storage:read",
+  vmSnapshot: "vm:snapshot",
   all: "*",
 } as const;
 

@@ -1,6 +1,6 @@
 // Helpers of the VM pages that hold no React state.
 
-import type { VM, VMState } from "@/api/types";
+import type { Snapshot, VM, VMState } from "@/api/types";
 import type { Tone } from "@/components/ui/badge";
 
 export const VM_STATE_TONE: Record<VMState, Tone> = {
@@ -60,6 +60,30 @@ export function vmErrorHint(code: string): string | undefined {
       return "The guest did not shut down in time and is still running. Stop it again, or force-stop it.";
     case "console_busy":
       return "Four clients are already attached to this console.";
+    case "snapshot_not_latest":
+      return "Rolling back to an older snapshot destroys the newer ones, and must be asked for.";
+    case "snapshot_has_clones":
+      return "Linked clones depend on it; delete the clones first.";
+    case "snapshot_incomplete":
+      return "A disk was added after this snapshot; remove the disks added since, then roll back.";
+    case "storage_feature_unsupported":
+      return "Snapshots and clones need every disk of the VM in one ZFS pool.";
+    case "storage_locked":
+      return "The encryption key of the VM's dataset is not loaded; an administrator loads it on the host.";
   }
   return undefined;
+}
+
+/** Whether the VM has a disk in a directory pool, which has no snapshots or clones. */
+export function snapshotsUnsupported(vm: VM): boolean {
+  return vm.disks.some((d) => d.pool_type === "directory");
+}
+
+/**
+ * The snapshots a rollback to `snap` would destroy: those taken after it.
+ * The API lists snapshots oldest first.
+ */
+export function newerSnapshots(list: Snapshot[], snap: Snapshot): Snapshot[] {
+  const i = list.findIndex((s) => s.id === snap.id);
+  return i < 0 ? [] : list.slice(i + 1);
 }
