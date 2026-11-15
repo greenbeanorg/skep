@@ -30,7 +30,7 @@ func (h *host) BhyveUsage(ctx context.Context, vmID string, pid int) (ProcessUsa
 	if err != nil || !isBhyveOf(args, instance) {
 		return ProcessUsage{}, fmt.Errorf("bhyve of %s (process %d): %w", vmID, pid, models.ErrNotFound)
 	}
-	out, err := h.run.Run(ctx, psBinary, "-o", "rss=,time=,comm=", "-p", strconv.Itoa(pid))
+	out, err := h.run.Run(ctx, psBinary, psArgs(pid)...)
 	if err != nil {
 		if ce, ok := err.(*CommandError); ok && ce.ExitCode == 1 {
 			// ps exits 1 when the process is gone.
@@ -39,6 +39,13 @@ func (h *host) BhyveUsage(ctx context.Context, vmID string, pid int) (ProcessUsa
 		return ProcessUsage{}, err
 	}
 	return parsePS(out)
+}
+
+// psArgs are the arguments of ps(1) for one process: one -o per column,
+// because FreeBSD's ps takes everything after "=" as the header, commas
+// included, so "-o rss=,time=" would be a single column.
+func psArgs(pid int) []string {
+	return []string{"-o", "rss=", "-o", "time=", "-o", "comm=", "-p", strconv.Itoa(pid)}
 }
 
 // isBhyveOf reports whether a process's arguments are those of bhyve
@@ -56,7 +63,7 @@ func isBhyveOf(args []string, instance string) bool {
 	return (args[0] == bhyveBinary || args[0] == "bhyve") && args[len(args)-1] == instance
 }
 
-// parsePS reads one line of "ps -o rss=,time=,comm=": the resident set
+// parsePS reads one line of "ps -o rss= -o time= -o comm=": the resident set
 // in KiB, the CPU time, and the command name, which must be bhyve.
 func parsePS(out []byte) (ProcessUsage, error) {
 	f := strings.Fields(firstLine(out))

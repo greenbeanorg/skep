@@ -48,8 +48,8 @@ func TestParsePS(t *testing.T) {
 
 func TestBhyveUsageChecksTheProcessIsTheVMsBhyve(t *testing.T) {
 	run := &script{answers: map[string]any{
-		"ps -o rss=,time=,comm= -p 4242": "  2048   1:00.00 bhyve\n",
-		"ps -o rss=,time=,comm= -p 4343": &CommandError{Name: "ps", ExitCode: 1, Err: errors.New("exit status 1")},
+		"ps -o rss= -o time= -o comm= -p 4242": "  2048   1:00.00 bhyve\n",
+		"ps -o rss= -o time= -o comm= -p 4343": &CommandError{Name: "ps", ExitCode: 1, Err: errors.New("exit status 1")},
 	}}
 	h := testHost(t, run, true)
 	sys := h.sys.(fakeSystem)
