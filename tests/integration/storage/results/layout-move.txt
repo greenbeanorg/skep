@@ -1,0 +1,198 @@
+# hearst: the test installation moved to the package layout, 2026-11-15
+
+Approved by Andy. Closes the gap left by ownership-fix.txt: the binaries,
+agent.json, the install media, and skep-api's data were under /home/aba,
+which aba owns, so aba could replace them. They are now where the package
+puts them, every directory above them root's:
+
+  /usr/local/sbin/skep-agent, skep-api   root:wheel 0555
+  /usr/local/bin/skepctl                 root:wheel 0555
+  /usr/local/etc/skep/agent.json         root:wheel 0600 (dir 0755)
+  /var/db/skep/agent                     root:wheel 0700 (unchanged: the agent already used it)
+  /var/db/skep/api                       skep:skep 0700 (copied from /home/aba/skep-m5/state/api)
+  /var/db/skep/media                     root:wheel 0700 (copied from /home/aba/skep-m6/media)
+
+The rc.d scripts on hearst are byte-identical to packaging/rc.d and their
+defaults are exactly this layout, so rc.conf no longer overrides the
+binaries, the configuration, or the data directory; only the listen
+address stays (skep_api_args). agent.json is the old one with media_dir
+changed from /home/aba/skep-m6/media to /var/db/skep/media. The media
+move was not in the request; it was the last thing the agent read from
+aba's home. /var/db/skep/api already held older (Milestone 4, Nov 12-13)
+API state; it was renamed, not overwritten. Times are UTC.
+
+## Before (old layout, 14:36 UTC)
+== health (m7a5viewer)
+ok 0.1.0 access_audit_archive=ok agent=ok audit_archive=ok database=ok storage_capacity=ok storage_locked=ok
+== VMs
+c0e23174-3dc0-4503-a691-9af23f657078 fbsd1 stopped [(0, 'skeptest', 8589934592)]
+fc8640f3-205c-404d-855b-1376c792d86e snaptest stopped [(0, 'skeptest', 1073741824), (1, 'skeptest', 1073741824)]
+== snapshots of c0e23174-3dc0-4503-a691-9af23f657078
+ec1f5086-b697-45bf-bc36-d0e729afc06f pre-add consistent True True
+== snapshots of fc8640f3-205c-404d-855b-1376c792d86e
+b4b27599-01fb-46a8-b87a-d53ec3407c23 s1 consistent True True
+8d347601-c546-41ce-a078-650a21438fca snaptest-c2 consistent True True
+== media
+FreeBSD-15.1-RELEASE-amd64-disc1.iso 1352255488
+== audit verify (agent)
+0 sealed segments in /var/db/skep/agent/audit-archive: 0 ok, 0 missing, 0 invalid
+exit 0
+== audit verify (api)
+0 sealed segments in /home/aba/skep-m5/state/api/audit-archive: 0 ok, 0 missing, 0 invalid
+exit 0
+== tls fingerprint
+source:       self-signed
+public key:   sha256:779cc5ec8daa3b04cefd14dc6dc6c9ac1ed989a409831561a47ec7d05cc069dd
+
+## The move (both VMs stopped, services stopped)
+14:38:17Z
+== 1. VMs stopped, services stopped
+no bhyve running
+Stopping skep_api.
+Waiting for PIDS: 10660.
+Stopping skep_agent.
+Waiting for PIDS: 10603.
+no skep process
+== 2. rc.conf backup
+-rw-r--r--  1 root wheel 705 Nov 14 15:09 /etc/rc.conf
+-rw-r--r--  1 root wheel 705 Nov 14 15:09 /etc/rc.conf.pre-layout-20261115
+== 3. binaries
+deploy-test: hearst:/usr/local/sbin/skep-agent root:wheel 0555 12746922 bytes sha256 30d713479269781730c9cb2bdce7444b7f0158b0ce5a3f19a3eb393bcfac14ba
+deploy-test: hearst:/usr/local/sbin/skep-api root:wheel 0555 14045354 bytes sha256 e8ac29a961df1ca151543d161ec818e48f764430abefbb5032c195912befdd02
+deploy-test: synced
+deploy-test: hearst:/usr/local/bin/skepctl root:wheel 0555 7217322 bytes sha256 fea0a0b45275434e42e53009c496a096985433758480b90ad4e173cbb86bff20
+deploy-test: synced
+== 4. config
+deploy-test: hearst:/usr/local/etc/skep/agent.json root:wheel 0600 500 bytes sha256 490bc08738a2dd835952e19c4f59e869857fd15a1a6ce8e8c0b9df1d1f3cb134
+deploy-test: synced
+14:38:21Z
+== 5. media
+SHA256 (/home/aba/skep-m6/media/FreeBSD-15.1-RELEASE-amd64-disc1.iso) = fa27646f05a1440fd26ffbb85e06a50bc86e128242a4e9cb7bb3ea76e1aa5fd9
+SHA256 (/var/db/skep/media/FreeBSD-15.1-RELEASE-amd64-disc1.iso) = fa27646f05a1440fd26ffbb85e06a50bc86e128242a4e9cb7bb3ea76e1aa5fd9
+== 6. API data
+api.db identical
+api.db-wal: absent in both (skep-api checkpointed and removed it on its clean stop)
+tls/key.pem identical
+tls/cert.pem identical
+== 7. rc.conf
+skep_agent_enable: YES
+skep_api_args: -listen 10.79.20.170:8443
+skep_api_enable: YES
+== layout
+-r-xr-xr-x  1 root wheel  7217322 Nov 15 09:38 /usr/local/bin/skepctl
+-rw-------  1 root wheel      500 Nov 15 09:38 /usr/local/etc/skep/agent.json
+-r-xr-xr-x  1 root wheel 12746922 Nov 15 09:38 /usr/local/sbin/skep-agent
+-r-xr-xr-x  1 root wheel 14045354 Nov 15 09:38 /usr/local/sbin/skep-api
+
+/usr/local/etc/skep:
+total 24
+drwxr-xr-x   2 root wheel  512 Nov 15 09:38 .
+drwxr-xr-x  11 root wheel 1024 Nov 15 09:38 ..
+-rw-------   1 root wheel  500 Nov 15 09:38 agent.json
+
+/var/db/skep:
+total 56
+drwxr-xr-x   7 root wheel 512 Nov 15 09:38 .
+drwxr-xr-x  14 root wheel 512 Nov 12 01:24 ..
+drwx------   3 root wheel 512 Nov 15 09:38 agent
+drwx------   3 skep skep  512 Nov 15 09:38 api
+drwx------   3 skep skep  512 Nov 13 11:58 api.pre-layout-20261115
+drwxr-xr-x   3 root wheel 512 Nov 14 16:58 backup-pre-m7a
+drwx------   2 root wheel 512 Nov 15 09:38 media
+
+/var/db/skep/api:
+total 344
+drwx------  3 skep skep     512 Nov 15 09:38 .
+drwxr-xr-x  7 root wheel    512 Nov 15 09:38 ..
+-rw-------  1 skep skep  163840 Nov 15 09:38 api.db
+drwx------  2 skep skep     512 Nov 13 12:39 tls
+
+/var/db/skep/api/tls:
+total 32
+drwx------  2 skep skep 512 Nov 13 12:39 .
+drwx------  3 skep skep 512 Nov 15 09:38 ..
+-rw-r--r--  1 skep skep 749 Nov 13 12:39 cert.pem
+-rw-------  1 skep skep 241 Nov 13 12:39 key.pem
+
+/var/db/skep/media:
+total 2641936
+drwx------  2 root wheel        512 Nov 15 09:38 .
+drwxr-xr-x  7 root wheel        512 Nov 15 09:38 ..
+-rw-r--r--  1 root wheel 1352255488 Jun 12 08:30 FreeBSD-15.1-RELEASE-amd64-disc1.iso
+13d12
+< skep_agent_bin="/home/aba/skep-m6/skep-agent"
+15,16d13
+< skep_api_bin="/home/aba/skep-m6/skep-api"
+< skep_api_data_dir="/home/aba/skep-m5/state"
+22d18
+< skep_agent_config="/home/aba/skep-m6/agent.json"
+
+## Start
+14:38:44Z
+Starting skep_agent.
+Starting skep_api.
+skep_agent is running as pid 12122 (supervisor pid 12120).
+skep_api is running as pid 12179 (supervisor pid 12177).
+root /usr/local/sbin/skep-agent -data-dir /var/db/skep
+skep /usr/local/sbin/skep-api -data-dir /var/db/skep -listen 10.79.20.170:8443
+skep-agent 0.1.0 (commit 54d0566, built 2026-11-15T14:38:04Z, go1.27.4 freebsd/amd64)
+Nov 15 09:38:44 hearst skep-agent[12120]: {"time":"2026-11-15T09:38:44.397145723-05:00","level":"INFO","msg":"retention run finished","tasks_removed":0,"events_removed":0,"audit_archive_error":null}
+Nov 15 09:38:44 hearst skep-agent[12120]: {"time":"2026-11-15T09:38:44.397817957-05:00","level":"INFO","msg":"task finished","task_id":"79f2e006-baaa-4b58-b050-add47b80a94b","type":"maintenance.retention","status":"succeeded","error_code":""}
+Nov 15 09:38:44 hearst skep-agent[12120]: {"time":"2026-11-15T09:38:44.399294694-05:00","level":"INFO","msg":"task finished","task_id":"ff32c7a3-336a-4d63-bc05-cdb06af8cdb7","type":"discovery.refresh","status":"succeeded","error_code":""}
+
+## After (new layout)
+== login (m7a5viewer, bearer, key pinned)
+m7a5viewer viewer bearer
+== health (m7a5viewer)
+ok 0.1.0 access_audit_archive=ok agent=ok audit_archive=ok database=ok storage_capacity=ok storage_locked=ok
+== VMs
+c0e23174-3dc0-4503-a691-9af23f657078 fbsd1 stopped [(0, 'skeptest', 8589934592)]
+fc8640f3-205c-404d-855b-1376c792d86e snaptest stopped [(0, 'skeptest', 1073741824), (1, 'skeptest', 1073741824)]
+== snapshots of c0e23174-3dc0-4503-a691-9af23f657078
+ec1f5086-b697-45bf-bc36-d0e729afc06f pre-add consistent True True
+== snapshots of fc8640f3-205c-404d-855b-1376c792d86e
+b4b27599-01fb-46a8-b87a-d53ec3407c23 s1 consistent True True
+8d347601-c546-41ce-a078-650a21438fca snaptest-c2 consistent True True
+== media
+FreeBSD-15.1-RELEASE-amd64-disc1.iso 1352255488
+== audit verify (agent)
+0 sealed segments in /var/db/skep/agent/audit-archive: 0 ok, 0 missing, 0 invalid
+exit 0
+== audit verify (api)
+0 sealed segments in /var/db/skep/api/audit-archive: 0 ok, 0 missing, 0 invalid
+exit 0
+== tls fingerprint
+source:       self-signed
+public key:   sha256:779cc5ec8daa3b04cefd14dc6dc6c9ac1ed989a409831561a47ec7d05cc069dd
+== skepctl login on hearst (m7a5operator)
+Logged in to https://10.79.20.170:8443 as m7a5operator (role operator).
+The session ends at 2026-11-15T21:39:02-05:00, or after 30m0s without use.
+NAME         CREATED               CONSISTENCY  USED     CLONES  ID
+s1           2026-11-14 22:00:05Z  consistent   2.0 KiB  0       b4b27599-01fb-46a8-b87a-d53ec3407c23
+snaptest-c2  2026-11-14 22:06:04Z  consistent   0 B      0       8d347601-c546-41ce-a078-650a21438fca
+Node ID:          97fc6968-7e82-49c9-bda8-9026775ca964
+Hostname:         hearst.greenbean.org
+Platform:         freebsd (production host)
+OS:               FreeBSD 15.1-RELEASE-p6 (amd64)
+Logged out of https://10.79.20.170:8443.
+
+The health, VM, snapshot, and media listings above are identical before
+and after (diff). Both audit verifies pass, but over 0 sealed segments:
+nothing is sealed before the first month ends (2026-12-01), so they show
+the archive directories are found and readable at the new paths, not a
+hash chain. The agent's database was not moved; skep-api's api.db and its
+TLS key and certificate are byte-identical copies, so the pinned key is
+unchanged.
+
+## Undo
+sudo service skep_api stop; sudo service skep_agent stop
+sudo cp -p /etc/rc.conf.pre-layout-20261115 /etc/rc.conf
+sudo service skep_agent start; sudo service skep_api start
+  (the old binaries, agent.json, media, and API data in /home/aba/skep-m6
+  and /home/aba/skep-m5 are untouched and kept until Andy agrees to
+  remove them; skep-api data written since the move is only in
+  /var/db/skep/api)
+then, to remove the new copies:
+sudo rm /usr/local/sbin/skep-agent /usr/local/sbin/skep-api /usr/local/bin/skepctl
+sudo rm -r /usr/local/etc/skep /var/db/skep/media /var/db/skep/api
+sudo mv /var/db/skep/api.pre-layout-20261115 /var/db/skep/api

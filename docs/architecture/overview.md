@@ -376,7 +376,8 @@ imported, both as an unprivileged user and as root.
 - **Follow-up: the agent does not check its own files.** `skep-agent`
   runs as root but starts even when its executable, its configuration
   file, or a directory above either is writable by another user (the
-  lab's test installation under `/home/aba` is such a case). It should
+  lab's test installation under `/home/aba` was such a case until it moved
+  to the package layout on 2026-11-15). It should
   refuse to start, naming the path, owner, and mode: owner uid 0, no
   group or other write bit, for the file and every directory up to `/`;
   a `-dev` build on Linux only warns. Whether `skep-api` checks its own

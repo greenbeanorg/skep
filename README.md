@@ -154,9 +154,16 @@ decision logic. It does not prove runtime behaviour on FreeBSD; see below.
 
 ```sh
 make build-freebsd
-scripts/deploy-test.sh hearst /usr/local/libexec/skep-test   # stage, check size and SHA-256, install root-owned, sync
-ssh hearst '/usr/local/libexec/skep-test/skep-agent -dev -data-dir /tmp/skep-dev'
+scripts/deploy-test.sh hearst          # stage, check size and SHA-256, install root-owned, sync
+ssh hearst 'sudo service skep_agent restart; sudo service skep_api restart'
 ```
+
+With the host alone, the script installs where the package will:
+`skep-agent` and `skep-api` in `/usr/local/sbin`, `skepctl` in
+`/usr/local/bin`, the paths the rc.d scripts use by default. With a
+directory, it installs the files named after it there instead (test
+binaries, or `agent.json` into `/usr/local/etc/skep`). Stop the services
+before replacing their binaries.
 
 `scripts/deploy-test.sh` installs with `sudo`: programs `root:wheel 0555`,
 `agent.json` `root:wheel 0600`, into a directory it makes `root:wheel 0755`.
