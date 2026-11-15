@@ -70,7 +70,8 @@ show no data.
 |---|---|
 | Dashboard | The node, its platform and version, uptime, every health check (degraded ones highlighted), capabilities, the five newest tasks |
 | Nodes | The one node: processor, memory, bhyve, QEMU, OpenZFS pools, discovery warnings |
-| Virtual machines | The VM list (state, drift, provisioning); create (one disk, install media, one NIC); a VM's details, power actions, media attach and detach, delete, and its serial console. See [Virtual machines](virtual-machines.md) |
+| Virtual machines | The VM list (state, drift, provisioning); create (one disk, install media, one NIC); a VM's details, power actions, media attach and detach, delete, its serial console, and its snapshots (take, roll back, delete, clone, with the note that a clone is the same guest). See [Virtual machines](virtual-machines.md) |
+| Storage | Each allow-listed pool with its capacity against the `storage_capacity` thresholds and any locked datasets; the current disk, CPU, and memory use of each VM; the dataset inventory with owners. See [Storage](storage.md) |
 | Tasks (under Monitoring) | Task list with a status filter and paging; task detail with its events; cancel (`task:cancel`) |
 | Users and permissions | Users (create, edit, enable and disable, set password, delete), roles and their permissions, the access audit log |
 | Settings | About this node: version and build, the API certificate, session lifetimes, the theme |

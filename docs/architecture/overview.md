@@ -284,6 +284,28 @@ skep-agent
   in a goroutine and a console that echoes. It never ships in a FreeBSD
   binary (CI checks the marker string).
 
+## Storage and monitoring
+
+Phase 7a ([ADR 0010](../decisions/0010-storage-and-jails.md)):
+
+- **Snapshots, rollback, clones** are storage operations, the same for any
+  engine, so `internal/vm` calls `internal/hostops` directly for them and
+  asks the adapter only whether the VM runs. Each is a task that holds the
+  VM. Names are derived (`@skep-<snapshot-id>`); a destroy or rollback
+  checks the `skep:` owner property of every dataset first.
+- **Disks** go through `hostops.Disks`, which routes create, grow, remove,
+  and delete to ZFS (zvols) or to a directory pool (raw files opened
+  through `os.Root`) by the pool's kind.
+- **The inventory** (`internal/storage`) lists what is under each pool's
+  dataset root and judges each owner by the tree, the property, and the
+  database together.
+- **Monitoring** (`internal/monitoring`) samples every 30 seconds: pool
+  space, the ZFS inventory (disk use, key status), directory pool files,
+  and `ps` of each running VM's bhyve (after checking its
+  `kern.proc.args`). It keeps the latest sample only. `GET /metrics`
+  serves it, and the `storage_capacity` and `storage_locked` health probes
+  read it, so a health request never runs a ZFS command.
+
 ## FreeBSD validation status
 
 Validated means it ran on FreeBSD 15.1-RELEASE-p6 (amd64, UFS-root, `hearst`)
@@ -339,6 +361,7 @@ imported, both as an unprivileged user and as root.
 | The rc.d harness `api` phase with the health statuses of #15 (`unavailable` with the agent down) | Validated (2026-11-13, 71 checks, see `tests/integration/rcd`) |
 | VM storage on ZFS: datasets and zvols with `volmode=dev`, `volblocksize=16K`, full or no reservation, `skep:` user properties; refusals outside the confinement; deletion of the VM's datasets only | Validated (2026-11-14, see `tests/integration/vm`) |
 | Booting a bhyve guest: runner, taps, nmdm console in the browser, a FreeBSD install to a zvol, guest reboot, media detach, stop and `stop_timeout`, force stop (also runner-less), restart, agent restart and `kill -9`, host reboot with drift, console audit, limit, logout and idle, permissions, concurrency, interrupted create, capabilities with `vmm` unloaded, unit tests natively | Validated (2026-11-14, after the nested-KVM workaround; see `tests/integration/vm`). Guest network isolation first failed because the lab firewall routed the guest VLAN to the SERVERS and MGMT VLANs; passed after the firewall fix |
+| Storage, phase 7a: inventory, snapshots (running and stopped), rollback with and without `destroy_newer`, linked clones booting with their own lease, disk add, grow, remove, directory pools with a FreeBSD guest installed on a file disk, `/metrics` against `zpool`, `zfs`, `df`, and `ps`, `storage_capacity`, `storage_locked` with an encrypted root and its key unloaded, the viewer refused every write, the clone note in the browser, `skepctl vm snapshot` | Validated (2026-11-14 and 15, see `tests/integration/storage`) |
 | ZFS-root host | **Pending FreeBSD validation** (the lab VM is UFS-root) |
 | arm64 | Not a target yet |
 
@@ -348,7 +371,10 @@ imported, both as an unprivileged user and as root.
   roles yet.
 - Sessions and users are per node.
 - The local node is the only node.
-- The inventory is refreshed only at start, not periodically.
+- The node inventory (hardware discovery) is refreshed only at start, not
+  periodically.
+- Resource monitoring keeps current values only; there is no history and
+  no export (Prometheus or otherwise) yet. Per-jail values come with 7b.
 - Retention does not shrink the database files: SQLite reuses freed pages,
   so a file stops growing. `VACUUM` is a manual step.
 - Archived audit entries are read on the host (`audit export`); the API

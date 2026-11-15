@@ -23,6 +23,7 @@ networking, and a serial console in the web interface. The design is
 | Serial console in the browser, for up to 4 clients at once | VNC or any graphical console |
 | Bridge NICs to bridges the operator created | Create bridges, VLAN tags, NAT, or firewall rules |
 | ZFS pools and directory pools named in the configuration | Snapshots and clones in a directory pool; QEMU |
+| Snapshots (also while running, crash-consistent), rollback, and linked clones on ZFS: see [Storage](storage.md) | Memory snapshots; full (independent) copies |
 
 ## Preparing the host
 
@@ -276,7 +277,11 @@ Policy, so it is never used.)
 | `vm:delete` | Delete a VM and its disks | yes | no |
 | `vm:power` | Start, stop, force-stop, restart | yes | no |
 | `vm:console` | Attach to the serial console | yes | no |
-| `storage:read` | List the allowed pools and the media | yes | yes |
+| `storage:read` | List the allowed pools, the media, and the dataset inventory | yes | yes |
+| `vm:snapshot` | Take, roll back, and delete snapshots; a clone needs `vm:write` as well | yes | no |
+
+Removing a disk needs `vm:delete` as well as `vm:write`. The storage
+permissions are in [Storage](storage.md#permissions).
 
 ## On the host
 

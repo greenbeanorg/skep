@@ -1,6 +1,7 @@
 # ADR 0010: Storage management and jails (Milestone 7)
 
-- Status: **Accepted** (not yet implemented). Every recommendation was
+- Status: **Accepted**; phase 7a implemented and validated on `hearst`
+  (pull request #26), phase 7b not started. Every recommendation was
   accepted; the review answers and the amendments made at acceptance are
   under [Decisions](#decisions) and are worked into the text. The changes
   `hearst` needs are under [Changes hearst needs](#changes-hearst-needs),
@@ -921,3 +922,61 @@ something the text left open, or departs from it.
   stored, so the space is not truly held; this is documented, not worked
   around. `volblocksize` is refused for a directory pool rather than
   ignored.
+
+### Step 5: monitoring, health checks, interface, CLI
+
+- **The sampler has its own 30-second loop**, not the VM watcher's
+  2 seconds: a `zfs list` of every pool that often would cost more than
+  the values are worth. `GET /metrics` and both health probes read the
+  latest sample, which is never more than a minute old (an older one is
+  replaced before answering), so a health request runs no ZFS command.
+  Per-jail values come with 7b.
+- **bhyve's CPU time and memory come from `ps(1)`** (`/bin/ps -o rss=
+  -o time= -o comm= -p <pid>`), not from decoding `struct kinfo_proc`:
+  `golang.org/x/sys` has no FreeBSD binding for it and its layout is not
+  an interface. Before `ps` runs, `kern.proc.args` of the PID the watcher
+  observed must be `bhyve: skep-<vm-id>` (bhyve's `setproctitle(3)`
+  title, seen on `hearst`), so a recycled PID is never reported as the
+  VM. On `hearst` the first version, with `-o rss=,time=,comm=`, failed:
+  FreeBSD's `ps` takes everything after `=` as the header, commas
+  included. A FreeBSD-only test now runs the real `ps`.
+- **Capacity** is allocated / size for a ZFS pool, as `zpool list` shows
+  it, and used / (used + available) for a directory pool, as `df` shows
+  it (the root reserve is not available to Skep's files either).
+- **One `degraded` level for both thresholds.** The health document has
+  no "warning" status, and making `storage_capacity` critical would make
+  `skep-api` answer 503 for a full pool, taking a working service away
+  from a load balancer. So a pool past either threshold makes the check
+  `degraded`; its message names the threshold, and `/metrics` gives
+  `capacity` as `ok`, `warning`, `failing`, or `unavailable`. A pool that
+  cannot be read also degrades `storage_capacity`.
+- **`GET /metrics` needs `system:read`, `vm:read`, and `storage:read`**:
+  it names VMs and pools.
+- **Start is refused with `storage_locked` too.** Steps 1 to 3 refused
+  create, snapshot, rollback, clone, and disk changes in a locked
+  dataset, but not start; on `hearst` a VM whose key was unloaded failed
+  in bhyve ("Device emulation initialization error"). The start check
+  now reads the VM's ZFS datasets and refuses before a task exists, and
+  again when the task runs.
+- **The `storage_locked` check used `skeptest/skep-enc` as the dataset
+  root** (hearst change 5). The test installation's `dataset_root` was
+  switched to it for the check and back afterwards, because the check is
+  of an encrypted `<pool>/<root>` and a sibling dataset is outside the
+  root.
+- **`storage:write` is still undeclared.** No 7a route needs it (step 1's
+  rule: a permission is declared when a route enforces it), so "operator
+  is refused `storage:write`" is shown by the role and the route table
+  test until 7b adds templates.
+- **The interface**: the Storage section replaces its placeholder (pools
+  with capacity against the thresholds, per-VM use, the paged inventory
+  with owners); the VM page gains a Snapshots card. A rollback to an
+  older snapshot asks for confirmation naming the snapshots it destroys
+  and sends `destroy_newer` only then. The clone form and a clone's page
+  carry the identity note of decision 3. `skepctl vm clone` prints it
+  too, on standard error with `--json` so the JSON stays parseable.
+- **The browser check against a real host** is
+  `web/e2e/clone-note.spec.ts`, skipped unless pointed at one; the local
+  browser suite covers the same note against the simulated host.
+- **`/var/tmp/skep` on `hearst` is now `root:wheel`** (approved for this
+  step). The device-and-inode comparison of step 4 stays: it is what
+  protects a directory pool whose parent is not root's.
