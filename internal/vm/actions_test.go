@@ -235,6 +235,24 @@ func TestStartRefusals(t *testing.T) {
 	}
 	f.fake.Set(func(fk *hostfake.Fake) { fk.Info.VMMLoaded = true })
 
+	// A dataset with its key unloaded: refused, audited, nothing started
+	// (ADR 0010 decision 5).
+	f.fake.Lock("devpool/skep/vm/"+b.ID, true)
+	f.act(a.ID, models.VMActionForceStop, nil)
+	f.observed(a.ID)
+	if _, err := f.svc.Action(context.Background(), b.ID, models.VMAction{Action: "start"}, f.sub); code(err) != models.CodeStorageLocked {
+		t.Errorf("start with a locked dataset: %v", err)
+	}
+	if n := f.count(`SELECT COUNT(*) FROM audit_log WHERE action = 'vm.start' AND outcome = 'denied' AND resource_id = ?`, b.ID); n != 3 {
+		t.Errorf("%d denied start entries, want 3", n)
+	}
+	f.fake.Lock("devpool/skep/vm/"+b.ID, false)
+	if task, _ := f.act(b.ID, models.VMActionStart, nil); task.Status != models.TaskSucceeded {
+		t.Errorf("start once the key is loaded: %+v", task)
+	}
+	f.act(b.ID, models.VMActionForceStop, nil)
+	f.observed(b.ID)
+
 	// A bridge that holds a management interface.
 	f.act(a.ID, models.VMActionForceStop, nil)
 	f.observed(a.ID)
