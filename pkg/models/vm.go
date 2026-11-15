@@ -209,14 +209,21 @@ type VMDisk struct {
 	Bus  string `json:"bus"`
 	// ReadOnly is always true for install media.
 	ReadOnly bool `json:"read_only"`
-	// SizeBytes, Pool, Thin, VolBlockSize, and Dataset describe a
-	// zvol-backed disk. They are zero for install media.
-	SizeBytes    int64  `json:"size_bytes,omitempty"`
-	Pool         string `json:"pool,omitempty"`
-	Thin         bool   `json:"thin,omitempty"`
-	VolBlockSize int    `json:"volblocksize,omitempty"`
+	// SizeBytes, Pool, PoolType, and Thin describe a disk on a pool:
+	// a zvol in a ZFS pool, a file in a directory pool (ADR 0010
+	// decision 6). They are zero for install media.
+	SizeBytes int64  `json:"size_bytes,omitempty"`
+	Pool      string `json:"pool,omitempty"`
+	// PoolType is "zfs" or "directory".
+	PoolType string `json:"pool_type,omitempty"`
+	Thin     bool   `json:"thin,omitempty"`
+	// VolBlockSize is the zvol's block size; zero in a directory pool.
+	VolBlockSize int `json:"volblocksize,omitempty"`
 	// Dataset is the zvol, derived from the pool, the VM, and the slot.
 	Dataset string `json:"dataset,omitempty"`
+	// File is the disk's file in a directory pool, relative to the
+	// pool's directory: <root>/vm/<vm-id>/disk<slot>.img.
+	File string `json:"file,omitempty"`
 	// Media is the name of the ISO file, for install media.
 	Media string `json:"media,omitempty"`
 }
@@ -366,7 +373,11 @@ type VMCreated struct {
 // StoragePool is one allow-listed pool as the agent last observed it.
 type StoragePool struct {
 	Name string `json:"name"`
+	// Type is "zfs" or "directory".
 	Type string `json:"type"`
+	// Capabilities says what the pool's kind can do: a directory pool
+	// has no snapshots, clones, or quotas (ADR 0010 decision 6).
+	Capabilities StoragePoolCapabilities `json:"capabilities"`
 	// Health is the pool's health as zpool(8) reports it, or "UNAVAILABLE"
 	// when the pool could not be read; Error says why.
 	Health         string `json:"health"`
@@ -378,6 +389,21 @@ type StoragePool struct {
 	// a disk's reservation is checked against.
 	AvailableBytes int64      `json:"available_bytes"`
 	ObservedAt     *time.Time `json:"observed_at,omitempty"`
+}
+
+// StoragePoolCapabilities says which storage features a pool has.
+type StoragePoolCapabilities struct {
+	Snapshots bool `json:"snapshots"`
+	Clones    bool `json:"clones"`
+	Quotas    bool `json:"quotas"`
+}
+
+// PoolCapabilities returns the capabilities of a kind of pool.
+func PoolCapabilities(poolType string) StoragePoolCapabilities {
+	if poolType == "zfs" {
+		return StoragePoolCapabilities{Snapshots: true, Clones: true, Quotas: true}
+	}
+	return StoragePoolCapabilities{}
 }
 
 // StoragePoolList is the list of allow-listed pools.

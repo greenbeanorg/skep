@@ -16,12 +16,13 @@ networking, and a serial console in the web interface. The design is
 
 | Does | Does not (yet) |
 |---|---|
-| Create a VM with up to 8 disks (zvols) and install media, and up to 4 NICs | Add, remove, or resize disks or NICs after creation |
+| Create a VM with up to 8 disks (zvols, or files in a directory pool) and install media, and up to 4 NICs | Change NICs after creation |
+| Add, grow, and remove disks of a stopped VM (ADR 0010 decision 4) | Shrink a disk |
 | Start, stop (ACPI), force-stop, restart, delete | Restart a VM by itself: no autostart, no reconciliation |
 | Attach and detach ISO files while the VM is stopped | Upload or download ISO files |
 | Serial console in the browser, for up to 4 clients at once | VNC or any graphical console |
 | Bridge NICs to bridges the operator created | Create bridges, VLAN tags, NAT, or firewall rules |
-| ZFS pools named in the configuration | UFS-root hosts without a ZFS pool; QEMU |
+| ZFS pools and directory pools named in the configuration | Snapshots and clones in a directory pool; QEMU |
 
 ## Preparing the host
 
@@ -105,6 +106,57 @@ itself. An administrator does the following once.
 
 The system page of the web interface, and `skepctl system --json`, show
 whether bhyve is available and, if not, exactly what is missing.
+
+### A host without ZFS: directory pools
+
+A UFS-root host with no ZFS pool can still run VMs from a directory pool
+(ADR 0010 decision 6). Each disk is a raw file,
+`<dir>/skep/vm/<vm-id>/disk<slot>.img`, that bhyve opens directly.
+
+1. Create the directory, owned by root and closed to everyone else, on a
+   local UFS or ZFS file system:
+
+   ```sh
+   mkdir -p /var/db/skep-disks
+   chown root:wheel /var/db/skep-disks
+   chmod 0700 /var/db/skep-disks
+   ```
+
+2. Name it in `storage.directories` of `agent.json`. Its name is how a
+   request refers to it, like a ZFS pool's name, and must not repeat one:
+
+   ```json
+   "storage": {
+     "pools": [],
+     "directories": [{"name": "disks", "path": "/var/db/skep-disks"}]
+   }
+   ```
+
+3. Restart the agent. `GET /api/v1/storage/pools` lists the pool with
+   `type: directory`; if it cannot be used it says why in `error`.
+
+The agent checks the directory every time it uses it and refuses one
+that is a symbolic link, not owned by root, readable or writable by group
+or others, or on another file system type (NFS and tmpfs are refused).
+
+What differs from a ZFS pool:
+
+- A thin disk (`thin: true`) is a sparse file; it takes space as the
+  guest writes. A disk that is not thin is written with zeros when it is
+  created or grown, so its blocks are allocated; that takes time for a
+  large disk. On a ZFS file system with compression the zeros take almost
+  no space, so the space is not truly reserved there.
+- `volblocksize` is refused: it is a zvol option.
+- Snapshots, rollback, and clones are refused with
+  `storage_feature_unsupported`. They are never emulated by copying files.
+  A VM with disks in a ZFS pool and a directory pool cannot be
+  snapshotted either.
+- `GET /api/v1/storage/datasets` lists ZFS datasets only; a directory
+  pool's disk files show in each VM's `disks` (`pool_type: directory`,
+  `file`).
+- Skep removes a VM's directory only if it holds nothing but its
+  `disk<N>.img` files; anything else in it makes the delete fail and is
+  left for an administrator.
 
 ### A FreeBSD host that is itself a KVM guest (nested bhyve)
 

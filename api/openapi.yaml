@@ -1305,7 +1305,9 @@ paths:
         removed automatically (ADR 0010 decision 1). Encryption,
         compression, and key status are what the operator set and Skep
         inherits (decision 5). A pool that cannot be read is named in
-        `unavailable_pools` instead of failing the list.
+        `unavailable_pools` instead of failing the list. Directory pools
+        have no datasets and are not listed; naming one in `pool` is
+        `storage_feature_unsupported`.
       parameters:
         - $ref: "#/components/parameters/Background"
         - name: pool
@@ -1573,11 +1575,21 @@ components:
         read_only: { type: boolean }
         size_bytes: { type: integer, format: int64 }
         pool: { type: string }
+        pool_type:
+          type: string
+          enum: [zfs, directory]
         thin: { type: boolean }
-        volblocksize: { type: integer }
+        volblocksize:
+          type: integer
+          description: The zvol's block size; absent in a directory pool.
         dataset:
           type: string
-          description: The zvol, `<pool>/skep/vm/<vm-id>/disk<slot>`.
+          description: The zvol, `<pool>/skep/vm/<vm-id>/disk<slot>`, in a ZFS pool.
+        file:
+          type: string
+          description: |
+            The disk's file in a directory pool, relative to the pool's
+            directory: `skep/vm/<vm-id>/disk<slot>.img`.
         media:
           type: string
           description: The ISO file name, for install media (`ahci-cd`).
@@ -1723,18 +1735,26 @@ components:
           description: Allow removing a disk that snapshots contain, destroying each of them whole.
     VMDiskSpec:
       type: object
-      description: A zvol-backed disk (pool and size) or install media (media, bus ahci-cd).
+      description: |
+        A disk on a pool (pool and size) or install media (media, bus
+        ahci-cd). In a ZFS pool the disk is a zvol; in a directory pool it
+        is a raw file, created sparse, or written with zeros when `thin`
+        is false so its blocks are allocated (on a ZFS file system with
+        compression, zeros take little space whatever is written).
       properties:
         bus:
           type: string
           enum: [virtio-blk, nvme, ahci-hd, ahci-cd]
         size:
           $ref: "#/components/schemas/ByteSize"
-        pool: { type: string }
+        pool:
+          type: string
+          description: An allow-listed ZFS pool or directory pool.
         thin: { type: boolean }
         media: { type: string }
         volblocksize:
           $ref: "#/components/schemas/ByteSize"
+          description: ZFS pools only; refused for a directory pool.
     VMDiskResize:
       type: object
       required: [slot, size]
@@ -1843,10 +1863,30 @@ components:
           $ref: "#/components/schemas/Task"
     StoragePool:
       type: object
-      required: [name, type, health, size_bytes, allocated_bytes, free_bytes, available_bytes]
+      description: |
+        An allow-listed pool: a ZFS pool (`storage.pools`) or a directory
+        pool (`storage.directories`, ADR 0010 decision 6), whose disks are
+        sparse raw files. A usable directory pool reports health `ONLINE`
+        and the sizes of its file system; one that cannot be used
+        (missing, a symbolic link, not `root` 0700, not on local UFS or
+        ZFS) reports `UNAVAILABLE` with the reason in `error`.
+      required: [name, type, capabilities, health, size_bytes, allocated_bytes, free_bytes, available_bytes]
       properties:
         name: { type: string }
-        type: { type: string }
+        type:
+          type: string
+          enum: [zfs, directory]
+        capabilities:
+          type: object
+          description: |
+            What the pool's kind can do. A directory pool has none of
+            these; snapshots and clones of a VM with a disk in one are
+            refused with `storage_feature_unsupported`, never emulated.
+          required: [snapshots, clones, quotas]
+          properties:
+            snapshots: { type: boolean }
+            clones: { type: boolean }
+            quotas: { type: boolean }
         health: { type: string }
         error: { type: string }
         size_bytes: { type: integer, format: int64 }

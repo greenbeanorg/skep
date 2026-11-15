@@ -58,7 +58,8 @@ func newFixture(t *testing.T) *fixture {
 	}
 	conf := hostops.Confinement{
 		Pools: []string{"devpool"}, DatasetRoot: "skep", MediaDir: filepath.Join(dir, "media"),
-		Bridges: []string{"bridge0"}, ManagementInterfaces: []string{"vtnet0"},
+		Directories: []hostops.DirPool{{Name: "dirpool", Path: "/srv/dirpool"}},
+		Bridges:     []string{"bridge0"}, ManagementInterfaces: []string{"vtnet0"},
 		FirmwareDir: filepath.Join(dir, "firmware"),
 		RunDir:      filepath.Join(dir, "run", "vm"), StateDir: filepath.Join(dir, "agent", "vm"),
 	}
@@ -357,7 +358,7 @@ func TestCreateWarnsAboutThinDisksAndReservesFullOnes(t *testing.T) {
 	full.Disks = []models.VMDiskSpec{{Pool: "devpool", Size: models.ByteSize(15 * gib)}}
 	f.create(full)
 	pools, err := f.svc.StoragePools(ctx)
-	if err != nil || len(pools.Items) != 1 || pools.Items[0].AvailableBytes != 5*gib || pools.Items[0].Health != "ONLINE" {
+	if err != nil || len(pools.Items) != 2 || pools.Items[0].Name != "devpool" || pools.Items[0].AvailableBytes != 5*gib || pools.Items[0].Health != "ONLINE" {
 		t.Fatalf("pools = %+v, %v", pools, err)
 	}
 	// A second full disk that does not fit is refused; a thin one of the

@@ -27,7 +27,8 @@ func setup(t *testing.T, pools ...string) (*Service, *hostfake.Fake) {
 	t.Helper()
 	dir := t.TempDir()
 	conf := hostops.Confinement{Pools: pools, DatasetRoot: "skep",
-		RunDir: filepath.Join(dir, "run"), StateDir: filepath.Join(dir, "state")}
+		Directories: []hostops.DirPool{{Name: "dirpool", Path: "/srv/dirpool"}},
+		RunDir:      filepath.Join(dir, "run"), StateDir: filepath.Join(dir, "state")}
 	f := hostfake.New(conf, hostfake.Options{})
 	s, err := New(Options{Host: f.Ops(), Owners: owners{VMs: map[string]bool{vmA: true}}})
 	if err != nil {
@@ -172,4 +173,20 @@ func join(list []string) string {
 		out += s
 	}
 	return out
+}
+
+// TestInventoryOfADirectoryPool: the inventory is of ZFS datasets; a
+// directory pool is refused by name and absent from the whole listing.
+func TestInventoryOfADirectoryPool(t *testing.T) {
+	s, _ := setup(t, "skeptest")
+	ctx := context.Background()
+	_, err := s.Datasets(ctx, models.DatasetListOptions{Pool: "dirpool"})
+	var me *models.Error
+	if !errors.As(err, &me) || me.Code != models.CodeStorageFeatureUnsupported {
+		t.Errorf("inventory of a directory pool = %v", err)
+	}
+	list, err := s.Datasets(ctx, models.DatasetListOptions{})
+	if err != nil || len(list.UnavailablePools) != 0 {
+		t.Errorf("whole inventory = %+v, %v", list, err)
+	}
 }

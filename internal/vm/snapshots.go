@@ -53,13 +53,19 @@ func diskPools(vm models.VM) []string {
 // snapshot atomically only within one pool, so a VM with disks in two
 // pools cannot have a snapshot that is "one atomic snapshot of every
 // disk" (decision 2a), and is refused rather than given a weaker one.
-func snapshotPool(vm models.VM) (string, error) {
+func snapshotPool(conf hostops.Confinement, vm models.VM) (string, error) {
 	pools := diskPools(vm)
 	switch len(pools) {
 	case 0:
 		return "", &models.Error{Code: models.CodeStorageFeatureUnsupported,
 			Message: "the virtual machine has no disks to snapshot"}
 	case 1:
+		if conf.IsDirectory(pools[0]) {
+			return "", &models.Error{Code: models.CodeStorageFeatureUnsupported,
+				Message: "the virtual machine's disks are in the directory pool " + pools[0] +
+					", which has no snapshots or clones; only ZFS pools do",
+				Details: map[string]any{"pool": pools[0], "pool_type": hostops.PoolKindDirectory}}
+		}
 		return pools[0], nil
 	}
 	return "", &models.Error{Code: models.CodeStorageFeatureUnsupported,
@@ -199,7 +205,7 @@ func (s *Service) Snapshot(ctx context.Context, vmID, id string) (models.Snapsho
 // snapshots. A failure to read is logged: the answer is then the last
 // observation.
 func (s *Service) observeSnapshots(ctx context.Context, vm models.VM, list []models.Snapshot) {
-	pool, err := snapshotPool(vm)
+	pool, err := snapshotPool(s.host.Conf, vm)
 	if err != nil || len(list) == 0 {
 		return
 	}
@@ -240,7 +246,7 @@ func (s *Service) CreateSnapshot(ctx context.Context, vmID string, req models.Sn
 	if err != nil {
 		return models.SnapshotCreated{}, s.refuse(ctx, refused, err)
 	}
-	if _, err := snapshotPool(vm); err != nil {
+	if _, err := snapshotPool(s.host.Conf, vm); err != nil {
 		return models.SnapshotCreated{}, s.refuse(ctx, refused, err)
 	}
 	request, err := canonical(req)
@@ -344,7 +350,7 @@ func (s *Service) runSnapshotCreate(ctx context.Context, task tasks.Task, report
 // after that the call runs to its end. Whatever fails is undone here,
 // except the row, which is the caller's.
 func (s *Service) takeSnapshot(ctx context.Context, vm models.VM, snapID string, report tasks.Reporter) ([]hostops.Dataset, string, error) {
-	pool, err := snapshotPool(vm)
+	pool, err := snapshotPool(s.host.Conf, vm)
 	if err != nil {
 		return nil, "", err
 	}
@@ -412,7 +418,7 @@ func (s *Service) checkRollback(ctx context.Context, vmID, snapID string, destro
 		return models.VM{}, models.Snapshot{}, nil, &models.Error{Code: models.CodeVMNotProvisioned,
 			Message: "the virtual machine was never provisioned; it can only be deleted"}
 	}
-	if _, err := snapshotPool(vm); err != nil {
+	if _, err := snapshotPool(s.host.Conf, vm); err != nil {
 		return models.VM{}, models.Snapshot{}, nil, err
 	}
 	list, err := s.snaps.List(ctx, models.VMResource, vm.ID)
@@ -507,7 +513,7 @@ func (s *Service) runSnapshotRollback(ctx context.Context, task tasks.Task, repo
 	if err != nil {
 		return nil, failure(err)
 	}
-	pool, _ := snapshotPool(vm)
+	pool, _ := snapshotPool(s.host.Conf, vm)
 	report.Progress("rolling the disks back", map[string]any{"snapshot_id": target.ID, "destroy_newer": p.DestroyNewer})
 	destroyed, err := s.host.ZFS.Rollback(ctx, pool, vmOwner(vm.ID), target.ID, p.DestroyNewer)
 	if err != nil {
@@ -547,7 +553,7 @@ func (s *Service) runSnapshotRollback(ctx context.Context, task tasks.Task, repo
 // snapshot taken before a disk grew gives the disk its earlier size.
 func (s *Service) refreshVolumes(ctx context.Context, vm models.VM) {
 	for _, pool := range diskPools(vm) {
-		list, err := s.host.ZFS.VMDatasets(ctx, pool, vm.ID)
+		list, err := s.host.Disks().VMVolumes(ctx, pool, vm.ID)
 		if err == nil {
 			err = s.saveVolumes(ctx, list)
 		}
@@ -642,6 +648,9 @@ func (s *Service) runSnapshotDelete(ctx context.Context, task tasks.Task, report
 	// Every pool the VM uses: a snapshot of a VM that has since gained a
 	// disk elsewhere still goes everywhere it is.
 	for _, pool := range diskPools(vm) {
+		if s.host.Conf.IsDirectory(pool) {
+			continue
+		}
 		gone, err := s.host.ZFS.DestroySnapshot(ctx, pool, vmOwner(vm.ID), snap.ID)
 		if errors.Is(err, models.ErrNotFound) {
 			// Not in ZFS (an interrupted snapshot task): only the row is
@@ -668,7 +677,7 @@ func (s *Service) cloneSource(ctx context.Context, srcID, snapID string) (models
 	if err != nil {
 		return models.VM{}, err
 	}
-	if _, err := snapshotPool(src); err != nil {
+	if _, err := snapshotPool(s.host.Conf, src); err != nil {
 		return models.VM{}, err
 	}
 	if snapID != "" {
@@ -836,7 +845,7 @@ func (s *Service) runClone(ctx context.Context, task tasks.Task, report tasks.Re
 		s.undoClone(target)
 		return nil, failure(err)
 	}
-	pool, _ := snapshotPool(src)
+	pool, _ := snapshotPool(s.host.Conf, src)
 	disks := map[int]string{}
 	for _, d := range target.Disks {
 		if d.Bus != models.BusAHCICD {

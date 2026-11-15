@@ -41,11 +41,34 @@ func VolumeName(datasetRoot, vmID string, slot int) string {
 	return fmt.Sprintf("%s/vm/%s/disk%d", datasetRoot, vmID, slot)
 }
 
-// poolID returns the row of a pool, creating it on first use.
-func poolID(ctx context.Context, tx *sql.Tx, nodeID, name string) (string, error) {
-	var id string
-	err := tx.QueryRowContext(ctx, `SELECT id FROM storage_pools WHERE node_id = ? AND name = ?`, nodeID, name).Scan(&id)
+// FileName is the name of a disk file in a directory pool, relative to
+// the pool's directory.
+func FileName(datasetRoot, vmID string, slot int) string {
+	return fmt.Sprintf("%s/vm/%s/disk%d.img", datasetRoot, vmID, slot)
+}
+
+// Pool types of storage_pools.type.
+const (
+	PoolTypeZFS       = "zfs"
+	PoolTypeDirectory = "directory"
+)
+
+// poolID returns the row of a pool, creating it on first use. A name
+// whose row has another type is refused: the configuration gave a pool's
+// name to a pool of the other kind, and the disks recorded on the old one
+// are not on the new one.
+func poolID(ctx context.Context, tx *sql.Tx, nodeID, name, typ string) (string, error) {
+	if typ == "" {
+		typ = PoolTypeZFS
+	}
+	var id, have string
+	err := tx.QueryRowContext(ctx, `SELECT id, type FROM storage_pools WHERE node_id = ? AND name = ?`, nodeID, name).Scan(&id, &have)
 	if err == nil {
+		if have != typ {
+			return "", &models.Error{Code: models.CodeStorageUnavailable,
+				Message: fmt.Sprintf("the pool %s is recorded as a %s pool and configured as a %s pool; a name cannot move between kinds while disks may be recorded on it", name, have, typ),
+				Details: map[string]any{"pool": name}}
+		}
 		return id, nil
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
@@ -55,7 +78,7 @@ func poolID(ctx context.Context, tx *sql.Tx, nodeID, name string) (string, error
 		return "", err
 	}
 	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO storage_pools (id, node_id, name, type) VALUES (?, ?, ?, 'zfs')`, id, nodeID, name); err != nil {
+		`INSERT INTO storage_pools (id, node_id, name, type) VALUES (?, ?, ?, ?)`, id, nodeID, name, typ); err != nil {
 		return "", fmt.Errorf("database: insert pool: %w", err)
 	}
 	return id, nil
@@ -124,9 +147,13 @@ func insertDisk(ctx context.Context, tx *sql.Tx, vm models.VM, d models.VMDisk, 
 		}
 		return nil
 	}
-	pool, err := poolID(ctx, tx, vm.NodeID, d.Pool)
+	pool, err := poolID(ctx, tx, vm.NodeID, d.Pool, d.PoolType)
 	if err != nil {
 		return err
+	}
+	kind, name := "zvol", VolumeName(datasetRoot, vm.ID, d.Slot)
+	if d.PoolType == PoolTypeDirectory {
+		kind, name = "file", FileName(datasetRoot, vm.ID, d.Slot)
 	}
 	volumeID, err := ids.NewUUID()
 	if err != nil {
@@ -135,9 +162,9 @@ func insertDisk(ctx context.Context, tx *sql.Tx, vm models.VM, d models.VMDisk, 
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO storage_volumes (id, pool_id, name, kind, desired_size_bytes, desired_thin,
 			desired_volblocksize, created_at, updated_at)
-		VALUES (?, ?, ?, 'zvol', ?, ?, ?, ?, ?)`,
-		volumeID, pool, VolumeName(datasetRoot, vm.ID, d.Slot), d.SizeBytes, boolInt(d.Thin),
-		d.VolBlockSize, now, now); err != nil {
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		volumeID, pool, name, kind, d.SizeBytes, boolInt(d.Thin),
+		nullInt(d.VolBlockSize), now, now); err != nil {
 		return fmt.Errorf("database: insert volume: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, `
@@ -222,7 +249,7 @@ func attach(ctx context.Context, q queryer, vms []models.VM) error {
 
 	rows, err := q.QueryContext(ctx, `
 		SELECT d.vm_id, d.id, d.slot, d.bus, d.read_only, COALESCE(d.size_bytes, 0), COALESCE(d.media_name, ''),
-			COALESCE(p.name, ''), COALESCE(v.name, ''), COALESCE(v.desired_thin, 0), COALESCE(v.desired_volblocksize, 0)
+			COALESCE(p.name, ''), COALESCE(p.type, ''), COALESCE(v.name, ''), COALESCE(v.desired_thin, 0), COALESCE(v.desired_volblocksize, 0)
 		FROM vm_disks d
 		LEFT JOIN storage_volumes v ON v.id = d.storage_volume_id
 		LEFT JOIN storage_pools p ON p.id = v.pool_id
@@ -237,12 +264,16 @@ func attach(ctx context.Context, q queryer, vms []models.VM) error {
 			readOnly, thin int
 		)
 		if err := rows.Scan(&vmID, &d.ID, &d.Slot, &d.Bus, &readOnly, &d.SizeBytes, &d.Media,
-			&d.Pool, &volume, &thin, &d.VolBlockSize); err != nil {
+			&d.Pool, &d.PoolType, &volume, &thin, &d.VolBlockSize); err != nil {
 			rows.Close()
 			return fmt.Errorf("database: read disks: %w", err)
 		}
 		d.ReadOnly, d.Thin = readOnly == 1, thin == 1
-		if volume != "" {
+		switch {
+		case volume == "":
+		case d.PoolType == PoolTypeDirectory:
+			d.File = volume
+		default:
 			d.Dataset = d.Pool + "/" + volume
 		}
 		index[vmID].Disks = append(index[vmID].Disks, d)
@@ -563,7 +594,7 @@ func (s *VMStore) SaveVolumes(ctx context.Context, nodeID string, list []VolumeO
 func (s *VMStore) SavePools(ctx context.Context, nodeID string, pools []models.StoragePool, at time.Time) error {
 	return s.inTx(ctx, func(tx *sql.Tx) error {
 		for _, p := range pools {
-			id, err := poolID(ctx, tx, nodeID, p.Name)
+			id, err := poolID(ctx, tx, nodeID, p.Name, p.Type)
 			if err != nil {
 				return err
 			}
@@ -648,4 +679,12 @@ func (s *VMStore) RemoveDisk(ctx context.Context, vmID, diskID string, at time.T
 		_, err = tx.ExecContext(ctx, `UPDATE virtual_machines SET updated_at = ? WHERE id = ?`, formatTime(at), vmID)
 		return err
 	})
+}
+
+// nullInt stores zero as NULL.
+func nullInt(n int) any {
+	if n == 0 {
+		return nil
+	}
+	return n
 }

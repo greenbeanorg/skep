@@ -87,7 +87,7 @@ export function CreateVMDialog({ onClose, onCreated }: { onClose: () => void; on
       <form onSubmit={submit} className="space-y-4" noValidate>
         {pools.data && poolNames.length === 0 ? (
           <Notice tone="warn" title="No storage pool is allowed">
-            The agent's configuration lists no pool in storage.pools, so no VM can be created on this host.
+            The agent's configuration lists no pool in storage.pools or storage.directories, so no VM can be created on this host.
           </Notice>
         ) : null}
         <div className="space-y-1.5">
@@ -116,13 +116,18 @@ export function CreateVMDialog({ onClose, onCreated }: { onClose: () => void; on
           <div className="space-y-1.5">
             <Label htmlFor="vm-pool">Pool</Label>
             <Select id="vm-pool" value={chosenPool} onChange={(e) => setPool(e.target.value)} disabled={busy || poolNames.length === 0}>
-              {poolNames.map((p) => (
-                <option key={p} value={p}>
-                  {p}
+              {(pools.data?.items ?? []).map((p) => (
+                <option key={p.name} value={p.name}>
+                  {p.type === "directory" ? `${p.name} (directory)` : p.name}
                 </option>
               ))}
             </Select>
-            {poolInfo ? <FieldText>{formatBytes(poolInfo.available_bytes)} available</FieldText> : null}
+            {poolInfo ? (
+              <FieldText>
+                {formatBytes(poolInfo.available_bytes)} available
+                {poolInfo.type === "directory" ? ". A directory pool has no snapshots or clones." : ""}
+              </FieldText>
+            ) : null}
           </div>
         </div>
         <label className="flex items-start gap-2 text-sm">

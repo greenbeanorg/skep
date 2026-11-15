@@ -735,7 +735,9 @@ export interface paths {
          *     removed automatically (ADR 0010 decision 1). Encryption,
          *     compression, and key status are what the operator set and Skep
          *     inherits (decision 5). A pool that cannot be read is named in
-         *     `unavailable_pools` instead of failing the list.
+         *     `unavailable_pools` instead of failing the list. Directory pools
+         *     have no datasets and are not listed; naming one in `pool` is
+         *     `storage_feature_unsupported`.
          */
         get: operations["listStorageDatasets"];
         put?: never;
@@ -800,10 +802,18 @@ export interface components {
             /** Format: int64 */
             size_bytes?: number;
             pool?: string;
+            /** @enum {string} */
+            pool_type?: "zfs" | "directory";
             thin?: boolean;
+            /** @description The zvol's block size; absent in a directory pool. */
             volblocksize?: number;
-            /** @description The zvol, `<pool>/skep/vm/<vm-id>/disk<slot>`. */
+            /** @description The zvol, `<pool>/skep/vm/<vm-id>/disk<slot>`, in a ZFS pool. */
             dataset?: string;
+            /**
+             * @description The disk's file in a directory pool, relative to the pool's
+             *     directory: `skep/vm/<vm-id>/disk<slot>.img`.
+             */
+            file?: string;
             /** @description The ISO file name, for install media (`ahci-cd`). */
             media?: string;
         };
@@ -901,14 +911,22 @@ export interface components {
             /** @description Allow removing a disk that snapshots contain, destroying each of them whole. */
             destroy_snapshots?: boolean;
         };
-        /** @description A zvol-backed disk (pool and size) or install media (media, bus ahci-cd). */
+        /**
+         * @description A disk on a pool (pool and size) or install media (media, bus
+         *     ahci-cd). In a ZFS pool the disk is a zvol; in a directory pool it
+         *     is a raw file, created sparse, or written with zeros when `thin`
+         *     is false so its blocks are allocated (on a ZFS file system with
+         *     compression, zeros take little space whatever is written).
+         */
         VMDiskSpec: {
             /** @enum {string} */
             bus?: "virtio-blk" | "nvme" | "ahci-hd" | "ahci-cd";
             size?: components["schemas"]["ByteSize"];
+            /** @description An allow-listed ZFS pool or directory pool. */
             pool?: string;
             thin?: boolean;
             media?: string;
+            /** @description ZFS pools only; refused for a directory pool. */
             volblocksize?: components["schemas"]["ByteSize"];
         };
         VMDiskResize: {
@@ -972,9 +990,28 @@ export interface components {
             vm: components["schemas"]["VM"];
             task: components["schemas"]["Task"];
         };
+        /**
+         * @description An allow-listed pool: a ZFS pool (`storage.pools`) or a directory
+         *     pool (`storage.directories`, ADR 0010 decision 6), whose disks are
+         *     sparse raw files. A usable directory pool reports health `ONLINE`
+         *     and the sizes of its file system; one that cannot be used
+         *     (missing, a symbolic link, not `root` 0700, not on local UFS or
+         *     ZFS) reports `UNAVAILABLE` with the reason in `error`.
+         */
         StoragePool: {
             name: string;
-            type: string;
+            /** @enum {string} */
+            type: "zfs" | "directory";
+            /**
+             * @description What the pool's kind can do. A directory pool has none of
+             *     these; snapshots and clones of a VM with a disk in one are
+             *     refused with `storage_feature_unsupported`, never emulated.
+             */
+            capabilities: {
+                snapshots: boolean;
+                clones: boolean;
+                quotas: boolean;
+            };
             health: string;
             error?: string;
             /** Format: int64 */

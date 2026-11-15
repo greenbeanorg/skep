@@ -337,8 +337,13 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 // confinement builds what Skep may touch on this host from the agent's
 // configuration, and from nothing else.
 func confinement(cfg config.Config) hostops.Confinement {
+	dirs := make([]hostops.DirPool, 0, len(cfg.Storage.Directories))
+	for _, d := range cfg.Storage.Directories {
+		dirs = append(dirs, hostops.DirPool{Name: d.Name, Path: d.Path})
+	}
 	return hostops.Confinement{
 		Pools:                cfg.Storage.Pools,
+		Directories:          dirs,
 		DatasetRoot:          cfg.Storage.DatasetRoot,
 		MediaDir:             cfg.Storage.MediaDir,
 		Bridges:              cfg.Network.Bridges,

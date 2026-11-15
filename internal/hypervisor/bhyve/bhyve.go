@@ -1,5 +1,6 @@
 // Package bhyve is the bhyve adapter of the hypervisor interface: UEFI
-// guests with zvol-backed disks (ADR 0009). Everything it does on the host
+// guests with disks on zvols or, in a directory pool, in files (ADR 0009,
+// ADR 0010 decision 6). Everything it does on the host
 // goes through internal/hostops.
 package bhyve
 
@@ -131,8 +132,16 @@ func (a *Adapter) Validate(ctx context.Context, vm models.VM) ([]string, error) 
 		if d.Bus == models.BusAHCICD {
 			continue
 		}
-		if err := a.host.Conf.CheckPool(d.Pool); err != nil {
+		kind, err := a.host.Conf.PoolKind(d.Pool)
+		if err != nil {
 			return nil, err
+		}
+		// A disk recorded in a pool of one kind is never looked for in a
+		// pool of the other that took its name.
+		if d.PoolType != "" && d.PoolType != kind {
+			return nil, &models.Error{Code: models.CodeStorageUnavailable,
+				Message: fmt.Sprintf("the disk in slot %d was made in the %s pool %s, which is now configured as a %s pool", d.Slot, d.PoolType, d.Pool, kind),
+				Details: map[string]any{"pool": d.Pool, "slot": d.Slot}}
 		}
 	}
 	if vm.Provisioned {
@@ -164,7 +173,7 @@ func (a *Adapter) checkSpace(ctx context.Context, vm models.VM) ([]string, error
 	}
 	var warnings []string
 	for _, name := range order {
-		pool, err := a.host.ZFS.Pool(ctx, name)
+		pool, err := a.host.Disks().Pool(ctx, name)
 		if err != nil {
 			return nil, err
 		}
@@ -207,8 +216,9 @@ func pools(vm models.VM) []string {
 	return out
 }
 
-// Create implements hypervisor.Hypervisor: one dataset per VM and pool,
-// one zvol per disk, and the persistent directory with the VM's copy of
+// Create implements hypervisor.Hypervisor: one dataset (or, in a
+// directory pool, one directory) per VM and pool, one zvol (or file) per
+// disk, and the persistent directory with the VM's copy of
 // the UEFI variable store.
 func (a *Adapter) Create(ctx context.Context, vm models.VM) (hypervisor.Provisioned, error) {
 	var made hypervisor.Provisioned
@@ -216,7 +226,7 @@ func (a *Adapter) Create(ctx context.Context, vm models.VM) (hypervisor.Provisio
 		if err := ctx.Err(); err != nil {
 			return made, err
 		}
-		ds, err := a.host.ZFS.CreateVMDataset(ctx, pool, vm.ID)
+		ds, err := a.host.Disks().PrepareVM(ctx, pool, vm.ID)
 		if err != nil {
 			return made, err
 		}
@@ -229,7 +239,7 @@ func (a *Adapter) Create(ctx context.Context, vm models.VM) (hypervisor.Provisio
 		if err := ctx.Err(); err != nil {
 			return made, err
 		}
-		ds, err := a.host.ZFS.CreateVolume(ctx, hostops.VolumeSpec{
+		ds, err := a.host.Disks().Create(ctx, hostops.VolumeSpec{
 			Pool: d.Pool, VMID: vm.ID, DiskID: d.ID, Slot: d.Slot,
 			SizeBytes: d.SizeBytes, BlockSize: d.VolBlockSize, Thin: d.Thin,
 		})
@@ -267,7 +277,7 @@ func (a *Adapter) Delete(ctx context.Context, vm models.VM) (hypervisor.Removed,
 	for _, pool := range pools(vm) {
 		// A pool taken off the allow-list after the VM was made is no
 		// longer Skep's to touch: say so instead of destroying.
-		destroyed, err := a.host.ZFS.DestroyVM(ctx, pool, vm.ID)
+		destroyed, err := a.host.Disks().DestroyVM(ctx, pool, vm.ID)
 		if err != nil {
 			var me *models.Error
 			if errors.As(err, &me) {

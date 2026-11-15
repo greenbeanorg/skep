@@ -871,3 +871,53 @@ something the text left open, or departs from it.
   create-time check (which skips provisioned VMs): only the new
   reservations count, that is full-reservation disks added and the growth
   of full-reservation disks.
+
+### Step 4: directory pools
+
+- **`storage.directories` is a list of `{"name", "path"}`**, not of bare
+  paths: a disk names its pool in a request as it names a ZFS pool, so a
+  directory pool needs a name, and names are one namespace with
+  `storage.pools` (a repeat is refused at load, as are relative, unclean,
+  duplicate, and nested paths). The checks of the directory itself (not
+  a symbolic link, `root`, mode `0700`, `statfs` type `ufs` or `zfs`) run
+  on every use, not at load, so a pool that goes missing reports
+  `storage_unavailable` with the reason instead of stopping the agent.
+  The file system types are an allow-list (`ufs`, `zfs`) rather than a
+  deny-list of `nfs` and `tmpfs`.
+- **Every file operation goes through `os.Root`** (Go 1.24+, standard
+  library) opened on the pool's directory, so no derived name can resolve
+  outside it, even through a planted link; disk files are also opened
+  with `O_NOFOLLOW` and checked with `lstat` as regular files. No new
+  dependency.
+- **One router, `hostops.Disks`**, sends create, grow, remove, delete,
+  listing, and pool reads to ZFS or to the directory implementation by the
+  pool's kind; the bhyve adapter and the VM service use it. Snapshots,
+  rollback, and clones stay ZFS calls; the service refuses them first
+  with `storage_feature_unsupported` for a VM with a disk in a directory
+  pool (a VM with disks in both kinds was already refused as multi-pool).
+  `GET /storage/datasets?pool=<directory pool>` is refused the same way;
+  the inventory is of ZFS datasets.
+- **A file disk has no ownership marker.** A zvol carries `skep:vm_id`
+  and `skep:disk_id`; extended attributes could do the same for a file,
+  but the path is already derived from the VM's ID inside a directory
+  only root can open, so the path is the ownership. A VM's directory is
+  removed only when it holds nothing but `disk<N>.img` regular files;
+  anything else fails the delete and is left in place.
+- **The database records the pool's kind.** `storage_pools.type` (already
+  allowing `directory`) is set from the configuration, and a volume in a
+  directory pool is `kind = 'file'` named `<root>/vm/<id>/disk<slot>.img`
+  relative to the pool, with no `desired_volblocksize`. A pool name whose
+  row has the other type is refused (`storage_unavailable`), and so is a
+  VM disk recorded in one kind whose pool name is now configured as the
+  other: a disk is never looked for in the wrong place. A disk shows
+  `pool_type` and, in a directory pool, `file` instead of `dataset`;
+  `GET /storage/pools` shows `type` and `capabilities`. No migration was
+  needed.
+- **Preallocation and its limits.** A disk that is not thin is checked
+  against `statfs` available space, then written with zeros in 1 MiB
+  chunks, checking cancellation between chunks; a failed or cancelled
+  create removes the file, and a failed growth truncates it back to its
+  old size. On a ZFS file system with compression the zeros are not
+  stored, so the space is not truly held; this is documented, not worked
+  around. `volblocksize` is refused for a directory pool rather than
+  ignored.

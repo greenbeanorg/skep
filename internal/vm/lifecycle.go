@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/greenbeanorg/skep/internal/database"
@@ -51,6 +52,9 @@ func (s *Service) CreateVM(ctx context.Context, req models.VMCreate, sub Submiss
 
 	vm, err := normalizeCreate(req)
 	if err != nil {
+		return models.VMCreated{}, s.refuse(ctx, refused, err)
+	}
+	if err := s.poolTypes(vm.Disks, req.Disks, "disks"); err != nil {
 		return models.VMCreated{}, s.refuse(ctx, refused, err)
 	}
 	if vm.Engine != s.hv.Engine() {
@@ -235,6 +239,15 @@ func (s *Service) undoCreate(vm models.VM) {
 func (s *Service) saveVolumes(ctx context.Context, datasets []hostops.Dataset) error {
 	var list []database.VolumeObservation
 	for _, d := range datasets {
+		if d.Type == hostops.TypeFile {
+			for _, p := range s.host.Conf.Directories {
+				if rel, ok := strings.CutPrefix(d.Name, p.Path+"/"); ok {
+					list = append(list, database.VolumeObservation{Pool: p.Name, Name: rel,
+						VolSizeBytes: d.VolSizeBytes, UsedBytes: d.UsedBytes, ReferencedBytes: d.ReferencedBytes})
+				}
+			}
+			continue
+		}
 		if d.Type != "volume" {
 			continue
 		}
@@ -288,6 +301,16 @@ func (s *Service) checkUpdate(ctx context.Context, id string, upd models.VMUpdat
 	next, changed, plan, err := applyUpdate(vm, upd)
 	if err != nil {
 		return models.VM{}, nil, diskWork{}, err
+	}
+	if err := s.poolTypes(plan.Add, upd.AddDisks, "add_disks"); err != nil {
+		return models.VM{}, nil, diskWork{}, err
+	}
+	for _, d := range plan.Add {
+		for i := range next.Disks {
+			if next.Disks[i].Slot == d.Slot {
+				next.Disks[i] = d
+			}
+		}
 	}
 	if _, err := s.hv.Validate(ctx, next); err != nil {
 		return models.VM{}, nil, diskWork{}, err

@@ -46,6 +46,9 @@ func (s *Service) checkDisks(ctx context.Context, vm models.VM, plan diskPlan, d
 	containing := map[string]bool{}
 	var foreign []string
 	for _, pool := range diskPools(vm) {
+		if s.host.Conf.IsDirectory(pool) {
+			continue // a directory pool has no snapshots
+		}
 		found, err := s.host.ZFS.Snapshots(ctx, pool, vmOwner(vm.ID))
 		if err != nil {
 			return work, err
@@ -126,7 +129,7 @@ func (s *Service) checkDiskSpace(ctx context.Context, plan diskPlan) error {
 		pools[p] = true
 	}
 	for name := range pools {
-		pool, err := s.host.ZFS.Pool(ctx, name)
+		pool, err := s.host.Disks().Pool(ctx, name)
 		if err != nil {
 			return err
 		}
@@ -157,6 +160,9 @@ func (s *Service) applyDisks(ctx context.Context, vm models.VM, work diskWork, r
 	for _, snap := range work.destroy {
 		report.Progress("destroying a snapshot that contains a removed disk", map[string]any{"snapshot_id": snap.ID})
 		for _, pool := range diskPools(vm) {
+			if s.host.Conf.IsDirectory(pool) {
+				continue
+			}
 			gone, err := s.host.ZFS.DestroySnapshot(ctx, pool, vmOwner(vm.ID), snap.ID)
 			if errors.Is(err, models.ErrNotFound) {
 				continue
@@ -175,7 +181,7 @@ func (s *Service) applyDisks(ctx context.Context, vm models.VM, work diskWork, r
 	at := s.now().UTC()
 	for _, d := range plan.Remove {
 		report.Progress("destroying a removed disk", map[string]any{"slot": d.Slot})
-		gone, err := s.host.ZFS.DestroyVolume(ctx, hostops.VolumeSpec{Pool: d.Pool, VMID: vm.ID, DiskID: d.ID, Slot: d.Slot})
+		gone, err := s.host.Disks().Destroy(ctx, hostops.VolumeSpec{Pool: d.Pool, VMID: vm.ID, DiskID: d.ID, Slot: d.Slot})
 		if err != nil {
 			return err
 		}
@@ -186,8 +192,8 @@ func (s *Service) applyDisks(ctx context.Context, vm models.VM, work diskWork, r
 	}
 	for _, g := range plan.Grow {
 		report.Progress("growing a disk", map[string]any{"slot": g.Disk.Slot, "size_bytes": g.NewBytes})
-		grown, err := s.host.ZFS.ResizeVolume(ctx, hostops.VolumeSpec{Pool: g.Disk.Pool, VMID: vm.ID, DiskID: g.Disk.ID,
-			Slot: g.Disk.Slot, SizeBytes: g.NewBytes})
+		grown, err := s.host.Disks().Resize(ctx, hostops.VolumeSpec{Pool: g.Disk.Pool, VMID: vm.ID, DiskID: g.Disk.ID,
+			Slot: g.Disk.Slot, SizeBytes: g.NewBytes, Thin: g.Disk.Thin})
 		if err != nil {
 			return err
 		}
@@ -206,10 +212,10 @@ func (s *Service) applyDisks(ctx context.Context, vm models.VM, work diskWork, r
 		if d.ID, err = ids.NewUUID(); err != nil {
 			return err
 		}
-		if _, err := s.host.ZFS.CreateVMDataset(ctx, d.Pool, vm.ID); err != nil {
+		if _, err := s.host.Disks().PrepareVM(ctx, d.Pool, vm.ID); err != nil {
 			return err
 		}
-		made, err := s.host.ZFS.CreateVolume(ctx, hostops.VolumeSpec{Pool: d.Pool, VMID: vm.ID, DiskID: d.ID, Slot: d.Slot,
+		made, err := s.host.Disks().Create(ctx, hostops.VolumeSpec{Pool: d.Pool, VMID: vm.ID, DiskID: d.ID, Slot: d.Slot,
 			SizeBytes: d.SizeBytes, BlockSize: d.VolBlockSize, Thin: d.Thin})
 		if err != nil {
 			return err

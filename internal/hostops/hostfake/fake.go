@@ -59,12 +59,18 @@ type Fake struct {
 	BridgeMembers  map[string][]string
 	// FailCreateVolume makes the next CreateVolume calls fail.
 	FailCreateVolume error
+	// UnusableDirs maps a directory pool to why it cannot be used.
+	UnusableDirs map[string]string
 
 	// IgnoreACPI lists the VMs whose guest ignores the ACPI power
 	// button, as an installer menu does.
 	IgnoreACPI map[string]bool
 
 	datasets map[string]hostops.Dataset
+	// diskFiles and dirs are the simulated disk files and VM directories
+	// of the directory pools, by path.
+	diskFiles map[string]hostops.Dataset
+	dirs      map[string]bool
 	// snaps holds the snapshots by full name; txg orders them.
 	snaps     map[string]hostops.Dataset
 	txg       int64
@@ -120,6 +126,9 @@ func New(conf hostops.Confinement, opts Options) *Fake {
 		MissingBridges: map[string]bool{},
 		BridgeMembers:  map[string][]string{},
 		datasets:       map[string]hostops.Dataset{},
+		diskFiles:      map[string]hostops.Dataset{},
+		dirs:           map[string]bool{},
+		UnusableDirs:   map[string]string{},
 		snaps:          map[string]hostops.Dataset{},
 		instances:      map[string]bool{},
 	}
@@ -127,7 +136,7 @@ func New(conf hostops.Confinement, opts Options) *Fake {
 
 // Ops returns the fake as the hostops surface.
 func (f *Fake) Ops() hostops.Ops {
-	return hostops.Ops{Conf: f.conf, ZFS: f, Net: f, VMM: f, Files: fakeFiles{Files: f.files, f: f}, Procs: f}
+	return hostops.Ops{Conf: f.conf, ZFS: f, Dirs: fakeDirs{f}, Net: f, VMM: f, Files: fakeFiles{Files: f.files, f: f}, Procs: f}
 }
 
 // Calls returns what was called so far, one line per mutating call.

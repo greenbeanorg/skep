@@ -174,7 +174,7 @@ func (s *Service) VM(ctx context.Context, id string) (models.VM, error) {
 // StoragePools reports the allow-listed pools as they are now, and
 // records what it saw.
 func (s *Service) StoragePools(ctx context.Context) (models.StoragePoolList, error) {
-	pools, err := s.host.ZFS.Pools(ctx)
+	pools, err := s.host.Disks().Pools(ctx)
 	if err != nil {
 		return models.StoragePoolList{}, err
 	}
@@ -182,7 +182,7 @@ func (s *Service) StoragePools(ctx context.Context) (models.StoragePoolList, err
 	list := models.StoragePoolList{Items: make([]models.StoragePool, 0, len(pools))}
 	for _, p := range pools {
 		sp := models.StoragePool{
-			Name: p.Name, Type: "zfs", Health: p.Health, Error: p.Error,
+			Name: p.Name, Type: p.Kind, Capabilities: models.PoolCapabilities(p.Kind), Health: p.Health, Error: p.Error,
 			SizeBytes: p.SizeBytes, AllocatedBytes: p.AllocatedBytes, FreeBytes: p.FreeBytes,
 			AvailableBytes: p.AvailableBytes, ObservedAt: &at,
 		}

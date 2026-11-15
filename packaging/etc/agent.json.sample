@@ -39,6 +39,7 @@
   },
   "storage": {
     "pools": [],
+    "directories": [],
     "dataset_root": "skep",
     "media_dir": "/var/db/skep/media"
   },

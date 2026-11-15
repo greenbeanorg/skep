@@ -65,6 +65,11 @@ func (s *Service) Datasets(ctx context.Context, opts models.DatasetListOptions) 
 	}
 	pools := s.host.Conf.Pools
 	if opts.Pool != "" {
+		if s.host.Conf.IsDirectory(opts.Pool) {
+			return models.DatasetList{}, &models.Error{Code: models.CodeStorageFeatureUnsupported,
+				Message: "the inventory lists ZFS datasets; " + opts.Pool + " is a directory pool, whose disk files are listed with their VMs",
+				Details: map[string]any{"pool": opts.Pool, "pool_type": hostops.PoolKindDirectory}}
+		}
 		if err := s.host.Conf.CheckPool(opts.Pool); err != nil {
 			return models.DatasetList{}, err
 		}

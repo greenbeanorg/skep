@@ -34,6 +34,7 @@ import (
 type Ops struct {
 	Conf  Confinement
 	ZFS   ZFS
+	Dirs  Dirs
 	Net   Net
 	VMM   VMM
 	Files Files
@@ -102,6 +103,8 @@ type ZFS interface {
 // Pool is one allow-listed pool as observed.
 type Pool struct {
 	Name string
+	// Kind is PoolKindZFS or PoolKindDirectory.
+	Kind string
 	// Health is what zpool(8) reports; empty when Error is set.
 	Health string
 	// Error says why the pool cannot be used. Empty when it can.
@@ -131,7 +134,8 @@ type VolumeSpec struct {
 // Dataset is a filesystem or volume as zfs(8) lists it.
 type Dataset struct {
 	Name string
-	// Type is "filesystem" or "volume".
+	// Type is "filesystem", "volume", or "snapshot"; for a directory
+	// pool, "directory" or "file" (TypeFile), with Name the full path.
 	Type            string
 	VolSizeBytes    int64
 	UsedBytes       int64

@@ -70,6 +70,21 @@ type StorageConfig struct {
 	// MaxSnapshotsPerResource bounds the snapshots of one VM or jail
 	// (ADR 0010 decision 2d). 0 means the default, 64.
 	MaxSnapshotsPerResource int `json:"max_snapshots_per_resource"`
+	// Directories is the allow-list of directory pools (ADR 0010
+	// decision 6): storage for hosts without ZFS. Their names share one
+	// namespace with Pools.
+	Directories []DirectoryPool `json:"directories"`
+}
+
+// DirectoryPool is one allow-listed directory that holds VM disks as
+// files. The directory must exist, be owned by root with mode 0700, and
+// be on a local UFS or ZFS file system; the agent checks that each time
+// it uses it, not at load.
+type DirectoryPool struct {
+	// Name is how requests refer to the pool, as they name a ZFS pool.
+	Name string `json:"name"`
+	// Path is the absolute, clean path of the directory.
+	Path string `json:"path"`
 }
 
 // NetworkConfig says which network interfaces Skep may use.
@@ -118,6 +133,9 @@ func (c *Config) applyConfinementDefaults() {
 	if c.Storage.Pools == nil {
 		c.Storage.Pools = []string{}
 	}
+	if c.Storage.Directories == nil {
+		c.Storage.Directories = []DirectoryPool{}
+	}
 	if c.Storage.MaxSnapshotsPerResource == 0 {
 		c.Storage.MaxSnapshotsPerResource = DefaultMaxSnapshotsPerResource
 	}
@@ -156,6 +174,28 @@ func (c Config) validateConfinement() []error {
 			add("storage.pools: %q is listed twice", p)
 		}
 		seen[p] = true
+	}
+	paths := map[string]bool{}
+	for _, d := range c.Storage.Directories {
+		switch {
+		case !poolNameRE.MatchString(d.Name):
+			add("storage.directories: %q is not a pool name", d.Name)
+		case seen[d.Name]:
+			add("storage.directories: the name %q is already used by another pool", d.Name)
+		case !filepath.IsAbs(d.Path) || filepath.Clean(d.Path) != d.Path || d.Path == "/":
+			add("storage.directories: the path %q of %q must be an absolute, clean path other than /", d.Path, d.Name)
+		case paths[d.Path]:
+			add("storage.directories: the path %q is listed twice", d.Path)
+		}
+		seen[d.Name] = true
+		paths[d.Path] = true
+	}
+	for i, a := range c.Storage.Directories {
+		for j, b := range c.Storage.Directories {
+			if i != j && a.Path != b.Path && strings.HasPrefix(b.Path, a.Path+"/") {
+				add("storage.directories: the path of %q is inside the path of %q", b.Name, a.Name)
+			}
+		}
 	}
 	for _, part := range strings.Split(c.Storage.DatasetRoot, "/") {
 		if !datasetComponentRE.MatchString(part) {

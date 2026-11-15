@@ -214,6 +214,7 @@ file, environment variables, command-line flags.
 | CPUs per VM | `hypervisor.bhyve.max_vcpus_per_vm` | | | `0`: the lower of the host's CPUs and `hw.vmm.maxcpu` |
 | VM watch interval | `hypervisor.bhyve.watch_interval` | | | `2s` |
 | Pools VMs may use | `storage.pools` | | | none: no VM can be created |
+| Directory pools VMs may use | `storage.directories` | | | none; each is `{"name", "path"}`, the path `root` `0700` on local UFS or ZFS |
 | Dataset root | `storage.dataset_root` | | | `skep`: everything under `<pool>/skep` |
 | Install media directory | `storage.media_dir` | | | `<data_dir>/media` |
 | Bridges NICs may join | `network.bridges` | | | none: no VM can have a NIC |
