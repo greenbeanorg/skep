@@ -32,6 +32,8 @@ func (f *fakeStatter) StatDir(path string) (DirStat, error) {
 	}
 	st := f.st
 	st.Mode = fi.Mode().Type() | f.st.Mode.Perm()
+	id, _ := fileIdentity(fi)
+	st.Dev, st.Ino = id.Dev, id.Ino
 	return st, nil
 }
 
@@ -304,3 +306,37 @@ func TestDiskPath(t *testing.T) {
 		t.Error("IsDirectory")
 	}
 }
+
+// TestDirPoolSwappedPath: a pool path replaced by a link to another
+// directory between the check and the open is refused, even when the
+// link's target would pass the checks.
+func TestDirPoolSwappedPath(t *testing.T) {
+	ctx := context.Background()
+	d, stat, dir := testDirs(t)
+	other := filepath.Join(t.TempDir(), "other")
+	if err := os.Mkdir(other, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// The statter reports the original directory; the path now leads
+	// elsewhere.
+	orig, err := stat.StatDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(dir, dir+".moved"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(other, dir); err != nil {
+		t.Fatal(err)
+	}
+	d.stat = fixedStat{orig}
+	_, err = d.CreateVMDir(ctx, "dirpool", testVM)
+	wantCode(t, err, models.CodeStorageUnavailable)
+	if entries, _ := os.ReadDir(other); len(entries) != 0 {
+		t.Errorf("something was created in the other directory: %v", entries)
+	}
+}
+
+type fixedStat struct{ st DirStat }
+
+func (f fixedStat) StatDir(string) (DirStat, error) { return f.st, nil }

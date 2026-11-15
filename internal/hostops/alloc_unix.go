@@ -15,3 +15,18 @@ func allocatedBytes(fi fs.FileInfo) int64 {
 	}
 	return fi.Size()
 }
+
+// identity is who owns a file and which file it is.
+type identity struct {
+	Dev, Ino uint64
+	UID      uint32
+}
+
+// fileIdentity reads a file's device, inode, and owner.
+func fileIdentity(fi fs.FileInfo) (identity, bool) {
+	st, ok := fi.Sys().(*syscall.Stat_t)
+	if !ok {
+		return identity{}, false
+	}
+	return identity{Dev: uint64(st.Dev), Ino: uint64(st.Ino), UID: st.Uid}, true
+}

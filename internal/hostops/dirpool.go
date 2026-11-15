@@ -63,8 +63,12 @@ type Dirs interface {
 type DirStat struct {
 	// Mode has the type bits of lstat(2): a symbolic link is not a
 	// directory.
-	Mode   fs.FileMode
-	UID    uint32
+	Mode fs.FileMode
+	UID  uint32
+	// Dev and Ino identify the directory, so the one opened can be
+	// compared with the one checked.
+	Dev    uint64
+	Ino    uint64
 	FSType string
 	// Sizes of the file system: total, free, and available to a
 	// non-root user (what a new file can count on).
@@ -180,6 +184,25 @@ func (d *dirs) open(p DirPool) (*os.Root, DirStat, error) {
 	}
 	root, err := os.OpenRoot(p.Path)
 	if err != nil {
+		return nil, st, unavailable(p.Name, err.Error())
+	}
+	// OpenRoot follows a symbolic link, so the path could have been
+	// swapped since it was checked by whoever can write its parent. The
+	// directory opened must be the one checked (same device and inode,
+	// whose owner only root can change), and still mode 0700.
+	fi, err := root.Stat(".")
+	if err == nil {
+		id, ok := fileIdentity(fi)
+		switch {
+		case !ok || id.Dev != st.Dev || id.Ino != st.Ino:
+			err = errors.New(p.Path + " changed while it was being opened")
+		case fi.Mode().Perm()&0o077 != 0 || !fi.IsDir():
+			// The owner was checked on this inode; only root changes it.
+			err = errors.New(p.Path + " is no longer a directory with mode 0700")
+		}
+	}
+	if err != nil {
+		root.Close()
 		return nil, st, unavailable(p.Name, err.Error())
 	}
 	return root, st, nil

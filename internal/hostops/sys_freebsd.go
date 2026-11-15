@@ -92,11 +92,11 @@ func (kernel) StatDir(path string) (DirStat, error) {
 		return DirStat{}, err
 	}
 	st := DirStat{Mode: fi.Mode()}
-	if sys, ok := fi.Sys().(*syscall.Stat_t); ok {
-		st.UID = sys.Uid
-	} else {
+	id, ok := fileIdentity(fi)
+	if !ok {
 		return DirStat{}, fmt.Errorf("lstat %s: no owner", path)
 	}
+	st.UID, st.Dev, st.Ino = id.UID, id.Dev, id.Ino
 	if !fi.IsDir() {
 		return st, nil
 	}
