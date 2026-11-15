@@ -48,3 +48,29 @@ func TestStorageDatasetsThroughTheSocket(t *testing.T) {
 		t.Errorf("limit=0: %d", resp.StatusCode)
 	}
 }
+
+type fakeMetrics struct{}
+
+func (fakeMetrics) Metrics(context.Context) (models.Metrics, error) {
+	return models.Metrics{NodeID: "node-1", CapacityWarnPercent: 80, CapacityFailPercent: 90,
+		Pools: []models.PoolMetrics{{Name: "skeptest", Type: "zfs", CapacityPercent: 12.5, Capacity: models.CapacityOK}},
+		VMs:   []models.VMMetrics{}}, nil
+}
+
+func TestMetricsThroughTheSocket(t *testing.T) {
+	path := startWith(t, &fakeBackend{}, me(), internalapi.Options{Metrics: fakeMetrics{}})
+	c := newClient(t, path)
+	m, err := c.Metrics(callerCtx())
+	if err != nil || m.NodeID != "node-1" || len(m.Pools) != 1 || m.Pools[0].CapacityPercent != 12.5 {
+		t.Fatalf("metrics = %+v, %v", m, err)
+	}
+	hdr := http.Header{agentproto.HeaderActorID: {"user-1"}, agentproto.HeaderActorName: {"andy"}}
+	if resp, _ := raw(t, path, http.MethodPost, agentproto.Prefix+"/metrics", hdr); resp.StatusCode != http.StatusMethodNotAllowed {
+		t.Errorf("POST = %d", resp.StatusCode)
+	}
+	// Without a sampler the route does not exist.
+	path = startWith(t, &fakeBackend{}, me(), internalapi.Options{})
+	if resp, _ := raw(t, path, http.MethodGet, agentproto.Prefix+"/metrics", hdr); resp.StatusCode != http.StatusNotFound {
+		t.Errorf("no sampler: %d", resp.StatusCode)
+	}
+}

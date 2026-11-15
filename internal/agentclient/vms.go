@@ -94,6 +94,13 @@ func (c *Client) StorageDatasets(ctx context.Context, opts models.DatasetListOpt
 	return list, err
 }
 
+// Metrics returns the node's current resource use (ADR 0010 decision 15).
+func (c *Client) Metrics(ctx context.Context) (models.Metrics, error) {
+	var m models.Metrics
+	err := c.do(ctx, http.MethodGet, "/metrics", nil, nil, &m)
+	return m, err
+}
+
 func snapshotPath(vmID, snapID string) string {
 	p := "/vms/" + url.PathEscape(vmID) + "/snapshots"
 	if snapID != "" {

@@ -500,3 +500,30 @@ func TestRemovingADiskNeedsVMDelete(t *testing.T) {
 		t.Errorf("operator refused: %d", rec.Code)
 	}
 }
+
+// TestMetricsNeedVMAndStorageRead: the metrics name VMs and pools, so a
+// role with system:read alone is refused (ADR 0010 decision 15).
+func TestMetricsNeedVMAndStorageRead(t *testing.T) {
+	e := freshEnv(t)
+	ctx := t.Context()
+	if _, err := e.db.Exec(`INSERT INTO roles (id, name, permissions) VALUES ('sys', 'sys', '["system:read"]')`); err != nil {
+		t.Fatal(err)
+	}
+	u, err := e.users.Create(ctx, auth.Actor{Name: "local:0"}, auth.NewUser{Username: "sys1", Password: testPassword, RoleID: "sys"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := e.authn.Login(ctx, auth.LoginRequest{Username: u.Username, Password: testPassword, Kind: auth.BearerSession, SourceIP: "192.0.2.201"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.tokens["sys"] = res.Token
+	h := e.handler(newBackend(), nil)
+	body := wantError(t, e.serve(h, request{method: http.MethodGet, path: Prefix + "/metrics", role: "sys"}), http.StatusForbidden, auth.CodeForbidden)
+	if body.Details["permission"] != auth.PermVMRead {
+		t.Errorf("details = %v", body.Details)
+	}
+	if rec := e.serve(h, request{method: http.MethodGet, path: Prefix + "/metrics", role: auth.RoleViewer}); rec.Code != http.StatusOK {
+		t.Errorf("viewer: %d %s", rec.Code, rec.Body)
+	}
+}

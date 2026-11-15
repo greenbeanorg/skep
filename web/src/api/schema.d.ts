@@ -38,6 +38,20 @@ export interface paths {
          *     when the previous month is still unsealed 7 days into the new
          *     one. Neither is critical. A check is absent when archiving is
          *     turned off.
+         *
+         *     Two concern storage (ADR 0010 decision 15), both from the agent's
+         *     resource sample (`GET /metrics`, at most a minute old):
+         *     `storage_capacity` is `degraded` when an allow-listed pool or
+         *     directory pool is past `storage.capacity_warn_percent` (default
+         *     80) or `storage.capacity_fail_percent` (default 90) of its space
+         *     in use, or cannot be read; its `error` says which pool, how full,
+         *     and which threshold it passed. `storage_locked` is `degraded` when
+         *     a dataset under a pool's dataset root has its encryption key
+         *     unloaded, naming the datasets. Neither is critical: a full or
+         *     locked pool stops what needs it, not the service. The health
+         *     document has no separate "warning" status, so a pool past either
+         *     threshold reads `degraded`; `GET /metrics` tells `warning` from
+         *     `failing`.
          */
         get: operations["getHealth"];
         put?: never;
@@ -748,6 +762,34 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/metrics": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Current resource use of the node
+         * @description Requires `system:read`, `vm:read`, and `storage:read`: the values
+         *     name pools and VMs. Current values only, with no history (ADR 0010
+         *     decision 15): the space and capacity of every allow-listed pool
+         *     and directory pool against the `storage_capacity` thresholds, the
+         *     datasets whose key is not loaded, each VM's disk use, and, while a
+         *     VM runs, the CPU time and resident memory of its bhyve process.
+         *     The agent samples every 30 seconds; a sample older than a minute
+         *     is replaced before answering. `observed_at` says when the values
+         *     were read. Per-jail values come with jails (phase 7b).
+         */
+        get: operations["getMetrics"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/storage/media": {
         parameters: {
             query?: never;
@@ -1067,6 +1109,73 @@ export interface components {
             keystatus?: string;
             compression?: string;
             compressratio?: string;
+        };
+        Metrics: {
+            node_id: string;
+            /** Format: date-time */
+            observed_at: string;
+            capacity_warn_percent: number;
+            capacity_fail_percent: number;
+            pools: components["schemas"]["PoolMetrics"][];
+            vms: components["schemas"]["VMMetrics"][];
+        };
+        PoolMetrics: {
+            name: string;
+            /** @enum {string} */
+            type: "zfs" | "directory";
+            /** @description What zpool(8) reports, `ONLINE` for a usable directory pool, or `UNAVAILABLE` with `error`. */
+            health: string;
+            error?: string;
+            /** Format: int64 */
+            size_bytes: number;
+            /** Format: int64 */
+            allocated_bytes: number;
+            /** Format: int64 */
+            available_bytes: number;
+            /**
+             * @description The share in use, to one decimal: allocated of size for a ZFS
+             *     pool, as `zpool list` shows it; used of used plus available
+             *     for a directory pool, as df(1) shows it.
+             */
+            capacity_percent: number;
+            /** @enum {string} */
+            capacity: "ok" | "warning" | "failing" | "unavailable";
+            /** @description Datasets under the pool's dataset root whose encryption key is not loaded. */
+            locked_datasets?: string[];
+        };
+        VMMetrics: {
+            /** Format: uuid */
+            id: string;
+            name: string;
+            state: string;
+            /** @description User and system CPU time of the bhyve process, while the VM runs. */
+            cpu_time_seconds?: number;
+            /**
+             * Format: int64
+             * @description Resident set of the bhyve process, while the VM runs.
+             */
+            resident_memory_bytes?: number;
+            /**
+             * Format: int64
+             * @description Space the VM holds in its pools, snapshots included.
+             */
+            disk_used_bytes: number;
+            /**
+             * Format: int64
+             * @description Space the VM's disks reference now.
+             */
+            disk_referenced_bytes: number;
+            disks: components["schemas"]["DiskMetrics"][];
+            /** @description Which values could not be read. */
+            error?: string;
+        };
+        DiskMetrics: {
+            slot: number;
+            pool: string;
+            /** Format: int64 */
+            used_bytes: number;
+            /** Format: int64 */
+            referenced_bytes: number;
         };
         DatasetList: {
             items: components["schemas"]["Dataset"][];
@@ -2813,6 +2922,37 @@ export interface operations {
             403: components["responses"]["Forbidden"];
             409: components["responses"]["VMConflict"];
             422: components["responses"]["VMUnprocessable"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
+    getMetrics: {
+        parameters: {
+            query?: never;
+            header?: {
+                /**
+                 * @description Marks a request the client made by itself (a timer, a refetch on
+                 *     focus). Any non-empty value. The request is authenticated as any
+                 *     other, the idle timeout included, but does not extend the idle
+                 *     timeout.
+                 */
+                "X-Skep-Background"?: components["parameters"]["Background"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The latest sample. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Metrics"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
             503: components["responses"]["Unavailable"];
         };
     };

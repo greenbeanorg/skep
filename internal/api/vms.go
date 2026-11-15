@@ -33,6 +33,8 @@ type VMBackend interface {
 	RollbackSnapshot(ctx context.Context, vmID, id string, req models.SnapshotRollback) (models.Task, error)
 	DeleteSnapshot(ctx context.Context, vmID, id string) (models.Task, error)
 	CloneVM(ctx context.Context, vmID string, req models.VMClone) (models.VMCreated, error)
+
+	Metrics(ctx context.Context) (models.Metrics, error)
 }
 
 // vmRoutes is the VM and storage part of the route table (ADR 0009
@@ -55,6 +57,9 @@ func (h *handler) vmRoutes() []route {
 		{http.MethodGet, "/storage/pools", auth.PermStorageRead, nil, h.listPools},
 		{http.MethodGet, "/storage/datasets", auth.PermStorageRead, nil, h.listDatasets},
 		{http.MethodGet, "/storage/media", auth.PermStorageRead, nil, h.listMedia},
+		// The metrics name VMs and pools, so they need what reading
+		// either needs (ADR 0010 decision 15).
+		{http.MethodGet, "/metrics", auth.PermSystemRead, []string{auth.PermVMRead, auth.PermStorageRead}, h.metrics},
 	}
 }
 
@@ -83,6 +88,9 @@ func (noVMs) StoragePools(context.Context) (models.StoragePoolList, error) {
 }
 func (noVMs) StorageDatasets(context.Context, models.DatasetListOptions) (models.DatasetList, error) {
 	return models.DatasetList{Items: []models.Dataset{}}, nil
+}
+func (noVMs) Metrics(context.Context) (models.Metrics, error) {
+	return models.Metrics{Pools: []models.PoolMetrics{}, VMs: []models.VMMetrics{}}, nil
 }
 func (noVMs) Media(context.Context) (models.MediaList, error) {
 	return models.MediaList{Items: []models.Media{}}, nil
@@ -326,4 +334,14 @@ func (h *handler) listDatasets(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpkit.WriteJSON(w, r, http.StatusOK, list)
+}
+
+// metrics is the node's current resource use (ADR 0010 decision 15).
+func (h *handler) metrics(w http.ResponseWriter, r *http.Request) {
+	m, err := h.vms.Metrics(r.Context())
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	httpkit.WriteJSON(w, r, http.StatusOK, m)
 }

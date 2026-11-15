@@ -51,6 +51,8 @@ type Options struct {
 	Console ConsoleBroker
 	// Storage is the storage service. Nil leaves the inventory route out.
 	Storage StorageBackend
+	// Metrics is the resource sampler. Nil leaves the metrics route out.
+	Metrics MetricsBackend
 	// RequestTimeout bounds the time spent on one request.
 	RequestTimeout time.Duration
 	// Logger defaults to slog.Default().
@@ -64,6 +66,7 @@ type handler struct {
 	vms     VMBackend
 	console ConsoleBroker
 	storage StorageBackend
+	metrics MetricsBackend
 	log     *slog.Logger
 }
 
@@ -75,7 +78,7 @@ func NewHandler(backend Backend, opts Options) http.Handler {
 	if log == nil {
 		log = slog.Default()
 	}
-	h := &handler{backend: backend, vms: opts.VMs, console: opts.Console, storage: opts.Storage, log: log}
+	h := &handler{backend: backend, vms: opts.VMs, console: opts.Console, storage: opts.Storage, metrics: opts.Metrics, log: log}
 
 	mux := http.NewServeMux()
 	mux.Handle(agentproto.Prefix+"/health", httpkit.ReadOnly(h.health))
@@ -89,6 +92,9 @@ func NewHandler(backend Backend, opts Options) http.Handler {
 	}
 	if h.storage != nil {
 		mux.Handle(agentproto.Prefix+"/storage/datasets", httpkit.ReadOnly(h.storageDatasets))
+	}
+	if h.metrics != nil {
+		mux.Handle(agentproto.Prefix+"/metrics", httpkit.ReadOnly(h.nodeMetrics))
 	}
 	mux.HandleFunc("/", httpkit.NotFound)
 

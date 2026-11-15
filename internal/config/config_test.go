@@ -412,6 +412,9 @@ func TestConfinementDefaultsAndValidation(t *testing.T) {
 		cfg.Hypervisor.Bhyve.WatchInterval.Std() != 2*time.Second {
 		t.Errorf("defaults = %+v %+v", cfg.Storage, cfg.Hypervisor.Bhyve)
 	}
+	if cfg.Storage.CapacityWarnPercent != 80 || cfg.Storage.CapacityFailPercent != 90 {
+		t.Errorf("capacity thresholds = %d, %d", cfg.Storage.CapacityWarnPercent, cfg.Storage.CapacityFailPercent)
+	}
 	if cfg.VMRunDir() != "/var/run/skep/vm" || cfg.VMStateDir() != "/var/db/skep/agent/vm" {
 		t.Errorf("VM directories = %q, %q", cfg.VMRunDir(), cfg.VMStateDir())
 	}
@@ -468,6 +471,10 @@ func TestConfinementDefaultsAndValidation(t *testing.T) {
 		"directory bad name":        `{"storage": {"directories": [{"name": "d/x", "path": "/srv/a"}]}}`,
 		"directory path twice":      `{"storage": {"directories": [{"name": "a", "path": "/srv/a"}, {"name": "b", "path": "/srv/a"}]}}`,
 		"directory nested":          `{"storage": {"directories": [{"name": "a", "path": "/srv/a"}, {"name": "b", "path": "/srv/a/b"}]}}`,
+		"capacity warn above fail":  `{"storage": {"capacity_warn_percent": 95}}`,
+		"capacity fail above 100":   `{"storage": {"capacity_fail_percent": 101}}`,
+		"capacity warn negative":    `{"storage": {"capacity_warn_percent": -5}}`,
+		"capacity equal":            `{"storage": {"capacity_warn_percent": 70, "capacity_fail_percent": 70}}`,
 	} {
 		if _, err := Load(LoadOptions{Path: writeFile(t, body), LookupEnv: noEnv}); err == nil {
 			t.Errorf("%s: accepted", name)

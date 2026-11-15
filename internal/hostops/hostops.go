@@ -265,6 +265,19 @@ type Procs interface {
 	Runner(vmID string) (pid int, ok bool)
 	// SignalRunner sends a request to the VM's live runner.
 	SignalRunner(vmID string, sig RunnerSignal) error
+	// BhyveUsage reads the CPU time and resident memory of a VM's bhyve
+	// process (ADR 0010 decision 15). The process must be named bhyve and
+	// carry the VM's vmm instance name, so a recycled PID is not
+	// reported as the VM; otherwise it is ErrNotFound.
+	BhyveUsage(ctx context.Context, vmID string, pid int) (ProcessUsage, error)
+}
+
+// ProcessUsage is what a process has used so far.
+type ProcessUsage struct {
+	// CPUTime is the user and system time the process has accumulated.
+	CPUTime time.Duration
+	// ResidentBytes is its resident set size.
+	ResidentBytes int64
 }
 
 // VMMInfo is the state of the hypervisor on this host.

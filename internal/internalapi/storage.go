@@ -15,6 +15,21 @@ type StorageBackend interface {
 	Datasets(ctx context.Context, opts models.DatasetListOptions) (models.DatasetList, error)
 }
 
+// MetricsBackend is what the metrics handler needs from the agent's
+// resource sampler.
+type MetricsBackend interface {
+	Metrics(ctx context.Context) (models.Metrics, error)
+}
+
+func (h *handler) nodeMetrics(w http.ResponseWriter, r *http.Request) {
+	m, err := h.metrics.Metrics(r.Context())
+	if err != nil {
+		httpkit.Fail(h.log, w, r, err)
+		return
+	}
+	httpkit.WriteJSON(w, r, http.StatusOK, m)
+}
+
 // datasetListOptions reads the inventory's query parameters.
 func datasetListOptions(r *http.Request) (models.DatasetListOptions, bool) {
 	q := r.URL.Query()

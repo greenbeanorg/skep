@@ -125,6 +125,20 @@ paths:
         when the previous month is still unsealed 7 days into the new
         one. Neither is critical. A check is absent when archiving is
         turned off.
+
+        Two concern storage (ADR 0010 decision 15), both from the agent's
+        resource sample (`GET /metrics`, at most a minute old):
+        `storage_capacity` is `degraded` when an allow-listed pool or
+        directory pool is past `storage.capacity_warn_percent` (default
+        80) or `storage.capacity_fail_percent` (default 90) of its space
+        in use, or cannot be read; its `error` says which pool, how full,
+        and which threshold it passed. `storage_locked` is `degraded` when
+        a dataset under a pool's dataset root has its encryption key
+        unloaded, naming the datasets. Neither is critical: a full or
+        locked pool stops what needs it, not the service. The health
+        document has no separate "warning" status, so a pool past either
+        threshold reads `degraded`; `GET /metrics` tells `warning` from
+        `failing`.
       responses:
         "200":
           description: The service serves requests. The status is `ok` or `degraded`.
@@ -1339,6 +1353,38 @@ paths:
           $ref: "#/components/responses/VMUnprocessable"
         "503":
           $ref: "#/components/responses/Unavailable"
+  /metrics:
+    get:
+      tags: [storage]
+      operationId: getMetrics
+      summary: Current resource use of the node
+      x-skep-permission: system:read
+      x-skep-also-requires: [vm:read, storage:read]
+      description: |
+        Requires `system:read`, `vm:read`, and `storage:read`: the values
+        name pools and VMs. Current values only, with no history (ADR 0010
+        decision 15): the space and capacity of every allow-listed pool
+        and directory pool against the `storage_capacity` thresholds, the
+        datasets whose key is not loaded, each VM's disk use, and, while a
+        VM runs, the CPU time and resident memory of its bhyve process.
+        The agent samples every 30 seconds; a sample older than a minute
+        is replaced before answering. `observed_at` says when the values
+        were read. Per-jail values come with jails (phase 7b).
+      parameters:
+        - $ref: "#/components/parameters/Background"
+      responses:
+        "200":
+          description: The latest sample.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Metrics"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "503":
+          $ref: "#/components/responses/Unavailable"
   /storage/media:
     get:
       tags: [storage]
@@ -1937,6 +1983,82 @@ components:
           description: "`available` or `unavailable`; absent when the dataset is not encrypted."
         compression: { type: string }
         compressratio: { type: string }
+    Metrics:
+      type: object
+      required: [node_id, observed_at, capacity_warn_percent, capacity_fail_percent, pools, vms]
+      properties:
+        node_id: { type: string }
+        observed_at: { type: string, format: date-time }
+        capacity_warn_percent: { type: integer }
+        capacity_fail_percent: { type: integer }
+        pools:
+          type: array
+          items: { $ref: "#/components/schemas/PoolMetrics" }
+        vms:
+          type: array
+          items: { $ref: "#/components/schemas/VMMetrics" }
+    PoolMetrics:
+      type: object
+      required: [name, type, health, size_bytes, allocated_bytes, available_bytes, capacity_percent, capacity]
+      properties:
+        name: { type: string }
+        type: { type: string, enum: [zfs, directory] }
+        health:
+          type: string
+          description: What zpool(8) reports, `ONLINE` for a usable directory pool, or `UNAVAILABLE` with `error`.
+        error: { type: string }
+        size_bytes: { type: integer, format: int64 }
+        allocated_bytes: { type: integer, format: int64 }
+        available_bytes: { type: integer, format: int64 }
+        capacity_percent:
+          type: number
+          description: |
+            The share in use, to one decimal: allocated of size for a ZFS
+            pool, as `zpool list` shows it; used of used plus available
+            for a directory pool, as df(1) shows it.
+        capacity:
+          type: string
+          enum: [ok, warning, failing, unavailable]
+        locked_datasets:
+          type: array
+          items: { type: string }
+          description: Datasets under the pool's dataset root whose encryption key is not loaded.
+    VMMetrics:
+      type: object
+      required: [id, name, state, disk_used_bytes, disk_referenced_bytes, disks]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        state: { type: string }
+        cpu_time_seconds:
+          type: number
+          description: User and system CPU time of the bhyve process, while the VM runs.
+        resident_memory_bytes:
+          type: integer
+          format: int64
+          description: Resident set of the bhyve process, while the VM runs.
+        disk_used_bytes:
+          type: integer
+          format: int64
+          description: Space the VM holds in its pools, snapshots included.
+        disk_referenced_bytes:
+          type: integer
+          format: int64
+          description: Space the VM's disks reference now.
+        disks:
+          type: array
+          items: { $ref: "#/components/schemas/DiskMetrics" }
+        error:
+          type: string
+          description: Which values could not be read.
+    DiskMetrics:
+      type: object
+      required: [slot, pool, used_bytes, referenced_bytes]
+      properties:
+        slot: { type: integer }
+        pool: { type: string }
+        used_bytes: { type: integer, format: int64 }
+        referenced_bytes: { type: integer, format: int64 }
     DatasetList:
       type: object
       required: [items]

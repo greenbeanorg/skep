@@ -34,6 +34,11 @@ const (
 	// storage.max_snapshots_per_resource.
 	DefaultMaxSnapshotsPerResource = 64
 	MaxSnapshotsPerResource        = 1000
+	// DefaultCapacityWarnPercent and DefaultCapacityFailPercent are the
+	// thresholds of the storage_capacity health check (ADR 0010
+	// decision 15).
+	DefaultCapacityWarnPercent = 80
+	DefaultCapacityFailPercent = 90
 )
 
 // HypervisorConfig configures the hypervisor engines.
@@ -74,6 +79,11 @@ type StorageConfig struct {
 	// decision 6): storage for hosts without ZFS. Their names share one
 	// namespace with Pools.
 	Directories []DirectoryPool `json:"directories"`
+	// CapacityWarnPercent and CapacityFailPercent are the thresholds of
+	// the storage_capacity health check, in percent of a pool in use
+	// (ADR 0010 decision 15). 0 means the defaults, 80 and 90.
+	CapacityWarnPercent int `json:"capacity_warn_percent"`
+	CapacityFailPercent int `json:"capacity_fail_percent"`
 }
 
 // DirectoryPool is one allow-listed directory that holds VM disks as
@@ -138,6 +148,12 @@ func (c *Config) applyConfinementDefaults() {
 	}
 	if c.Storage.MaxSnapshotsPerResource == 0 {
 		c.Storage.MaxSnapshotsPerResource = DefaultMaxSnapshotsPerResource
+	}
+	if c.Storage.CapacityWarnPercent == 0 {
+		c.Storage.CapacityWarnPercent = DefaultCapacityWarnPercent
+	}
+	if c.Storage.CapacityFailPercent == 0 {
+		c.Storage.CapacityFailPercent = DefaultCapacityFailPercent
 	}
 	if c.Network.Bridges == nil {
 		c.Network.Bridges = []string{}
@@ -205,6 +221,9 @@ func (c Config) validateConfinement() []error {
 	}
 	if n := c.Storage.MaxSnapshotsPerResource; n < 1 || n > MaxSnapshotsPerResource {
 		add("storage.max_snapshots_per_resource must be between 1 and %d", MaxSnapshotsPerResource)
+	}
+	if w, f := c.Storage.CapacityWarnPercent, c.Storage.CapacityFailPercent; w < 1 || f > 100 || w >= f {
+		add("storage.capacity_warn_percent (%d) and storage.capacity_fail_percent (%d) must satisfy 1 <= warn < fail <= 100", w, f)
 	}
 	if !c.DevMode && !filepath.IsAbs(c.Storage.MediaDir) {
 		add("storage.media_dir %q must be an absolute path", c.Storage.MediaDir)

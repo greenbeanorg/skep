@@ -34,6 +34,7 @@ import (
 	"github.com/greenbeanorg/skep/internal/hypervisor/bhyve"
 	"github.com/greenbeanorg/skep/internal/internalapi"
 	"github.com/greenbeanorg/skep/internal/logging"
+	"github.com/greenbeanorg/skep/internal/monitoring"
 	"github.com/greenbeanorg/skep/internal/retention"
 	"github.com/greenbeanorg/skep/internal/storage"
 	"github.com/greenbeanorg/skep/internal/sysaccount"
@@ -221,6 +222,22 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
+	// Current resource use (ADR 0010 decision 15), which also feeds the
+	// two storage health checks.
+	sampler, err := monitoring.New(monitoring.Options{
+		NodeID:      nodeID,
+		Host:        host,
+		VMs:         vms,
+		WarnPercent: cfg.Storage.CapacityWarnPercent,
+		FailPercent: cfg.Storage.CapacityFailPercent,
+		MaxAge:      2 * monitoring.DefaultInterval,
+		Logger:      log,
+	})
+	if err != nil {
+		return err
+	}
+	checks[models.CheckStorageCapacity] = sampler.CapacityProbe
+	checks[models.CheckStorageLocked] = sampler.LockedProbe
 	svc, err := agent.NewService(agent.Options{
 		Bhyve:      vms.Capabilities,
 		NodeID:     nodeID,
@@ -299,6 +316,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		log.Warn("could not observe the virtual machines", "error", err)
 	}
 	go vms.Watch(ctx, cfg.Hypervisor.Bhyve.WatchInterval.Std())
+	go sampler.Run(ctx, monitoring.DefaultInterval)
 	if caps := vms.Capabilities(ctx); caps.Available {
 		log.Info("bhyve is available", "reason", caps.Reason, "max_vcpus_per_vm", caps.MaxVCPUsPerVM,
 			"guest_memory_bytes", caps.GuestMemoryBytes)
@@ -316,6 +334,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		VMs:            vms,
 		Console:        consoles,
 		Storage:        storageSvc,
+		Metrics:        sampler,
 		RequestTimeout: cfg.Socket.RequestTimeout.Std(),
 		Logger:         log,
 	})

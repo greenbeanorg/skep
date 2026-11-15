@@ -8,8 +8,10 @@ import (
 	"sort"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/greenbeanorg/skep/internal/hostops"
+	"github.com/greenbeanorg/skep/pkg/models"
 )
 
 // Close stops every simulated runner and waits for them.
@@ -309,4 +311,23 @@ func (f *Fake) OpenConsole(vmID string) (io.ReadWriteCloser, error) {
 	f.record("open console %s", vmID)
 	f.mu.Unlock()
 	return agent, nil
+}
+
+// FakeCPUTime and FakeResidentBytes are what BhyveUsage reports for every
+// simulated guest.
+const (
+	FakeCPUTime       = 1500 * time.Millisecond
+	FakeResidentBytes = 64 << 20
+)
+
+// BhyveUsage implements hostops.Procs: a running simulated guest reports
+// fixed values; anything else is not found, as a recycled PID is.
+func (f *Fake) BhyveUsage(_ context.Context, vmID string, pid int) (hostops.ProcessUsage, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	g, ok := f.guests[vmID]
+	if !ok || g.ended || g.pid != pid {
+		return hostops.ProcessUsage{}, fmt.Errorf("hostfake: bhyve of %s (process %d): %w", vmID, pid, models.ErrNotFound)
+	}
+	return hostops.ProcessUsage{CPUTime: FakeCPUTime, ResidentBytes: FakeResidentBytes}, nil
 }

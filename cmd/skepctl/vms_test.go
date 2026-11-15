@@ -106,6 +106,8 @@ func (f *fakeVMs) CloneVM(context.Context, string, models.VMClone) (models.VMCre
 	return models.VMCreated{}, models.ErrNotFound
 }
 
+func (f *fakeVMs) Metrics(context.Context) (models.Metrics, error) { return models.Metrics{}, nil }
+
 func (f *fakeVMs) Media(context.Context) (models.MediaList, error) { return models.MediaList{}, nil }
 
 func TestVMCommands(t *testing.T) {
