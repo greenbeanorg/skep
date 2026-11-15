@@ -1,0 +1,152 @@
+# ADR 0010 phase 7a, step 3 on hearst: disk add, grow, remove, 2026-11-14/15
+
+Build 732b5b9, deployed with scripts/deploy-test.sh (size and SHA-256
+checked) into /home/aba/skep-m6, services stopped and restarted around the
+swap. No hearst configuration changed; only datasets under skeptest/skep
+were touched. Driven through the public API with curl (server key pinned)
+as m6operator (operator) and m6viewer (viewer); the guest (fbsd1, FreeBSD
+15.1, UEFI, one 8 GiB virtio-blk disk) through tests/integration/vm/consolectl
+in tmux. Times are UTC. Columns of the zfs lists: name, volsize,
+refreservation, volmode, guid.
+
+Not checked on hearst: a role with vm:write but without vm:delete being
+refused a disk removal. No built-in role has that combination and there is
+no role API yet; adding a role row to the lab api.db by hand was not done.
+Covered by internal/api/rbac_test.go (403, audited authz.deny naming
+vm:delete).
+
+The "reload pending error" in the grow section is growfs(8) warning about
+growing the mounted root; the reboot after it mounted root clean.
+
+## Disk add (build 732b5b9, 22:15 UTC), VM fbsd1 c0e23174-3dc0-4503-a691-9af23f657078
+HTTP202
+task vm.snapshot.create succeeded None {"consistency": "consistent", "datasets":
+HTTP202
+task vm.update succeeded None {"changed": ["disks_added"], "disks_added": [{"name": "skeptest/skep/vm/c0e23174-3dc0-4503-a691-9af23f657078/disk1", "size_bytes": 1073741824, "type": "volume", "used_bytes": 12288}], "vm_id": "c0e23174-3dc0-4503-a691-9af23f657078"}
+HTTP200
+[(0, 'virtio-blk', 8589934592, True, 'skeptest/skep/vm/c0e23174-3dc0-4503-a691-9af23f657078/disk0'), (1, 'virtio-blk', 1073741824, True, 'skeptest/skep/vm/c0e23174-3dc0-4503-a691-9af23f657078/disk1')]
+HTTP202
+task vm.snapshot.create succeeded None {"consistency": "consistent", "datasets":
+skeptest/skep/vm/c0e23174-3dc0-4503-a691-9af23f657078	-	none	default	-
+skeptest/skep/vm/c0e23174-3dc0-4503-a691-9af23f657078@skep-ec1f5086-b697-45bf-bc36-d0e729afc06f	-	-	-	-
+skeptest/skep/vm/c0e23174-3dc0-4503-a691-9af23f657078@skep-47efe7e0-6aaf-4213-ba5e-abcf4a9d8ae0	-	-	-	-
+skeptest/skep/vm/c0e23174-3dc0-4503-a691-9af23f657078/disk0	8G	none	dev	c8aef261-f1a4-4736-a6b0-c2307a6e03d4
+skeptest/skep/vm/c0e23174-3dc0-4503-a691-9af23f657078/disk0@skep-ec1f5086-b697-45bf-bc36-d0e729afc06f	8G	-	-	c8aef261-f1a4-4736-a6b0-c2307a6e03d4
+skeptest/skep/vm/c0e23174-3dc0-4503-a691-9af23f657078/disk0@skep-47efe7e0-6aaf-4213-ba5e-abcf4a9d8ae0	8G	-	-	c8aef261-f1a4-4736-a6b0-c2307a6e03d4
+skeptest/skep/vm/c0e23174-3dc0-4503-a691-9af23f657078/disk1	1G	none	dev	e3a68309-af2b-4bbd-bf8f-e9c6dc49b69b
+skeptest/skep/vm/c0e23174-3dc0-4503-a691-9af23f657078/disk1@skep-47efe7e0-6aaf-4213-ba5e-abcf4a9d8ae0	1G	-	-	e3a68309-af2b-4bbd-bf8f-e9c6dc49b69b
+-- rollback to pre-add (taken before disk1 existed):
+HTTP202
+task vm.snapshot.rollback failed {'code': 'snapshot_incomplete', 'message': 'the snapshot does not contain every disk the resource has now, so using it would make a state the resource was never in; remove the disks added since the snapshot first'} null
+task vm.start succeeded None {"pid": 3863, "state": "running", "vm_id": "c0e23174-3dc0-4503-a691-9af23f657078"}
+FreeBSD directory layout:      man hier
+To change this login announcement, see motd(5).
+root@fbsd1:~ # unset HISTFILE; geom disk list | grep -E "Geom name|Mediasize"; gpart show vtbd0
+Geom name: vtbd0
+   Mediasize: 8589934592 (8.0G)
+Geom name: vtbd1
+   Mediasize: 1073741824 (1.0G)
+=>      40  16777136  vtbd0  GPT  (8.0G)
+        40        24         - free -  (12K)
+        64    532480      1  efi  (260M)
+    532544  15402976      2  freebsd-ufs  (7.3G)
+  15935520    839680      3  freebsd-swap  (410M)
+  16775200      1976         - free -  (988K)
+root@fbsd1:~ #
+
+## Disk grow (22:17 UTC)
+-- grow while running:
+HTTP409
+vm_not_stopped
+HTTP400
+shrink: invalid_request resize_disks[0]: a disk only grows; slot 0 has 8589934592 bytes
+HTTP202
+task vm.update succeeded None {"changed": ["disks_grown"], "disks_grown": [{"name": "skeptest/skep/vm/c0e23174-3dc0-4503-a691-9af23f657078/disk0", "size_bytes": 10737418240, "type": "volume", "used_bytes": 478580224}], "notes": ["the guest sees the larger disk at its next start; grow its partition and filesystem inside the guest (for example gpart recover, gpart resize, growfs on FreeBSD)"], "vm_id": "c0e23174-3dc0-4503-a691-9af23f657078"}
+skeptest/skep/vm/c0e23174-3dc0-4503-a691-9af23f657078/disk0	10G	none
+HTTP202
+task vm.start succeeded None {"pid": 3953, "state": "running", "vm_id": "c0e23174-3dc0-4503-a691-9af23f657078"}
+=>      40  16777136  vtbd0  GPT  (10G) [CORRUPT]
+        40        24         - free -  (12K)
+        64    532480      1  efi  (260M)
+    532544  15402976      2  freebsd-ufs  (7.3G)
+  15935520    839680      3  freebsd-swap  (410M)
+  16775200      1976         - free -  (988K)
+vtbd0 recovered
+vtbd0p3 deleted
+vtbd0p2 resized
+vtbd0p3 added
+swapon: adding /dev/vtbd0p3 as swap device
+super-block backups (for fsck_ffs -b #) at:
+ 16642688, 17922880
+WARNING: /: reload pending error: blocks 96 files 1
+=>      40  20971440  vtbd0  GPT  (10G)
+        40        24         - free -  (12K)
+        64    532480      1  efi  (260M)
+    532544  18874368      2  freebsd-ufs  (9.0G)
+  19406912   1564568      3  freebsd-swap  (764M)
+Filesystem      Size    Used   Avail Capacity  Mounted on
+/dev/vtbd0p2    8.7G    959M    7.1G    12%    /
+Device          1K-blocks     Used    Avail Capacity
+/dev/vtbd0p3       782284        0   782284     0%
+root@fbsd1:~ #
+Trying to mount root from ufs:/dev/vtbd0p2 [rw]...
+/dev/vtbd0p2: FILE SYSTEM CLEAN; SKIPPING CHECKS
+/dev/vtbd0p2: clean, 2038501 free (93 frags, 254801 blocks, 0.0% fragmentation)
+/dev/vtbd0p1: FILESYSTEM CLEAN; SKIPPING CHECKS
+Mounting local filesystems:.
+route: message indicates error: File exists
+route: message indicates error: File exists
+login:
+Filesystem      Size    Used   Avail Capacity  Mounted on
+/dev/vtbd0p2    8.7G    959M    7.1G    12%    /
+/dev/vtbd0p3       782284        0   782284     0%
+
+## Disk remove (22:20 UTC); pre-add ec1f5086-b697-45bf-bc36-d0e729afc06f (before disk1), post-add 47efe7e0-6aaf-4213-ba5e-abcf4a9d8ae0 (with disk1)
+HTTP200
+state: stopped
+-- a viewer:
+HTTP403
+forbidden {'permission': 'vm:write'}
+-- operator, without destroy_snapshots:
+HTTP409
+disk_has_snapshots {'snapshots': [{'id': '47efe7e0-6aaf-4213-ba5e-abcf4a9d8ae0', 'name': 'post-add'}]}
+-- operator, with destroy_snapshots:
+HTTP202
+task vm.update succeeded None {"changed": ["disks_removed"], "disks_removed": [{"name": "skeptest/skep/vm/c0e23174-3dc0-4503-a691-9af23f657078/disk0@skep-47efe7e0-6aaf-4213-ba5e-abcf4a9d8ae0", "size_bytes": 8589934592, "type": "snapshot", "used_bytes": 0}, {"name": "skeptest/skep/vm/c0e23174-3dc0-4503-a691-9af23f657078/disk1@skep-47efe7e0-6aaf-4213-ba5e-abcf4a9d8ae0", "size_bytes": 1073741824, "type": "snapshot", "used_bytes": 0}, {"name": "skeptest/skep/vm/c0e23174-3dc0-4503-a691-9af23f657078@skep-47efe7e0-6aaf-4213-ba5e-abcf4a9d8ae0", "type": "snapshot", "used_bytes": 0}, {"name": "skeptest/skep/vm/c0e23174-3dc0-4503-a69
+skeptest/skep/vm/c0e23174-3dc0-4503-a691-9af23f657078
+skeptest/skep/vm/c0e23174-3dc0-4503-a691-9af23f657078@skep-ec1f5086-b697-45bf-bc36-d0e729afc06f
+skeptest/skep/vm/c0e23174-3dc0-4503-a691-9af23f657078/disk0
+skeptest/skep/vm/c0e23174-3dc0-4503-a691-9af23f657078/disk0@skep-ec1f5086-b697-45bf-bc36-d0e729afc06f
+ec1f5086-b697-45bf-bc36-d0e729afc06f.fd
+{"changed":["disks_removed"],"datasets_destroyed":[{"name":"skeptest/skep/vm/c0e23174-3dc0-4503-a691-9af23f657078/disk0@skep-47efe7e0-6aaf-4213-ba5e-abcf4a9d8ae0","type":"snapshot","size_bytes":8589934592,"used_bytes":0},{"name":"skeptest/skep/vm/c0e23174-3dc0-4503-a691-9af23f657078/disk1@skep-47efe7e0-6aaf-4213-ba5e-abcf4a9d8ae0","type":"snapshot","size_bytes":1073741824,"used_bytes":0},{"name":"skeptest/skep/vm/c0e23174-3dc0-4503-a691-9af23f657078@skep-47efe7e0-6aaf-4213-ba5e-abcf4a9d8ae0","type":"snapshot","used_bytes":0},{"name":"skeptest/skep/vm/c0e23174-3dc0-4503-a691-9af23f657078/disk1","type":"volume","size_bytes":1073741824,"used_bytes":12288}],"snapshots_destroyed":[{"id":"47efe7e0-6aaf-4213-ba5e-abcf4a9d8ae0","name":"post-add"}]}
+HTTP200
+[('pre-add', True)]
+HTTP200
+[(0, 10737418240)]
+
+## After removal (07:10 UTC)
+-- rollback to pre-add (taken before disk1 existed; disk1 now gone):
+HTTP202
+None 02492eff-f4da-4c43-b1ee-f2e17d0fe6aa
+skeptest/skep/vm/c0e23174-3dc0-4503-a691-9af23f657078	-
+skeptest/skep/vm/c0e23174-3dc0-4503-a691-9af23f657078@skep-ec1f5086-b697-45bf-bc36-d0e729afc06f	-
+skeptest/skep/vm/c0e23174-3dc0-4503-a691-9af23f657078/disk0	8G
+skeptest/skep/vm/c0e23174-3dc0-4503-a691-9af23f657078/disk0@skep-ec1f5086-b697-45bf-bc36-d0e729afc06f	8G
+task vm.snapshot.rollback succeeded None {"datasets_destroyed": [], "destroyed_snapshots": [], "name": "pre-add", "snapshot_id": "ec1f5086-b697-45bf-bc36-d0e729afc06f", "vm_id": "c0e23174-3dc0-4503-a691-9af23f657078"}
+-- recorded disks after rollback:
+HTTP200
+[(0, 8589934592)]
+-- start:
+HTTP202
+task vm.start succeeded None {"pid": 5054, "state": "running", "vm_id": "c0e23174-3dc0-4503-a691-9af23f657078"}
+Please include that output and any error messages when posting questions.
+Introduction to manual pages:  man man
+FreeBSD directory layout:      man hier
+To change this login announcement, see motd(5).
+root@fbsd1:~ # unset HISTFILE; geom disk list | grep -E "Geom name|Mediasize"; df -h /
+Geom name: vtbd0
+   Mediasize: 8589934592 (8.0G)
+Filesystem      Size    Used   Avail Capacity  Mounted on
+/dev/vtbd0p2    7.1G    959M    5.6G    14%    /
+root@fbsd1:~ #
+
