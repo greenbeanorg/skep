@@ -104,3 +104,6 @@ skep-agent as root. Closing it needs the installation moved to a path
 whose every directory is root's (for example /usr/local/libexec/skep-test
 and /var/db/skep-test-api) and rc.conf pointed there: an rc.conf change,
 not made without Andy's approval.
+
+Closed the same day: the installation moved to the package layout
+(/usr/local/sbin, /usr/local/etc/skep, /var/db/skep), see layout-move.txt.

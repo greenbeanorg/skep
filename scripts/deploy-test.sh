@@ -3,9 +3,13 @@
 # verified, and on disk. A development tool for the lab test host; it is
 # not how Skep is installed.
 #
-#   scripts/deploy-test.sh HOST DIR [FILE...]
+#   scripts/deploy-test.sh HOST
+#   scripts/deploy-test.sh HOST DIR FILE...
 #
-# FILE defaults to bin/freebsd-amd64/skep-agent, skep-api, and skepctl.
+# With HOST alone, the FreeBSD builds go where the package puts them:
+# bin/freebsd-amd64/skep-agent and skep-api to /usr/local/sbin, skepctl to
+# /usr/local/bin (the rc.d scripts' defaults). With DIR, the FILEs go to
+# DIR: test binaries, or agent.json to /usr/local/etc/skep.
 # Each file is copied to a private staging directory on HOST (mktemp, the
 # SSH user's), its size and SHA-256 are compared with the local build, and
 # only then is it installed with sudo into DIR under a temporary name,
@@ -23,8 +27,13 @@
 # Needs passwordless sudo on HOST.
 set -eu
 
-if [ $# -lt 2 ]; then
-	echo "usage: $0 HOST DIR [FILE...]" >&2
+if [ $# -eq 1 ]; then
+	# The package layout, as two runs of this script.
+	"$0" "$1" /usr/local/sbin bin/freebsd-amd64/skep-agent bin/freebsd-amd64/skep-api
+	exec "$0" "$1" /usr/local/bin bin/freebsd-amd64/skepctl
+fi
+if [ $# -lt 3 ]; then
+	echo "usage: $0 HOST | $0 HOST DIR FILE..." >&2
 	exit 2
 fi
 host="$1"
@@ -37,9 +46,6 @@ case "${dir}" in
 	exit 2
 	;;
 esac
-if [ $# -eq 0 ]; then
-	set -- bin/freebsd-amd64/skep-agent bin/freebsd-amd64/skep-api bin/freebsd-amd64/skepctl
-fi
 
 # The mode of each file, decided before anything is copied.
 for f in "$@"; do

@@ -3,7 +3,11 @@
 The named checks of [ADR 0010 decision 16](../../../docs/decisions/0010-storage-and-jails.md#decision-16-what-verified-means-and-what-is-not-in-this-milestone)
 for phase 7a, run on `hearst` (FreeBSD 15.1-RELEASE-p6, amd64, UFS-root,
 the file-backed pool `skeptest`) with the FreeBSD build of the binaries,
-against the test installation in `/home/aba/skep-m6`. The output of every
+against the test installation, which was in `/home/aba/skep-m6` (binaries,
+`agent.json`) and `/home/aba/skep-m5/state` (skep-api's data) until
+2026-11-15 and is now in the package layout (`/usr/local/sbin`,
+`/usr/local/etc/skep`, `/var/db/skep`; see
+[layout-move.txt](results/layout-move.txt)). The output of every
 run is in [results/](results/). A check without a recorded passing run is
 **pending FreeBSD validation**, whatever CI says.
 
