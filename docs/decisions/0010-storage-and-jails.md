@@ -966,7 +966,9 @@ something the text left open, or departs from it.
 - **`storage:write` is still undeclared.** No 7a route needs it (step 1's
   rule: a permission is declared when a route enforces it), so "operator
   is refused `storage:write`" is shown by the role and the route table
-  test until 7b adds templates.
+  test until 7b adds templates. **7b must verify it with a real request**:
+  an `operator`'s `container.template.create` refused with `403`
+  (`storage:write`) and audited, on `hearst` (Andy, 2026-11-15).
 - **The interface**: the Storage section replaces its placeholder (pools
   with capacity against the thresholds, per-VM use, the paged inventory
   with owners); the VM page gains a Snapshots card. A rollback to an

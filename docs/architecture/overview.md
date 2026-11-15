@@ -373,6 +373,16 @@ imported, both as an unprivileged user and as root.
 - The local node is the only node.
 - The node inventory (hardware discovery) is refreshed only at start, not
   periodically.
+- **Follow-up: the agent does not check its own files.** `skep-agent`
+  runs as root but starts even when its executable, its configuration
+  file, or a directory above either is writable by another user (the
+  lab's test installation under `/home/aba` is such a case). It should
+  refuse to start, naming the path, owner, and mode: owner uid 0, no
+  group or other write bit, for the file and every directory up to `/`;
+  a `-dev` build on Linux only warns. Whether `skep-api` checks its own
+  binary and `api.json` the same way is part of that change. Logged
+  2026-11-15, before phase 7b; `scripts/deploy-test.sh` already installs
+  root-owned files and warns about such parent directories.
 - Resource monitoring keeps current values only; there is no history and
   no export (Prometheus or otherwise) yet. Per-jail values come with 7b.
 - Retention does not shrink the database files: SQLite reuses freed pages,
