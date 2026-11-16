@@ -1,0 +1,7 @@
+./var/db/pkg/local.sqlite
+
+    9922 /skeptest/step6-scratch/deployed/list-api.txt
+    9922 /skeptest/step6-scratch/deployed/list-step6.txt
+       0 /skeptest/step6-scratch/deployed/only-api.txt
+       0 /skeptest/step6-scratch/deployed/only-step6.txt
+   19844 total

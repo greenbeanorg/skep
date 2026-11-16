@@ -1,0 +1,2 @@
+   1 pkg              -
+ 301 pkg              PATH=/sbin:/bin:/usr/sbin:/usr/bin ASSUME_ALWAYS_YES=yes TMPDIR=/skeptest/skep/templates/.work-f496866f-32ba-4527-bcee-5a717a2f74c0/tmp

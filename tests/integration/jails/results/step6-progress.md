@@ -265,3 +265,38 @@ neighbour `vuln.xml.bak` and a file inside a listed directory still are;
 with no list the file is recorded. The admin guide and the security
 overview say so, including the cost (a build that wrote an excluded path
 would not be caught). `go test ./...` passes on merrick.
+
+## 10. Deploy, and the admin build through the API (2026-11-16)
+
+**Deploy.** `make build-freebsd` at `c8b0f06`; services stopped with sudo;
+`scripts/deploy-test.sh hearst` (skep-agent sha256 `012222ac…`, skep-api
+`1f663565…`, skepctl `f1d47f1a…`); started. Both report `commit c8b0f06`;
+the agent's database stayed at schema 5 (`migrations_applied: 0`).
+
+**Accounts.** `s6admin` (admin, `skep-api admin create --password-stdin`)
+and `s6oper` (operator, `POST /api/v1/users` as s6admin). Passwords were
+generated on merrick and are not kept in the repository. curl verified
+the API's certificate as its only CA after checking its key against
+`skep-api tls fingerprint` (`sha256:779cc5ec…`); no verification was
+skipped.
+
+**Build.** `POST /api/v1/storage/templates`
+`{"name":"minimal-151","pool":"skeptest","source":"pkgbase"}` as s6admin:
+202, template `f496866f-…`, task `f81ab83f-…`, succeeded in 33 s. Six
+commands, 66 packages, 4 scripts and `mandoc.ucl` allowed, release
+`15.1-RELEASE-p6` (no patch difference), `@skep-base` with
+`skep:template_id`, `readonly=on`. **763 host files compared**: the 764 of
+the test-binary run less `/var/db/pkg/vuln.xml`, the new exclusion. The
+agent created `skeptest/skep/templates` itself, `root:wheel 0700`. No
+build jail, catalogues, deferred trigger, cache or work area left. pkg's
+environment (301 samples): exactly `PATH`, `ASSUME_ALWAYS_YES`, `TMPDIR`.
+Host files from outside, nothing excluded: 1521 lines before and after,
+identical, and the same hash (`c89c4bb8…`) as the test-binary run.
+
+**Comparison with `skeptest/step6`.** 9922 entries each, none only on one
+side, one different: `var/db/pkg/local.sqlite`, which on copies on
+merrick has the same schema (user_version 42), 36 tables, 66 packages, and
+identical rows except `packages.time` (the install time). So
+`services.db`, both `mandoc.db`, `pwd.db`, `spwd.db`, the certs and the
+rest are byte-identical between the test-binary build and the deployed
+agent's. Records: `step6-deployed/`.

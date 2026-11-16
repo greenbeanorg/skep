@@ -1,0 +1,215 @@
+{
+    "id": "f81ab83f-09fe-49f0-91c0-d34324dd2914",
+    "node_id": "97fc6968-7e82-49c9-bda8-9026775ca964",
+    "type": "container.template.create",
+    "status": "succeeded",
+    "resource_type": "container_template",
+    "resource_id": "f496866f-32ba-4527-bcee-5a717a2f74c0",
+    "actor": {
+        "id": "f3a9776b-5719-44f5-a611-63572830526b",
+        "name": "s6admin"
+    },
+    "request_id": "ca13ce3d678ce0e7fa12ac14",
+    "cancellable": true,
+    "result": {
+        "commands_run": [
+            "/usr/sbin/certctl rehash",
+            "/usr/sbin/pwd_mkdb -i -p -d /etc /etc/master.passwd",
+            "/usr/sbin/services_mkdb -l -q -o /var/db/services.db /etc/services",
+            "/usr/bin/cap_mkdb -l /etc/login.conf",
+            "/usr/bin/makewhatis /usr/share/man",
+            "/usr/bin/makewhatis /usr/share/openssl/man"
+        ],
+        "host_files_compared": 763,
+        "host_release": "15.1-RELEASE-p6",
+        "name": "minimal-151",
+        "packages_installed": 66,
+        "patch_differs": false,
+        "release": "15.1-RELEASE-p6",
+        "scripts_allowed": 4,
+        "snapshot": "skeptest/skep/templates/f496866f-32ba-4527-bcee-5a717a2f74c0@skep-base",
+        "template_id": "f496866f-32ba-4527-bcee-5a717a2f74c0",
+        "trigger_files": [
+            "usr/share/pkg/triggers/mandoc.ucl"
+        ],
+        "used_bytes": 81452032
+    },
+    "created_at": "2026-11-16T23:47:00.855Z",
+    "started_at": "2026-11-16T23:47:00.857Z",
+    "finished_at": "2026-11-16T23:47:34.206Z",
+    "events": [
+        {
+            "id": 2061,
+            "kind": "state",
+            "level": "info",
+            "message": "task is pending",
+            "data": {
+                "from": "",
+                "to": "pending"
+            },
+            "created_at": "2026-11-16T23:47:00.855Z"
+        },
+        {
+            "id": 2062,
+            "kind": "state",
+            "level": "info",
+            "message": "task is running",
+            "data": {
+                "from": "pending",
+                "to": "running"
+            },
+            "created_at": "2026-11-16T23:47:00.857Z"
+        },
+        {
+            "id": 2063,
+            "kind": "progress",
+            "level": "info",
+            "message": "checking the templates directory",
+            "created_at": "2026-11-16T23:47:00.894Z"
+        },
+        {
+            "id": 2064,
+            "kind": "progress",
+            "level": "info",
+            "message": "recording the host files",
+            "created_at": "2026-11-16T23:47:00.934Z"
+        },
+        {
+            "id": 2065,
+            "kind": "progress",
+            "level": "info",
+            "message": "creating the template dataset",
+            "created_at": "2026-11-16T23:47:01.285Z"
+        },
+        {
+            "id": 2066,
+            "kind": "progress",
+            "level": "info",
+            "message": "installing the base packages (scripts and triggers off)",
+            "created_at": "2026-11-16T23:47:01.313Z"
+        },
+        {
+            "id": 2067,
+            "kind": "progress",
+            "level": "info",
+            "message": "checking the package scripts against the allowlist",
+            "created_at": "2026-11-16T23:47:32.369Z"
+        },
+        {
+            "id": 2068,
+            "kind": "progress",
+            "level": "info",
+            "message": "checking the trigger files against the allowlist",
+            "created_at": "2026-11-16T23:47:32.745Z"
+        },
+        {
+            "id": 2069,
+            "kind": "progress",
+            "level": "info",
+            "message": "checking the template's release",
+            "created_at": "2026-11-16T23:47:32.751Z"
+        },
+        {
+            "id": 2070,
+            "kind": "progress",
+            "level": "info",
+            "message": "starting the build jail",
+            "created_at": "2026-11-16T23:47:32.758Z"
+        },
+        {
+            "id": 2071,
+            "kind": "progress",
+            "level": "info",
+            "message": "running /usr/sbin/certctl rehash in the build jail",
+            "created_at": "2026-11-16T23:47:32.771Z"
+        },
+        {
+            "id": 2072,
+            "kind": "progress",
+            "level": "info",
+            "message": "running /usr/sbin/pwd_mkdb -i -p -d /etc /etc/master.passwd in the build jail",
+            "created_at": "2026-11-16T23:47:32.801Z"
+        },
+        {
+            "id": 2073,
+            "kind": "progress",
+            "level": "info",
+            "message": "running /usr/sbin/services_mkdb -l -q -o /var/db/services.db /etc/services in the build jail",
+            "created_at": "2026-11-16T23:47:32.808Z"
+        },
+        {
+            "id": 2074,
+            "kind": "progress",
+            "level": "info",
+            "message": "running /usr/bin/cap_mkdb -l /etc/login.conf in the build jail",
+            "created_at": "2026-11-16T23:47:32.855Z"
+        },
+        {
+            "id": 2075,
+            "kind": "progress",
+            "level": "info",
+            "message": "running /usr/bin/makewhatis /usr/share/man in the build jail",
+            "created_at": "2026-11-16T23:47:32.858Z"
+        },
+        {
+            "id": 2076,
+            "kind": "progress",
+            "level": "info",
+            "message": "running /usr/bin/makewhatis /usr/share/openssl/man in the build jail",
+            "created_at": "2026-11-16T23:47:33.737Z"
+        },
+        {
+            "id": 2077,
+            "kind": "progress",
+            "level": "info",
+            "message": "removing the build jail",
+            "created_at": "2026-11-16T23:47:33.771Z"
+        },
+        {
+            "id": 2078,
+            "kind": "progress",
+            "level": "info",
+            "message": "checking for deferred triggers",
+            "created_at": "2026-11-16T23:47:33.775Z"
+        },
+        {
+            "id": 2079,
+            "kind": "progress",
+            "level": "info",
+            "message": "removing the repository catalogues and checking the package cache",
+            "created_at": "2026-11-16T23:47:33.782Z"
+        },
+        {
+            "id": 2080,
+            "kind": "progress",
+            "level": "info",
+            "message": "comparing the host files",
+            "created_at": "2026-11-16T23:47:33.796Z"
+        },
+        {
+            "id": 2081,
+            "kind": "progress",
+            "level": "info",
+            "message": "removing the work area",
+            "created_at": "2026-11-16T23:47:34.134Z"
+        },
+        {
+            "id": 2082,
+            "kind": "progress",
+            "level": "info",
+            "message": "taking @skep-base",
+            "created_at": "2026-11-16T23:47:34.14Z"
+        },
+        {
+            "id": 2083,
+            "kind": "state",
+            "level": "info",
+            "message": "task is succeeded",
+            "data": {
+                "from": "running",
+                "to": "succeeded"
+            },
+            "created_at": "2026-11-16T23:47:34.206Z"
+        }
+    ]
+}
