@@ -47,8 +47,7 @@ as written. Don't work around the spec." Options are at the end of
 step6-probe.txt. I recommend A: `jexec -l` without `-U`, every `allow.*`
 off, and keep `/etc/services`.
 
-**Commit:** see `git log` for "test(jails): record the step 6 feasibility
-probe" (this file is committed with it).
+**Commit:** `e3fc0c7`.
 
 **hearst state:** no jails. `skeptest/step6-probe` (162M) is left in place.
 `skeptest/trace-7b` and `/var/tmp/skep-trace7b` are untouched. Nothing else
