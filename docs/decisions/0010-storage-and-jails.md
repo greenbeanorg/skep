@@ -4,7 +4,9 @@
   (pull request #26); phase 7b started 2026-11-16 (step 6: the RACCT
   reboot is done, the `pkg --rootdir` trace is recorded, and the decision
   on package scripts is accepted, see
-  [Step 6](#step-6-racct-reboot-and-the-pkg-trace); building it is next).
+  [Step 6](#step-6-racct-reboot-and-the-pkg-trace); building it is
+  blocked on an open question found by a probe on 2026-11-16, see
+  [Open](#open-the-specification-is-not-buildable-as-written-2026-11-16)).
   Every recommendation was
   accepted; the review answers and the amendments made at acceptance are
   under [Decisions](#decisions) and are worked into the text. The changes
@@ -1251,3 +1253,27 @@ two and left the third to the implementation):
 The pkgbase source is built in step 6 to this specification, together
 with the template store, the `dist` source, the
 `container.template.create` and delete tasks, and the routes.
+
+#### Open: the specification is not buildable as written (2026-11-16)
+
+A hand-run probe on `hearst` before building it
+([step6-probe.txt](../../tests/integration/jails/results/step6-probe.txt))
+found three things that need Andy's answer. Building has stopped until he
+gives it.
+
+- `jexec -l -U root` fails before `pwd_mkdb` has run (`getpwnam: root`),
+  because the template has no `pwd.db` yet. It also fails after that
+  (`initgroups: Operation not permitted`), because item 2 turns off every
+  `allow.*`, `allow.suser` included. `jexec -l` without `-U` (uid 0, root's
+  login class) runs all six commands with every `allow.*` off, no devfs,
+  and `securelevel=2`.
+- The package script's `services.db` is an empty database: it passes a
+  directory to services_mkdb as its input. That is true of the trace and of
+  `hearst`'s own base system. The `/etc/services` of item 3 builds the
+  populated one, so item 3's "identical to the trace" check cannot pass.
+- Holding as specified: scripts and triggers off; `TMPDIR`; every allowlist
+  hash (the four script entries and `mandoc.ucl`); no devfs needed;
+  removal confirmed with `jls -j`.
+
+Options and a recommendation are at the end of the probe record. The same
+`allow.suser` question applies to Decision 9's baseline in step 7.

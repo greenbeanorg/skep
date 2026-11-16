@@ -1,0 +1,38 @@
+package main
+
+import (
+	"crypto/sha256"
+	"encoding/json"
+	"fmt"
+		"os"
+	"sort"
+)
+
+func main() {
+	var all []json.RawMessage
+	if err := json.NewDecoder(os.Stdin).Decode(&all); err != nil { fmt.Println(err); os.Exit(1) }
+	n := 0
+	for _, raw := range all {
+		var m struct {
+			Name       string            `json:"name"`
+			Version    string            `json:"version"`
+			Scripts    map[string]string `json:"scripts"`
+			LuaScripts map[string][]string `json:"lua_scripts"`
+		}
+		if err := json.Unmarshal(raw, &m); err != nil {
+			fmt.Println("decode:", err)
+			os.Exit(1)
+		}
+		n++
+		keys := []string{}
+		for k := range m.Scripts { keys = append(keys, k) }
+		sort.Strings(keys)
+		for _, k := range keys {
+			fmt.Printf("%s %s scripts %s %x\n", m.Name, m.Version, k, sha256.Sum256([]byte(m.Scripts[k])))
+		}
+		for k, v := range m.LuaScripts {
+			for i, s := range v { fmt.Printf("%s %s lua_scripts %s[%d] %x\n", m.Name, m.Version, k, i, sha256.Sum256([]byte(s))) }
+		}
+	}
+	fmt.Println("packages:", n)
+}
