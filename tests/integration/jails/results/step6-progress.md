@@ -226,3 +226,21 @@ templates" section in `docs/security/overview.md` and in
 `docs/architecture/overview.md`; the README's status table; a pointer from
 the storage guide; ADR 0010's step 6 "Built" notes and status line; the
 README of `tests/integration/jails`.
+
+## 8. Deployed validation run: clean-up of the trace (2026-11-16)
+
+Andy approved, for this run: deploying the branch to hearst with
+`scripts/deploy-test.sh` (undo: redeploy the previous build), destroying
+the trace now, and destroying `skeptest/step6` and `skeptest/step6-scratch`
+once the API-built template matches `skeptest/step6`.
+
+**Done.** `sudo zfs destroy -r skeptest/trace-7b` (161M) and `sudo rm -r
+/var/tmp/skep-trace7b` (86M: the ktrace, kdump, host lists and log of the
+trace). Both confirmed gone; no jail on hearst. The trace's results stay in
+the repository (`step6-pkg-trace.txt`).
+
+**Before the deploy.** The installed build is `54d0566` (skep-agent and
+skep-api report it). No migration was added between `54d0566` and this
+branch, so redeploying `54d0566` is a complete undo: the old agent will not
+meet a newer schema. Copies of the three installed binaries are kept on
+merrick for that.
