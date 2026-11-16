@@ -1,0 +1,79 @@
+ADR 0010 phase 7b, step 6: hearst change 3 (kern.racct.enable) and the
+post-reboot checks. Recorded 2026-11-16 on hearst (FreeBSD 15.1-RELEASE-p6,
+amd64), from merrick over ssh. Reboot 1 of the Milestone 7 budget of two.
+
+== Before: housekeeping approved by Andy (2026-11-16) ==
+
+Removed from hearst after confirming nothing live referenced them (agent.json,
+rc.conf, rc.d scripts, both databases: no "skep-m5"/"skep-m6" string; the ISO
+in /home/aba/skep-m6/media byte-identical (cmp) to /var/db/skep/media's):
+
+  /home/aba/skep-m5                        58M  (M5 binaries, rcd-test, old api state)
+  /home/aba/skep-m6                        1.3G (M6/M7a binaries, agent.json + 2 backups, ISO copy)
+  /etc/rc.conf.pre-layout-20261115         rc.conf backup from the layout move
+  /var/db/skep/api.pre-layout-20261115     112K (api.db + tls/ from before the layout move)
+
+skep_agent and skep_api kept running throughout (pids 12122, 12179).
+/var/db/skep/backup-pre-m7a is kept.
+
+== State before the change ==
+
+$ sysctl kern.racct.enable kern.features.racct kern.features.rctl hw.vmm.vmx.cap.virtual_interrupt_delivery
+kern.racct.enable: 0
+kern.features.racct: 1
+kern.features.rctl: 1
+hw.vmm.vmx.cap.virtual_interrupt_delivery: 0
+$ ls /dev/vmm
+ls: /dev/vmm: No such file or directory          (no VM running)
+$ sudo jls
+   JID  IP Address      Hostname                      Path
+kern.boottime: Sat Nov 14 15:16:18 2026
+
+The skeptest pool comes back at boot from /etc/zfs/zpool.cache (zfs_enable="YES");
+its file vdev /var/tmp/skep/skeptest.img is on the UFS root.
+
+== The change ==
+
+$ sudo cp -p /boot/loader.conf /boot/loader.conf.pre-racct-20261116
+$ echo 'kern.racct.enable="1"' | sudo tee -a /boot/loader.conf
+$ cat /boot/loader.conf
+vmm_load="YES"
+nmdm_load="YES"
+vfs.zfs.arc.max="1073741824"
+hw.vmm.vmx.cap.virtual_interrupt_delivery="0"
+kern.racct.enable="1"
+$ sudo shutdown -r now "skep M7 7b: kern.racct.enable reboot (ADR 0010 hearst change 3)"
+  (Mon Nov 16 19:03:47 UTC 2026)
+
+== After the reboot, before anything else ==
+
+$ sysctl kern.boottime hw.vmm.vmx.cap.virtual_interrupt_delivery kern.racct.enable kern.features.rctl
+kern.boottime: { sec = 1794855855, usec = 378436 } Mon Nov 16 14:04:15 2026
+hw.vmm.vmx.cap.virtual_interrupt_delivery: 0         <- confirmed 0 before any vm.start
+kern.racct.enable: 1
+kern.features.rctl: 1
+$ uname -a
+FreeBSD hearst.greenbean.org 15.1-RELEASE-p6 FreeBSD 15.1-RELEASE-p6 releng/15.1-n283643-95719d8a895b GENERIC amd64
+$ kldstat | grep -E "vmm|nmdm|zfs|bridge"
+ 2    1 0xffffffff82554000   380270 vmm.ko
+ 3    1 0xffffffff828d5000     3988 nmdm.ko
+ 4    1 0xffffffff83200000   3f2c58 zfs.ko
+10    1 0xffffffff8302c000     8810 if_bridge.ko
+11    1 0xffffffff83035000     6120 bridgestp.ko
+$ sudo zpool list -H skeptest ; sudo zpool status -x
+skeptest	15.9G	458M	15.4G	-	-	1%	2%	1.00x	ONLINE	-
+all pools are healthy
+$ sudo service skep_agent status ; sudo service skep_api status
+skep_agent is running as pid 1511 (supervisor pid 1509).
+skep_api is running as pid 1553 (supervisor pid 1552).
+$ ifconfig bridge0 | head -1
+bridge0: flags=1008843<UP,BROADCAST,RUNNING,SIMPLEX,MULTICAST,LOWER_UP> metric 0 mtu 1500
+$ sudo rctl -u process:1 | head -5          (RACCT accounting answers)
+cputime=0
+datasize=1146880
+stacksize=0
+coredumpsize=0
+memoryuse=0
+$ grep skep /var/log/daemon.log (14:04-14:09)  -> 20 lines, all "level":"INFO"; no WARN or ERROR.
+
+No VM was started in this step.

@@ -1,7 +1,10 @@
 # ADR 0010: Storage management and jails (Milestone 7)
 
 - Status: **Accepted**; phase 7a implemented and validated on `hearst`
-  (pull request #26), phase 7b not started. Every recommendation was
+  (pull request #26); phase 7b started 2026-11-16 (step 6: the RACCT
+  reboot is done, the `pkg --rootdir` trace is recorded, and one question
+  from it is open, see [Step 6](#step-6-racct-reboot-and-the-pkg-trace)).
+  Every recommendation was
   accepted; the review answers and the amendments made at acceptance are
   under [Decisions](#decisions) and are worked into the text. The changes
   `hearst` needs are under [Changes hearst needs](#changes-hearst-needs),
@@ -982,3 +985,81 @@ something the text left open, or departs from it.
 - **`/var/tmp/skep` on `hearst` is now `root:wheel`** (approved for this
   step). The device-and-inode comparison of step 4 stays: it is what
   protects a directory pool whose parent is not root's.
+
+### Step 6: RACCT reboot and the pkg trace
+
+Recorded from 2026-11-16 for phase 7b. Evidence in
+[tests/integration/jails/](../../tests/integration/jails/README.md).
+
+- **hearst change 3 is applied.** `kern.racct.enable="1"` is in
+  `/boot/loader.conf` (backup `loader.conf.pre-racct-20261116`), and
+  `hearst` was rebooted on 2026-11-16: reboot 1 of the budget of two. After
+  the reboot, before anything else, `hw.vmm.vmx.cap.virtual_interrupt_delivery`
+  was `0` (it is set in `loader.conf` since ADR 0009), `kern.racct.enable`
+  was `1`, and the pool, both services, and `bridge0` came back. No VM was
+  started.
+- **How `pkg --rootdir` runs scripts (pkg 2.9.2), from its source and a
+  traced build.** Shell scripts are spawned as the host's `/bin/sh`,
+  **not chrooted**, with `PKG_ROOTDIR` set. They use the host's binaries
+  and write where their text points. Lua package scripts are forked
+  unchrooted, with file access redirected to the root descriptor (no
+  `RESOLVE_BENEATH`) and `pkg.exec` free to run host binaries. Triggers
+  marked `sandbox: false` are **deferred** under `--rootdir`: saved into
+  `<dbdir>/triggers/` for `pkg triggers` inside the target, never run on
+  the host. Sandboxed triggers run under Capsicum. Repository
+  configuration comes from the host. `pkg.conf`, `PKG_DBDIR`, and
+  `PKG_CACHEDIR` default to paths inside the root. Trust anchors are
+  looked up in the root first, then on the host: safe only because a
+  template root is always empty when Skep creates it.
+- **On the 15.1 minimal set** (66 packages), three packages have
+  scripts, all shell: `FreeBSD-caroot` (`certctl -D<root> rehash`),
+  `FreeBSD-runtime` (`pwd_mkdb -d <root>/etc`, `services_mkdb -o
+  <root>/...`), and `FreeBSD-utilities` (`cap_mkdb <root>/etc/login.conf`).
+  The one trigger, mandoc's, is unsandboxed and would run `makewhatis
+  /usr/share/man` on the host; it was deferred. The traced build read
+  `/etc/nsswitch.conf`, `/etc/shells`, and `/etc/ssl/openssl.cnf` from the
+  host and wrote only into the root, apart from pkg's catalogue download
+  temporaries in the host's `/tmp`. Every file under the host's `/etc`,
+  `/var/db/pkg`, and `/usr/share/certs` was identical afterwards (type,
+  mode, owner, size, mtime, SHA-256). A `find -newer` over the UFS root
+  found nothing else changed.
+- **Fixed options the build needs, from the trace.** `TMPDIR` set to the
+  work area (it is part of the fixed environment), so nothing lands in the
+  host's `/tmp`. `PKG_CACHEDIR` in the work area, outside the root, so the
+  cache never enters the template. `PKG_DBDIR` inside the root, so the
+  jail's own `pkg` knows the base packages and runs the deferred trigger.
+  The catalogue copies this leaves in `<root>/var/db/pkg/repos/` (every
+  host repository's, ports included) are removed before `@skep-base`.
+- **Open question, raised before the template feature is enabled**
+  (Decision 7a's rule). Shell scripts run unchrooted, as root, on the
+  host, and they read host paths. Their writes stay in the root only
+  because their text uses `${PKG_ROOTDIR}`. That text comes from packages
+  signed by the repository the host already trusts for its own updates.
+  The options:
+  - **A.** Accept it as observed and document it in the administration
+    guide and the security overview. Every build runs the host-state hash
+    check at run time as well (about 1,500 files, seconds), so a build
+    that changed the host fails and raises an event; it cannot undo the
+    change. Repeat the trace for each new FreeBSD release before Skep
+    offers it.
+  - **B.** Run `pkg` with `RUN_SCRIPTS=false` and
+    `PKG_TRIGGERS_ENABLE=false`, and have Skep run the four commands
+    itself with fixed arguments. Refuse the build if the installed
+    packages carry any script beyond the four known ones. No package code
+    runs on the host. The cost is that Skep must track the base set's
+    scripts for every release.
+  - **C.** Two phases: `--rootdir` with scripts off, then the scripts
+    run inside a `chroot` of the new root, using the root's own binaries.
+    That is the strongest confinement, but it needs pkg internals pkg
+    does not expose (`pkg` has no "run the scripts of installed packages"
+    command), so in practice it becomes B with the commands chrooted.
+
+  Recommendation: **B, with the commands run chrooted in the new root**
+  (`chroot <root> /usr/sbin/pwd_mkdb -d /etc /etc/master.passwd` and so on,
+  using the root's binaries, which the release rule makes the host's
+  version anyway), plus A's run-time hash check. No package-supplied code
+  runs on the host, and an unknown script stops the build instead of
+  running. The pkgbase source is not implemented until Andy answers. The
+  rest of step 6 (the template store, the `dist` source, the task and the
+  routes) does not depend on the answer.
+
