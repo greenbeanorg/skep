@@ -2,8 +2,9 @@
 
 - Status: **Accepted**; phase 7a implemented and validated on `hearst`
   (pull request #26); phase 7b started 2026-11-16 (step 6: the RACCT
-  reboot is done, the `pkg --rootdir` trace is recorded, and one question
-  from it is open, see [Step 6](#step-6-racct-reboot-and-the-pkg-trace)).
+  reboot is done, the `pkg --rootdir` trace is recorded, and the decision
+  on package scripts is accepted, see
+  [Step 6](#step-6-racct-reboot-and-the-pkg-trace); building it is next).
   Every recommendation was
   accepted; the review answers and the amendments made at acceptance are
   under [Decisions](#decisions) and are worked into the text. The changes
@@ -1030,36 +1031,173 @@ Recorded from 2026-11-16 for phase 7b. Evidence in
   jail's own `pkg` knows the base packages and runs the deferred trigger.
   The catalogue copies this leaves in `<root>/var/db/pkg/repos/` (every
   host repository's, ports included) are removed before `@skep-base`.
-- **Open question, raised before the template feature is enabled**
-  (Decision 7a's rule). Shell scripts run unchrooted, as root, on the
-  host, and they read host paths. Their writes stay in the root only
-  because their text uses `${PKG_ROOTDIR}`. That text comes from packages
-  signed by the repository the host already trusts for its own updates.
-  The options:
-  - **A.** Accept it as observed and document it in the administration
-    guide and the security overview. Every build runs the host-state hash
-    check at run time as well (about 1,500 files, seconds), so a build
-    that changed the host fails and raises an event; it cannot undo the
-    change. Repeat the trace for each new FreeBSD release before Skep
-    offers it.
-  - **B.** Run `pkg` with `RUN_SCRIPTS=false` and
-    `PKG_TRIGGERS_ENABLE=false`, and have Skep run the four commands
-    itself with fixed arguments. Refuse the build if the installed
-    packages carry any script beyond the four known ones. No package code
-    runs on the host. The cost is that Skep must track the base set's
-    scripts for every release.
-  - **C.** Two phases: `--rootdir` with scripts off, then the scripts
-    run inside a `chroot` of the new root, using the root's own binaries.
-    That is the strongest confinement, but it needs pkg internals pkg
-    does not expose (`pkg` has no "run the scripts of installed packages"
-    command), so in practice it becomes B with the commands chrooted.
+- **The question this raised** (Decision 7a's rule: an unchrooted script
+  is raised before the template feature is enabled). Shell scripts run
+  unchrooted, as root, on the host, and read host paths. Their writes
+  stay in the root only because their text uses `${PKG_ROOTDIR}`. Three
+  options were put to Andy on 2026-11-16: **A**, accept it, document it,
+  and check the host files on every build; **B**, turn package scripts
+  and triggers off and have Skep run the known commands itself; **C**,
+  re-run the scripts chrooted in a second pass, which pkg has no command
+  for, so in practice it becomes B.
 
-  Recommendation: **B, with the commands run chrooted in the new root**
-  (`chroot <root> /usr/sbin/pwd_mkdb -d /etc /etc/master.passwd` and so on,
-  using the root's binaries, which the release rule makes the host's
-  version anyway), plus A's run-time hash check. No package-supplied code
-  runs on the host, and an unknown script stops the build instead of
-  running. The pkgbase source is not implemented until Andy answers. The
-  rest of step 6 (the template store, the `dist` source, the task and the
-  routes) does not depend on the answer.
+#### Decision on package scripts (accepted 2026-11-16)
 
+Andy chose **B, with four changes**, and kept A's host-file check. This
+is the specification of the pkgbase build. It supersedes the "Rules for
+running `pkg`" in Decision 7a where they differ, and keeps every rule
+there that it does not change (cleared environment, fixed arguments,
+package names only from `storage.template_packages`, `PKG_CACHEDIR` and
+`PKG_DBDIR` given with `-o`, cache emptied before `@skep-base`).
+
+1. **No package code runs on the host.** `pkg` runs with
+   `-o RUN_SCRIPTS=false -o PKG_TRIGGERS_ENABLE=false`. With triggers off,
+   pkg neither runs nor saves (defers) triggers: `triggers_enabled()` in
+   pkg 2.9.2's `triggers.c` checks both options.
+2. **The known commands run inside a throwaway build jail on the new
+   template, not in a plain chroot** (Andy's change 1). Its properties:
+   - Name `skep-build-<template-id>`, `path=<template root>`, created
+     only for the build and removed afterwards (`jail -r`) on success,
+     failure, cancel, or timeout. The agent removes any leftover
+     `skep-build-*` jail at start, before it serves its socket, and logs
+     an event when it does.
+   - **No network:** `ip4=disable`, `ip6=disable`, no `vnet`, no
+     interfaces.
+   - **No devfs, or the minimum:** first try without `mount.devfs`. If a
+     command needs `/dev/null` or similar (record which one and why),
+     mount devfs with a ruleset that unhides only `null`, `zero`,
+     `random`, and `urandom`, and nothing else.
+   - The hardened parameters of Decision 9 that apply: `enforce_statfs=2`,
+     `children.max=0`, every `allow.*` off, `securelevel=2` unless a
+     command needs less (record it), `exec.clean`.
+   - Started with `persist` so the commands can run one by one with
+     `jexec -l` (cleared login environment). It never runs `/etc/rc`
+     (no `exec.start`).
+   - Same parent rule as the template: the parent of the template root is
+     `root:wheel 0700`, checked before the jail starts
+     (`jail_parent_insecure`).
+   - The jail.conf for it is generated from typed values like Decision
+     8's, or the parameters are passed as a fixed argument list to
+     `jail -c`. Nothing in it comes from a request.
+3. **The commands, fixed in Skep's code, run as root inside the build
+   jail with the template's own binaries** (paths relative to the jail
+   root, which is `/` inside it). They are the package scripts' commands
+   with `${PKG_ROOTDIR}` empty and `PKG_METALOG` unset:
+
+   | Package (its script) | Command run in the build jail |
+   |---|---|
+   | `FreeBSD-caroot` (post-install) | `/usr/sbin/certctl rehash` |
+   | `FreeBSD-runtime` (post-install) | `/usr/sbin/pwd_mkdb -i -p -d /etc /etc/master.passwd` |
+   | `FreeBSD-runtime` (post-install) | `/usr/sbin/services_mkdb -l -q -o /var/db/services.db /etc/services` |
+   | `FreeBSD-utilities` (post-install) | `/usr/bin/cap_mkdb -l /etc/login.conf` |
+   | mandoc trigger (Andy's change 4) | `/usr/bin/makewhatis /usr/share/man` and, if it exists, `/usr/bin/makewhatis /usr/share/openssl/man` |
+
+   About `services_mkdb`: the package script passes `${PKG_ROOTDIR}/`
+   (the root directory) as the input file. Inside the jail, Skep passes
+   `/etc/services`, the input services_mkdb(8) documents as its default.
+   When this is first built, check that the resulting
+   `/var/db/services.db` is identical to the one the traced build
+   produced, which is kept on `hearst` in `skeptest/trace-7b` until then.
+   A command that fails fails the build, and its first line of stderr
+   goes in the task error.
+4. **Allowlist by package name and script hash** (Andy's change 2). After
+   the install and before the build jail, Skep reads every installed
+   package's scripts from the template's own database with a fixed
+   command: `pkg --rootdir <root> -o PKG_DBDIR=<root>/var/db/pkg info
+   --raw --raw-format json-compact -a`. For each package it takes every
+   entry of `scripts` and `lua_scripts`, in every phase (install,
+   deinstall, pre and post, upgrade), and computes the SHA-256 of the
+   script body as that JSON gives it (the UTF-8 string, no trailing
+   newline added). Every (package name, script kind, phase, SHA-256) must
+   be on the allowlist. Anything not on it fails the build with
+   `template_script_unknown`. The error names the package and phase and
+   includes the script text, so the operator sees what changed. The
+   allowlist is compiled into Skep, keyed by release major.minor; it is
+   not configuration, because it is a security boundary. The 15.1 entries,
+   from the traced build (the package versions are shown for reference;
+   the key is the name and hash):
+
+   | Package | Kind, phase | SHA-256 of the body | Version seen |
+   |---|---|---|---|
+   | `FreeBSD-caroot` | scripts, post-install | `5976bb9bdaf0cbb34807cdd7eb9b1b30e4913f92f4c2422c96caea0b381c8099` | 15.1p6 |
+   | `FreeBSD-caroot` | scripts, post-deinstall | `5976bb9bdaf0cbb34807cdd7eb9b1b30e4913f92f4c2422c96caea0b381c8099` | 15.1p6 |
+   | `FreeBSD-runtime` | scripts, post-install | `900cf7d3a93efcb3e894d1517d9d1c913932041ee97ad339adeed6f4ae9ce0f9` | 15.1p6 |
+   | `FreeBSD-utilities` | scripts, post-install | `8620cabb4dfe8249fc0fe50ff62fc6e0cd4df957ac46b112098baa4ee63c698f` | 15.1p4 |
+
+   The bodies hashed are, exactly:
+   `/usr/sbin/certctl -D${PKG_ROOTDIR}/ ${PKG_METALOG:+-U -M $PKG_METALOG} rehash`;
+   `pwd_mkdb -i -p -d  ${PKG_ROOTDIR}/etc ${PKG_ROOTDIR}/etc/master.passwd\n    services_mkdb -l -q -o ${PKG_ROOTDIR}/var/db/services.db ${PKG_ROOTDIR}/`
+   (two spaces after `-d`; `\n` is a newline followed by four spaces);
+   `cap_mkdb -l ${PKG_ROOTDIR}/etc/login.conf`. A unit test pins these
+   hashes against these strings. A release without allowlist entries has
+   no pkgbase source in the capabilities.
+5. **No deferred trigger is left in the template** (Andy's change 4).
+   Before `@skep-base`, `<root>/var/db/pkg/triggers/` must be absent or
+   empty; if it holds anything, the build fails (`template_trigger_left`)
+   and the error lists the files. With triggers off it should never have
+   any, and the check proves it. The mandoc trigger's work is done by the
+   `makewhatis` row above.
+6. **The release is never newer than the host's** (Andy's change 3).
+   After the install, `freebsd-version -u` of the template (run inside
+   the build jail, or read from `<root>/bin/freebsd-version` without
+   running host code on it) must have the host's `freebsd-version -k`
+   major.minor (Decision 7b) and must not be newer than the host's
+   release. A newer one fails the build with `release_unsupported` and
+   the template is destroyed. The same rule applies to the `dist` source.
+   Whether a newer patch level of the same major.minor counts as newer is
+   one of the open points below.
+7. **A's host-file check is kept, at run time, on every build.** Before
+   `pkg` starts and after the build jail is removed, the agent records,
+   for every regular file and symlink under the host's `/etc`,
+   `/var/db/pkg`, and `/usr/share/certs`, its type, mode, owner, size,
+   mtime, and the SHA-256 of regular files (about 1,500 entries on
+   `hearst`, a few seconds). Any difference fails the build
+   (`template_host_changed`), lists the changed paths in the task error
+   and the audit entry, and emits an event. The template is destroyed;
+   the host change cannot be undone and is reported, not repaired. The
+   Decision 16 check repeats this from outside, as the trace did.
+8. **The trace's housekeeping.** `TMPDIR=<work area>/tmp` is part of the
+   fixed environment of `pkg` (the trace showed pkg writing its catalogue
+   download temporaries to the host's `/tmp` without it).
+   `PKG_CACHEDIR=<work area>/cache`, outside the root. `PKG_DBDIR=<root>/var/db/pkg`.
+   Before `@skep-base`, Skep removes `<root>/var/db/pkg/repos/` (copies of
+   every host repository's catalogue, ports included) and checks that
+   `<root>/var/cache/pkg` is empty or absent. The work area is
+   `<pool>/<root>/templates/.work-<template-id>` or a directory beside the
+   template root under the same `0700` parent, and is removed after the
+   build.
+
+The build sequence, in order: check the parent directory; record the
+host hashes; create the template dataset and work area; run `pkg install`
+(scripts and triggers off, fixed environment and options); read and check
+the scripts against the allowlist; check the release; start the build
+jail, run the commands, remove the jail; check for deferred triggers;
+remove the catalogues and check the cache; record the host hashes again
+and compare; remove the work area; snapshot `@skep-base`; record the
+release, packages, and size. A failure at any step removes the build jail
+and work area and destroys the template dataset. Cancel and timeout (30
+minutes) do the same.
+
+New error codes: `template_script_unknown` (422), `template_trigger_left`
+(500), and `template_host_changed` (500); `release_unsupported` and
+`jail_parent_insecure` already exist in the text. The administration
+guide and the security overview document all of this when it is built.
+
+Points the implementation decides and records here as it goes (Andy did
+not rule on them): whether trigger definition files in the template
+(`<root>/usr/share/pkg/triggers/*.ucl`, today only `mandoc.ucl`, SHA-256
+`c6cc94249864d251d0a143b62c21019d5f4ab593299c55dccdb5f0574fdb1590`) are
+allowlisted too, so a new trigger whose work Skep does not do stops the
+build (suggested: yes, same error as an unknown script); whether the
+build jail is one persistent jail with `jexec` or one `jail -c ...
+command=` per command; and **whether "newer than the host" includes the
+patch level**. The base repository can carry a newer patch (say
+`15.1-RELEASE-p7`) before the host is updated, and a strict reading would
+then fail every build until the host catches up. Suggested: compare
+major.minor only, and record the patch level and flag it in the UI, as
+Decision 7b already does for older jails. This one goes to Andy before
+it is built, because it reads his change 3.
+
+The pkgbase source is built in step 6 to this specification, together
+with the template store, the `dist` source, the
+`container.template.create` and delete tasks, and the routes.

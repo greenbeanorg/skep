@@ -306,5 +306,12 @@ that is raised before the template feature is enabled, not worked around".
 Raised with Andy on 2026-11-16; the pkgbase source is not implemented until he
 has answered.
 
+Answered by Andy on 2026-11-16: option B with four changes (a throwaway build
+jail instead of a chroot, an allowlist by package name and script hash, no
+template newer than the host, makewhatis in the build jail with no deferred
+trigger left), keeping the run-time host-file check, TMPDIR in a work area,
+and removing the catalogues. The specification is in ADR 0010, implementation
+notes, "Step 6", "Decision on package scripts".
+
 Scratch left on hearst for review: skeptest/trace-7b (161M) and
 /var/tmp/skep-trace7b (ktrace 57M, kdump, hashes, logs).
