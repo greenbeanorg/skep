@@ -300,3 +300,17 @@ identical rows except `packages.time` (the install time). So
 `services.db`, both `mandoc.db`, `pwd.db`, `spwd.db`, the certs and the
 rest are byte-identical between the test-binary build and the deployed
 agent's. Records: `step6-deployed/`.
+
+## 11. The operator's refused template build (2026-11-16)
+
+**Done** (the check owed since 2026-11-15; see section 5). Clean-up first: with the comparison matching, `skeptest/step6`
+and `skeptest/step6-scratch` were destroyed (`zfs destroy -r`), as approved.
+
+s6oper logged in (bearer); its permissions include `storage:read` and not
+`storage:write`. `GET /api/v1/storage/templates`: 200. `POST
+/api/v1/storage/templates` `{"name":"oper-attempt",…}`: **403**
+`forbidden`, "your role does not allow this", details `permission:
+storage:write`, request `005a708b…`. The access audit log has it as entry
+278: `authz.deny`, outcome `denied`, actor s6oper, role operator, route
+and method, `permission: storage:write`, same request ID. No task was
+created, no template row, no dataset. Record: `step6-deployed/operator-refusal.txt`.
