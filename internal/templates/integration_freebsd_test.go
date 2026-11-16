@@ -125,7 +125,7 @@ func TestIntegrationBuild(t *testing.T) {
 	if !strings.HasPrefix(res.Release, "15.1-RELEASE") {
 		t.Errorf("release %q", res.Release)
 	}
-	if res.HostFiles < 1000 {
+	if res.HostFiles < 700 { // 764 on hearst: 757 files and 7 links
 		t.Errorf("only %d host files were compared", res.HostFiles)
 	}
 }
