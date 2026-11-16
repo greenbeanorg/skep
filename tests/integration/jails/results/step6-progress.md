@@ -66,3 +66,57 @@ opens the db (libc `getservent.c`, releng/15.1). `skeptest/step6-probe`
 destroyed.
 
 **Commit:** see the next entry.
+
+## 3. hostops template layer, allowlist, build sequence
+
+**Done.** `internal/hostops` gains a `Templates` interface
+(`templates.go`, `templates_pkg.go`, `templates_jail.go`, `hostfiles.go`):
+the templates dataset and its 0700 check, the template dataset and work
+area, `pkg install` with the fixed environment and options, `pkg info
+--raw`, the trigger-directory listing through `os.Root` without following
+links, `USERLAND_VERSION` read from `bin/freebsd-version`, `base.txz`
+checked against `MANIFEST` and extracted, the build jail (create, check
+the kernel's view of its parameters, `jexec -l`, remove and confirm), the
+host-file record. The real runner gains `RunEnv` (its own environment,
+timeout, and output cap; output past the cap is an error there, not cut).
+`internal/templates` holds the compiled allowlist (15.1, pinned by a test
+against the ADR's exact strings) and the build sequence with its clean-up.
+Unit tests: 20 in hostops, 20 in templates, all passing on merrick.
+
+**Decisions made (small, easy to undo, in line with the ADR):**
+
+- The work area is a directory `<templates mountpoint>/.work-<id>`, not a
+  dataset (item 8 allows either). `<root>/templates` is a mounted dataset
+  (unlike `<root>/vm`, which is `canmount=off`), so the work areas are in
+  it and the 0700 parent is a real directory of its own.
+- The build jail's `allow.*` list is fixed in code (19 parameters, the
+  15.1 GENERIC set), and after `jail -c` every `allow.*` that `jls
+  --libxo=json -n` reports must be `false`. The probe showed two default to
+  on (`reserved_ports`, `unprivileged_proc_debug`), which is why each is
+  listed. The JSON form is read rather than `jls -n`, whose `allow.noX`
+  spelling is ambiguous. Fixture: `internal/hostops/testdata/jls-build-jail-15.1.json`,
+  recorded on hearst.
+- A build command runs only if an allowlisted script or trigger in the
+  template asks for it (the ADR maps each script and trigger to its
+  commands), always in the fixed order. The OpenSSL `makewhatis` runs only
+  if `usr/share/openssl/man` exists (the ADR's "if it exists").
+- The template is set `readonly=on` after `@skep-base` ("read-only from
+  then on", decision 7b).
+- New error codes besides the ADR's three: `template_build_failed` (500,
+  a pkg, tar, or build-jail command that ran and failed, with the first
+  stderr line, as item 3 asks), `template_name_taken` (409),
+  `template_not_provisioned` (409), `template_archive_mismatch` (422, the
+  dist check, which the ADR leaves unnamed). `release_unsupported` (422)
+  and `jail_parent_insecure` (409) get their constants. A source that is
+  not available is `storage_feature_unsupported`.
+- A symlink or other non-regular entry in a trigger directory fails with
+  `template_script_unknown` (it is the allowlist check that fails).
+- A failed build that also changed the host files reports
+  `template_host_changed`, with the build's own error in the details. A
+  clean-up failure (a jail that will not go) is appended to the task
+  error's message and details.
+- No general event stream exists in the agent yet. A host change goes in
+  the task error, the audit details and an `event=template_host_changed`
+  error log. The start-up sweep (next piece) logs a warning.
+- A `.work-` directory name cannot collide with a template: template IDs
+  are UUIDs.

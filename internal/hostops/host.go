@@ -51,6 +51,9 @@ type host struct {
 	self  string
 	log   *slog.Logger
 
+	// hostFileRoots replaces HostFileRoots in tests.
+	hostFileRoots []string
+
 	// ignoredMedia remembers which entries of the media directory were
 	// already logged as ignored.
 	mediaMu      sync.Mutex

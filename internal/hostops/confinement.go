@@ -32,6 +32,10 @@ type Confinement struct {
 	// reboot. StateDir holds one persistent directory per VM.
 	RunDir   string
 	StateDir string
+	// DistDir is storage.dist_dir: the root-owned directory where the
+	// operator places base.txz and its MANIFEST for dist templates. Empty
+	// means there is no dist source.
+	DistDir string
 }
 
 // DirPool is an allow-listed directory that holds VM disks as files.

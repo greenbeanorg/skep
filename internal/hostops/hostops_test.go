@@ -26,6 +26,15 @@ type script struct {
 	// answers maps "binary arg arg ..." to an output or an error.
 	answers map[string]any
 	calls   []string
+	// envs holds the environment of each RunEnv call, in order.
+	envs [][]string
+}
+
+// RunEnv implements EnvRunner: the call is recorded and answered like
+// Run, and its environment is kept.
+func (s *script) RunEnv(ctx context.Context, c EnvCommand) ([]byte, error) {
+	s.envs = append(s.envs, c.Env)
+	return s.Run(ctx, c.Path, c.Args...)
 }
 
 func (s *script) Run(_ context.Context, path string, args ...string) ([]byte, error) {

@@ -39,6 +39,8 @@ type Ops struct {
 	VMM   VMM
 	Files Files
 	Procs Procs
+	// Templates builds jail templates (ADR 0010 decision 7).
+	Templates Templates
 }
 
 // ZFS creates, lists, and destroys the datasets of VMs inside the

@@ -23,22 +23,29 @@ type execRunner struct {
 }
 
 func (r execRunner) Run(ctx context.Context, path string, args ...string) ([]byte, error) {
+	return runCommand(ctx, r.timeout, maxOutput, false,
+		[]string{"LC_ALL=C", "PATH=/sbin:/bin:/usr/sbin:/usr/bin"}, path, args...)
+}
+
+// runCommand runs one command. strict makes output past the limit an
+// error instead of silently cut (the builder parses pkg's whole output).
+func runCommand(ctx context.Context, timeout time.Duration, limit int, strict bool, env []string, path string, args ...string) ([]byte, error) {
 	if !filepath.IsAbs(path) {
 		return nil, fmt.Errorf("hostops: refusing to run non-absolute command %q", path)
 	}
-	ctx, cancel := context.WithTimeout(ctx, r.timeout)
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	var stdout, stderr capped
+	stdout, stderr := capped{limit: limit}, capped{limit: maxOutput}
 	cmd := exec.CommandContext(ctx, path, args...)
-	cmd.Env = []string{"LC_ALL=C", "PATH=/sbin:/bin:/usr/sbin:/usr/bin"}
+	cmd.Env = env
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	cmd.WaitDelay = time.Second
 
 	if err := cmd.Run(); err != nil {
 		name := filepath.Base(path)
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			return nil, fmt.Errorf("hostops: %s timed out after %s", name, r.timeout)
+			return nil, fmt.Errorf("hostops: %s timed out after %s", name, timeout)
 		}
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
@@ -52,17 +59,41 @@ func (r execRunner) Run(ctx context.Context, path string, args ...string) ([]byt
 		ce.Stderr = strings.TrimSpace(line)
 		return nil, ce
 	}
+	if strict && stdout.over {
+		return nil, fmt.Errorf("hostops: %s wrote more than %d bytes", filepath.Base(path), limit)
+	}
 	return stdout.buf.Bytes(), nil
 }
 
-// capped keeps at most maxOutput bytes and discards the rest.
+// RunEnv implements EnvRunner: the same rules as Run, with the command's
+// own complete environment, timeout, and output cap.
+func (r execRunner) RunEnv(ctx context.Context, c EnvCommand) ([]byte, error) {
+	timeout := c.Timeout
+	if timeout <= 0 {
+		timeout = r.timeout
+	}
+	limit := c.MaxOutput
+	if limit <= 0 {
+		limit = maxOutput
+	}
+	return runCommand(ctx, timeout, limit, true, c.Env, c.Path, c.Args...)
+}
+
+// capped keeps at most limit bytes, discards the rest, and remembers
+// that it did.
 type capped struct {
-	buf bytes.Buffer
+	buf   bytes.Buffer
+	limit int
+	over  bool
 }
 
 func (c *capped) Write(p []byte) (int, error) {
-	if room := maxOutput - c.buf.Len(); room > 0 {
+	room := c.limit - c.buf.Len()
+	if room > 0 {
 		c.buf.Write(p[:min(room, len(p))])
+	}
+	if len(p) > room {
+		c.over = true
 	}
 	return len(p), nil
 }

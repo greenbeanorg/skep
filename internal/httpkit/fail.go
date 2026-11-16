@@ -51,6 +51,18 @@ var StatusForCode = map[string]int{
 	models.CodeSnapshotIncomplete:        http.StatusConflict,
 	models.CodeStorageLocked:             http.StatusConflict,
 	models.CodeStorageFeatureUnsupported: http.StatusUnprocessableEntity,
+
+	// Jail templates (ADR 0010 decision 7, step 6). Most of these end a
+	// build task; the statuses apply when a request is refused with one.
+	models.CodeReleaseUnsupported:      http.StatusUnprocessableEntity,
+	models.CodeJailParentInsecure:      http.StatusConflict,
+	models.CodeTemplateScriptUnknown:   http.StatusUnprocessableEntity,
+	models.CodeTemplateTriggerLeft:     http.StatusInternalServerError,
+	models.CodeTemplateHostChanged:     http.StatusInternalServerError,
+	models.CodeTemplateBuildFailed:     http.StatusInternalServerError,
+	models.CodeTemplateNameTaken:       http.StatusConflict,
+	models.CodeTemplateNotProvisioned:  http.StatusConflict,
+	models.CodeTemplateArchiveMismatch: http.StatusUnprocessableEntity,
 }
 
 // Fail maps a service error to an error response. Internal error text is
