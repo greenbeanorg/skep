@@ -1131,6 +1131,26 @@ package names only from `storage.template_packages`, `PKG_CACHEDIR` and
    `cap_mkdb -l ${PKG_ROOTDIR}/etc/login.conf`. A unit test pins these
    hashes against these strings. A release without allowlist entries has
    no pkgbase source in the capabilities.
+
+   **Trigger definition files are allowlisted too** (Andy, 2026-11-16).
+   Triggers are off during the install, so a trigger whose work Skep does
+   not reproduce would silently leave the template unfinished. After the
+   install, Skep lists every regular file in the template's trigger
+   directories, `<root>/usr/share/pkg/triggers/` and
+   `<root>/usr/local/share/pkg/triggers/` (pkg's default
+   `PKG_TRIGGERS_DIR`), reading them through the root's directory
+   descriptor without following links. A symlink or any other non-regular
+   entry there fails the build. Each file's (file name, SHA-256 of its
+   bytes) must be on the same compiled, per-release allowlist. Anything
+   else fails the build with `template_script_unknown`; the error names
+   the file and includes its content. For 15.1 there is one entry:
+
+   | Trigger file | SHA-256 | From package |
+   |---|---|---|
+   | `usr/share/pkg/triggers/mandoc.ucl` | `c6cc94249864d251d0a143b62c21019d5f4ab593299c55dccdb5f0574fdb1590` | `FreeBSD-mandoc` 15.1 |
+
+   Each allowlisted trigger maps to the commands Skep runs for it in the
+   build jail. `mandoc.ucl` maps to the `makewhatis` row of item 3.
 5. **No deferred trigger is left in the template** (Andy's change 4).
    Before `@skep-base`, `<root>/var/db/pkg/triggers/` must be absent or
    empty; if it holds anything, the build fails (`template_trigger_left`)
@@ -1144,8 +1164,13 @@ package names only from `storage.template_packages`, `PKG_CACHEDIR` and
    major.minor (Decision 7b) and must not be newer than the host's
    release. A newer one fails the build with `release_unsupported` and
    the template is destroyed. The same rule applies to the `dist` source.
-   Whether a newer patch level of the same major.minor counts as newer is
-   one of the open points below.
+   **Only major.minor is compared** (Andy, 2026-11-16): a template of
+   `15.1-RELEASE-p7` on a host at `15.1-RELEASE-p6` builds; `15.2` or
+   `16.0` on that host is refused. The template's full release, patch
+   level included, is recorded in `observed_release`, and the UI shows it
+   beside the host's. When the template's patch level differs from the
+   host kernel's, in either direction, the UI flags it, the same way
+   Decision 7b flags jails older than the host.
 7. **A's host-file check is kept, at run time, on every build.** Before
    `pkg` starts and after the build jail is removed, the agent records,
    for every regular file and symlink under the host's `/etc`,
@@ -1183,20 +1208,45 @@ New error codes: `template_script_unknown` (422), `template_trigger_left`
 `jail_parent_insecure` already exist in the text. The administration
 guide and the security overview document all of this when it is built.
 
-Points the implementation decides and records here as it goes (Andy did
-not rule on them): whether trigger definition files in the template
-(`<root>/usr/share/pkg/triggers/*.ucl`, today only `mandoc.ucl`, SHA-256
-`c6cc94249864d251d0a143b62c21019d5f4ab593299c55dccdb5f0574fdb1590`) are
-allowlisted too, so a new trigger whose work Skep does not do stops the
-build (suggested: yes, same error as an unknown script); whether the
-build jail is one persistent jail with `jexec` or one `jail -c ...
-command=` per command; and **whether "newer than the host" includes the
-patch level**. The base repository can carry a newer patch (say
-`15.1-RELEASE-p7`) before the host is updated, and a strict reading would
-then fail every build until the host catches up. Suggested: compare
-major.minor only, and record the patch level and flag it in the UI, as
-Decision 7b already does for older jails. This one goes to Andy before
-it is built, because it reads his change 3.
+Three follow-up points, settled on 2026-11-16 (Andy answered the first
+two and left the third to the implementation):
+
+- **Patch level:** only major.minor is compared, and the patch level is
+  shown in the UI (item 6).
+- **Trigger definition files:** allowlisted by name and hash (item 4).
+- **The build jail's shape: one persistent jail, with each command run
+  through `jexec`.** The jail is created once with `jail -c` (the
+  parameters of item 2 plus `persist`, and no `command`, `exec.start`,
+  or `exec.stop`). Each command of item 3 runs as
+  `/usr/sbin/jexec -l -U root skep-build-<template-id> <command> <args>`,
+  in a fixed order: certctl, pwd_mkdb, services_mkdb, cap_mkdb,
+  makewhatis. Then the jail is removed with `jail -r`. The removal sits in
+  a deferred cleanup that uses its own short context, so a cancelled or
+  timed-out task still removes the jail. Removal is then confirmed with
+  `jls -j`, and a jail that will not go fails the task and is reported.
+  Why one jail rather than one `jail -c ... command=` per command:
+  - The parameters (no network, devfs or not, securelevel) are set and
+    checked once, and every command runs in the identical environment.
+    With five jails, a difference between them would be a bug that is
+    hard to see.
+  - There is one jail to clean up, under one known name, and one place
+    that guarantees its removal. The agent's start-up sweep of leftover
+    `skep-build-*` jails covers a crash at any point. Five short-lived
+    jails mean five create and remove cycles, each one a chance to leave
+    something behind or to collide with a half-removed predecessor of the
+    same name.
+  - Errors map cleanly. A failing `jexec` is one command's failure, with
+    its own exit status and stderr, and the jail itself is unaffected. A
+    failing `jail -c ... command=` mixes jail-setup failures with command
+    failures in one exit status.
+  - `jexec -l` gives each command a clean login environment, which
+    matches `exec.clean` and the fixed-environment rule.
+
+  What it costs: `persist` means the jail outlives a crashed agent until
+  the start-up sweep removes it. Per-command jails would vanish on their
+  own when their command ended. The sweep, and the fact that a build
+  jail has no network, no `exec.start`, and nothing running between
+  commands, make that acceptable.
 
 The pkgbase source is built in step 6 to this specification, together
 with the template store, the `dist` source, the
