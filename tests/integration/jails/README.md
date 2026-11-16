@@ -15,9 +15,10 @@ run is **pending FreeBSD validation**, whatever CI says.
 | hearst change 3: `kern.racct.enable=1` in `loader.conf` and the reboot (1 of 2); after it, `hw.vmm.vmx.cap.virtual_interrupt_delivery` is `0` before any `vm.start`; pool, services, and bridge back | **done** (2026-11-16) | [step6-reboot.txt](results/step6-reboot.txt) |
 | How `pkg --rootdir` runs scripts and triggers (pkg 2.9.2 source, and a traced hand-run build of `FreeBSD-set-minimal`); host `/etc`, `/var/db/pkg`, `/usr/share/certs` unchanged by that build | **recorded**: shell scripts run unchrooted on the host; host state identical. Andy's decision (B with changes, 2026-11-16) is in ADR 0010's step 6 notes | [step6-pkg-trace.txt](results/step6-pkg-trace.txt) |
 | Feasibility of the step 6 build specification, hand-run before building it | **resolved**: Andy chose option A (`jexec -l`, no `-U`), `/etc/services` kept, Decision 9 amended (ADR 0010 step 6, "Resolved") | [step6-probe.txt](results/step6-probe.txt), [step6-progress.md](results/step6-progress.md) |
-| Template (pkgbase): `container.template.create` builds a 15.1 userland; release recorded `15.1-RELEASE-pN` | pending: to be built to the step 6 decision | |
+| Template (pkgbase): the step 6 builder builds a 15.1 userland; release recorded `15.1-RELEASE-pN` | **passed** (2026-11-16) for the builder with the real host operations, run by its FreeBSD test binary: `15.1-RELEASE-p6`, 66 packages, every difference from the trace explained (services.db intended). Through a deployed agent's task and API: pending (needs a deploy) | [step6-build.txt](results/step6-build.txt) |
+| Template refusal: a changed trigger file fails with `template_script_unknown` and leaves nothing | **passed** (2026-11-16) | [step6-build.txt](results/step6-build.txt) |
 | Template (dist): a mismatched `base.txz` refused, a matching one builds | pending | |
-| Template host safety, by a Skep task: host hashes identical, `pkg` environment fixed (`procstat -e`), `var/cache/pkg` empty in `@skep-base` | pending (the hand-run build passed the hash part; see above) | |
+| Template host safety: host hashes identical, `pkg` environment fixed (`procstat -e`), `var/cache/pkg` empty in `@skep-base`, no build jail left, no deferred trigger | **passed** (2026-11-16) by the builder's own check and from outside | [step6-build.txt](results/step6-build.txt) |
 | Jail lifecycle, networking, baseline, root parent, orphaned epairs, `started_once`, limits, clone identity, symlink rule, monitoring, permissions (`operator` refused `storage:write` with a real `container.template.create` request) | pending (steps 7 to 10) | |
 
 Not verifiable on this host and pending regardless: a ZFS-root host; a host
@@ -35,7 +36,13 @@ shape is not).
   paths the script children read, the deferred triggers, and the files
   changed on the UFS root during the build.
 
-Keep `skeptest/trace-7b` until the first Skep-built template's
-`/var/db/services.db` has been compared with the trace's (ADR 0010 step 6
-decision, item 3). Clean-up after that:
+- [step6-probe/](step6-probe/): the hand-run probe of the specification
+  before it was built ([results/step6-probe.txt](results/step6-probe.txt)).
+- [step6-build/](step6-build/): the native build, the refusal, and the
+  comparison with the trace (`run-build.sh`, `run-refusal.sh`,
+  `compare.sh`), driving `internal/templates/integration_freebsd_test.go`.
+
+The first Skep-built template's `/var/db/services.db` has been compared
+with the trace's ([results/step6-build.txt](results/step6-build.txt)), so
+`skeptest/trace-7b` may go when Andy agrees. Clean-up:
 `sudo zfs destroy -r skeptest/trace-7b; sudo rm -r /var/tmp/skep-trace7b`.

@@ -1,0 +1,2 @@
+./usr/share/man/mandoc.db
+./usr/share/openssl/man/mandoc.db

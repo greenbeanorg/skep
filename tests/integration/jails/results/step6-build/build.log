@@ -1,0 +1,39 @@
+=== RUN   TestIntegrationBuild
+    integration_freebsd_test.go:78: template ID a623f47e-2872-46d6-93cf-0b98f3d63c1e
+    integration_freebsd_test.go:55: [   0.0s] checking the templates directory
+    integration_freebsd_test.go:55: [   0.1s] recording the host files
+    integration_freebsd_test.go:55: [   0.4s] creating the template dataset
+    integration_freebsd_test.go:55: [   0.5s] installing the base packages (scripts and triggers off)
+    integration_freebsd_test.go:55: [  34.2s] checking the package scripts against the allowlist
+    integration_freebsd_test.go:55: [  34.6s] checking the trigger files against the allowlist
+    integration_freebsd_test.go:55: [  34.6s] checking the template's release
+    integration_freebsd_test.go:55: [  34.6s] starting the build jail
+    integration_freebsd_test.go:55: [  34.7s] running /usr/sbin/certctl rehash in the build jail
+    integration_freebsd_test.go:55: [  34.7s] running /usr/sbin/pwd_mkdb -i -p -d /etc /etc/master.passwd in the build jail
+    integration_freebsd_test.go:55: [  34.7s] running /usr/sbin/services_mkdb -l -q -o /var/db/services.db /etc/services in the build jail
+    integration_freebsd_test.go:55: [  34.7s] running /usr/bin/cap_mkdb -l /etc/login.conf in the build jail
+    integration_freebsd_test.go:55: [  34.7s] running /usr/bin/makewhatis /usr/share/man in the build jail
+    integration_freebsd_test.go:55: [  35.6s] running /usr/bin/makewhatis /usr/share/openssl/man in the build jail
+    integration_freebsd_test.go:55: [  35.6s] removing the build jail
+    integration_freebsd_test.go:55: [  35.6s] checking for deferred triggers
+    integration_freebsd_test.go:55: [  35.6s] removing the repository catalogues and checking the package cache
+    integration_freebsd_test.go:55: [  35.7s] comparing the host files
+    integration_freebsd_test.go:55: [  36.0s] removing the work area
+    integration_freebsd_test.go:55: [  36.0s] taking @skep-base
+    integration_freebsd_test.go:91: result: {Release:15.1-RELEASE-p6 HostRelease:15.1-RELEASE-p6 PatchDiffers:false ArchiveSHA256: UsedBytes:81445888 Snapshot:skeptest/step6/templates/a623f47e-2872-46d6-93cf-0b98f3d63c1e@skep-base Packages:66 ScriptsAllowed:4 TriggerFiles:[usr/share/pkg/triggers/mandoc.ucl] Commands:[/usr/sbin/certctl rehash /usr/sbin/pwd_mkdb -i -p -d /etc /etc/master.passwd /usr/sbin/services_mkdb -l -q -o /var/db/services.db /etc/services /usr/bin/cap_mkdb -l /etc/login.conf /usr/bin/makewhatis /usr/share/man /usr/bin/makewhatis /usr/share/openssl/man] HostFiles:764}
+TEMPLATE_ID=a623f47e-2872-46d6-93cf-0b98f3d63c1e
+    integration_freebsd_test.go:94: jls name: ""
+    integration_freebsd_test.go:103: var/db/pkg/triggers: absent
+    integration_freebsd_test.go:103: var/db/pkg/repos: absent
+    integration_freebsd_test.go:103: var/cache/pkg: absent
+    integration_freebsd_test.go:120: zfs get -H -o property,value readonly,mounted,mountpoint,skep:template_id,used skeptest/step6/templates/a623f47e-2872-46d6-93cf-0b98f3d63c1e:
+        readonly	on
+        mounted	yes
+        mountpoint	/skeptest/step6/templates/a623f47e-2872-46d6-93cf-0b98f3d63c1e
+        skep:template_id	a623f47e-2872-46d6-93cf-0b98f3d63c1e
+        used	77.7M
+    integration_freebsd_test.go:120: zfs list -H -t snapshot -o name,used,skep:template_id skeptest/step6/templates/a623f47e-2872-46d6-93cf-0b98f3d63c1e:
+        skeptest/step6/templates/a623f47e-2872-46d6-93cf-0b98f3d63c1e@skep-base	0B	a623f47e-2872-46d6-93cf-0b98f3d63c1e
+    integration_freebsd_test.go:129: only 764 host files were compared
+--- FAIL: TestIntegrationBuild (36.11s)
+FAIL

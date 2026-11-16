@@ -179,3 +179,42 @@ resource type `container_template`. A refusal by the task's companion
 an operator's `container.template.create` is refused 403 on hearst. That
 needs the deployed skep-api. It is not part of this run's validation list
 and is left for the step that deploys (see the end of this log).
+
+## 6. Validation on hearst
+
+**Done.** Record: [step6-build.txt](step6-build.txt), logs in
+[step6-build/](step6-build/). The FreeBSD test binary of
+`internal/templates` drove the real builder against
+`skeptest/step6/templates`, as root, from the scratch dataset
+`skeptest/step6-scratch`. Nothing else on hearst was changed: no deploy, no
+config edit.
+
+- Build: `15.1-RELEASE-p6`, 66 packages, 6 commands in the build jail,
+  `@skep-base`, read-only. 36 s.
+- Host files identical, both by the builder (764 entries) and from outside
+  (1521 lines, the trace's method). `pkg` ran with exactly `PATH`,
+  `ASSUME_ALWAYS_YES`, `TMPDIR`. No build jail left, no deferred trigger,
+  no catalogues, no cache, no work area.
+- Comparison with `skeptest/trace-7b`: +2 (`mandoc.db` ×2, makewhatis ran),
+  −18 (the repository catalogues and the trace's deferred trigger),
+  2 changed: `services.db` (intended: populated instead of empty) and
+  `local.sqlite` (only `packages.time` differs). Nothing flagged.
+- Refusal: an appended line in `mandoc.ucl` → `template_script_unknown`
+  with the path, hash and text; nothing left behind.
+- Native hostops template tests as root: 20 pass, 1 skip.
+
+**Surprising:**
+
+- The first build check failed on its own threshold (1000 host files);
+  the trace's "1,500" was a line count. Fixed in `e4f39e8` and re-run:
+  PASS.
+- `pkg shell <file>` opens the *host's* package database, not the file. I
+  ran it once by mistake and it failed to parse before doing anything. The
+  host files were re-hashed straight away and were identical. Comparisons
+  of databases are done on copies on merrick from now on.
+- The whole `hostops.test`, with `TMPDIR` on ZFS, fails the 7a
+  `TestDirPoolNative`. That is the documented compression effect, not this
+  step.
+
+**Commits:** `9ecd9af` (integration test), `e4f39e8` (threshold), this
+entry's commit (records).

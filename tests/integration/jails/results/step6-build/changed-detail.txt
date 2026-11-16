@@ -1,0 +1,6 @@
+~ ./var/db/pkg/local.sqlite
+  trace: ./var/db/pkg/local.sqlite|Regular File|-rw-r--r--|root:wheel|uarch|3112960||6ac7abf10f41626a6036e395a26bc6f6f76dbc3682ae5c6e05c36831ed6386ba
+  new:   ./var/db/pkg/local.sqlite|Regular File|-rw-r--r--|root:wheel|uarch|3112960||ad1b96d7df4e1471692348bb57881c3fcd23d10367b8a6354af014ef21b1ea0c
+~ ./var/db/services.db
+  trace: ./var/db/services.db|Regular File|-rw-r--r--|root:wheel|uarch|2097920||06eebad8e1b36a9b6fa60bd0bbc7d02f36f4333c09d9575e60f10f2113bce151
+  new:   ./var/db/services.db|Regular File|-rw-r--r--|root:wheel|uarch|2097920||ba71f56b901aa4ceee950df50d309a342c25355771051f034a3c1a8613dd7054

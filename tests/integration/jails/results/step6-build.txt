@@ -1,0 +1,206 @@
+ADR 0010 phase 7b, step 6: the pkgbase template builder on hearst, compared
+with the traced build. Recorded 2026-11-16 on hearst (FreeBSD
+15.1-RELEASE-p6, amd64, pkg 2.9.2, UFS root, RACCT on).
+
+What ran: the FreeBSD test binary of internal/templates
+(integration_freebsd_test.go), which drives the real Builder with the real
+hostops (hostops.New) against Confinement{Pools: [skeptest], DatasetRoot:
+step6}, as root, from the scratch dataset skeptest/step6-scratch. The
+installed Skep services and their configuration were not touched. Scripts
+(piped over ssh to `sudo sh -s`): ../step6-build/run-build.sh,
+../step6-build/run-refusal.sh, ../step6-build/compare.sh. Logs:
+step6-build/.
+
+Binaries: templates.test from 9ecd9af (first build and refusal), and
+e4f39e8 (re-run of the build check). hostops.test from eba7d2f.
+
+== 1. Native unit tests of the template host operations (as root) ==
+
+hostops.test -test.run 'Template|Build|Pkg|Trigger|HostFiles|Manifest|
+PrivateDir|WorkArea|HostRelease|Release': 20 PASS, 1 SKIP
+(TestStartBuildJailChecksParameters: as root it defers to the integration
+build). TestCheckPrivateDir ran its root branch: a root:wheel 0700
+directory passes, 0755 is jail_parent_insecure. Log:
+step6-build/hostops-native-templates.log.
+
+Not caused by this step: the whole hostops.test, run once with TMPDIR on
+the scratch dataset, also failed TestDirPoolNative (a 7a test). Its
+preallocated file showed 512 bytes allocated because ZFS with compression
+does not store zeros, which ADR 0010 step 4 documents. That test expects
+the UFS /tmp it was validated on. It was not re-run there, to keep /tmp
+untouched.
+
+== 2. The build ==
+
+Template a623f47e-2872-46d6-93cf-0b98f3d63c1e, FreeBSD-set-minimal, into
+skeptest/step6/templates/a623f47e-2872-46d6-93cf-0b98f3d63c1e (left in place
+for review). Progress, as the task reports it (step6-build/build.log):
+
+  [  0.0s] checking the templates directory
+  [  0.1s] recording the host files
+  [  0.4s] creating the template dataset
+  [  0.5s] installing the base packages (scripts and triggers off)
+  [ 34.2s] checking the package scripts against the allowlist
+  [ 34.6s] checking the trigger files against the allowlist
+  [ 34.6s] checking the template's release
+  [ 34.6s] starting the build jail
+  [ 34.7s] running /usr/sbin/certctl rehash in the build jail
+  [ 34.7s] running /usr/sbin/pwd_mkdb -i -p -d /etc /etc/master.passwd in the build jail
+  [ 34.7s] running /usr/sbin/services_mkdb -l -q -o /var/db/services.db /etc/services in the build jail
+  [ 34.7s] running /usr/bin/cap_mkdb -l /etc/login.conf in the build jail
+  [ 34.7s] running /usr/bin/makewhatis /usr/share/man in the build jail
+  [ 35.6s] running /usr/bin/makewhatis /usr/share/openssl/man in the build jail
+  [ 35.6s] removing the build jail
+  [ 35.6s] checking for deferred triggers
+  [ 35.6s] removing the repository catalogues and checking the package cache
+  [ 35.7s] comparing the host files
+  [ 36.0s] removing the work area
+  [ 36.0s] taking @skep-base
+
+Result: release 15.1-RELEASE-p6 (host 15.1-RELEASE-p6, patch_differs
+false), 66 packages, 4 allowed scripts, 1 allowed trigger file
+(usr/share/pkg/triggers/mandoc.ucl), 6 commands run, 764 host files
+compared, used 77.7M (81445888 bytes), snapshot @skep-base carrying
+skep:template_id, dataset readonly=on and mounted at its derived path.
+The build jail passed its parameter check: the kernel reported every
+allow.* false, securelevel 2, enforce_statfs 2, children.max 0,
+ip4/ip6 disable, vnet inherit. No command needed devfs.
+
+The test then FAILED one assertion of its own: "only 764 host files were
+compared", against a threshold of 1000. The threshold was wrong, not the
+build. The trace's "1521" is a line count: 757 regular files listed twice
+(stat and hash) plus 7 links; `find` on hearst gives 764 = 757 + 7.
+Fixed in e4f39e8 (threshold 700), and the build check was re-run: --- PASS
+(step6-build/build-rerun.log, template dac15cfd-..., host state identical
+again). That second template was destroyed afterwards with `zfs destroy -r`.
+
+== 3. Host safety ==
+
+The builder's own check (item 7): 764 entries before pkg and after the
+build jail was removed, identical (the build would have failed
+template_host_changed otherwise).
+
+The same check from outside, as the trace did it (run-build.sh, hashhost
+over /etc, /var/db/pkg, /usr/share/certs: type, mode, owner, size, mtime,
+SHA-256):
+  host-before.txt sha256 c89c4bb87190dbcbca1b349869fd5da9641b6f098d7c8ff288f0804106dc2e7f
+  host-after.txt  sha256 c89c4bb87190dbcbca1b349869fd5da9641b6f098d7c8ff288f0804106dc2e7f
+  HOST STATE: identical (1521 lines). The re-run: identical again.
+(The lists themselves are not committed: they hold the hashes of host
+secrets such as spwd.db and the SSH host keys. The trace record did the
+same.)
+
+Wider sweep: find / -xdev -newer host-before ! -newer host-after, outside
+/var/log and /skeptest:
+  /var/db/entropy/saved-entropy.6     the entropy cron job
+  /var/db/skep/agent/agent.db-shm     the running Skep agent's database
+  /var/run                            the directory (pid and socket churn)
+  /var/tmp/skep/skeptest.img          the file backing the skeptest pool
+None is a build effect; the trace's /tmp entry is gone, because pkg's
+temporaries now go to the work area (TMPDIR).
+
+pkg's environment (procstat -e, sampled every 0.2 s; step6-build/procstat.txt):
+  pkg  PATH=/sbin:/bin:/usr/sbin:/usr/bin ASSUME_ALWAYS_YES=yes
+       TMPDIR=/skeptest/step6/templates/.work-a623f47e-2872-46d6-93cf-0b98f3d63c1e/tmp
+Nothing else. The jexec children ended between samples.
+
+No build jail is left: jls name printed nothing after the build, after
+the refusal, and after the re-run.
+
+The trigger directory and the rest of the tree:
+  var/db/pkg/triggers  absent  (no deferred trigger; triggers were off)
+  var/db/pkg/repos     absent  (the catalogues were removed)
+  var/cache/pkg        absent  (the cache was in the work area)
+  the work area .work-<id>: removed
+
+== 4. Comparison with skeptest/trace-7b ==
+
+compare.sh lists every entry of both trees (find -x): path, type, mode,
+owner, file flags, size, link target, SHA-256 of regular files. It leaves
+out modification times. Trace 9938 entries, new template 9922.
+
+Only in the new template (2):
+  ./usr/share/man/mandoc.db
+  ./usr/share/openssl/man/mandoc.db
+  EXPLAINED: makewhatis ran in the build jail (item 3, the mandoc trigger's
+  row). The trace deferred the mandoc trigger instead, so it has no
+  mandoc.db.
+
+Only in the trace (18):
+  ./var/db/pkg/repos and its 15 entries (FreeBSD-base, FreeBSD-ports,
+  FreeBSD-ports-kmods: db, db-journal, lock, meta)
+  EXPLAINED: the catalogue copies are removed before @skep-base (item 8).
+  ./var/db/pkg/triggers and ./var/db/pkg/triggers/oR3hHb5PjH
+  EXPLAINED: the trace's deferred mandoc trigger. With triggers off pkg
+  saves none (item 1), and the check of item 5 found the directory absent.
+
+In both, different (2):
+  ./var/db/services.db: same type, mode 0644, root:wheel, flags uarch,
+  size 2097920; SHA-256 differs.
+    trace  06eebad8e1b36a9b6fa60bd0bbc7d02f36f4333c09d9575e60f10f2113bce151  285 non-zero bytes
+    new    ba71f56b901aa4ceee950df50d309a342c25355771051f034a3c1a8613dd7054  225517 non-zero bytes
+    hearst's own /var/db/services.db
+           06eebad8e1b36a9b6fa60bd0bbc7d02f36f4333c09d9575e60f10f2113bce151  285 non-zero bytes
+  EXPLAINED, and intended (ADR 0010 step 6, "Resolved"): the
+  FreeBSD-runtime post-install script passes "${PKG_ROOTDIR}/", a
+  directory, as services_mkdb's input, which yields an empty database: the
+  trace's, and hearst's own. The builder passes /etc/services and gets
+  the populated database. The probe showed services_mkdb is deterministic
+  and that the new hash equals what the same command gives on the same
+  /etc/services. Lookups on hearst do not use the db (nsswitch "services:
+  compat" reads the text; see step6-probe.txt).
+
+  ./var/db/pkg/local.sqlite: same type, mode, owner, flags, size 3112960;
+  SHA-256 differs.
+  EXPLAINED: compared table by table, read-only, on copies (Python sqlite3
+  on merrick): the same 36 tables and schema (user_version 42), the same row
+  counts, and identical rows in every table but one column: packages.time,
+  the install timestamp (trace 1794856118..1794856119, new 1794864149). The
+  same 66 packages with the same versions, origins and sizes, the same 9212
+  files with their SHA-256, the same 4 script rows (pkg records the
+  scripts; with RUN_SCRIPTS=false it does not run them).
+
+Byte-identical to the trace, as checked by the list: everything else,
+including etc/pwd.db, etc/spwd.db (0600), etc/login.conf.db, the 118
+entries of etc/ssl/certs, bin/freebsd-version, and
+usr/share/pkg/triggers/mandoc.ucl.
+
+Nothing is FLAGGED: every difference has a cause the specification names.
+
+== 5. A refusal: a changed trigger file ==
+
+TestIntegrationRefusal (step6-build/refusal.log, run-refusal.sh): the same
+build, with a test-only hook that appends one line to
+<root>/usr/share/pkg/triggers/mandoc.ucl after pkg install and before the
+checks, as a changed package would ship it.
+
+  refused: template_script_unknown: the trigger file
+    usr/share/pkg/triggers/mandoc.ucl is not on Skep's allowlist for 15.1
+  details: path=usr/share/pkg/triggers/mandoc.ucl
+           sha256=f5886048f251c7be7da0dd2e277acdf5fdcdedde16aeed8f08a6af9881a77151
+           text (544 bytes = the 507 of the original plus the line), last
+           line "-- changed by TestIntegrationRefusal"
+  The build jail never started. Afterwards: jls empty; the template dataset
+  "does not exist"; its work area absent; the dataset list of skeptest/step6
+  is the same as before the refused build. --- PASS
+
+== 6. A slip during the comparison, and its check ==
+
+To compare the package databases, I first ran `pkg shell <copy>` on hearst.
+pkg shell takes no database path: it opens the host's own
+/var/db/pkg/local.sqlite and treated the path as SQL, which failed to parse
+before anything ran. Because that touched the host's /var/db/pkg, the host
+files were hashed again at once: identical to host-before.txt. The
+database comparison was then done on merrick on copies.
+
+== hearst after this record ==
+
+Left for review: skeptest/step6 (77.7M: skeptest/step6/templates and the
+template a623f47e-..., read-only, with @skep-base) and
+skeptest/step6-scratch (the test binaries, logs and listings, and copies of
+the two local.sqlite files). No jail. Nothing outside the skeptest datasets
+was written. skeptest/trace-7b and /var/tmp/skep-trace7b are unchanged.
+Clean-up when done:
+  sudo zfs destroy -r skeptest/step6; sudo zfs destroy -r skeptest/step6-scratch
+  (and, now that services.db has been compared, trace-7b too if wanted:
+  sudo zfs destroy -r skeptest/trace-7b; sudo rm -r /var/tmp/skep-trace7b)

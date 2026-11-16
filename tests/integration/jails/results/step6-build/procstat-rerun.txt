@@ -1,0 +1,1 @@
+pkg              PATH=/sbin:/bin:/usr/sbin:/usr/bin ASSUME_ALWAYS_YES=yes TMPDIR=/skeptest/step6/templates/.work-dac15cfd-cef2-4f54-b90f-884e37ceb879/tmp

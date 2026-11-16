@@ -1,0 +1,44 @@
+=== RUN   TestTemplateNames
+--- PASS: TestTemplateNames (0.00s)
+=== RUN   TestBuildJailArgs
+--- PASS: TestBuildJailArgs (0.00s)
+=== RUN   TestCheckBuildJail
+--- PASS: TestCheckBuildJail (0.00s)
+=== RUN   TestStartBuildJailChecksParameters
+    templates_test.go:139: covered by the FreeBSD integration test when run as root
+--- SKIP: TestStartBuildJailChecksParameters (0.00s)
+=== RUN   TestBuildJailExec
+--- PASS: TestBuildJailExec (0.00s)
+=== RUN   TestBuildCommandOrder
+--- PASS: TestBuildCommandOrder (0.00s)
+=== RUN   TestRemoveBuildJail
+--- PASS: TestRemoveBuildJail (0.00s)
+=== RUN   TestBuildJails
+--- PASS: TestBuildJails (0.00s)
+=== RUN   TestPkgInstall
+--- PASS: TestPkgInstall (0.00s)
+=== RUN   TestPkgScriptsCommand
+--- PASS: TestPkgScriptsCommand (0.00s)
+=== RUN   TestParsePkgRaw
+--- PASS: TestParsePkgRaw (0.00s)
+=== RUN   TestTemplateRelease
+--- PASS: TestTemplateRelease (0.00s)
+=== RUN   TestHostRelease
+--- PASS: TestHostRelease (0.00s)
+=== RUN   TestTriggerFiles
+--- PASS: TestTriggerFiles (0.00s)
+=== RUN   TestTemplateTreeChecks
+--- PASS: TestTemplateTreeChecks (0.00s)
+=== RUN   TestTemplateMustBeMountedInPlace
+--- PASS: TestTemplateMustBeMountedInPlace (0.00s)
+=== RUN   TestCheckPrivateDir
+--- PASS: TestCheckPrivateDir (0.00s)
+=== RUN   TestHostFiles
+--- PASS: TestHostFiles (0.00s)
+=== RUN   TestManifestSHA256
+--- PASS: TestManifestSHA256 (0.00s)
+=== RUN   TestRemoveWorkArea
+--- PASS: TestRemoveWorkArea (0.00s)
+=== RUN   TestDestroyTemplateRefusesForeignDataset
+--- PASS: TestDestroyTemplateRefusesForeignDataset (0.00s)
+PASS
