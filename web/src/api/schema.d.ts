@@ -762,6 +762,106 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/storage/template-sources": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * What this host can build jail templates from
+         * @description Requires `storage:read`. The host kernel's release
+         *     (`freebsd-version -k`) and whether each template source can be
+         *     used, with the reason when not (ADR 0010 decision 7). `pkgbase`
+         *     needs the host's pkg, a non-empty `storage.template_packages`, and
+         *     a compiled package-script allowlist for the host's major.minor;
+         *     `dist` needs `base.txz` and `MANIFEST` in `storage.dist_dir`.
+         */
+        get: operations["getTemplateSources"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/storage/templates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Jail templates
+         * @description Requires `storage:read`. Templates by name, cursor paginated. Each
+         *     shows the release it was built with, the host's release now, and
+         *     `patch_differs` when the two share major.minor but not the patch
+         *     level (ADR 0010 step 6, item 6).
+         */
+        get: operations["listTemplates"];
+        put?: never;
+        /**
+         * Build a jail template
+         * @description Requires `storage:write` (admin only: the root agent fetches and
+         *     installs packages). Submits `container.template.create`
+         *     (cancellable, 30 minutes), which builds the userland into
+         *     `<pool>/<root>/templates/<id>` and snapshots it as `@skep-base`.
+         *     The request names no package, URL, or path: the packages are
+         *     `storage.template_packages`, the archive is `base.txz` in
+         *     `storage.dist_dir`.
+         *
+         *     A `pkgbase` build runs pkg with package scripts and triggers off
+         *     and a fixed environment; checks every package script and trigger
+         *     file against Skep's compiled allowlist for the release
+         *     (`template_script_unknown`, with the script's text); checks that
+         *     the userland has the host's major.minor (`release_unsupported`);
+         *     runs the scripts' known commands in a throwaway build jail with no
+         *     network and every `allow.*` off; fails if pkg left a deferred
+         *     trigger (`template_trigger_left`); and compares every file under
+         *     the host's `/etc`, `/var/db/pkg`, and `/usr/share/certs` before
+         *     and after (`template_host_changed`, with the paths). A command that
+         *     fails is `template_build_failed` with its first line of stderr. Any
+         *     failure, cancel, or timeout removes the build jail and destroys the
+         *     template. Templates are built in ZFS pools only in this release.
+         */
+        post: operations["createTemplate"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/storage/templates/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        /**
+         * One jail template
+         * @description Requires `storage:read`.
+         */
+        get: operations["getTemplate"];
+        put?: never;
+        post?: never;
+        /**
+         * Delete a jail template
+         * @description Requires `storage:write`. Submits `container.template.delete`,
+         *     which destroys the template's dataset and snapshot and its work
+         *     area. A template with linked clones is `snapshot_has_clones`.
+         */
+        delete: operations["deleteTemplate"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/metrics": {
         parameters: {
             query?: never;
@@ -1013,6 +1113,57 @@ export interface components {
         SnapshotCreate: {
             name: string;
             description?: string;
+        };
+        TemplateSourceState: {
+            available: boolean;
+            /** @description Why the source cannot be used. */
+            reason?: string;
+        };
+        TemplateSources: {
+            /** @description freebsd-version -k of the host, for example 15.1-RELEASE-p6. */
+            host_release: string;
+            pkgbase: components["schemas"]["TemplateSourceState"];
+            /** @description storage.template_packages. */
+            packages: string[];
+            dist: components["schemas"]["TemplateSourceState"];
+        };
+        Template: {
+            /** Format: uuid */
+            id: string;
+            name: string;
+            pool: string;
+            /** @enum {string} */
+            source: "pkgbase" | "dist";
+            packages: string[];
+            /** @description The checked SHA-256 of base.txz (dist). */
+            archive_sha256?: string;
+            /** @description False while the build runs, and after it failed or was interrupted. */
+            provisioned: boolean;
+            /** @description freebsd-version -u of the built userland, patch level included. */
+            release?: string;
+            /** @description The host kernel's release when the template was read. */
+            host_release?: string;
+            /** @description Same major.minor as the host, different patch level. */
+            patch_differs: boolean;
+            /** Format: int64 */
+            used_bytes: number;
+            /** Format: date-time */
+            created_at: string;
+        };
+        TemplateList: {
+            items: components["schemas"]["Template"][];
+            next_cursor?: string;
+        };
+        TemplateCreate: {
+            name: string;
+            /** @description An allow-listed ZFS pool. */
+            pool: string;
+            /** @enum {string} */
+            source: "pkgbase" | "dist";
+        };
+        TemplateCreated: {
+            template: components["schemas"]["Template"];
+            task: components["schemas"]["Task"];
         };
         SnapshotCreated: {
             snapshot: components["schemas"]["Snapshot"];
@@ -1638,7 +1789,9 @@ export interface components {
          *     `idempotency_key_conflict`, and for storage operations
          *     `storage_locked`, `snapshot_limit`, `snapshot_has_clones`,
          *     `snapshot_not_latest`, `snapshot_incomplete`, `snapshot_name_taken`,
-         *     `snapshot_not_provisioned`, `disk_has_snapshots`.
+         *     `snapshot_not_provisioned`, `disk_has_snapshots`, and for jail
+         *     templates `template_name_taken`, `template_not_provisioned`,
+         *     `jail_parent_insecure`.
          */
         VMConflict: {
             headers: {
@@ -1652,7 +1805,12 @@ export interface components {
          * @description The request names something this host does not offer:
          *     `engine_unsupported`, `firmware_unsupported`, `pool_not_allowed`,
          *     `bridge_not_allowed`, `media_not_found`,
-         *     `storage_feature_unsupported`.
+         *     `storage_feature_unsupported`, and for jail templates
+         *     `release_unsupported` (no allowlist for the host's release).
+         *     A build task can also fail with `template_script_unknown`,
+         *     `template_trigger_left`, `template_host_changed`,
+         *     `template_build_failed`, `template_archive_mismatch`, or
+         *     `release_unsupported`; those are in the task, not the response.
          */
         VMUnprocessable: {
             headers: {
@@ -2922,6 +3080,180 @@ export interface operations {
             403: components["responses"]["Forbidden"];
             409: components["responses"]["VMConflict"];
             422: components["responses"]["VMUnprocessable"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
+    getTemplateSources: {
+        parameters: {
+            query?: never;
+            header?: {
+                /**
+                 * @description Marks a request the client made by itself (a timer, a refetch on
+                 *     focus). Any non-empty value. The request is authenticated as any
+                 *     other, the idle timeout included, but does not extend the idle
+                 *     timeout.
+                 */
+                "X-Skep-Background"?: components["parameters"]["Background"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The template sources of this host. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TemplateSources"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
+    listTemplates: {
+        parameters: {
+            query?: {
+                limit?: number;
+                cursor?: string;
+            };
+            header?: {
+                /**
+                 * @description Marks a request the client made by itself (a timer, a refetch on
+                 *     focus). Any non-empty value. The request is authenticated as any
+                 *     other, the idle timeout included, but does not extend the idle
+                 *     timeout.
+                 */
+                "X-Skep-Background"?: components["parameters"]["Background"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description One page of templates. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TemplateList"];
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
+    createTemplate: {
+        parameters: {
+            query?: never;
+            header?: {
+                /**
+                 * @description Makes a retry safe: a second request with the same key and the
+                 *     same body returns the task of the first; with a different body it
+                 *     is refused with `idempotency_key_conflict`.
+                 */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TemplateCreate"];
+            };
+        };
+        responses: {
+            /** @description The template, not yet provisioned, and its build task. */
+            202: {
+                headers: {
+                    Location?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TemplateCreated"];
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["VMConflict"];
+            422: components["responses"]["VMUnprocessable"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
+    getTemplate: {
+        parameters: {
+            query?: never;
+            header?: {
+                /**
+                 * @description Marks a request the client made by itself (a timer, a refetch on
+                 *     focus). Any non-empty value. The request is authenticated as any
+                 *     other, the idle timeout included, but does not extend the idle
+                 *     timeout.
+                 */
+                "X-Skep-Background"?: components["parameters"]["Background"];
+            };
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The template. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Template"];
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
+    deleteTemplate: {
+        parameters: {
+            query?: never;
+            header?: {
+                /**
+                 * @description Makes a retry safe: a second request with the same key and the
+                 *     same body returns the task of the first; with a different body it
+                 *     is refused with `idempotency_key_conflict`.
+                 */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The delete task. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Task"];
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["VMConflict"];
             503: components["responses"]["Unavailable"];
         };
     };

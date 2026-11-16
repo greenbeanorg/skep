@@ -1353,6 +1353,186 @@ paths:
           $ref: "#/components/responses/VMUnprocessable"
         "503":
           $ref: "#/components/responses/Unavailable"
+  /storage/template-sources:
+    get:
+      tags: [storage]
+      operationId: getTemplateSources
+      summary: What this host can build jail templates from
+      x-skep-permission: storage:read
+      description: |
+        Requires `storage:read`. The host kernel's release
+        (`freebsd-version -k`) and whether each template source can be
+        used, with the reason when not (ADR 0010 decision 7). `pkgbase`
+        needs the host's pkg, a non-empty `storage.template_packages`, and
+        a compiled package-script allowlist for the host's major.minor;
+        `dist` needs `base.txz` and `MANIFEST` in `storage.dist_dir`.
+      parameters:
+        - $ref: "#/components/parameters/Background"
+      responses:
+        "200":
+          description: The template sources of this host.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TemplateSources"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /storage/templates:
+    get:
+      tags: [storage]
+      operationId: listTemplates
+      summary: Jail templates
+      x-skep-permission: storage:read
+      description: |
+        Requires `storage:read`. Templates by name, cursor paginated. Each
+        shows the release it was built with, the host's release now, and
+        `patch_differs` when the two share major.minor but not the patch
+        level (ADR 0010 step 6, item 6).
+      parameters:
+        - $ref: "#/components/parameters/Background"
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+        - name: cursor
+          in: query
+          schema: { type: string }
+      responses:
+        "200":
+          description: One page of templates.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TemplateList"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+    post:
+      tags: [storage]
+      operationId: createTemplate
+      summary: Build a jail template
+      x-skep-permission: storage:write
+      description: |
+        Requires `storage:write` (admin only: the root agent fetches and
+        installs packages). Submits `container.template.create`
+        (cancellable, 30 minutes), which builds the userland into
+        `<pool>/<root>/templates/<id>` and snapshots it as `@skep-base`.
+        The request names no package, URL, or path: the packages are
+        `storage.template_packages`, the archive is `base.txz` in
+        `storage.dist_dir`.
+
+        A `pkgbase` build runs pkg with package scripts and triggers off
+        and a fixed environment; checks every package script and trigger
+        file against Skep's compiled allowlist for the release
+        (`template_script_unknown`, with the script's text); checks that
+        the userland has the host's major.minor (`release_unsupported`);
+        runs the scripts' known commands in a throwaway build jail with no
+        network and every `allow.*` off; fails if pkg left a deferred
+        trigger (`template_trigger_left`); and compares every file under
+        the host's `/etc`, `/var/db/pkg`, and `/usr/share/certs` before
+        and after (`template_host_changed`, with the paths). A command that
+        fails is `template_build_failed` with its first line of stderr. Any
+        failure, cancel, or timeout removes the build jail and destroys the
+        template. Templates are built in ZFS pools only in this release.
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TemplateCreate"
+      responses:
+        "202":
+          description: The template, not yet provisioned, and its build task.
+          headers:
+            Location:
+              schema: { type: string }
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TemplateCreated"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/VMConflict"
+        "422":
+          $ref: "#/components/responses/VMUnprocessable"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /storage/templates/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [storage]
+      operationId: getTemplate
+      summary: One jail template
+      x-skep-permission: storage:read
+      description: Requires `storage:read`.
+      parameters:
+        - $ref: "#/components/parameters/Background"
+      responses:
+        "200":
+          description: The template.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Template"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+    delete:
+      tags: [storage]
+      operationId: deleteTemplate
+      summary: Delete a jail template
+      x-skep-permission: storage:write
+      description: |
+        Requires `storage:write`. Submits `container.template.delete`,
+        which destroys the template's dataset and snapshot and its work
+        area. A template with linked clones is `snapshot_has_clones`.
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "202":
+          description: The delete task.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Task"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/VMConflict"
+        "503":
+          $ref: "#/components/responses/Unavailable"
   /metrics:
     get:
       tags: [storage]
@@ -1475,7 +1655,9 @@ components:
         `idempotency_key_conflict`, and for storage operations
         `storage_locked`, `snapshot_limit`, `snapshot_has_clones`,
         `snapshot_not_latest`, `snapshot_incomplete`, `snapshot_name_taken`,
-        `snapshot_not_provisioned`, `disk_has_snapshots`.
+        `snapshot_not_provisioned`, `disk_has_snapshots`, and for jail
+        templates `template_name_taken`, `template_not_provisioned`,
+        `jail_parent_insecure`.
       content:
         application/json:
           schema:
@@ -1485,7 +1667,12 @@ components:
         The request names something this host does not offer:
         `engine_unsupported`, `firmware_unsupported`, `pool_not_allowed`,
         `bridge_not_allowed`, `media_not_found`,
-        `storage_feature_unsupported`.
+        `storage_feature_unsupported`, and for jail templates
+        `release_unsupported` (no allowlist for the host's release).
+        A build task can also fail with `template_script_unknown`,
+        `template_trigger_left`, `template_host_changed`,
+        `template_build_failed`, `template_archive_mismatch`, or
+        `release_unsupported`; those are in the task, not the response.
       content:
         application/json:
           schema:
@@ -1872,6 +2059,86 @@ components:
           type: string
           pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$"
         description: { type: string, maxLength: 1024 }
+    TemplateSourceState:
+      type: object
+      required: [available]
+      properties:
+        available: { type: boolean }
+        reason:
+          type: string
+          description: Why the source cannot be used.
+    TemplateSources:
+      type: object
+      required: [host_release, pkgbase, packages, dist]
+      properties:
+        host_release:
+          type: string
+          description: freebsd-version -k of the host, for example 15.1-RELEASE-p6.
+        pkgbase:
+          $ref: "#/components/schemas/TemplateSourceState"
+        packages:
+          type: array
+          items: { type: string }
+          description: storage.template_packages.
+        dist:
+          $ref: "#/components/schemas/TemplateSourceState"
+    Template:
+      type: object
+      required: [id, name, pool, source, packages, provisioned, patch_differs, used_bytes, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        pool: { type: string }
+        source: { type: string, enum: [pkgbase, dist] }
+        packages:
+          type: array
+          items: { type: string }
+        archive_sha256:
+          type: string
+          description: The checked SHA-256 of base.txz (dist).
+        provisioned:
+          type: boolean
+          description: False while the build runs, and after it failed or was interrupted.
+        release:
+          type: string
+          description: freebsd-version -u of the built userland, patch level included.
+        host_release:
+          type: string
+          description: The host kernel's release when the template was read.
+        patch_differs:
+          type: boolean
+          description: Same major.minor as the host, different patch level.
+        used_bytes: { type: integer, format: int64 }
+        created_at: { type: string, format: date-time }
+    TemplateList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Template"
+        next_cursor: { type: string }
+    TemplateCreate:
+      type: object
+      additionalProperties: false
+      required: [name, pool, source]
+      properties:
+        name:
+          type: string
+          pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$"
+        pool:
+          type: string
+          description: An allow-listed ZFS pool.
+        source: { type: string, enum: [pkgbase, dist] }
+    TemplateCreated:
+      type: object
+      required: [template, task]
+      properties:
+        template:
+          $ref: "#/components/schemas/Template"
+        task:
+          $ref: "#/components/schemas/Task"
     SnapshotCreated:
       type: object
       required: [snapshot, task]

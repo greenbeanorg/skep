@@ -158,3 +158,24 @@ API gets `GET /internal/v1/storage/template-sources`, `GET|POST
   with `release_unsupported` before any task exists.
 - Deleting a template first removes a build jail of that template if one
   is somehow left, then destroys the dataset and work area.
+
+## 5. Public routes, permission, agent client, OpenAPI
+
+**Done.** skep-api serves `GET /api/v1/storage/template-sources`,
+`GET|POST /api/v1/storage/templates`, `GET|DELETE
+/api/v1/storage/templates/{id}`. `storage:write` is now declared and
+enforced on the two writes (admin only: `api/0005` already left it out of
+operator and viewer). The permission matrix test covers the new routes,
+and explicit rows assert that an operator's and a viewer's template create
+gets 403 and is audited. The agent client gains the five calls. OpenAPI
+documents the paths, schemas, and codes; `web/src/api/schema.d.ts` is
+regenerated (`npm run check-types` passes).
+
+**Decisions made:** template writes are audited in the access log with
+resource type `container_template`. A refusal by the task's companion
+(`template_name_taken`) is audited once, by the engine.
+
+**Still owed (memory note, Andy 2026-11-15):** the real-request check that
+an operator's `container.template.create` is refused 403 on hearst. That
+needs the deployed skep-api. It is not part of this run's validation list
+and is left for the step that deploys (see the end of this log).

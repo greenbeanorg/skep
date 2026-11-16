@@ -56,6 +56,9 @@ type Options struct {
 	// VMs is the VM and storage service layer. When nil, Backend is used
 	// if it implements VMBackend, as the agent client does.
 	VMs VMBackend
+	// Templates is the jail template service layer. When nil, Backend is
+	// used if it implements TemplateBackend, as the agent client does.
+	Templates TemplateBackend
 	// Auth checks sessions and performs logins.
 	Auth *auth.Authenticator
 	// Users manages accounts.
@@ -90,6 +93,8 @@ type Options struct {
 type handler struct {
 	backend Backend
 	vms     VMBackend
+	// templates is the jail template backend.
+	templates TemplateBackend
 	// consoleCheck is how often an open console re-checks its session.
 	consoleCheck time.Duration
 	auth         *auth.Authenticator
@@ -156,7 +161,7 @@ func (h *handler) routes() []route {
 		{http.MethodDelete, "/users/{id}", auth.PermUserManage, nil, h.deleteUser},
 		{http.MethodGet, "/roles", auth.PermRoleRead, nil, h.listRoles},
 		{http.MethodGet, "/audit", auth.PermAuditRead, nil, h.listAudit},
-	}, h.vmRoutes()...)
+	}, append(h.vmRoutes(), h.templateRoutes()...)...)
 }
 
 // NewHandler returns the API as an http.Handler, wrapped in the request ID,
@@ -181,6 +186,14 @@ func NewHandler(opts Options) http.Handler {
 		h.vms = vms
 	default:
 		h.vms = noVMs{}
+	}
+	switch tpl, ok := opts.Backend.(TemplateBackend); {
+	case opts.Templates != nil:
+		h.templates = opts.Templates
+	case ok:
+		h.templates = tpl
+	default:
+		h.templates = noTemplates{}
 	}
 
 	// Routes are grouped by path, and the method is checked by the

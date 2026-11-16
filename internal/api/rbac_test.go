@@ -167,6 +167,13 @@ func TestPermissionMatrix(t *testing.T) {
 		{auth.RoleOperator, http.MethodGet, "/audit", http.StatusOK},
 		{auth.RoleOperator, http.MethodDelete, "/users/" + e.ids[auth.RoleViewer], http.StatusForbidden},
 		{auth.RoleAdmin, http.MethodGet, "/audit", http.StatusOK},
+		// Templates make the root agent fetch and install packages:
+		// storage:write, admin only (ADR 0010 decision 14).
+		{auth.RoleOperator, http.MethodPost, "/storage/templates", http.StatusForbidden},
+		{auth.RoleOperator, http.MethodDelete, "/storage/templates/" + e.ids[auth.RoleViewer], http.StatusForbidden},
+		{auth.RoleOperator, http.MethodGet, "/storage/templates", http.StatusOK},
+		{auth.RoleViewer, http.MethodGet, "/storage/template-sources", http.StatusOK},
+		{auth.RoleViewer, http.MethodPost, "/storage/templates", http.StatusForbidden},
 	} {
 		if got := status(tt.role, tt.method, tt.path); got != tt.want {
 			t.Errorf("%s %s as %s: %d, want %d", tt.method, tt.path, tt.role, got, tt.want)

@@ -26,6 +26,9 @@ const (
 	// Snapshots of VMs (ADR 0010 decision 14). A clone needs vm:write
 	// as well.
 	PermVMSnapshot = "vm:snapshot"
+	// Building and deleting jail templates (ADR 0010 decision 14), for
+	// admin only: it makes the root agent fetch and install packages.
+	PermStorageWrite = "storage:write"
 
 	// PermAll is how the admin role is stored: every permission,
 	// including ones added later.
@@ -37,7 +40,7 @@ var Permissions = []string{
 	PermSystemRead, PermNodeRead, PermTaskRead, PermTaskCancel,
 	PermUserRead, PermUserManage, PermRoleRead, PermAuditRead,
 	PermVMRead, PermVMWrite, PermVMDelete, PermVMPower, PermVMConsole, PermStorageRead,
-	PermVMSnapshot,
+	PermVMSnapshot, PermStorageWrite,
 }
 
 // KnownPermission reports whether p is a declared permission.
