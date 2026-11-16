@@ -1,0 +1,138 @@
+ADR 0010 phase 7b, step 6: the template builder through the deployed agent
+and API on hearst. Recorded 2026-11-16 on hearst (FreeBSD 15.1-RELEASE-p6,
+amd64, pkg 2.9.2, UFS root, RACCT on). Progress log: step6-progress.md,
+sections 8 to 13. Raw records: step6-deployed/. Scripts:
+../step6-deployed/.
+
+Approved for this run (Andy, 2026-11-16): deploy the branch with
+scripts/deploy-test.sh (undo: redeploy the previous build, 54d0566);
+destroy skeptest/trace-7b and /var/tmp/skep-trace7b; destroy skeptest/step6
+and skeptest/step6-scratch once the comparison matches; the host-file
+exclusion list (/var/db/pkg/vuln.xml only).
+
+== 0. Builds deployed ==
+
+c8b0f06 (the exclusion list) for the admin build and the operator refusal;
+a34749d (the sweep's summary line) for the restart check. Both deployed
+with scripts/deploy-test.sh hearst, services stopped and started with
+sudo. The agent database stayed at schema 5, no migration applied (none
+was added since 54d0566, so the undo needs no database restore).
+
+== 1. Admin build through the API ==
+
+POST /api/v1/storage/templates as s6admin (admin; created with
+skep-api admin create --password-stdin), body
+{"name":"minimal-151","pool":"skeptest","source":"pkgbase"}:
+  202, template f496866f-32ba-4527-bcee-5a717a2f74c0,
+  task f81ab83f-09fe-49f0-91c0-d34324dd2914 (container.template.create)
+  succeeded in 33.3 s (23:47:00.857Z to 23:47:34.206Z)
+Result (step6-deployed/admin-build-task.json):
+  release 15.1-RELEASE-p6, host 15.1-RELEASE-p6, patch_differs false
+  66 packages, 4 scripts allowed, trigger usr/share/pkg/triggers/mandoc.ucl
+  6 commands in the build jail (certctl, pwd_mkdb, services_mkdb,
+    cap_mkdb, makewhatis x2)
+  host_files_compared 763: the test-binary run's 764 less
+    /var/db/pkg/vuln.xml, now excluded (ADR 0010 step 6, item 7)
+  snapshot skeptest/skep/templates/f496866f-...@skep-base, carrying
+    skep:template_id; dataset readonly=on; used 77.7M
+The agent created skeptest/skep/templates on first use, root:wheel 0700.
+In the template: var/db/pkg/repos, var/db/pkg/triggers and var/cache/pkg
+absent. No work area left. No jail (jls empty).
+pkg's environment, procstat -e every 0.2 s (step6-deployed/procstat-pkg-env.txt):
+  301 samples: PATH=/sbin:/bin:/usr/sbin:/usr/bin ASSUME_ALWAYS_YES=yes
+    TMPDIR=/skeptest/skep/templates/.work-f496866f-.../tmp
+  1 sample "-" (a pkg process exiting while sampled)
+The audit log has the request as container.template.create, success,
+actor s6admin, task f81ab83f (entry 276).
+
+== 2. Host safety, from outside ==
+
+../step6-deployed/hashhost.sh (the trace's method, nothing excluded) over
+/etc, /var/db/pkg, /usr/share/certs, before the request and after the task:
+  host-before 1521 lines sha256 c89c4bb87190dbcbca1b349869fd5da9641b6f098d7c8ff288f0804106dc2e7f
+  host-after  1521 lines sha256 c89c4bb87190dbcbca1b349869fd5da9641b6f098d7c8ff288f0804106dc2e7f
+  cmp: identical. Also identical to the test-binary run of step6-build.txt
+  (same hash), so nothing in these trees, vuln.xml included, changed
+  between the two runs. (The lists are not committed: they hold hashes of
+  host secrets.)
+
+== 3. Comparison with skeptest/step6 (the test binary's template) ==
+
+../step6-deployed/compare.sh: every entry of both trees (find -x): path,
+type, mode, owner, file flags, size, link target, SHA-256 of regular
+files; no mtimes.
+  entries: API template 9922, step6 9922
+  only in the API template: 0
+  only in skeptest/step6:   0
+  in both, different:       1
+    ./var/db/pkg/local.sqlite  same type, mode 0644, root:wheel, flags
+      uarch, size 3112960
+      step6 sha256 ad1b96d7df4e1471692348bb57881c3fcd23d10367b8a6354af014ef21b1ea0c
+      API   sha256 59f68210947426557c5f8cb9fe50e9eba3dc3b498ed225be1bd8b7cea4be7df0
+    Compared read-only on copies on merrick (Python sqlite3, mode=ro):
+      schema identical, user_version 42 both, 36 tables, 66 packages both;
+      every table identical except packages, where only the column time
+      differs (step6 1794864149; API 1794872851..1794872852), and the
+      rows are identical with that column left out.
+    EXPLAINED: the install time pkg records.
+Every other entry is byte-identical, including var/db/services.db (the
+populated one), both mandoc.db, etc/pwd.db, etc/spwd.db,
+etc/login.conf.db, and etc/ssl/certs.
+VERDICT: matches. skeptest/step6 and skeptest/step6-scratch were then
+destroyed (zfs destroy -r), as approved.
+
+== 4. Operator refusal ==
+
+s6oper (operator; created with POST /api/v1/users as s6admin). Its
+session's permissions include storage:read, not storage:write.
+  GET  /api/v1/storage/templates: 200
+  POST /api/v1/storage/templates {"name":"oper-attempt","pool":"skeptest",
+       "source":"pkgbase"}:
+       403 {"error":{"code":"forbidden","message":"your role does not allow
+       this","request_id":"005a708b0f1f561d17a078e7",
+       "details":{"permission":"storage:write"}}}
+Access audit log, entry 278: action authz.deny, outcome denied, actor
+s6oper, details {method POST, permission storage:write, role operator,
+route /api/v1/storage/templates}, request_id 005a708b0f1f561d17a078e7,
+source 10.79.20.80.
+No task, no template row, no dataset was created
+(step6-deployed/operator-refusal.txt).
+
+== 5. Agent restart with no build jail ==
+
+Before: the sweep logged only removals, so finding nothing left no line.
+a34749d adds event=build_jail_sweep with found, removed, failed to every
+completed sweep (unit tested), and was deployed.
+  jls --libxo=json name: {"jail-information": {"jail": []}}
+  sudo service skep_agent restart (18:51:30)
+  agent log, pid 50166 (step6-deployed/agent-restart.log), in order:
+    database ready (schema 5, migrations_applied 0)
+    task engine started
+    templates: build jail sweep finished  found=0 removed=0 failed=0
+    internal API listening
+  No ERROR or WARN line. jls empty afterwards. skep-api lists the
+  template as provisioned, release 15.1-RELEASE-p6.
+
+== 6. Service lookups with the empty services.db (read-only) ==
+
+  getent services ssh       ssh      22/tcp   rc 0
+  getent services domain    domain   53/tcp   rc 0
+  getent services 22/tcp    ssh      22/tcp
+  getent services 53/udp    domain   53/udp
+  /etc/nsswitch.conf: services: compat (services_compat: nis)
+  /var/db/services.db: 2097920 bytes, 285 non-zero, sha256
+    06eebad8e1b36a9b6fa60bd0bbc7d02f36f4333c09d9575e60f10f2113bce151
+    (unchanged: the empty database of step6-build.txt)
+Lookups work: the compat source reads the /etc/services text and never
+opens the db, as "Resolved" in ADR 0010 step 6 says. Same result as the
+probe's check.
+
+== hearst after this record ==
+
+Installed: skep-agent, skep-api, skepctl at a34749d, both services
+running. Left: template minimal-151 (f496866f-..., 77.7M) in
+skeptest/skep/templates, and the API users s6admin and s6oper. No jail.
+Gone: skeptest/trace-7b, /var/tmp/skep-trace7b, skeptest/step6,
+skeptest/step6-scratch. Nothing outside skeptest and the approved deploy
+was written apart from what the running services write themselves (their
+databases, the access and audit logs, syslog).

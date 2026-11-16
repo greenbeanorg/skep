@@ -1389,3 +1389,13 @@ files more (makewhatis ran), the catalogues and the deferred trigger fewer,
 differing only in `packages.time`. A `mandoc.ucl` changed after the
 install was refused with `template_script_unknown` and left nothing
 behind.
+
+Validated through the deployed agent and API on 2026-11-16
+([step6-deployed.txt](../../tests/integration/jails/results/step6-deployed.txt)):
+an admin's `POST /api/v1/storage/templates` built `FreeBSD-set-minimal`
+in 33 s, comparing 763 host files (`vuln.xml` excluded), with the host
+identical from outside. Its tree is byte-identical to the test binary's
+template apart from `local.sqlite`'s install times. An operator's request
+was refused 403 for `storage:write` and audited as `authz.deny`. A restart
+with no build jail logs `build_jail_sweep found=0` before the socket is
+served; every sweep now logs that line, so a clean one is visible.

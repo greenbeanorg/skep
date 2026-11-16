@@ -105,8 +105,11 @@ use, and why not:
 A failure at any step, a cancel, or the timeout removes the build jail and
 destroys the template's dataset and work area. If the agent is killed in
 the middle, it removes any leftover `skep-build-*` jail at its next start,
-before it serves its socket, and logs a warning. The template row is then
-left unprovisioned; delete it.
+before it serves its socket, and logs a warning (`event=build_jail_removed`)
+for each. Every start logs one line with the counts
+(`event=build_jail_sweep`, `found`, `removed`, `failed`), so a start that
+found nothing shows `found=0`. The template row is then left
+unprovisioned; delete it.
 
 A dist build checks the archive, extracts it with `tar -x -p` into the
 template, checks the release, compares the host files, and snapshots. It

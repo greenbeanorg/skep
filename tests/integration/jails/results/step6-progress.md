@@ -332,3 +332,23 @@ listening`: the sweep ran before the socket was served. No ERROR or WARN
 line. `jls` empty afterwards. Through skep-api the template lists as
 provisioned, `15.1-RELEASE-p6`. (The redeploy's own start at 18:51:20
 logged the same sweep line.) Record: `step6-deployed/agent-restart.log`.
+
+## 13. Service lookups, and the record (2026-11-16)
+
+**Done.** Read-only on hearst: `getent services ssh` → `ssh 22/tcp`,
+`getent services domain` → `domain 53/tcp`, both exit 0 (also `22/tcp`
+and `53/udp` by number). `nsswitch.conf` has `services: compat`;
+hearst's `/var/db/services.db` is still the empty one (285 non-zero
+bytes, unchanged hash). Lookups work with the empty database, as the
+probe found.
+
+Record of the whole deployed run: [step6-deployed.txt](step6-deployed.txt).
+ADR 0010's "Built" notes, the admin guide (the sweep line) and the jails
+test README's check table are updated.
+
+**hearst now:** a34749d installed and running; template `minimal-151`
+(`f496866f-…`) in `skeptest/skep/templates`; API users `s6admin` and
+`s6oper`; no jail. The trace and the step 6 test datasets are gone.
+
+**Still open, not part of this run:** dist validation on hearst (no
+`base.txz`); templates in directory pools (refused); step 7.
