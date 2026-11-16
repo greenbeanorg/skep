@@ -136,7 +136,8 @@ func New(conf hostops.Confinement, opts Options) *Fake {
 
 // Ops returns the fake as the hostops surface.
 func (f *Fake) Ops() hostops.Ops {
-	return hostops.Ops{Conf: f.conf, ZFS: f, Dirs: fakeDirs{f}, Net: f, VMM: f, Files: fakeFiles{Files: f.files, f: f}, Procs: f}
+	return hostops.Ops{Conf: f.conf, ZFS: f, Dirs: fakeDirs{f}, Net: f, VMM: f, Files: fakeFiles{Files: f.files, f: f}, Procs: f,
+		Templates: fakeTemplates{f}}
 }
 
 // Calls returns what was called so far, one line per mutating call.

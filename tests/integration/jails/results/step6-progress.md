@@ -120,3 +120,41 @@ Unit tests: 20 in hostops, 20 in templates, all passing on merrick.
   error log. The start-up sweep (next piece) logs a warning.
 - A `.work-` directory name cannot collide with a template: template IDs
   are UUIDs.
+
+## 4. Template store, service, tasks, agent wiring, internal routes
+
+**Done.** `database.TemplateStore` (container_templates, cursor pages by
+name); `templates.Service` with `container.template.create` (cancellable,
+30 min) and `container.template.delete` (5 min), the `template-sources`
+read, idempotency like the VM tasks, and `SweepBuildJails`, which the
+agent runs after the engine starts and before it serves its socket.
+Configuration: `storage.template_packages` (default
+`["FreeBSD-set-minimal"]`, each `^FreeBSD-[a-z0-9][a-z0-9-]*$`, no
+repeats) and `storage.dist_dir` (absolute, clean). The confinement carries
+`DistDir`. The fake host simulates a whole build, with the real 15.1
+script texts, so the dev agent and the UI can use templates. The internal
+API gets `GET /internal/v1/storage/template-sources`, `GET|POST
+/internal/v1/storage/templates`, and `GET|DELETE
+/internal/v1/storage/templates/{id}`. `go test ./...` passes on merrick.
+
+**Decisions made:**
+
+- Routes live under `/storage/templates`, with `storage:read` to read and
+  `storage:write` to change (decision 14 makes writing `storage:write`).
+  `GET /storage/template-sources` is what "capabilities" means in the
+  ADR: host release, whether pkgbase and dist can be used, and why not.
+- Templates are refused in a **directory pool**
+  (`storage_feature_unsupported`) in this step. Decision 6 describes jail
+  roots copied from a template directory, but a template build into a
+  directory pool needs its own layout and has no snapshot, so it is left
+  for later and flagged in the report. This is a scope gap, not a security
+  choice.
+- A dist template's row holds a placeholder checksum of zeros until the
+  build has checked the archive (the schema requires a checksum on every
+  dist row). The API never shows the placeholder.
+- The packages recorded on a template, and passed to its task, are the
+  configured ones at request time.
+- On a host whose release has no allowlist, a pkgbase request is refused
+  with `release_unsupported` before any task exists.
+- Deleting a template first removes a build jail of that template if one
+  is somehow left, then destroys the dataset and work area.

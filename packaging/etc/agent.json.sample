@@ -44,7 +44,9 @@
     "media_dir": "/var/db/skep/media",
     "max_snapshots_per_resource": 64,
     "capacity_warn_percent": 80,
-    "capacity_fail_percent": 90
+    "capacity_fail_percent": 90,
+    "template_packages": ["FreeBSD-set-minimal"],
+    "dist_dir": ""
   },
   "network": {
     "bridges": [],

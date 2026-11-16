@@ -39,6 +39,7 @@ import (
 	"github.com/greenbeanorg/skep/internal/storage"
 	"github.com/greenbeanorg/skep/internal/sysaccount"
 	"github.com/greenbeanorg/skep/internal/tasks"
+	"github.com/greenbeanorg/skep/internal/templates"
 	"github.com/greenbeanorg/skep/internal/vm"
 	"github.com/greenbeanorg/skep/migrations"
 	"github.com/greenbeanorg/skep/pkg/models"
@@ -212,6 +213,24 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 			return err
 		}
 	}
+	// Jail templates (ADR 0010 decision 7): built by a task, as admin
+	// only, from the configured packages or the dist directory.
+	templateSvc, err := templates.New(templates.Options{
+		NodeID:   nodeID,
+		Store:    database.NewTemplateStore(db),
+		Engine:   engine,
+		Host:     host,
+		Packages: cfg.Storage.TemplatePackages,
+		Logger:   log,
+	})
+	if err != nil {
+		return err
+	}
+	for _, def := range templateSvc.Definitions() {
+		if err := engine.Register(def); err != nil {
+			return err
+		}
+	}
 	// The storage inventory reads the host and the database; it changes
 	// nothing.
 	storageSvc, err := storage.New(storage.Options{
@@ -310,6 +329,12 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		return err
 	}, log)
 
+	// A build jail outlives a crashed agent (it is persistent); remove any
+	// before the socket is served (the step 6 decision, item 2).
+	if err := templateSvc.SweepBuildJails(ctx); err != nil {
+		log.Error("could not remove every leftover template build jail", "error", err)
+	}
+
 	// Look at every VM before anything can ask about one: a restarted
 	// agent knows what is running before it serves its socket.
 	if err := vms.ObserveAll(ctx); err != nil {
@@ -334,6 +359,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		VMs:            vms,
 		Console:        consoles,
 		Storage:        storageSvc,
+		Templates:      templateSvc,
 		Metrics:        sampler,
 		RequestTimeout: cfg.Socket.RequestTimeout.Std(),
 		Logger:         log,
@@ -370,6 +396,7 @@ func confinement(cfg config.Config) hostops.Confinement {
 		FirmwareDir:          cfg.Hypervisor.Bhyve.FirmwareDir,
 		RunDir:               cfg.VMRunDir(),
 		StateDir:             cfg.VMStateDir(),
+		DistDir:              cfg.Storage.DistDir,
 	}
 }
 

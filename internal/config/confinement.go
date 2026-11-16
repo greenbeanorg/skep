@@ -84,7 +84,23 @@ type StorageConfig struct {
 	// (ADR 0010 decision 15). 0 means the defaults, 80 and 90.
 	CapacityWarnPercent int `json:"capacity_warn_percent"`
 	CapacityFailPercent int `json:"capacity_fail_percent"`
+	// TemplatePackages are the base packages a pkgbase jail template
+	// installs (ADR 0010 decision 7a). Never taken from a request. Unset
+	// means FreeBSD-set-minimal; an empty list means no pkgbase source.
+	TemplatePackages []string `json:"template_packages"`
+	// DistDir is the root-owned directory where the operator places
+	// base.txz and its MANIFEST for dist templates. Empty means no dist
+	// source.
+	DistDir string `json:"dist_dir"`
 }
+
+// DefaultTemplatePackage is what a pkgbase template installs when
+// storage.template_packages is not set.
+const DefaultTemplatePackage = "FreeBSD-set-minimal"
+
+// templatePackageRE is the shape of a base package name (ADR 0010
+// decision 7a).
+var templatePackageRE = regexp.MustCompile(`^FreeBSD-[a-z0-9][a-z0-9-]*$`)
 
 // DirectoryPool is one allow-listed directory that holds VM disks as
 // files. The directory must exist, be owned by root with mode 0700, and
@@ -145,6 +161,9 @@ func (c *Config) applyConfinementDefaults() {
 	}
 	if c.Storage.Directories == nil {
 		c.Storage.Directories = []DirectoryPool{}
+	}
+	if c.Storage.TemplatePackages == nil {
+		c.Storage.TemplatePackages = []string{DefaultTemplatePackage}
 	}
 	if c.Storage.MaxSnapshotsPerResource == 0 {
 		c.Storage.MaxSnapshotsPerResource = DefaultMaxSnapshotsPerResource
@@ -224,6 +243,19 @@ func (c Config) validateConfinement() []error {
 	}
 	if w, f := c.Storage.CapacityWarnPercent, c.Storage.CapacityFailPercent; w < 1 || f > 100 || w >= f {
 		add("storage.capacity_warn_percent (%d) and storage.capacity_fail_percent (%d) must satisfy 1 <= warn < fail <= 100", w, f)
+	}
+	pkgs := map[string]bool{}
+	for _, p := range c.Storage.TemplatePackages {
+		switch {
+		case !templatePackageRE.MatchString(p):
+			add("storage.template_packages: %q is not a base package name (FreeBSD-...)", p)
+		case pkgs[p]:
+			add("storage.template_packages: %q is listed twice", p)
+		}
+		pkgs[p] = true
+	}
+	if d := c.Storage.DistDir; d != "" && (!filepath.IsAbs(d) || filepath.Clean(d) != d || d == "/") {
+		add("storage.dist_dir %q must be an absolute, clean path other than /", d)
 	}
 	if !c.DevMode && !filepath.IsAbs(c.Storage.MediaDir) {
 		add("storage.media_dir %q must be an absolute path", c.Storage.MediaDir)

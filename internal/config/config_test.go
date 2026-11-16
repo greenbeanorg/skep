@@ -415,6 +415,9 @@ func TestConfinementDefaultsAndValidation(t *testing.T) {
 	if cfg.Storage.CapacityWarnPercent != 80 || cfg.Storage.CapacityFailPercent != 90 {
 		t.Errorf("capacity thresholds = %d, %d", cfg.Storage.CapacityWarnPercent, cfg.Storage.CapacityFailPercent)
 	}
+	if !reflect.DeepEqual(cfg.Storage.TemplatePackages, []string{"FreeBSD-set-minimal"}) || cfg.Storage.DistDir != "" {
+		t.Errorf("template defaults = %v, %q", cfg.Storage.TemplatePackages, cfg.Storage.DistDir)
+	}
 	if cfg.VMRunDir() != "/var/run/skep/vm" || cfg.VMStateDir() != "/var/db/skep/agent/vm" {
 		t.Errorf("VM directories = %q, %q", cfg.VMRunDir(), cfg.VMStateDir())
 	}
@@ -475,6 +478,13 @@ func TestConfinementDefaultsAndValidation(t *testing.T) {
 		"capacity fail above 100":   `{"storage": {"capacity_fail_percent": 101}}`,
 		"capacity warn negative":    `{"storage": {"capacity_warn_percent": -5}}`,
 		"capacity equal":            `{"storage": {"capacity_warn_percent": 70, "capacity_fail_percent": 70}}`,
+		"template package not base": `{"storage": {"template_packages": ["nginx"]}}`,
+		"template package injected": `{"storage": {"template_packages": ["FreeBSD-set-minimal -o RUN_SCRIPTS=true"]}}`,
+		"template package option":   `{"storage": {"template_packages": ["-oRUN_SCRIPTS=true"]}}`,
+		"template package twice":    `{"storage": {"template_packages": ["FreeBSD-set-minimal", "FreeBSD-set-minimal"]}}`,
+		"dist dir relative":         `{"storage": {"dist_dir": "dist"}}`,
+		"dist dir not clean":        `{"storage": {"dist_dir": "/srv/../etc"}}`,
+		"dist dir root":             `{"storage": {"dist_dir": "/"}}`,
 	} {
 		if _, err := Load(LoadOptions{Path: writeFile(t, body), LookupEnv: noEnv}); err == nil {
 			t.Errorf("%s: accepted", name)
