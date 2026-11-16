@@ -469,13 +469,20 @@ func (s *Service) runDelete(ctx context.Context, task tasks.Task, report tasks.R
 // SweepBuildJails removes every skep-build-* jail left on the host, which
 // only a crash or a kill of the agent during a build can leave (the step 6
 // decision, item 2). The agent calls it at start, before it serves its
-// socket. Each removal is logged as a warning event.
+// socket. Each removal is logged as a warning event, and every completed
+// sweep logs one line with its counts, so a sweep that found nothing is
+// visible too.
 func (s *Service) SweepBuildJails(ctx context.Context) error {
 	ids, err := s.host.BuildJails(ctx)
 	if err != nil {
 		return fmt.Errorf("templates: list the build jails: %w", err)
 	}
 	var errs []error
+	removed := 0
+	defer func() {
+		s.log.Info("templates: build jail sweep finished", "event", "build_jail_sweep",
+			"found", len(ids), "removed", removed, "failed", len(errs))
+	}()
 	for _, id := range ids {
 		name, _ := hostops.BuildJailName(id)
 		if err := s.host.RemoveBuildJail(ctx, id); err != nil {
@@ -484,6 +491,7 @@ func (s *Service) SweepBuildJails(ctx context.Context) error {
 			errs = append(errs, err)
 			continue
 		}
+		removed++
 		s.log.Warn("templates: removed a build jail left by an earlier run", "event", "build_jail_removed",
 			"jail", name, "template_id", id)
 	}

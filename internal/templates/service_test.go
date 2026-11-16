@@ -222,16 +222,34 @@ func TestSources(t *testing.T) {
 func TestSweepBuildJails(t *testing.T) {
 	f := newFakeHost()
 	f.calls = nil
-	s := &Service{host: sweepHost{fakeHost: f, ids: []string{tpl}}, log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	var logs strings.Builder
+	s := &Service{host: sweepHost{fakeHost: f, ids: []string{tpl}}, log: slog.New(slog.NewTextHandler(&logs, nil))}
 	if err := s.SweepBuildJails(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if strings.Join(f.calls, ",") != "RemoveBuildJail" {
 		t.Fatalf("calls = %v", f.calls)
 	}
+	if !strings.Contains(logs.String(), "event=build_jail_removed") || !strings.Contains(logs.String(), "event=build_jail_sweep found=1 removed=1 failed=0") {
+		t.Fatalf("log:\n%s", logs.String())
+	}
+	logs.Reset()
 	f.fail["RemoveBuildJail"] = errors.New("still there")
 	if err := s.SweepBuildJails(context.Background()); err == nil {
 		t.Fatal("a failed removal was not reported")
+	}
+	if !strings.Contains(logs.String(), "event=build_jail_sweep found=1 removed=0 failed=1") {
+		t.Fatalf("log:\n%s", logs.String())
+	}
+	// Nothing to sweep: no removal, and the sweep still says it ran.
+	logs.Reset()
+	f.calls = nil
+	empty := &Service{host: sweepHost{fakeHost: f}, log: slog.New(slog.NewTextHandler(&logs, nil))}
+	if err := empty.SweepBuildJails(context.Background()); err != nil || len(f.calls) != 0 {
+		t.Fatalf("empty sweep: %v, calls %v", err, f.calls)
+	}
+	if !strings.Contains(logs.String(), "event=build_jail_sweep found=0 removed=0 failed=0") {
+		t.Fatalf("log:\n%s", logs.String())
 	}
 }
 
