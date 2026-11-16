@@ -224,7 +224,7 @@ func parsePkgRaw(out []byte) ([]PackageScripts, error) {
 		if r.Name == "" {
 			return nil, errors.New("hostops: pkg info --raw: a package has no name")
 		}
-		out2 = append(out2, PackageScripts{Name: r.Name, Version: r.Version, Scripts: r.Scripts, LuaScripts: r.LuaScripts})
+		out2 = append(out2, PackageScripts(r))
 	}
 	return out2, nil
 }
