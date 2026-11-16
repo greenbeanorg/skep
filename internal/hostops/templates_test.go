@@ -440,11 +440,11 @@ func TestHostFiles(t *testing.T) {
 	os.Symlink("../x", filepath.Join(etc, "localtime"))
 	roots := []string{etc, filepath.Join(dir, "missing")}
 	ctx := context.Background()
-	before, err := recordFiles(ctx, roots)
+	before, err := recordFiles(ctx, roots, nil)
 	if err != nil || len(before) != 4 {
 		t.Fatalf("recordFiles = %v, %v", before, err)
 	}
-	same, _ := recordFiles(ctx, roots)
+	same, _ := recordFiles(ctx, roots, nil)
 	if c := before.Changed(same); len(c) != 0 {
 		t.Fatalf("no change reported %v", c)
 	}
@@ -454,15 +454,15 @@ func TestHostFiles(t *testing.T) {
 	os.Symlink("../y", filepath.Join(etc, "localtime"))
 	os.Chmod(filepath.Join(etc, "ssl", "openssl.cnf"), 0o600)
 	os.WriteFile(filepath.Join(etc, "new"), nil, 0o644)
-	after, _ := recordFiles(ctx, roots)
+	after, _ := recordFiles(ctx, roots, nil)
 	want := []string{filepath.Join(etc, "localtime"), filepath.Join(etc, "new"), filepath.Join(etc, "rc.conf"), filepath.Join(etc, "ssl", "openssl.cnf")}
 	if c := before.Changed(after); !reflect.DeepEqual(c, want) {
 		t.Fatalf("Changed = %v, want %v", c, want)
 	}
 	// Same content, new mtime.
-	again, _ := recordFiles(ctx, roots)
+	again, _ := recordFiles(ctx, roots, nil)
 	os.Chtimes(filepath.Join(etc, "new"), time.Now(), time.Now().Add(time.Hour))
-	later, _ := recordFiles(ctx, roots)
+	later, _ := recordFiles(ctx, roots, nil)
 	if c := again.Changed(later); !reflect.DeepEqual(c, []string{filepath.Join(etc, "new")}) {
 		t.Fatalf("mtime change: %v", c)
 	}
@@ -525,5 +525,78 @@ func TestDestroyTemplateRefusesForeignDataset(t *testing.T) {
 		if strings.HasPrefix(c, "zfs destroy") {
 			t.Fatalf("destroy ran: %s", c)
 		}
+	}
+}
+
+func TestHostFileExclusions(t *testing.T) {
+	// The list is the ADR's, exactly: one path, no wildcards.
+	if !reflect.DeepEqual(HostFileExclusions, []string{"/var/db/pkg/vuln.xml"}) {
+		t.Fatalf("HostFileExclusions = %v", HostFileExclusions)
+	}
+	for _, p := range HostFileExclusions {
+		if !filepath.IsAbs(p) || filepath.Clean(p) != p || strings.ContainsAny(p, "*?[]\\") {
+			t.Errorf("exclusion %q is not an exact, clean, absolute path", p)
+		}
+		under := false
+		for _, r := range HostFileRoots {
+			if strings.HasPrefix(p, r+"/") {
+				under = true
+			}
+		}
+		if !under {
+			t.Errorf("exclusion %q is not under a host-file root", p)
+		}
+	}
+
+	dir := t.TempDir()
+	pkgdb := filepath.Join(dir, "var", "db", "pkg")
+	os.MkdirAll(filepath.Join(pkgdb, "vuln.xml.d"), 0o755)
+	vuln := filepath.Join(pkgdb, "vuln.xml")
+	os.WriteFile(vuln, []byte("old"), 0o444)
+	os.WriteFile(filepath.Join(pkgdb, "local.sqlite"), []byte("db"), 0o644)
+	os.WriteFile(filepath.Join(pkgdb, "vuln.xml.bak"), []byte("x"), 0o644)
+	os.WriteFile(filepath.Join(pkgdb, "vuln.xml.d", "f"), []byte("y"), 0o644)
+	// A directory on the list is still walked: no directory exclusions.
+	excl := []string{vuln, filepath.Join(pkgdb, "vuln.xml.d")}
+	roots := []string{pkgdb}
+	ctx := context.Background()
+	before, err := recordFiles(ctx, roots, excl)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := before[vuln]; ok {
+		t.Fatalf("the excluded file was recorded: %v", before)
+	}
+	if len(before) != 3 {
+		t.Fatalf("recorded %d entries, want 3 (local.sqlite, vuln.xml.bak, vuln.xml.d/f): %v", len(before), before)
+	}
+	// The excluded file is rewritten, replaced by a link, and removed:
+	// none of it is a change.
+	os.Remove(vuln)
+	os.WriteFile(vuln, []byte("new content"), 0o644)
+	os.Chtimes(vuln, time.Now(), time.Now().Add(time.Hour))
+	after, _ := recordFiles(ctx, roots, excl)
+	if c := before.Changed(after); len(c) != 0 {
+		t.Fatalf("rewriting the excluded file was reported: %v", c)
+	}
+	os.Remove(vuln)
+	os.Symlink("elsewhere", vuln)
+	linked, _ := recordFiles(ctx, roots, excl)
+	if c := before.Changed(linked); len(c) != 0 {
+		t.Fatalf("a link at the excluded path was reported: %v", c)
+	}
+	// Exact match only: a neighbour with the same prefix, and a file in a
+	// listed directory, are still checked.
+	os.WriteFile(filepath.Join(pkgdb, "vuln.xml.bak"), []byte("changed"), 0o644)
+	os.WriteFile(filepath.Join(pkgdb, "vuln.xml.d", "f"), []byte("changed"), 0o644)
+	later, _ := recordFiles(ctx, roots, excl)
+	want := []string{filepath.Join(pkgdb, "vuln.xml.bak"), filepath.Join(pkgdb, "vuln.xml.d", "f")}
+	if c := before.Changed(later); !reflect.DeepEqual(c, want) {
+		t.Fatalf("Changed = %v, want %v", c, want)
+	}
+	// Without the list, the same file is checked.
+	plain, _ := recordFiles(ctx, roots, nil)
+	if _, ok := plain[vuln]; !ok {
+		t.Fatalf("without exclusions the file is not recorded: %v", plain)
 	}
 }

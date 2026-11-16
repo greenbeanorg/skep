@@ -18,6 +18,15 @@ import (
 // must leave unchanged (ADR 0010 decision 7a; the step 6 decision, item 7).
 var HostFileRoots = []string{"/etc", "/var/db/pkg", "/usr/share/certs"}
 
+// HostFileExclusions are the exact paths under the HostFileRoots that the
+// host-file check leaves out (ADR 0010, step 6 decision, item 7,
+// "Exclusions"). Each entry is an absolute path with its reason recorded
+// in the ADR; there are no wildcards, and a listed path that is a
+// directory is still walked.
+//
+//   - /var/db/pkg/vuln.xml: periodic's daily pkg audit -F rewrites it.
+var HostFileExclusions = []string{"/var/db/pkg/vuln.xml"}
+
 // HostFileState maps the path of every regular file and symbolic link
 // under the HostFileRoots to a description of it: type, mode, owner,
 // size, modification time, and the SHA-256 of a regular file or the
@@ -48,13 +57,18 @@ func (h *host) HostFiles(ctx context.Context) (HostFileState, error) {
 	if roots == nil {
 		roots = HostFileRoots
 	}
-	return recordFiles(ctx, roots)
+	return recordFiles(ctx, roots, HostFileExclusions)
 }
 
 // recordFiles walks each root without following symbolic links. A root
 // that does not exist is recorded as missing, so its appearance is a
-// change too.
-func recordFiles(ctx context.Context, roots []string) (HostFileState, error) {
+// change too. A file or link whose path is exactly one of excluded is not
+// recorded; directories are always walked.
+func recordFiles(ctx context.Context, roots, excluded []string) (HostFileState, error) {
+	skip := make(map[string]bool, len(excluded))
+	for _, p := range excluded {
+		skip[p] = true
+	}
 	state := HostFileState{}
 	for _, root := range roots {
 		if _, err := os.Lstat(root); errors.Is(err, fs.ErrNotExist) {
@@ -68,7 +82,7 @@ func recordFiles(ctx context.Context, roots []string) (HostFileState, error) {
 			if err := ctx.Err(); err != nil {
 				return err
 			}
-			if d.IsDir() {
+			if d.IsDir() || skip[path] {
 				return nil
 			}
 			fi, err := os.Lstat(path)

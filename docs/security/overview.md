@@ -461,7 +461,10 @@ package scripts"; [guide](../administration/jail-templates.md)).
   login-class environment.
 - **The host is checked, not trusted.** Every file under `/etc`,
   `/var/db/pkg`, and `/usr/share/certs` is recorded before pkg starts and
-  after the jail is removed. Any difference fails the build
+  after the jail is removed, except the exact paths on a short compiled
+  list (only `/var/db/pkg/vuln.xml`, which periodic's `pkg audit -F`
+  rewrites; no wildcards; ADR 0010 records each reason). A build that
+  wrote an excluded path would not be caught. Any difference fails the build
   (`template_host_changed`), destroys the template, and is reported; Skep
   does not try to repair the host.
 - **Clean-up does not depend on the task's context.** A failed, cancelled,

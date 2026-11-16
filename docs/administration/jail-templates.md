@@ -66,7 +66,10 @@ use, and why not:
    that way on first use.
 2. Records every regular file and symbolic link under the host's `/etc`,
    `/var/db/pkg`, and `/usr/share/certs`: type, mode, owner, size, mtime,
-   and SHA-256 (764 entries on the lab host).
+   and SHA-256 (764 entries on the lab host). One exact path is left out:
+   `/var/db/pkg/vuln.xml`, which the daily `pkg audit -F` of periodic(8)
+   rewrites on its own schedule. The list is compiled into Skep; ADR 0010
+   gives the reason for each entry.
 3. Creates the template dataset and a work area
    `<templates>/.work-<id>/` (`tmp/`, `cache/`).
 4. Runs `pkg --rootdir <root> install -y <packages>` with **package scripts

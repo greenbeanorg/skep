@@ -244,3 +244,24 @@ skep-api report it). No migration was added between `54d0566` and this
 branch, so redeploying `54d0566` is a complete undo: the old agent will not
 meet a newer schema. Copies of the three installed binaries are kept on
 merrick for that.
+
+## 9. Spec change: exclusions in the host-file check (Andy, 2026-11-16)
+
+**Done.** ADR 0010 step 6, item 7 gains "Exclusions": an explicit list of
+exact absolute paths, compiled in, no wildcards and no directory
+exclusions, each entry with its reason. It starts with
+`/var/db/pkg/vuln.xml`. Checked read-only on hearst for the reason: the
+daily periodic run (03:01, `/etc/crontab`) has `405.pkg-base-audit` and
+`410.pkg-audit` (pkg's own periodic scripts), and both run `pkg audit -F`
+once the file is older than `security_status_*audit_expiry` (2 days). On
+hearst it dates from Nov 14 18:30, so the next daily run rewrites it.
+
+Code: `hostops.HostFileExclusions`; `recordFiles` skips a file or link
+whose path equals an entry and still walks a listed directory. Test
+`TestHostFileExclusions`: the list is exactly the ADR's and each entry is
+clean, absolute, wildcard-free and under a root; rewriting the excluded
+file, re-timing it, replacing it with a link, are all not a change; a
+neighbour `vuln.xml.bak` and a file inside a listed directory still are;
+with no list the file is recorded. The admin guide and the security
+overview say so, including the cost (a build that wrote an excluded path
+would not be caught). `go test ./...` passes on merrick.
