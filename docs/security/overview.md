@@ -428,6 +428,56 @@ The agent changes the host for the first time in Milestone 6
   the context is lost, the console is shown as unavailable; it never falls
   back to the other renderer.
 
+## Jail templates (Milestone 7b, step 6)
+
+Building a template is the first time the root agent installs software
+and makes outbound connections, so it has its own rules
+([ADR 0010](../decisions/0010-storage-and-jails.md), step 6, "Decision on
+package scripts"; [guide](../administration/jail-templates.md)).
+
+- **What `pkg --rootdir` would do unaided.** pkg 2.9.2 runs package shell
+  scripts with the host's `/bin/sh`, unchrooted and as root, with only
+  `PKG_ROOTDIR` pointing at the target. It runs Lua scripts unchrooted
+  too, and saves unsandboxed triggers for later. A script's writes stay in
+  the template only because its text uses `${PKG_ROOTDIR}`
+  ([trace](../../tests/integration/jails/results/step6-pkg-trace.txt)).
+  Skep does not rely on that.
+- **No package code runs on the host.** pkg runs with
+  `RUN_SCRIPTS=false` and `PKG_TRIGGERS_ENABLE=false`, a fixed argument
+  list, and an environment of exactly `PATH`, `ASSUME_ALWAYS_YES`, and
+  `TMPDIR` (in the work area). Package names come only from
+  `storage.template_packages` and must match `FreeBSD-*`. The repositories
+  and signing keys are the host's own. A template root is always empty
+  when pkg starts, because pkg looks for trust anchors in the root first.
+- **What the scripts would have done, Skep does, inside a jail.** Every
+  script and trigger file in the new template must match a compiled,
+  per-release allowlist (package, kind, phase, SHA-256). The allowlist is
+  in the code, not the configuration, because it is a security boundary.
+  The commands those scripts stand for are fixed in Skep's code and run
+  in a throwaway build jail on the template. That jail has no network, no
+  devfs, every `allow.*` off including `allow.suser`, securelevel 2, and
+  no `exec.*`. Its parameters are read back from the kernel before
+  anything runs in it. Commands enter with `jexec -l`, which gives root's
+  login-class environment.
+- **The host is checked, not trusted.** Every file under `/etc`,
+  `/var/db/pkg`, and `/usr/share/certs` is recorded before pkg starts and
+  after the jail is removed. Any difference fails the build
+  (`template_host_changed`), destroys the template, and is reported; Skep
+  does not try to repair the host.
+- **Clean-up does not depend on the task's context.** A failed, cancelled,
+  or timed-out build removes its jail and destroys its dataset on a
+  context of its own. A jail left by a crash is removed at the next agent
+  start, before the socket is served.
+- **Paths inside a template are read through `os.Root`**, and the
+  trigger directories and `bin/freebsd-version` without following symbolic
+  links, so nothing the packages ship can redirect a read or a removal to
+  the host.
+- **Only admin can build** (`storage:write`).
+
+Ordinary jails (step 7) keep `allow.suser` on. With it off, root in a jail
+has no privilege and `/etc/rc` fails (ADR 0010, amendment e). Only the
+build jail turns it off.
+
 ## Audit logs and retention
 
 There are two audit logs: the agent's operation audit in `agent.db` and

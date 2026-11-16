@@ -4,8 +4,9 @@ Skep keeps VM disks in the pools an administrator allow-lists: ZFS pools,
 and directory pools for hosts without ZFS. On ZFS it takes snapshots of a
 VM, rolls a VM back, and makes linked clones. It reports the current space
 and load of everything it uses, with two health checks. The design is
-[ADR 0010](../decisions/0010-storage-and-jails.md), phase 7a. Jails
-(phase 7b) are not in this release.
+[ADR 0010](../decisions/0010-storage-and-jails.md), phase 7a. Jail
+templates (phase 7b) have [their own guide](jail-templates.md); jails
+themselves are not in this release yet.
 
 > **Validation status.** Verified on FreeBSD 15.1-RELEASE (amd64,
 > UFS-root, a file-backed test pool and a directory pool on the root file

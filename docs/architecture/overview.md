@@ -306,6 +306,33 @@ Phase 7a ([ADR 0010](../decisions/0010-storage-and-jails.md)):
   serves it, and the `storage_capacity` and `storage_locked` health probes
   read it, so a health request never runs a ZFS command.
 
+## Jail templates
+
+Phase 7b, step 6 ([ADR 0010](../decisions/0010-storage-and-jails.md),
+decision 7 and the step 6 notes):
+
+```
+skep-api  /api/v1/storage/templates (storage:write to build or delete)
+   |
+skep-agent
+   internal/templates   the service, the tasks, the compiled allowlist,
+                        the build sequence and its clean-up, the start-up sweep
+   internal/hostops     Templates: datasets and work area, pkg (scripts and
+                        triggers off), the build jail (jail -c, jexec -l,
+                        jail -r), the host-file record
+```
+
+- **Order and judgement in `internal/templates`, mechanics in
+  `internal/hostops`.** hostops offers typed steps whose names and paths
+  are derived from the pool and the template ID. The builder decides the
+  order, applies the allowlist and the release rule, and compares the
+  host files.
+- **Clean-up** runs on its own context, so a cancelled or timed-out task
+  still removes its build jail and its dataset. The agent removes any
+  leftover `skep-build-*` jail at start, before it serves its socket.
+- **Development machines** simulate a whole build in `hostfake`, with the
+  real 15.1 script texts, so the allowlist and the tasks run unchanged.
+
 ## FreeBSD validation status
 
 Validated means it ran on FreeBSD 15.1-RELEASE-p6 (amd64, UFS-root, `hearst`)

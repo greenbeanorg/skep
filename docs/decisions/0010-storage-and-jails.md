@@ -7,8 +7,10 @@
   [Step 6](#step-6-racct-reboot-and-the-pkg-trace); a probe on 2026-11-16
   found the specification not buildable as written, and Andy's answers are
   recorded under
-  [Resolved](#resolved-the-probe-of-the-specification-2026-11-16); building
-  it is next).
+  [Resolved](#resolved-the-probe-of-the-specification-2026-11-16); the
+  builder, the template store, tasks and routes are built, and the builder
+  is validated on `hearst`, see
+  [Built](#built-the-template-builder-2026-11-16)).
   Every recommendation was
   accepted; the review answers and the amendments made at acceptance are
   under [Decisions](#decisions) and are worked into the text. The changes
@@ -1313,3 +1315,61 @@ found the specification not buildable as written. Andy answered on
   `mandoc.ucl`); no devfs needed; removal confirmed with `jls -j`. Also
   learned: `pkg info --raw --raw-format json-compact -a` prints one JSON
   array, not one object per line.
+
+#### Built: the template builder (2026-11-16)
+
+Built to the specification above with the answers of "Resolved". Record:
+[step6-build.txt](../../tests/integration/jails/results/step6-build.txt);
+the choices the text left open are listed with their reasons in
+[step6-progress.md](../../tests/integration/jails/results/step6-progress.md).
+The ones that shape behaviour:
+
+- **Layout.** `<root>/templates` is a mounted dataset (unlike
+  `<root>/vm`), whose directory is the `root:wheel 0700` parent. The work
+  area is a directory `<templates>/.work-<id>` in it, the second form item
+  8 allows. A template is set `readonly=on` after `@skep-base`.
+- **The build jail's `allow.*`.** The 19 `allow.*` parameters of the
+  15.1 GENERIC kernel that are neither `allow.mount.*` nor added by a
+  module are set to 0 explicitly (`allow.mount=0` covers the
+  `allow.mount.*`; `allow.vmm` and the like default to off);
+  `allow.reserved_ports`
+  and `allow.unprivileged_proc_debug` default to on. After `jail -c`, every
+  `allow.*` that `jls --libxo=json -n` reports must be `false`, together
+  with the name, path, `ip4`/`ip6=disable`, `vnet=inherit`,
+  `enforce_statfs=2`, `children.max=0`, `securelevel=2`. A jail that fails
+  the check is removed and the build fails. No command needed devfs.
+- **Which commands run.** Each allowlist entry maps to its commands (the
+  table of item 3); a command runs only if an allowed script or trigger in
+  the template asks for it, always in the fixed order.
+- **Codes beyond the three.** `template_build_failed` (a pkg, tar, or
+  build-jail command failed; the first line of its stderr, as item 3
+  asks), `template_name_taken`, `template_not_provisioned`,
+  `template_archive_mismatch` (the dist check). A source the host cannot
+  use is `storage_feature_unsupported`. A symlink in a trigger directory
+  is `template_script_unknown`. A failed build that also changed the host
+  is `template_host_changed`, with the build's error in the details.
+- **Events.** The agent has no event stream yet. A host change is in the
+  task error, the audit details, and an error log line
+  (`event=template_host_changed`). The start-up sweep logs a warning per
+  jail removed (`event=build_jail_removed`).
+- **Routes and permissions.** `GET /storage/template-sources` (what
+  "capabilities" means for templates), `GET|POST /storage/templates`,
+  `GET|DELETE /storage/templates/{id}`. Reads are `storage:read`, writes
+  `storage:write`, which is now declared and enforced (admin only).
+- **Not built in this step.** Templates in a **directory pool** are
+  refused with `storage_feature_unsupported`: a build there needs its own
+  layout and has no snapshot. The `dist` source is built and unit tested
+  but not run on `hearst` (no `base.txz` there).
+
+Validated on `hearst` through the builder's FreeBSD test binary with the
+real host operations, not yet through a deployed agent:
+`FreeBSD-set-minimal` 15.1-RELEASE-p6 in 36 s; host files identical by
+the builder (764 entries) and from outside (the trace's method); pkg's
+environment exactly `PATH`, `ASSUME_ALWAYS_YES`, `TMPDIR`; no build jail,
+deferred trigger, catalogue, cache, or work area left. Against
+`skeptest/trace-7b`, every difference has a named cause: two `mandoc.db`
+files more (makewhatis ran), the catalogues and the deferred trigger fewer,
+`services.db` populated instead of empty (intended), and `local.sqlite`
+differing only in `packages.time`. A `mandoc.ucl` changed after the
+install was refused with `template_script_unknown` and left nothing
+behind.

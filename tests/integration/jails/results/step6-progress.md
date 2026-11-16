@@ -218,3 +218,11 @@ config edit.
 
 **Commits:** `9ecd9af` (integration test), `e4f39e8` (threshold), this
 entry's commit (records).
+
+## 7. Documentation
+
+**Done.** New guide `docs/administration/jail-templates.md`; a "Jail
+templates" section in `docs/security/overview.md` and in
+`docs/architecture/overview.md`; the README's status table; a pointer from
+the storage guide; ADR 0010's step 6 "Built" notes and status line; the
+README of `tests/integration/jails`.

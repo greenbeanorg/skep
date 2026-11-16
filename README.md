@@ -41,7 +41,8 @@ It cannot manage jails (phase 7b) or networks yet.
 | Web interface | Served by `skep-api` on the same address as the API, embedded in the binary; cookie-session login; dashboard, node, tasks (with cancel), virtual machines (with the serial console and snapshots), storage, users, roles, access audit log, settings, own account; the other sections are placeholders that name their milestone |
 | Virtual machines (Milestone 6) | bhyve UEFI guests with zvol disks, bridged virtio-net, and install media: create, update while stopped, delete, start, stop, force-stop, restart, all as tasks; a per-VM runner that survives the agent; the serial console in the browser; `skepctl vm`. Host confinement in `agent.json`. **Verified on FreeBSD 15.1** (`hearst`): every check of ADR 0009 decision 11 passed (guest network isolation after a fix to the lab firewall) (see [tests/integration/vm](tests/integration/vm/README.md) and the [guide](docs/administration/virtual-machines.md)) |
 | Storage (Milestone 7, phase 7a) | Snapshots of VMs (also while running, crash-consistent), rollback, linked clones, disks added, grown, and removed after creation, directory pools for hosts without ZFS, the dataset inventory, current resource use (`GET /metrics`) with the `storage_capacity` and `storage_locked` health checks; the Storage section and a VM's snapshots in the web interface; `skepctl vm snapshot` and `vm clone`. **Verified on FreeBSD 15.1** (`hearst`): every 7a check of ADR 0010 decision 16 (see [tests/integration/storage](tests/integration/storage/README.md) and the [guide](docs/administration/storage.md)) |
-| Not yet | Jails (phase 7b), network management, graphical consoles, metric history, clustering |
+| Jail templates (Milestone 7, phase 7b, in progress) | `GET/POST /storage/templates`, `GET/DELETE /storage/templates/{id}`, `GET /storage/template-sources` (admin-only builds): a FreeBSD userland built from the host's pkgbase repositories with package scripts and triggers off, the scripts' known commands run in a throwaway no-network build jail, every script and trigger checked against a compiled allowlist, and the host's `/etc`, `/var/db/pkg`, and `/usr/share/certs` checked unchanged; or from an operator-placed `base.txz`. The pkgbase builder **ran on FreeBSD 15.1** (`hearst`) through its test binary; through a deployed agent, and the `dist` source, **pending FreeBSD validation** (see the [guide](docs/administration/jail-templates.md)) |
+| Not yet | Jails themselves (the rest of phase 7b), network management, graphical consoles, metric history, clustering |
 
 ## Platforms
 
@@ -410,6 +411,7 @@ docs/                  architecture, security, and decision records
 - [The web interface](docs/administration/web-ui.md)
 - [Virtual machines](docs/administration/virtual-machines.md)
 - [Storage](docs/administration/storage.md)
+- [Jail templates](docs/administration/jail-templates.md)
 - Decision records:
   [0001 Go toolchain and SQLite driver](docs/decisions/0001-go-toolchain-and-sqlite-driver.md),
   [0002 Discovery abstraction](docs/decisions/0002-discovery-abstraction.md),
