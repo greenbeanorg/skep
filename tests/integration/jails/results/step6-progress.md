@@ -314,3 +314,21 @@ storage:write`, request `005a708b…`. The access audit log has it as entry
 278: `authz.deny`, outcome `denied`, actor s6oper, role operator, route
 and method, `permission: storage:write`, same request ID. No task was
 created, no template row, no dataset. Record: `step6-deployed/operator-refusal.txt`.
+
+## 12. Agent restart with no build jail (2026-11-16)
+
+**Found first.** The sweep logged only a removal, so a sweep that found
+nothing left no line, and "ran cleanly" could not be told from "did not
+run". **Changed** (`a34749d`): every completed sweep logs
+`event=build_jail_sweep` with `found`, `removed`, `failed`; unit test
+extended (one removed, one failed, nothing found). Redeployed the same
+way; both binaries report `a34749d`.
+
+**Check.** `jls --libxo=json name`: no jails. `sudo service skep_agent
+restart` at 18:51:30. In the new agent's log (pid 50166), in order:
+database ready (schema 5, no migration), task engine started,
+`build_jail_sweep found=0 removed=0 failed=0`, then `internal API
+listening`: the sweep ran before the socket was served. No ERROR or WARN
+line. `jls` empty afterwards. Through skep-api the template lists as
+provisioned, `15.1-RELEASE-p6`. (The redeploy's own start at 18:51:20
+logged the same sweep line.) Record: `step6-deployed/agent-restart.log`.
