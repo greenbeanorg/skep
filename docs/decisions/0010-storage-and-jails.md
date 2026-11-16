@@ -1195,13 +1195,29 @@ package names only from `storage.template_packages`, `PKG_CACHEDIR` and
 7. **A's host-file check is kept, at run time, on every build.** Before
    `pkg` starts and after the build jail is removed, the agent records,
    for every regular file and symlink under the host's `/etc`,
-   `/var/db/pkg`, and `/usr/share/certs`, its type, mode, owner, size,
+   `/var/db/pkg`, and `/usr/share/certs` except the exclusions below, its type, mode, owner, size,
    mtime, and the SHA-256 of regular files (about 1,500 entries on
    `hearst`, a few seconds). Any difference fails the build
    (`template_host_changed`), lists the changed paths in the task error
    and the audit entry, and emits an event. The template is destroyed;
    the host change cannot be undone and is reported, not repaired. The
    Decision 16 check repeats this from outside, as the trace did.
+
+   **Exclusions (Andy, 2026-11-16).** The check leaves out the paths on an
+   explicit list compiled into Skep, each one an exact absolute path. There
+   are no wildcards and no directory exclusions: a listed path that is a
+   directory is still walked. The list is not configuration, for the same
+   reason as the allowlist. A path is added only with its reason recorded
+   here. The list starts with one entry:
+
+   | Path | Why it is left out |
+   |---|---|
+   | `/var/db/pkg/vuln.xml` | The vulnerability database. `periodic daily` (03:01 from `/etc/crontab`) runs `405.pkg-base-audit` and `410.pkg-audit`, which run `pkg audit -F` and download a new copy whenever it is older than two days (`security_status_*audit_expiry`). That rewrite has nothing to do with a build, and a build that overlapped it would fail with `template_host_changed`. Nothing in a build writes it: pkg runs with `PKG_DBDIR` inside the root. |
+
+   What this costs: a build that did write an excluded path would not be
+   caught by this check. Each entry must be a file the build has no
+   reason to touch and that something else on the host is known to
+   rewrite.
 8. **The trace's housekeeping.** `TMPDIR=<work area>/tmp` is part of the
    fixed environment of `pkg` (the trace showed pkg writing its catalogue
    download temporaries to the host's `/tmp` without it).
