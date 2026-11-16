@@ -52,3 +52,17 @@ off, and keep `/etc/services`.
 **hearst state:** no jails. `skeptest/step6-probe` (162M) is left in place.
 `skeptest/trace-7b` and `/var/tmp/skep-trace7b` are untouched. Nothing else
 changed.
+
+## 2. Andy's answers recorded (2026-11-16)
+
+**Done.** ADR 0010: the "Open" section became "Resolved" (option A:
+`jexec -l` without `-U`, every `allow.*` off in the build jail;
+`/etc/services` kept, with the reason; the read-only lookup check);
+amendment e to Decision 9 (ordinary jails keep `allow.suser` on);
+spec items 2 and 3 and the follow-up ruling point to it. The lookup check:
+`getent services ssh` and `domain` both answer on hearst, because
+`services: compat` reads the `/etc/services` text and only the `db` source
+opens the db (libc `getservent.c`, releng/15.1). `skeptest/step6-probe`
+destroyed.
+
+**Commit:** see the next entry.

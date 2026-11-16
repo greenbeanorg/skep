@@ -4,9 +4,11 @@
   (pull request #26); phase 7b started 2026-11-16 (step 6: the RACCT
   reboot is done, the `pkg --rootdir` trace is recorded, and the decision
   on package scripts is accepted, see
-  [Step 6](#step-6-racct-reboot-and-the-pkg-trace); building it is
-  blocked on an open question found by a probe on 2026-11-16, see
-  [Open](#open-the-specification-is-not-buildable-as-written-2026-11-16)).
+  [Step 6](#step-6-racct-reboot-and-the-pkg-trace); a probe on 2026-11-16
+  found the specification not buildable as written, and Andy's answers are
+  recorded under
+  [Resolved](#resolved-the-probe-of-the-specification-2026-11-16); building
+  it is next).
   Every recommendation was
   accepted; the review answers and the amendments made at acceptance are
   under [Decisions](#decisions) and are worked into the text. The changes
@@ -46,7 +48,7 @@ both.
 | 6 | Hosts without ZFS (UFS-root equivalence) | A `directory` pool type: an allow-listed directory, sparse raw files for VM disks, plain directories for jail roots; snapshots and clones are reported unsupported on it, never emulated |
 | 7 | Jail userland and templates | A template is a ZFS dataset snapshot (or a directory) of a FreeBSD userland built by a task from the host's own pkgbase repository configuration, or from an operator-placed `base.txz`; the release must equal the host's; no URL from a request; `pkg` runs with a cleared environment and fixed arguments, its cache is emptied before `@skep-base`, and the host's `/etc`, `/var/db/pkg`, and `/usr/share/certs` are checked unchanged |
 | 8 | How jails run | A generated per-jail `jail.conf` under the run directory and `jail(8)` with explicit arguments; no runner process; observed with `jls --libxo=json`; never `rc.conf`'s `jail_list` |
-| 9 | Jail parameters | A fixed hardened baseline (`enforce_statfs=2`, `children.max=0`, no `allow.*`, `securelevel=2`); three typed opt-ins, `mlock` only with an RCTL memory limit; the parent directory of every jail root is `root:wheel 0700`; never `exec.prestart`, `exec.poststart`, or any host-side command from a request |
+| 9 | Jail parameters | A fixed hardened baseline (`enforce_statfs=2`, `children.max=0`, no `allow.*` beyond the default `allow.suser`, `securelevel=2`); three typed opt-ins, `mlock` only with an RCTL memory limit; the parent directory of every jail root is `root:wheel 0700`; never `exec.prestart`, `exec.poststart`, or any host-side command from a request |
 | 10 | Jail networking | VNET only, one `epair` per NIC, the host end in an allow-listed bridge; addresses by DHCP or static, written into the jail before its first start; no shared-IP and no `inherit` |
 | 11 | Jail resource limits | RCTL limits (memory, processes, CPU percent, open files) when `kern.racct.enable=1`, refused with a clear code when not; disk by ZFS `refquota`, which needs nothing |
 | 12 | Getting into a jail | No interactive console in this milestone; an optional SSH public key and `sshd_enable` at create. `jexec` to a shell is never exposed |
@@ -393,7 +395,8 @@ this milestone.
 **Recommendation: A.** Baseline, not changeable through the API:
 `enforce_statfs=2`, `children.max=0`, `securelevel=2`, `devfs_ruleset=5`
 (`devfsrules_jail_vnet`, which every Skep jail is), `mount.devfs`, no
-`mount.fstab`, every `allow.*` off, `exec.clean`, `exec.consolelog` to
+`mount.fstab`, every `allow.*` that grants extra privileges off, with
+`allow.suser` left at its default, on (amendment e), `exec.clean`, `exec.consolelog` to
 `<RunDir>/jails/<id>/console.log` (root-only, served to `container:read`
 holders as a bounded tail). Opt-ins: `allow_raw_sockets`,
 `sysvipc` (`sysvshm`, `sysvsem`, `sysvmsg` = `new`), and `mlock`. `mlock`
@@ -770,6 +773,15 @@ Amendments made at acceptance, worked into the text:
     considered (Decision 11).
   - The UI notes that a clone shares the source guest's hostname, SSH
     host keys, and machine ID (Decision 3).
+- **e. `allow.suser` stays on in ordinary jails** (Decision 9; Andy,
+  2026-11-16, from the step 6 probe). An ordinary jail keeps `allow.suser`
+  at its default, on; every `allow.*` that grants extra privileges stays
+  off. The reason: `allow.suser` is itself an `allow.*` parameter, and with
+  it off, root inside the jail has no privileges (on `hearst`, `jexec -U
+  root` failed with `initgroups: Operation not permitted`), so `/etc/rc`
+  and the services a jail exists to run fail. Only the template build jail
+  of step 6 runs with `allow.suser` off, because its fixed commands need
+  nothing beyond owning the files they write.
 
 ## Implementation notes
 
@@ -1071,7 +1083,9 @@ package names only from `storage.template_packages`, `PKG_CACHEDIR` and
      `random`, and `urandom`, and nothing else.
    - The hardened parameters of Decision 9 that apply: `enforce_statfs=2`,
      `children.max=0`, every `allow.*` off, `securelevel=2` unless a
-     command needs less (record it), `exec.clean`.
+     command needs less (record it), `exec.clean`. In the build jail
+     "every `allow.*`" includes `allow.suser`, unlike an ordinary jail
+     (amendment e); the probe showed no command needs it.
    - Started with `persist` so the commands can run one by one with
      `jexec -l` (cleared login environment). It never runs `/etc/rc`
      (no `exec.start`).
@@ -1100,6 +1114,9 @@ package names only from `storage.template_packages`, `PKG_CACHEDIR` and
    When this is first built, check that the resulting
    `/var/db/services.db` is identical to the one the traced build
    produced, which is kept on `hearst` in `skeptest/trace-7b` until then.
+   (The probe showed it cannot be: the package script's database is
+   empty. Skep keeps `/etc/services`; see
+   [Resolved](#resolved-the-probe-of-the-specification-2026-11-16).)
    A command that fails fails the build, and its first line of stderr
    goes in the task error.
 4. **Allowlist by package name and script hash** (Andy's change 2). After
@@ -1220,7 +1237,8 @@ two and left the third to the implementation):
   through `jexec`.** The jail is created once with `jail -c` (the
   parameters of item 2 plus `persist`, and no `command`, `exec.start`,
   or `exec.stop`). Each command of item 3 runs as
-  `/usr/sbin/jexec -l -U root skep-build-<template-id> <command> <args>`,
+  `/usr/sbin/jexec -l skep-build-<template-id> <command> <args>` (without
+  `-U root`; see [Resolved](#resolved-the-probe-of-the-specification-2026-11-16)),
   in a fixed order: certctl, pwd_mkdb, services_mkdb, cap_mkdb,
   makewhatis. Then the jail is removed with `jail -r`. The removal sits in
   a deferred cleanup that uses its own short context, so a cancelled or
@@ -1254,26 +1272,44 @@ The pkgbase source is built in step 6 to this specification, together
 with the template store, the `dist` source, the
 `container.template.create` and delete tasks, and the routes.
 
-#### Open: the specification is not buildable as written (2026-11-16)
+#### Resolved: the probe of the specification (2026-11-16)
 
-A hand-run probe on `hearst` before building it
+A hand-run probe on `hearst` before building
 ([step6-probe.txt](../../tests/integration/jails/results/step6-probe.txt))
-found three things that need Andy's answer. Building has stopped until he
-gives it.
+found the specification not buildable as written. Andy answered on
+2026-11-16; the text above is amended accordingly.
 
-- `jexec -l -U root` fails before `pwd_mkdb` has run (`getpwnam: root`),
-  because the template has no `pwd.db` yet. It also fails after that
-  (`initgroups: Operation not permitted`), because item 2 turns off every
-  `allow.*`, `allow.suser` included. `jexec -l` without `-U` (uid 0, root's
-  login class) runs all six commands with every `allow.*` off, no devfs,
-  and `securelevel=2`.
-- The package script's `services.db` is an empty database: it passes a
-  directory to services_mkdb as its input. That is true of the trace and of
-  `hearst`'s own base system. The `/etc/services` of item 3 builds the
-  populated one, so item 3's "identical to the trace" check cannot pass.
-- Holding as specified: scripts and triggers off; `TMPDIR`; every allowlist
-  hash (the four script entries and `mandoc.ucl`); no devfs needed;
-  removal confirmed with `jls -j`.
-
-Options and a recommendation are at the end of the probe record. The same
-`allow.suser` question applies to Decision 9's baseline in step 7.
+- **What failed.** `jexec -l -U root` failed before `pwd_mkdb` had run
+  (`getpwnam: root`): the template has no `pwd.db` yet, and FreeBSD's
+  `files` passwd source reads nothing else. It also failed after that
+  (`initgroups: Operation not permitted`), because item 2 turns every
+  `allow.*` off, `allow.suser` included.
+- **Decision: option A.** Every command runs as
+  `/usr/sbin/jexec -l skep-build-<template-id> <command>`, without `-U`,
+  in the fixed order, with every `allow.*` off in the build jail,
+  `allow.suser` included. The command then runs with the agent's own
+  credentials, uid 0 and gid 0 (what `-U root` would give), and gets root's
+  login-class environment from `-l`. In a jail with `allow.suser` off that
+  root has no privilege beyond owning the files. The probe ran all six
+  commands this way with no devfs and `securelevel=2`.
+- **Decision: `services_mkdb` keeps `/etc/services` as its input.** The
+  `FreeBSD-runtime` 15.1 post-install script passes `${PKG_ROOTDIR}/`, a
+  directory, as the input file; services_mkdb reads no entries from it and
+  writes an empty database (2097920 bytes, 285 of them non-zero). The trace
+  has that empty database, and so does `hearst`'s own base system. Skep's
+  command builds the populated one, so the template's `services.db`
+  differs from the trace's on purpose. **The empty database breaks no
+  lookup on `hearst`** (checked read-only): `getent services ssh` gives
+  `ssh 22/tcp` and `getent services domain` gives `domain 53/tcp`, because
+  `nsswitch.conf` has `services: compat`, and in libc
+  (`lib/libc/net/getservent.c`, releng/15.1) the `files` and `compat`
+  sources read the `/etc/services` text; only the `db` source opens
+  `/var/db/services.db`. A host configured with `services: db` would find
+  nothing. An upstream report is Andy's decision, later.
+- **Decision: Decision 9 is amended for step 7** (amendment e): ordinary
+  jails keep `allow.suser` on; only the build jail turns it off.
+- **Held as specified:** scripts and triggers off (nothing ran, nothing
+  deferred); `TMPDIR`; every allowlist hash (the four script entries and
+  `mandoc.ucl`); no devfs needed; removal confirmed with `jls -j`. Also
+  learned: `pkg info --raw --raw-format json-compact -a` prints one JSON
+  array, not one object per line.

@@ -171,3 +171,19 @@ Problem 3: services.db.
   ii. Mimic the package exactly (input "/"): the template gets the same
       empty database pkgbase gives a host. Bug-compatible, no value.
   Optionally, report the script bug upstream (outward action: Andy's call).
+
+== Answers (Andy, 2026-11-16) and the lookup check ==
+
+Option A; services_mkdb keeps /etc/services; Decision 9 amended (amendment
+e: ordinary jails keep allow.suser on). Recorded in ADR 0010, step 6,
+"Resolved". skeptest/step6-probe destroyed (zfs destroy exit 0).
+
+Does hearst's own empty /var/db/services.db break name lookups? (read-only)
+  getent services ssh     -> ssh                  22/tcp   (exit 0)
+  getent services domain  -> domain               53/tcp   (exit 0)
+  getent services 22      -> ssh                  22/tcp   (exit 0)
+  /etc/nsswitch.conf: services: compat / services_compat: nis
+No. In lib/libc/net/getservent.c (releng/15.1), the files and compat
+sources fopen(_PATH_SERVICES) (/etc/services text); only the db source
+dbopen()s _PATH_SERVICES_DB. With "services: compat" the db is never read.
+A host configured with "services: db" would get no answers.
