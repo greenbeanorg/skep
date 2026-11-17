@@ -93,6 +93,14 @@ type Jails interface {
 	// then SIGTERM, then after the stop timeout SIGKILL. It confirms the
 	// jail is gone. A jail that is not running is not an error.
 	StopJail(ctx context.Context, spec JailSpec) error
+	// RemoveLeftoverDevfs unmounts a devfs that a removal outside Skep
+	// left on a jail's <root>/dev, and returns the fsids it unmounted
+	// (amendment l). The mount must be in the mount table with
+	// f_mntonname exactly <root>/dev and type devfs, and is unmounted by
+	// fsid (MNT_BYFSID), never by a path. A running jail is refused
+	// (container_not_stopped). StartJail and DestroyJailRoot do the same
+	// themselves; the agent's start-up sweep calls this.
+	RemoveLeftoverDevfs(ctx context.Context, pool, containerID string) ([]string, error)
 	// RunningJails lists the running Skep jails (skep-<id>) by container
 	// ID.
 	RunningJails(ctx context.Context) (map[string]JailState, error)

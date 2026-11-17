@@ -95,6 +95,9 @@ type Fake struct {
 	jails         map[string]int
 	nextJID       int
 	jailFiles     map[string]hostops.JailFiles
+	// leftoverDevfs are the jails with a devfs a removal outside Skep
+	// left on their <root>/dev (amendment l).
+	leftoverDevfs map[string]bool
 	calls         []string
 	// taps maps a tap to its description and bridge.
 	taps    map[string]fakeTap
@@ -162,6 +165,7 @@ func New(conf hostops.Confinement, opts Options) *Fake {
 		rctl:           map[string][]string{},
 		nextJID:        1,
 		jailFiles:      map[string]hostops.JailFiles{},
+		leftoverDevfs:  map[string]bool{},
 	}
 }
 

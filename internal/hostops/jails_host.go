@@ -288,6 +288,15 @@ func (h *host) DestroyJailRoot(ctx context.Context, pool, containerID string) ([
 	if clones := clonesOf(snaps); len(clones) > 0 {
 		return nil, hasClones(clones)
 	}
+	// A devfs a removal outside Skep left on <root>/dev keeps the dataset
+	// busy (amendment l).
+	mp, err := h.jailsMount(ctx, pool)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := h.removeLeftoverDevfs(containerID, filepath.Join(mp, containerID)); err != nil {
+		return nil, err
+	}
 	if _, err := h.run.Run(ctx, zfsBinary, "destroy", "-r", ds); err != nil {
 		return nil, err
 	}
@@ -440,6 +449,11 @@ func (h *host) StartJail(ctx context.Context, spec JailSpec) (JailState, error) 
 	}
 	conf, root, err := h.writeJailConf(ctx, spec, true)
 	if err != nil {
+		return JailState{}, err
+	}
+	// And a devfs a removal outside Skep left on <root>/dev, which jail
+	// -c would mount over (amendment l).
+	if _, err := h.removeLeftoverDevfs(spec.ContainerID, root); err != nil {
 		return JailState{}, err
 	}
 	epairs := map[int]string{}

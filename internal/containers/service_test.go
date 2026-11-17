@@ -389,6 +389,28 @@ func TestTemplateInUse(t *testing.T) {
 	}
 }
 
+// TestObserveAllSweepsLeftoverDevfs: at agent start a devfs left on the
+// root of a jail that does not run is unmounted; a running jail's root is
+// not touched (amendment l).
+func TestObserveAllSweepsLeftoverDevfs(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	stopped := f.create(models.ContainerCreate{Name: "stopped", TemplateID: f.minimal})
+	running := f.create(models.ContainerCreate{Name: "running", TemplateID: f.minimal})
+	f.succeed(f.svc.Action(ctx, running.ID, models.ContainerAction{Action: "start"}, f.sub))
+	f.fake.LeaveDevfs(stopped.ID)
+	f.fake.LeaveDevfs(running.ID)
+	if err := f.svc.ObserveAll(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if f.fake.HasLeftoverDevfs(stopped.ID) {
+		t.Fatal("the stopped jail's leftover devfs is still there")
+	}
+	if !f.fake.HasLeftoverDevfs(running.ID) {
+		t.Fatal("the sweep touched a running jail's root")
+	}
+}
+
 func TestObserveAllSweepsHalfStartedJail(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()

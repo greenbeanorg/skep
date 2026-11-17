@@ -299,10 +299,24 @@ func (s *Service) ObserveAll(ctx context.Context) error {
 				continue
 			}
 		}
-		s.observe(ctx, c, running, true)
+		c = s.observe(ctx, c, running, true)
+		if _, ok := running[c.ID]; !ok && c.Provisioned {
+			s.sweepLeftoverDevfs(ctx, c)
+		}
 	}
 	s.log.Info("containers: observed the jails", "containers", len(ids), "running", len(running), "half_started_removed", swept)
 	return nil
+}
+
+// sweepLeftoverDevfs unmounts a devfs that a removal outside Skep left
+// on the root of a jail that does not run (amendment l); hostops logs
+// each one it removes. A failure is logged and the start-up goes on: the
+// next start or delete of the jail tries again.
+func (s *Service) sweepLeftoverDevfs(ctx context.Context, c models.Container) {
+	if _, err := s.jails.RemoveLeftoverDevfs(ctx, c.Pool, c.ID); err != nil {
+		s.log.Warn("containers: could not check the jail's root for a leftover devfs", "event", "orphaned_devfs_check_failed",
+			"container_id", c.ID, "error", err)
+	}
 }
 
 // sweepHalfStarted removes the jail of a container still recorded

@@ -166,6 +166,7 @@ func (j fakeJails) DestroyJailRoot(_ context.Context, pool, containerID string) 
 	if clones := f.clonesUnder(ds); len(clones) > 0 {
 		return nil, hasClones(clones)
 	}
+	f.removeLeftoverDevfsLocked(containerID)
 	out := []hostops.Dataset{d}
 	for name, sn := range f.snaps {
 		if strings.HasPrefix(name, ds+"@") {
@@ -249,6 +250,9 @@ func (j fakeJails) StartJail(ctx context.Context, spec hostops.JailSpec) (hostop
 		return hostops.JailState{}, err
 	}
 	name, _ := hostops.JailName(spec.ContainerID)
+	j.f.mu.Lock()
+	j.f.removeLeftoverDevfsLocked(spec.ContainerID)
+	j.f.mu.Unlock()
 	for _, nic := range spec.NICs {
 		b, err := j.f.Bridge(ctx, nic.Bridge)
 		if err != nil {
@@ -385,6 +389,45 @@ func (j fakeJails) SkepInterfaces(context.Context) ([]hostops.SkepInterface, err
 	}
 	sort.Slice(out, func(a, b int) bool { return out[a].Name < out[b].Name })
 	return out, nil
+}
+
+// RemoveLeftoverDevfs implements hostops.Jails.
+func (j fakeJails) RemoveLeftoverDevfs(_ context.Context, pool, containerID string) ([]string, error) {
+	if _, _, err := j.root(pool, containerID); err != nil {
+		return nil, err
+	}
+	f := j.f
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if _, ok := f.jails[containerID]; ok {
+		return nil, &models.Error{Code: models.CodeContainerNotStopped, Message: "the jail is running"}
+	}
+	return f.removeLeftoverDevfsLocked(containerID), nil
+}
+
+func (f *Fake) removeLeftoverDevfsLocked(containerID string) []string {
+	if !f.leftoverDevfs[containerID] {
+		return nil
+	}
+	delete(f.leftoverDevfs, containerID)
+	f.record("umount FSID:1:%s (leftover devfs on the jail root's dev)", containerID)
+	return []string{"FSID:1:" + containerID}
+}
+
+// LeaveDevfs simulates a devfs a removal outside Skep left on a jail's
+// <root>/dev.
+func (f *Fake) LeaveDevfs(containerID string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.leftoverDevfs[containerID] = true
+}
+
+// HasLeftoverDevfs reports whether a simulated leftover devfs is still
+// there.
+func (f *Fake) HasLeftoverDevfs(containerID string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.leftoverDevfs[containerID]
 }
 
 // LeaveEpair simulates an epair a crashed agent left for a container.

@@ -66,13 +66,17 @@ type host struct {
 	// listDev lists a jail's /dev for the guard (amendment i); tests
 	// replace it.
 	listDev func(root string) ([]string, error)
+
+	// mounts reads the mount table and unmounts a leftover devfs by its
+	// fsid (amendment l); tests replace it.
+	mounts mountTable
 }
 
 func newHost(conf Confinement, run Runner, sys system, log *slog.Logger) *host {
 	if log == nil {
 		log = slog.Default()
 	}
-	return &host{conf: conf, run: run, sys: sys, log: log, ignoredMedia: map[string]bool{}, listDev: listJailDev}
+	return &host{conf: conf, run: run, sys: sys, log: log, ignoredMedia: map[string]bool{}, listDev: listJailDev, mounts: kernelMounts{}}
 }
 
 // NewFiles returns the Files implementation alone. It is plain file I/O
