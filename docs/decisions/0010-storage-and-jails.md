@@ -373,7 +373,9 @@ this milestone.
   extra mechanism.
 - `exec.start = "/bin/sh /etc/rc"`, `exec.stop = "/bin/sh /etc/rc.shutdown jail"`,
   fixed by Skep. `exec.timeout` and `stop.timeout` come from typed
-  configuration.
+  configuration. (Amendment i: the jail.conf has no `exec.start`; Skep
+  runs `/etc/rc` itself with `jexec` after the `/dev` guard. `exec.stop`
+  is unchanged.)
 - **Stopping escalates, unlike a VM.** `jail -r` runs `exec.stop`, then
   sends `SIGTERM` and, after `stop.timeout` (default 10 s; request
   `timeout` up to 300 s), `SIGKILL` to whatever is left; the kernel then
@@ -910,6 +912,29 @@ Amendments made at acceptance, worked into the text:
     static check is skipped for now; static addressing is covered by
     unit tests only until a range is approved.
   - Redeploying the corrected build on `hearst` is approved.
+  - **Skep running rc itself is confirmed** (Andy, 2026-11-17): `jexec
+    -l -U root skep-<id> /bin/sh /etc/rc`, with these requirements.
+    - The jail is created with `persist`, so it survives with no
+      processes while the guard runs.
+    - `exec.stop` stays configured, so `jail -r` still runs
+      `/etc/rc.shutdown`; verified on `hearst`.
+    - If `/etc/rc` fails or hits the start timeout, the jail is stopped
+      and removed (`jail -r`, which runs `/etc/rc.shutdown`), its epairs
+      destroyed, the result is `container_start_failed`, and rc's output
+      stays in `console.log`.
+    - A jail left half-started by an agent crash (the container still
+      recorded `starting` at agent start, its jail present) is handled by
+      the start-up sweep: removed before the socket is served, its epairs
+      destroyed, and the container recorded `stopped` with a detail that
+      says why.
+    - My reading of two cases the answer leaves open: a jail refused by
+      the guard, and a half-started jail found by the sweep, are removed
+      **without** `exec.stop`. In the first, none of the jail's code may
+      run with the devices it should not have; in the second, Skep cannot
+      know whether the guard passed. Their jail.conf is written for the
+      removal without `exec.stop`; `jail -r` then sends `SIGTERM` and
+      `SIGKILL` as usual and unmounts devfs.
+    - Static range: the live static test is skipped; unit tests only.
 
 ## Implementation notes
 
