@@ -1826,3 +1826,20 @@ cloned** (Q8 in the progress log). A start is refused with
 `container_address_in_use` when a running Skep jail on the same bridge
 holds one of its static addresses (as Skep wrote them).
 
+
+**Amendment l, the leftover devfs, built (2026-11-17).**
+`hostops.removeLeftoverDevfs` reads the mount table with getfsstat(2)
+(`MNT_NOWAIT`, read again if the buffer filled), keeps only entries whose
+`f_mntonname` is byte for byte `<root>/dev` (root the jail's expected
+mountpoint, a clean absolute path) and whose `f_fstypename` is `devfs`,
+and unmounts each, newest first, with `unmount("FSID:<a>:<b>",
+MNT_BYFSID)`; an entry with a zero fsid is refused. `StartJail` calls it
+after the jail.conf is written and before any epair or `jail -c`;
+`DestroyJailRoot` after the ownership and clone checks, before `zfs
+destroy` (a failed unmount stops the delete); `Jails.RemoveLeftoverDevfs`
+(refused while the jail runs) is called by `containers.ObserveAll` for
+every provisioned jail that does not run. Each unmount is logged as
+`orphaned_devfs_removed`. The symbolic-link requirement is tested twice:
+a unit test with a fake table, and a native test on `hearst` that reads
+the real table with a root whose `dev` links to `/dev` and to `/`, with
+an unmount that fails the test if called.

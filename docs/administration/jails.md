@@ -113,8 +113,9 @@ jail and its devfs mount. A jail cannot refuse to stop, so there is no
 force stop. The timeout is `containers.stop_timeout_seconds` (default 10)
 or the request's `timeout` (1 to 300).
 
-**Delete.** The jail must be stopped. Skep destroys its dataset and
-snapshots and its runtime directory. A template with jails cloned from it
+**Delete.** The jail must be stopped. Skep unmounts a devfs a removal
+outside Skep left on its `<root>/dev` (below), then destroys its dataset
+and snapshots and its runtime directory. A template with jails cloned from it
 cannot be deleted.
 
 **The agent restarting.** A jail is persistent: it outlives the agent,
@@ -228,6 +229,19 @@ those names. It finds a jail's epairs by their host ends' description
 and the jail's next start, stop, or delete destroys them (destroying a
 host end removes its own jail end, whatever it is called). Don't run
 `ifconfig skep0 ...` on the host while two exist: it acts on one of them.
+
+A `jail -r` by hand without Skep's `jail.conf` can also leave the jail's
+devfs mounted on `<root>/dev`, which keeps the dataset busy so the delete
+would fail. Before a start, at a delete, and at every agent start for each
+jail that does not run, Skep looks for such a mount in the mount table
+(`getfsstat(2)`): only one whose mount point is exactly `<root>/dev` and
+whose type is `devfs`. It unmounts it by its file system ID
+(`unmount(2)` with `MNT_BYFSID`), never by a path, so a `dev` that is a
+symbolic link cannot point the unmount at a host mount (ADR 0010
+amendment l). Each one is logged with the event `orphaned_devfs_removed`,
+the mount point, and the fsid; a failed check at agent start is logged as
+`orphaned_devfs_check_failed`, and the jail's next start or delete tries
+again.
 
 ## Snapshots and clones
 
