@@ -983,13 +983,17 @@ export interface paths {
          *     removed (`container_start_failed`). A jail with NICs needs the
          *     `if_epair` module (`epair_unavailable`, refused before a task
          *     exists); a jail with a DHCP NIC needs devfs ruleset 6001 to be
-         *     Skep's or absent (`devfs_ruleset_conflict`). An epair an earlier
-         *     crash left is destroyed first. The first start marks the jail
+         *     Skep's or absent (`devfs_ruleset_conflict`). A start is refused
+         *     when a running Skep jail on the same bridge holds one of the
+         *     jail's static IPv4 addresses (`container_address_in_use`,
+         *     amendment k; the addresses compared are the ones Skep wrote). An
+         *     epair an earlier crash left is destroyed first. The first start marks the jail
          *     as started for good: Skep never writes into its tree again. `stop`
          *     runs `/etc/rc.shutdown`, then sends SIGTERM and, after `timeout`
          *     seconds (default `containers.stop_timeout_seconds`), SIGKILL; a
          *     jail cannot refuse, so there is no force stop. A stop destroys the
-         *     jail's epairs. `restart` is a stop and a start.
+         *     jail's epairs before the jail is removed, so the jail's
+         *     `/etc/rc.shutdown` runs without its NICs. `restart` is a stop and a start.
          */
         post: operations["containerAction"];
         delete?: never;
@@ -1017,6 +1021,159 @@ export interface paths {
         get: operations["getContainerConsoleLog"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/containers/{id}/snapshots": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        /**
+         * A jail's snapshots
+         * @description Requires `container:read`. The jail's snapshots, oldest first,
+         *     with what ZFS shows of each now (`observed`) and the linked
+         *     clones that depend on each.
+         */
+        get: operations["listContainerSnapshots"];
+        put?: never;
+        /**
+         * Take a snapshot of a jail's root
+         * @description Requires `container:snapshot`. Submits
+         *     `container.snapshot.create`, which takes one ZFS snapshot of the
+         *     jail's root (ADR 0010 decision 2). Memory is not saved. Taken
+         *     while the jail runs, the snapshot is `crash_consistent`: what a
+         *     power cut would leave on disk; taken while it is stopped,
+         *     `consistent`. The task can be cancelled until the ZFS call.
+         *     Refused for a name the jail already uses (`snapshot_name_taken`),
+         *     beyond `storage.max_snapshots_per_resource` (`snapshot_limit`,
+         *     default 64), for a jail that was never provisioned
+         *     (`container_not_provisioned`), and when the encryption key of the
+         *     jail's root is not loaded (`storage_locked`).
+         */
+        post: operations["createContainerSnapshot"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/containers/{id}/snapshots/{sid}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                sid: components["parameters"]["SnapshotID"];
+            };
+            cookie?: never;
+        };
+        /** One jail snapshot */
+        get: operations["getContainerSnapshot"];
+        put?: never;
+        post?: never;
+        /**
+         * Delete a jail snapshot
+         * @description Requires `container:snapshot`. Submits
+         *     `container.snapshot.delete`, which destroys the snapshot. The jail
+         *     may be running. Refused while a linked clone depends on the
+         *     snapshot (`snapshot_has_clones`, naming the clones).
+         */
+        delete: operations["deleteContainerSnapshot"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/containers/{id}/snapshots/{sid}/rollback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                sid: components["parameters"]["SnapshotID"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Roll a jail back to a snapshot
+         * @description Requires `container:snapshot`. Submits
+         *     `container.snapshot.rollback`, which rolls the jail's root back.
+         *     Only while the jail is stopped (`container_not_stopped`). A
+         *     rollback to a snapshot that is not the latest destroys every newer
+         *     one and is refused without `"destroy_newer": true`
+         *     (`snapshot_not_latest`, listing them); the task result and the
+         *     audit entry name each snapshot destroyed. A newer snapshot with
+         *     linked clones refuses the rollback whatever the flag says
+         *     (`snapshot_has_clones`), and so does a newer snapshot Skep did not
+         *     take.
+         *
+         *     `started_once` stays true after any rollback, even to a snapshot
+         *     taken before the first start: Skep never writes into the tree of
+         *     a jail that has run code (ADR 0010 decision 13).
+         */
+        post: operations["rollbackContainerSnapshot"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/containers/{id}/clone": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Make a linked clone of a jail
+         * @description Requires `container:write` and `container:snapshot` (ADR 0010
+         *     amendment j). Submits `container.clone`, which makes a new jail
+         *     whose root is a ZFS clone of one snapshot of the source's root
+         *     (decision 3). Without `snapshot_id`, the task takes a snapshot of
+         *     the source first, named after the clone, and leaves it behind.
+         *     The clone gets a new ID, the given name and hostname (default:
+         *     the name), new MAC addresses, and the source's template, options,
+         *     limits (the disk quota is set again), SSH key, NIC slots,
+         *     bridges, and addressing. Its in-jail interfaces are `skep0`,
+         *     `skep1`, ... as in every jail, so the copied `rc.conf` configures
+         *     them.
+         *
+         *     **Static addresses** (amendment k): every NIC of the source with
+         *     a static address needs new addressing in `nics`, or the clone
+         *     would hold the source's address (`clone_addressing_required`,
+         *     422, naming the slots). New addressing or nameservers are written
+         *     into the clone's `rc.conf` and `resolv.conf`, which Skep does only
+         *     for a tree that has never run code: a clone inherits its source's
+         *     `started_once`, and for a source that has started the change is
+         *     `container_started`. So a jail with a static address can be
+         *     cloned only while it has never started.
+         *
+         *     **A clone is the same guest.** Skep does not change what is inside
+         *     the tree: the clone's `/etc/ssh` host keys and `/etc/hostid` are
+         *     the source's. Regenerate the host keys inside the clone (for
+         *     example `rm /etc/ssh/ssh_host_*` and restart sshd) before it shares
+         *     a network with the source.
+         *
+         *     While the clone exists, its origin snapshot and the source jail
+         *     cannot be deleted (`snapshot_has_clones`). Clones stay in the
+         *     source's pool.
+         */
+        post: operations["cloneContainer"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1442,8 +1599,13 @@ export interface components {
             /** @description Written into the jail's resolv.conf before its first start (static addressing). */
             nameservers?: string[];
             provisioned: boolean;
-            /** @description True from the first start on; Skep then never writes into the jail's tree. */
+            /** @description True from the first start on; Skep then never writes into the jail's tree. A clone inherits its source's. */
             started_once: boolean;
+            /**
+             * Format: uuid
+             * @description The snapshot a linked clone was made from. Deleting it, or its jail, is refused while the clone exists.
+             */
+            cloned_from_snapshot_id?: string;
             /** @enum {string} */
             desired_state: "stopped" | "running";
             /** @enum {string} */
@@ -1509,6 +1671,17 @@ export interface components {
         SnapshotRollback: {
             /** @description Allow a rollback to an older snapshot, which destroys every newer one. */
             destroy_newer?: boolean;
+        };
+        ContainerClone: {
+            name: string;
+            /** @description Defaults to the name. */
+            hostname?: string;
+            /** @description The snapshot of the source to clone. Without it, the task takes one first. */
+            snapshot_id?: string;
+            /** @description One entry per NIC of the source, in slot order. Empty fields keep the source's bridge and addressing; the MAC address is new unless given. Every NIC with a static address on the source needs new addressing here. */
+            nics?: components["schemas"]["ContainerNICSpec"][];
+            /** @description Replace the source's (static addressing only). Dropped when no NIC keeps a static address. */
+            nameservers?: string[];
         };
         VMClone: {
             name: string;
@@ -2172,7 +2345,11 @@ export interface components {
          *     `snapshot_not_latest`, `snapshot_incomplete`, `snapshot_name_taken`,
          *     `snapshot_not_provisioned`, `disk_has_snapshots`, and for jail
          *     templates `template_name_taken`, `template_not_provisioned`,
-         *     `jail_parent_insecure`.
+         *     `jail_parent_insecure`, and for jails `container_name_taken`,
+         *     `container_not_stopped`, `container_not_running`,
+         *     `container_not_provisioned`, `container_started`,
+         *     `container_start_failed`, `container_address_in_use`,
+         *     `epair_unavailable`, `rctl_unavailable`, `devfs_ruleset_conflict`.
          */
         VMConflict: {
             headers: {
@@ -2187,7 +2364,9 @@ export interface components {
          *     `engine_unsupported`, `firmware_unsupported`, `pool_not_allowed`,
          *     `bridge_not_allowed`, `media_not_found`,
          *     `storage_feature_unsupported`, and for jail templates
-         *     `release_unsupported` (no allowlist for the host's release).
+         *     `release_unsupported` (no allowlist for the host's release), and
+         *     for jails `container_ssh_unavailable`,
+         *     `mlock_requires_memory_limit`, `clone_addressing_required`.
          *     A build task can also fail with `template_script_unknown`,
          *     `template_trigger_left`, `template_host_changed`,
          *     `template_build_failed`, `template_archive_mismatch`, or
@@ -3893,6 +4072,233 @@ export interface operations {
             401: components["responses"]["Unauthenticated"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
+    listContainerSnapshots: {
+        parameters: {
+            query?: never;
+            header?: {
+                /**
+                 * @description Marks a request the client made by itself (a timer, a refetch on
+                 *     focus). Any non-empty value. The request is authenticated as any
+                 *     other, the idle timeout included, but does not extend the idle
+                 *     timeout.
+                 */
+                "X-Skep-Background"?: components["parameters"]["Background"];
+            };
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The snapshots. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SnapshotList"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
+    createContainerSnapshot: {
+        parameters: {
+            query?: never;
+            header?: {
+                /**
+                 * @description Makes a retry safe: a second request with the same key and the
+                 *     same body returns the task of the first; with a different body it
+                 *     is refused with `idempotency_key_conflict`.
+                 */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SnapshotCreate"];
+            };
+        };
+        responses: {
+            /** @description The snapshot, not yet taken, and its task. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SnapshotCreated"];
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["VMConflict"];
+            422: components["responses"]["VMUnprocessable"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
+    getContainerSnapshot: {
+        parameters: {
+            query?: never;
+            header?: {
+                /**
+                 * @description Marks a request the client made by itself (a timer, a refetch on
+                 *     focus). Any non-empty value. The request is authenticated as any
+                 *     other, the idle timeout included, but does not extend the idle
+                 *     timeout.
+                 */
+                "X-Skep-Background"?: components["parameters"]["Background"];
+            };
+            path: {
+                id: string;
+                sid: components["parameters"]["SnapshotID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The snapshot. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Snapshot"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
+    deleteContainerSnapshot: {
+        parameters: {
+            query?: never;
+            header?: {
+                /**
+                 * @description Makes a retry safe: a second request with the same key and the
+                 *     same body returns the task of the first; with a different body it
+                 *     is refused with `idempotency_key_conflict`.
+                 */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                id: string;
+                sid: components["parameters"]["SnapshotID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The task. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Task"];
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["VMConflict"];
+            422: components["responses"]["VMUnprocessable"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
+    rollbackContainerSnapshot: {
+        parameters: {
+            query?: never;
+            header?: {
+                /**
+                 * @description Makes a retry safe: a second request with the same key and the
+                 *     same body returns the task of the first; with a different body it
+                 *     is refused with `idempotency_key_conflict`.
+                 */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                id: string;
+                sid: components["parameters"]["SnapshotID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SnapshotRollback"];
+            };
+        };
+        responses: {
+            /** @description The task. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Task"];
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["VMConflict"];
+            422: components["responses"]["VMUnprocessable"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
+    cloneContainer: {
+        parameters: {
+            query?: never;
+            header?: {
+                /**
+                 * @description Makes a retry safe: a second request with the same key and the
+                 *     same body returns the task of the first; with a different body it
+                 *     is refused with `idempotency_key_conflict`.
+                 */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ContainerClone"];
+            };
+        };
+        responses: {
+            /** @description The clone, not yet provisioned, and its task. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ContainerCreated"];
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["VMConflict"];
+            422: components["responses"]["VMUnprocessable"];
             503: components["responses"]["Unavailable"];
         };
     };

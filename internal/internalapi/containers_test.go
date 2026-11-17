@@ -3,7 +3,9 @@ package internalapi_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/greenbeanorg/skep/internal/agentproto"
@@ -19,6 +21,44 @@ type fakeContainers struct {
 	create models.ContainerCreate
 	update models.ContainerUpdate
 	action models.ContainerAction
+	clone  models.ContainerClone
+	// calls records the snapshot operations: "op id snapID".
+	calls []string
+}
+
+const snapID = "5a5a5a5a-1111-4222-8333-444455556666"
+
+func (f *fakeContainers) Snapshots(_ context.Context, id string) (models.SnapshotList, error) {
+	f.calls = append(f.calls, "list "+id)
+	return models.SnapshotList{Items: []models.Snapshot{{ID: snapID, Name: "s1"}}}, nil
+}
+
+func (f *fakeContainers) Snapshot(_ context.Context, id, sid string) (models.Snapshot, error) {
+	f.calls = append(f.calls, "get "+id+" "+sid)
+	return models.Snapshot{ID: sid, Name: "s1"}, nil
+}
+
+func (f *fakeContainers) CreateSnapshot(_ context.Context, id string, req models.SnapshotCreate, sub containers.Submission) (models.SnapshotCreated, error) {
+	f.calls, f.sub = append(f.calls, "create "+id+" "+req.Name), sub
+	return models.SnapshotCreated{Snapshot: models.Snapshot{ID: snapID, Name: req.Name}, Task: models.Task{ID: "t-4"}}, nil
+}
+
+func (f *fakeContainers) RollbackSnapshot(_ context.Context, id, sid string, req models.SnapshotRollback, sub containers.Submission) (models.Task, error) {
+	f.calls, f.sub = append(f.calls, fmt.Sprintf("rollback %s %s %t", id, sid, req.DestroyNewer)), sub
+	return models.Task{ID: "t-5"}, nil
+}
+
+func (f *fakeContainers) DeleteSnapshot(_ context.Context, id, sid string, sub containers.Submission) (models.Task, error) {
+	f.calls, f.sub = append(f.calls, "delete "+id+" "+sid), sub
+	return models.Task{}, &models.Error{Code: models.CodeSnapshotHasClones, Message: "clones"}
+}
+
+func (f *fakeContainers) CloneContainer(_ context.Context, id string, req models.ContainerClone, sub containers.Submission) (models.ContainerCreated, error) {
+	f.clone, f.sub = req, sub
+	if len(req.NICs) == 0 {
+		return models.ContainerCreated{}, &models.Error{Code: models.CodeCloneAddressingRequired, Message: "needs addressing"}
+	}
+	return models.ContainerCreated{Container: models.Container{ID: ctrID, Name: req.Name}, Task: models.Task{ID: "t-6"}}, nil
 }
 
 func (f *fakeContainers) Containers(_ context.Context, opts models.ContainerListOptions) (models.ContainerList, error) {
@@ -94,9 +134,40 @@ func TestContainersThroughTheSocket(t *testing.T) {
 		t.Fatalf("delete = %+v, %v", task, err)
 	}
 
+	// Snapshots and clones.
+	if list, err := c.ContainerSnapshots(ctx, ctrID); err != nil || len(list.Items) != 1 {
+		t.Fatalf("snapshots = %+v, %v", list, err)
+	}
+	if snap, err := c.ContainerSnapshot(ctx, ctrID, snapID); err != nil || snap.ID != snapID {
+		t.Fatalf("snapshot = %+v, %v", snap, err)
+	}
+	if got, err := c.CreateContainerSnapshot(ctx, ctrID, models.SnapshotCreate{Name: "s2"}); err != nil || got.Task.ID != "t-4" {
+		t.Fatalf("create snapshot = %+v, %v", got, err)
+	}
+	if task, err := c.RollbackContainerSnapshot(ctx, ctrID, snapID, models.SnapshotRollback{DestroyNewer: true}); err != nil || task.ID != "t-5" {
+		t.Fatalf("rollback = %+v, %v", task, err)
+	}
+	if _, err := c.DeleteContainerSnapshot(ctx, ctrID, snapID); !errors.As(err, &me) || me.Code != models.CodeSnapshotHasClones {
+		t.Fatalf("delete snapshot: %v", err)
+	}
+	want := []string{"list " + ctrID, "get " + ctrID + " " + snapID, "create " + ctrID + " s2",
+		"rollback " + ctrID + " " + snapID + " true", "delete " + ctrID + " " + snapID}
+	if strings.Join(fc.calls, "|") != strings.Join(want, "|") {
+		t.Fatalf("calls = %q", fc.calls)
+	}
+	if _, err := c.CloneContainer(ctx, ctrID, models.ContainerClone{Name: "web2"}); !errors.As(err, &me) || me.Code != models.CodeCloneAddressingRequired {
+		t.Fatalf("refused clone: %v", err)
+	}
+	created, err = c.CloneContainer(ctx, ctrID, models.ContainerClone{Name: "web2", SnapshotID: snapID,
+		NICs: []models.ContainerNICSpec{{IPv4: &models.ContainerIPv4{Mode: models.IPv4DHCP}}}})
+	if err != nil || created.Task.ID != "t-6" || fc.clone.SnapshotID != snapID || fc.clone.NICs[0].IPv4.Mode != models.IPv4DHCP {
+		t.Fatalf("clone = %+v, %v (%+v)", created, err, fc.clone)
+	}
+
 	hdr := http.Header{agentproto.HeaderActorID: {"user-1"}, agentproto.HeaderActorName: {"andy"}}
 	for _, bad := range []struct{ method, path string }{
 		{http.MethodGet, agentproto.Prefix + "/containers/bad%21id"},
+		{http.MethodGet, agentproto.Prefix + "/containers/" + ctrID + "/snapshots/bad%21id"},
 		{http.MethodGet, agentproto.Prefix + "/containers?limit=0"},
 	} {
 		if resp, _ := raw(t, path, bad.method, bad.path, hdr); resp.StatusCode != http.StatusBadRequest {

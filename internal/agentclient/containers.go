@@ -66,3 +66,53 @@ func (c *Client) ContainerAction(ctx context.Context, id string, act models.Cont
 	err := c.do(ctx, http.MethodPost, "/containers/"+url.PathEscape(id)+"/actions", nil, act, &task)
 	return task, err
 }
+
+func containerSnapshotPath(id, snapID string) string {
+	p := "/containers/" + url.PathEscape(id) + "/snapshots"
+	if snapID != "" {
+		p += "/" + url.PathEscape(snapID)
+	}
+	return p
+}
+
+// ContainerSnapshots returns a jail's snapshots, oldest first.
+func (c *Client) ContainerSnapshots(ctx context.Context, id string) (models.SnapshotList, error) {
+	var list models.SnapshotList
+	err := c.do(ctx, http.MethodGet, containerSnapshotPath(id, ""), nil, nil, &list)
+	return list, err
+}
+
+// ContainerSnapshot returns one snapshot of a jail.
+func (c *Client) ContainerSnapshot(ctx context.Context, id, snapID string) (models.Snapshot, error) {
+	var snap models.Snapshot
+	err := c.do(ctx, http.MethodGet, containerSnapshotPath(id, snapID), nil, nil, &snap)
+	return snap, err
+}
+
+// CreateContainerSnapshot asks the agent to snapshot a jail.
+func (c *Client) CreateContainerSnapshot(ctx context.Context, id string, req models.SnapshotCreate) (models.SnapshotCreated, error) {
+	var created models.SnapshotCreated
+	err := c.do(ctx, http.MethodPost, containerSnapshotPath(id, ""), nil, req, &created)
+	return created, err
+}
+
+// RollbackContainerSnapshot asks the agent to roll a jail back.
+func (c *Client) RollbackContainerSnapshot(ctx context.Context, id, snapID string, req models.SnapshotRollback) (models.Task, error) {
+	var task models.Task
+	err := c.do(ctx, http.MethodPost, containerSnapshotPath(id, snapID)+"/rollback", nil, req, &task)
+	return task, err
+}
+
+// DeleteContainerSnapshot asks the agent to delete a jail snapshot.
+func (c *Client) DeleteContainerSnapshot(ctx context.Context, id, snapID string) (models.Task, error) {
+	var task models.Task
+	err := c.do(ctx, http.MethodDelete, containerSnapshotPath(id, snapID), nil, nil, &task)
+	return task, err
+}
+
+// CloneContainer asks the agent for a linked clone of a jail.
+func (c *Client) CloneContainer(ctx context.Context, id string, req models.ContainerClone) (models.ContainerCreated, error) {
+	var created models.ContainerCreated
+	err := c.do(ctx, http.MethodPost, "/containers/"+url.PathEscape(id)+"/clone", nil, req, &created)
+	return created, err
+}

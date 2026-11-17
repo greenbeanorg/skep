@@ -30,12 +30,13 @@ const (
 	// admin only: it makes the root agent fetch and install packages.
 	PermStorageWrite = "storage:write"
 
-	// Jails (ADR 0010 decision 14). container:snapshot is granted by
-	// api/0005 and declared with the jail snapshot routes (step 9).
-	PermContainerRead   = "container:read"
-	PermContainerWrite  = "container:write"
-	PermContainerDelete = "container:delete"
-	PermContainerPower  = "container:power"
+	// Jails (ADR 0010 decision 14). A clone needs container:write and
+	// container:snapshot (amendment j).
+	PermContainerRead     = "container:read"
+	PermContainerWrite    = "container:write"
+	PermContainerDelete   = "container:delete"
+	PermContainerPower    = "container:power"
+	PermContainerSnapshot = "container:snapshot"
 
 	// PermAll is how the admin role is stored: every permission,
 	// including ones added later.
@@ -48,7 +49,7 @@ var Permissions = []string{
 	PermUserRead, PermUserManage, PermRoleRead, PermAuditRead,
 	PermVMRead, PermVMWrite, PermVMDelete, PermVMPower, PermVMConsole, PermStorageRead,
 	PermVMSnapshot, PermStorageWrite,
-	PermContainerRead, PermContainerWrite, PermContainerDelete, PermContainerPower,
+	PermContainerRead, PermContainerWrite, PermContainerDelete, PermContainerPower, PermContainerSnapshot,
 }
 
 // KnownPermission reports whether p is a declared permission.
