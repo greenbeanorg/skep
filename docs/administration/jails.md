@@ -67,11 +67,30 @@ outside the jail.
 
 **Start.** Skep marks the jail as started for good, writes
 `/var/run/skep/jails/<id>/jail.conf` (root only), and runs
-`jail -f <conf> -c skep-<id>`, which mounts devfs and runs `/etc/rc`. It
-then reads the jail's parameters back from the kernel and removes the
-jail again if they are not the baseline below (`container_start_failed`).
-The console output goes to `/var/run/skep/jails/<id>/console.log`, which
-`GET .../console-log` serves; it is gone after a host reboot.
+`jail -f <conf> -c skep-<id>`, which creates the jail, mounts its devfs,
+and moves its interfaces in, with nothing running in it (the jail.conf
+has no `exec.start`). Before any process runs in the jail, Skep checks
+it:
+
+1. its parameters, read back from the kernel, must be the baseline
+   below;
+2. its interfaces must have left the host;
+3. **the `/dev` guard:** the jail's `/dev`, listed from the host, must be
+   a devfs and hold nothing outside the allow-list `fd`, `null`, `zero`,
+   `crypto`, `random`, `urandom`, `pts`, `ptmx`, `stdin`, `stdout`,
+   `stderr`, `zfs`, `fuse`, `pf`, plus `bpf` and `bpf<N>` for a jail with
+   a DHCP interface.
+
+A jail that fails a check is removed without running `/etc/rc.shutdown`
+(none of its code has run) and the start fails with
+`container_start_failed`, naming any extra device. Only then does Skep
+run the jail's `/etc/rc` itself, as `jexec -l -U root skep-<id> /bin/sh
+/etc/rc`, bounded by `containers.start_timeout_seconds` (default 120). If
+`/etc/rc` fails or outlasts the timeout, the jail is stopped as below
+(`/etc/rc.shutdown` runs) and removed, and the start fails with
+`container_start_failed`. rc's output goes to
+`/var/run/skep/jails/<id>/console.log`, which `GET .../console-log`
+serves; it is gone after a host reboot.
 
 **Stop.** `jail -r` runs `/etc/rc.shutdown`, sends SIGTERM to what is
 left, and after the stop timeout SIGKILL; the kernel then removes the
@@ -86,25 +105,35 @@ cannot be deleted.
 **The agent restarting.** A jail is persistent: it outlives the agent,
 and the agent reads every jail's state before it serves its socket. After
 a host reboot every jail is stopped; Skep does not start it again (no
-autostart), and `state_detail` says the jail should be running.
+autostart), and `state_detail` says the jail should be running. A jail
+whose start the agent's death interrupted (between `jail -c` and the end
+of `/etc/rc`) is removed at the next agent start, without
+`/etc/rc.shutdown`, since Skep cannot tell whether its `/dev` was checked;
+`state_detail` says so.
 
 ## The fixed baseline
 
 Every jail gets the same parameters; none can be changed through the API:
 
-- its own network stack (`vnet`), with no interface but `lo0` for now;
+- its own network stack (`vnet`), with an epair per NIC (step 8);
 - `enforce_statfs=2`, `children.max=0`, `securelevel=2`;
 - devfs with ruleset 5 (`devfsrules_jail_vnet`): `null`, `zero`,
-  `random`, `urandom`, `fd`, `pts`, `std*`, and `zfs`;
+  `random`, `urandom`, `fd`, `pts`, `std*`, and `zfs`. A jail with a DHCP
+  interface gets Skep's ruleset 6001 instead: ruleset 5's own rules
+  written out (`include 1` to `include 4`, `path pf unhide`) plus
+  `path bpf* unhide`, which `dhclient` needs. The agent adds 6001 to the
+  kernel when it is absent and refuses a start
+  (`devfs_ruleset_conflict`) if 6001 holds anything else. Either way the
+  `/dev` guard checks the result before the jail runs anything;
 - `allow.suser` and `allow.reserved_ports` on (root in the jail is root
   there and can bind ports below 1024); every other `allow.*` off,
   including `allow.set_hostname`, `allow.mount`, `allow.chflags`, and
   `allow.unprivileged_proc_debug`;
 - System V IPC off unless the `sysvipc` option is set;
-- `exec.clean`, `exec.start="/bin/sh /etc/rc"`,
-  `exec.stop="/bin/sh /etc/rc.shutdown jail"`, `exec.timeout` from
-  `containers.start_timeout_seconds` (default 120), and nothing else:
-  never a host-side command.
+- `exec.clean`, `exec.stop="/bin/sh /etc/rc.shutdown jail"`,
+  `exec.timeout` from `containers.start_timeout_seconds` (default 120),
+  and nothing else: no `exec.start` (Skep runs `/etc/rc` after the `/dev`
+  guard) and never a host-side command.
 
 What that means inside a jail: mounting, loading kernel modules, writing
 sysctls, changing the hostname, lowering the securelevel, and clearing

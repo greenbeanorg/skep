@@ -217,6 +217,11 @@ func (s *Service) observe(ctx context.Context, c models.Container, running map[s
 	}
 	if state == models.ContainerStopped && c.DesiredState == models.ContainerRunning {
 		detail = "the jail is not running although it should be: it was removed outside Skep, or the host restarted"
+		// A detail recorded when the jail stopped (a failed start, the
+		// start-up sweep) says more; keep it while the jail stays stopped.
+		if c.State == models.ContainerStopped && c.StateDetail != "" {
+			detail = c.StateDetail
+		}
 	}
 	if state != models.ContainerRunning {
 		c = s.clearEpairs(ctx, c)
@@ -268,16 +273,49 @@ func (s *Service) ObserveAll(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	swept := 0
 	for _, id := range ids {
 		c, err := s.store.Get(ctx, id)
 		if err != nil {
 			s.log.Warn("containers: could not read a container", "container_id", id, "error", err)
 			continue
 		}
+		if _, ok := running[c.ID]; ok && c.State == models.ContainerStarting {
+			if s.sweepHalfStarted(ctx, c) {
+				swept++
+				delete(running, c.ID)
+				continue
+			}
+		}
 		s.observe(ctx, c, running, true)
 	}
-	s.log.Info("containers: observed the jails", "containers", len(ids), "running", len(running))
+	s.log.Info("containers: observed the jails", "containers", len(ids), "running", len(running), "half_started_removed", swept)
 	return nil
+}
+
+// sweepHalfStarted removes the jail of a container still recorded
+// starting at agent start: the agent died between jail -c and the end of
+// /etc/rc, so the /dev guard may not have run (amendment i). The jail is
+// removed without exec.stop and its epairs destroyed; the container is
+// recorded stopped with a detail that says why. It reports whether the
+// jail was removed; if not, the container is observed as usual and the
+// failure logged.
+func (s *Service) sweepHalfStarted(ctx context.Context, c models.Container) bool {
+	if err := s.jails.DiscardJail(ctx, s.spec(c, 0)); err != nil {
+		s.log.Error("containers: could not remove a jail an agent restart left half-started", "event", "jail_start_interrupted",
+			"container_id", c.ID, "error", err)
+		return false
+	}
+	s.log.Warn("containers: removed a jail an agent restart left half-started", "event", "jail_start_interrupted",
+		"container_id", c.ID)
+	if err := s.store.SaveEpairs(ctx, c.ID, nil); err != nil {
+		s.log.Warn("containers: could not clear the observed epairs", "container_id", c.ID, "error", err)
+	}
+	detail := "a start was interrupted by an agent restart; the half-started jail was removed without running /etc/rc.shutdown"
+	if err := s.store.SaveObserved(ctx, c.ID, models.ContainerStopped, nil, detail, s.now().UTC()); err != nil {
+		s.log.Warn("containers: could not record the observed state", "container_id", c.ID, "error", err)
+	}
+	return true
 }
 
 // ConsoleLog returns the end of a jail's console.log (decision 9).

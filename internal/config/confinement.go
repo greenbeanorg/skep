@@ -107,9 +107,9 @@ type ContainersConfig struct {
 	// SIGTERM and SIGKILL when a jail stops. 0 means
 	// DefaultContainerStopTimeout.
 	StopTimeoutSeconds int `json:"stop_timeout_seconds"`
-	// StartTimeoutSeconds is exec.timeout: how long /etc/rc and
-	// /etc/rc.shutdown may run in a jail. 0 means
-	// DefaultContainerStartTimeout.
+	// StartTimeoutSeconds bounds /etc/rc, which Skep runs with jexec
+	// after the /dev guard, and is exec.timeout, which bounds
+	// /etc/rc.shutdown. 0 means DefaultContainerStartTimeout.
 	StartTimeoutSeconds int `json:"start_timeout_seconds"`
 }
 

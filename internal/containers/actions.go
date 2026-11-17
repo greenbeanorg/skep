@@ -125,7 +125,7 @@ func (s *Service) start(ctx context.Context, c models.Container, report tasks.Re
 	if err := s.store.MarkStarting(ctx, c.ID, s.now().UTC()); err != nil {
 		return nil, err
 	}
-	report.Progress("starting the jail (jail -c, /etc/rc)", nil)
+	report.Progress("starting the jail (jail -c, the /dev guard, /etc/rc)", nil)
 	st, err := s.jails.StartJail(ctx, s.spec(c, 0))
 	at := s.now().UTC()
 	// Recorded on its own context: what the host did must be recorded.

@@ -9,6 +9,7 @@ import (
 	"io"
 	"log/slog"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -383,5 +384,45 @@ func TestTemplateInUse(t *testing.T) {
 	// cannot go while the jail exists.
 	if err := database.NewTemplateStore(f.db).Delete(context.Background(), f.minimal); err == nil {
 		t.Fatal("a template in use was deleted")
+	}
+}
+
+func TestObserveAllSweepsHalfStartedJail(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	half := f.create(models.ContainerCreate{Name: "half", TemplateID: f.minimal})
+	whole := f.create(models.ContainerCreate{Name: "whole", TemplateID: f.minimal})
+	f.succeed(f.svc.Action(ctx, half.ID, models.ContainerAction{Action: "start"}, f.sub))
+	f.succeed(f.svc.Action(ctx, whole.ID, models.ContainerAction{Action: "start"}, f.sub))
+	// The agent died between jail -c and the end of /etc/rc: the jail is
+	// there, and the container is still recorded starting.
+	if err := database.NewContainerStore(f.db).MarkStarting(ctx, half.ID, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.svc.ObserveAll(ctx); err != nil {
+		t.Fatal(err)
+	}
+	running, err := f.fake.Ops().Jails.RunningJails(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := running[half.ID]; ok {
+		t.Fatal("the half-started jail is still running")
+	}
+	if _, ok := running[whole.ID]; !ok {
+		t.Fatal("a running jail was removed")
+	}
+	if !slices.Contains(f.fake.Calls(), "jail -r skep-"+half.ID+" (no exec.stop)") {
+		t.Fatalf("not removed without exec.stop: %q", f.fake.Calls())
+	}
+	got, err := f.svc.Container(ctx, half.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.State != models.ContainerStopped || got.JID != nil || !strings.Contains(got.StateDetail, "interrupted by an agent restart") {
+		t.Fatalf("after the sweep: %+v", got)
+	}
+	if got, _ := f.svc.Container(ctx, whole.ID); got.State != models.ContainerRunning {
+		t.Fatalf("the whole jail: %+v", got)
 	}
 }

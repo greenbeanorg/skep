@@ -492,10 +492,20 @@ Skep fixes and nobody can change through the API
 - **A generated jail.conf, no host-side command.** jail(8) reads a
   root-only `jail.conf` that Skep renders from typed values: the path is
   derived from the pool and the ID, the hostname is a validated DNS name,
-  and the only commands are `exec.start="/bin/sh /etc/rc"` and
-  `exec.stop="/bin/sh /etc/rc.shutdown jail"`, which run inside the jail.
-  There is never an `exec.prestart`, `exec.poststart`, or any other
-  command on the host, and no `mount.fstab`.
+  and the only command is `exec.stop="/bin/sh /etc/rc.shutdown jail"`,
+  which runs inside the jail. There is never an `exec.start`,
+  `exec.prestart`, `exec.poststart`, or any other command on the host,
+  and no `mount.fstab`.
+- **The `/dev` guard (amendment i).** `jail -c` creates the jail with
+  nothing running in it. The agent lists the jail's `/dev` from the host
+  (opened without following links, required to be a devfs mounted at
+  `<root>/dev`) and removes the jail, without `/etc/rc.shutdown`, if it
+  holds anything outside a short allow-list (`bpf*` only for a DHCP jail).
+  Only then does the agent run `/etc/rc` in the jail with `jexec -l -U
+  root`. This is a check of the result, not of the ruleset text: amendment
+  h's ruleset 6001 (`include 5` plus `bpf*`) exposed every host device,
+  because devfs does not resolve the includes of an included ruleset;
+  ruleset 6001 now writes out ruleset 5's own rules plus `bpf*`.
 - **The baseline.** VNET, `enforce_statfs=2`, `children.max=0`,
   `securelevel=2`, devfs ruleset 5, `allow.suser` and
   `allow.reserved_ports` on and every other `allow.*` off. After `jail -c`
