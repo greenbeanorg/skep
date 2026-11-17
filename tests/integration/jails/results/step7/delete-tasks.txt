@@ -1,0 +1,36 @@
+container.delete succeeded  
+{
+ "container_id": "d1db6333-9b51-4dff-ac39-e469d8578b0f",
+ "datasets_destroyed": [
+  {
+   "name": "skeptest/skep/jail/d1db6333-9b51-4dff-ac39-e469d8578b0f",
+   "type": "filesystem",
+   "used_bytes": 295424
+  }
+ ],
+ "name": "j1"
+}
+container.delete succeeded  
+{
+ "container_id": "d3a83eb1-ec83-4f51-95f9-5cc64eb7c619",
+ "datasets_destroyed": [
+  {
+   "name": "skeptest/skep/jail/d3a83eb1-ec83-4f51-95f9-5cc64eb7c619",
+   "type": "filesystem",
+   "used_bytes": 291328
+  }
+ ],
+ "name": "j2"
+}
+container.delete succeeded  
+{
+ "container_id": "66ed9df5-f45c-40a7-b020-0e9f567f9023",
+ "datasets_destroyed": [
+  {
+   "name": "skeptest/skep/jail/66ed9df5-f45c-40a7-b020-0e9f567f9023",
+   "type": "filesystem",
+   "used_bytes": 293376
+  }
+ ],
+ "name": "j3"
+}

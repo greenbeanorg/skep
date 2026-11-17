@@ -255,3 +255,29 @@ Record: [step7/sshd-template-task.txt](step7/sshd-template-task.txt).
   `409 container_started`, running or stopped; an update while running is
   `409 container_not_stopped`; a hostname change after a stop is accepted.
   [step7/started-once.txt](step7/started-once.txt)
+
+## 7. The rest of the validation on hearst
+
+**Done.** Record: [step7-validation.txt](step7-validation.txt).
+
+- Permissions (decision 14), live: every allowed case for the operator
+  and viewer worked; seven refusals (four container writes as the viewer,
+  `storage:write` as the viewer and twice as the operator) got 403 and are
+  in the access log as `authz.deny` with the permission and route.
+- Jails survive `service skep_agent restart` and `kill -9` of the agent;
+  the restarted agent observes them before it serves its socket.
+- Stop removes the jail and its devfs mount and leaves the interfaces as
+  they were; delete destroys the dataset, lists it, and removes the
+  runtime directory. No clone of either template is left.
+- `skeptest/step7-scratch` destroyed.
+
+**Not done, waiting for Andy:**
+
+- The `chmod 755` of the jail parent followed by a refused start
+  (`jail_parent_insecure`): it changes the mode of a host directory, which
+  this run's approvals do not cover. Unit tested only.
+- The epair part of "stop/destroy cleans up its epair": step 7 jails have
+  no NIC; epairs are step 8 and need `if_epair`.
+- Nothing in this run read the agent's own operation audit log (it has no
+  API route, and hearst has no sqlite3); the task results list what each
+  delete destroyed, and the access log has every request.

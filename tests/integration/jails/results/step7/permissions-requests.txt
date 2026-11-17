@@ -1,0 +1,14 @@
+s7oper   GET    /containers                                      200 d9b05f6e2ac64647c4716b71 
+s7oper   GET    /containers/66ed9df5-f45c-40a7-b020-0e9f567f9023 200 853bd34cdef66ee6d90f5380 
+s7oper   GET    /containers/66ed9df5-f45c-40a7-b020-0e9f567f9023/console-log 200 6d97e9c6e52e6c4aa2675619 
+s7viewer GET    /containers                                      200 959e2fa66226e88bbc35cec5 
+s7viewer GET    /containers/66ed9df5-f45c-40a7-b020-0e9f567f9023 200 5f4cf1be58c25fe2bc38c4f1 
+s7viewer GET    /containers/66ed9df5-f45c-40a7-b020-0e9f567f9023/console-log 200 c77a6e3cd5ab048a2bcc6764 
+s7oper   POST   /containers/66ed9df5-f45c-40a7-b020-0e9f567f9023/actions 202 dece5c90cd91177a7439a3f3 
+s7viewer POST   /containers                                      403 8ea15b78a0baa2928301b761 forbidden container:write
+s7viewer PUT    /containers/66ed9df5-f45c-40a7-b020-0e9f567f9023 403 44c1bccb5e5fee7cc8a8aa07 forbidden container:write
+s7viewer DELETE /containers/66ed9df5-f45c-40a7-b020-0e9f567f9023 403 984dd03c1d24aac629db1063 forbidden container:delete
+s7viewer POST   /containers/66ed9df5-f45c-40a7-b020-0e9f567f9023/actions 403 5c84e42bc1dafc23e3022f78 forbidden container:power
+s7viewer POST   /storage/templates                               403 997d30fbdcf7a34d0279611b forbidden storage:write
+s7oper   POST   /storage/templates                               403 3dce616dd80e4db70886230a forbidden storage:write
+s7oper   DELETE /storage/templates/f496866f-32ba-4527-bcee-5a717a2f74c0 403 1669da54ddafdf586109f3d1 forbidden storage:write

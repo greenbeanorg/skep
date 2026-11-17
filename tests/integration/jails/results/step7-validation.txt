@@ -1,0 +1,152 @@
+ADR 0010 phase 7b, step 7: jails (Decisions 8, 9, 12, 13 with amendments
+e, f, g), validated through the deployed agent and API on hearst.
+Recorded 2026-11-16 (hearst FreeBSD 15.1-RELEASE-p6, amd64, UFS root,
+RACCT on). Build deployed: 57d74bb (scripts/deploy-test.sh hearst).
+Raw records: step7/. Progress log: step7-progress.md. Probe before the
+build: step7-probe.txt.
+
+Accounts: s7admin (admin), s7oper (operator), s7viewer (viewer), made for
+this run. Requests: curl over TLS, hearst's certificate as the only CA
+(its key checked against `skep-api tls fingerprint`, sha256:779cc5ec...).
+Checks inside a jail used jexec on the host as root, for testing only;
+Skep exposes no jexec.
+
+== 0. Native unit tests (hostops.test, as root, TMPDIR on skeptest) ==
+
+The decision 13 writer: PASS, including eight planted links (rc.conf, etc,
+root, .ssh, authorized_keys, the temporary name; absolute and relative);
+nothing outside the jail root changed. O_RESOLVE_BENEATH alone: four
+escapes fail with ENOTCAPABLE, a link that stays inside works.
+                                                   step7/writer-native.log
+
+== 1. The sshd template (approved: a new template with FreeBSD-ssh) ==
+
+minimal-ssh-151 (dbf4243a-...), as s7admin, packages FreeBSD-set-minimal
+and FreeBSD-ssh (the new default): 68 packages, 4 scripts and mandoc.ucl
+on the allowlist, 763 host files unchanged, 15.1-RELEASE-p6, "checking
+that the template holds no SSH host keys" passed. usr/sbin/sshd present;
+etc/ssh: moduli, ssh_config, sshd_config only.  step7/sshd-template-task.txt
+minimal-151 (step 6) is kept.
+
+== 2. Clones are writable ==                                PASS
+
+j1 from minimal-151: skeptest/skep/jail/<id>, readonly=off (local),
+origin minimal-151@skep-base; a file created and removed. The template:
+readonly=on, a write fails "Read-only file system".  step7/j1-clone.txt
+
+== 3. /etc/rc starts cleanly ==                             PASS
+
+Console log of j1 through GET /containers/{id}/console-log (as the
+viewer): ldconfig, lo0, os-release, /tmp, newsyslog, motd, syslogd, cron.
+The only noise: rc.d/routing's two "route already in table" lines for
+lo0, which every VNET jail prints. Processes: syslogd, cron.
+                                                   step7/j1-console.txt
+
+== 4. Ports below 1024 can be bound ==                      PASS
+
+Inside j1 as root: nc -l 127.0.0.1 22 listens (sockstat). The kernel
+reports allow.reserved_ports on (amendment f).    step7/j1-baseline.txt
+
+== 5. Raw sockets: recorded, not expected to fail ==        RECORDED
+
+Inside j1: ping -c1 127.0.0.1 works (exit 0) with allow.raw_sockets off,
+as amendment f records for VNET jails.             step7/j1-baseline.txt
+
+== 6. The rest of the baseline ==                           PASS
+
+The kernel's view (jls -n): vnet new, enforce_statfs 2, children.max 0,
+securelevel 2, devfs_ruleset 5, sysvshm/sem/msg disable, host.hostname as
+asked; only allow.suser and allow.reserved_ports on, every other allow.*
+off. The agent checks the same after every jail -c. Inside: mount tmpfs,
+kldload, sysctl kern.hostname=x, hostname x, sysctl kern.securelevel=0,
+and chflags noschg on a schg file (lib/libcrypt.so.5): Operation not
+permitted. /dev: fd null pts random stderr stdin stdout urandom zero zfs.
+Interfaces: lo0 only.                              step7/j1-baseline.txt
+
+== 7. SSH key: works with sshd, refused without ==          PASS
+
+- On minimal-151: 422 container_ssh_unavailable, naming the template;
+  audited (access log #298, denied).         step7/ssh-refused-minimal.txt
+- j2, j3 on minimal-ssh-151 with a throwaway ed25519 key: before the
+  first start, etc/rc.conf (Skep's header, sshd_enable, sshd_flags
+  "-o PermitRootLogin=prohibit-password") 0644, root/.ssh 0700,
+  authorized_keys 0600, all root:wheel; no host key.
+                                                step7/ssh-before-start.txt
+- Login: from inside j2 over its own lo0 (step 7 jails have no NIC),
+  ssh -i <key> root@127.0.0.1 -> uid=0(root), hostname j2. Another key,
+  and no key: Permission denied (publickey,keyboard-interactive).
+                                                     step7/ssh-login.txt
+
+== 8. Two jails have different host keys ==                 PASS
+
+After the first start, j2 and j3 each have ECDSA, ED25519 and RSA host
+keys; all six fingerprints differ.                 step7/ssh-hostkeys.txt
+
+== 9. Decision 13 after the first start ==                  PASS
+
+j2's key change or removal after it ran: 409 container_started (running
+and stopped); an update while running: 409 container_not_stopped; a
+hostname change when stopped: accepted.            step7/started-once.txt
+
+== 10. Jail roots have 0700 parents ==                      PASS
+
+/skeptest/skep/jail and /skeptest/skep/templates: root:wheel drwx------.
+As the unprivileged host user aba, with j1 running: the jail root,
+usr/bin/su (setuid, schg), sbin/ping (setuid), and both parent
+directories: Permission denied.                step7/j1-unprivileged.txt
+NOT RUN on hearst: "a start after chmod 755 of the parent is refused with
+jail_parent_insecure". It changes the mode of a host directory, which is
+not on this run's approved list (create and destroy jails and datasets).
+The refusal is unit tested (TestJailParentRefusedBeforeAnything,
+TestCheckPrivateDir). Waiting for Andy.
+
+== 11. Operator and viewer permissions (decision 14) ==     PASS
+
+Allowed, as s7oper: GET /containers, GET /containers/{id}, GET
+console-log, POST /containers (j1, j2, j3), start, stop (with a timeout),
+restart, PUT (hostname), DELETE (all three). As s7viewer: the three reads.
+Refused, 403 forbidden, each audited as authz.deny with the missing
+permission and the route (access log #310 to #316):
+  s7viewer POST   /containers                  container:write
+  s7viewer PUT    /containers/{id}             container:write
+  s7viewer DELETE /containers/{id}             container:delete
+  s7viewer POST   /containers/{id}/actions     container:power
+  s7viewer POST   /storage/templates           storage:write
+  s7oper   POST   /storage/templates           storage:write
+  s7oper   DELETE /storage/templates/{id}      storage:write
+The operator's own writes are in the access log with resource type
+container, including the denied ones (container_started,
+container_not_stopped, container_ssh_unavailable).
+                  step7/permissions-requests.txt, step7/permissions-audit.txt
+
+== 12. Jails survive the agent ==                           PASS
+
+With j1 and j3 running: `service skep_agent restart` and `kill -9` of the
+agent (daemon(8) restarted it): both jails kept their JIDs (14, 17); each
+new agent logged "containers: observed the jails" containers=3 running=2
+before "internal API listening"; the API then showed j1 and j3 running,
+j2 stopped.                            step7/agent-restart-and-kill.txt
+
+== 13. Stop and delete clean up ==                          PASS (datasets)
+
+Stop: the jails left jls, their devfs mounts were unmounted, and the
+interface list was the same as before any jail (vtnet0 vtnet1 lo0
+bridge0). Delete: each task listed the dataset it destroyed; afterwards
+only the empty skeptest/skep/jail parent is left, neither template has a
+clone, /var/run/skep/jails is empty.
+Epairs: NOT APPLICABLE in step 7. A step 7 jail has no NIC (VNET with lo0
+only); epairs are Decision 10, step 8, and need if_epair, which this run
+had no approval to load. The check that no interface was created or left
+is above; the epair check is for step 8.
+                          step7/stop-and-delete.txt, step7/delete-tasks.txt
+
+== hearst after this record ==
+
+Installed: 57d74bb, both services running. No jail. Templates
+minimal-151 (step 6) and minimal-ssh-151 (this run) in
+skeptest/skep/templates; the empty skeptest/skep/jail dataset (created by
+the agent, the 0700 parent of jail roots). API users s7admin, s7oper,
+s7viewer (enabled; passwords in the session scratchpad only).
+skeptest/step7-probe and skeptest/step7-scratch destroyed. Nothing outside
+skeptest and the approved deploy was changed; the agent's runtime
+directory /var/run/skep/jails exists (empty, root 0700).
