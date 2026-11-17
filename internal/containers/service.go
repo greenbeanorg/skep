@@ -44,7 +44,11 @@ type Options struct {
 	NodeID    string
 	Store     *database.ContainerStore
 	Templates *database.TemplateStore
-	Engine    Engine
+	// Snapshots is the snapshot store shared with the VMs (decision 2d);
+	// MaxSnapshots is storage.max_snapshots_per_resource.
+	Snapshots    *database.SnapshotStore
+	MaxSnapshots int
+	Engine       Engine
 	// Host gives the confinement, the jail operations, and the host's
 	// release (Templates.HostRelease).
 	Host hostops.Ops
@@ -62,9 +66,12 @@ type Service struct {
 	nodeID       string
 	store        *database.ContainerStore
 	templates    *database.TemplateStore
+	snaps        *database.SnapshotStore
+	maxSnapshots int
 	engine       Engine
 	conf         hostops.Confinement
 	jails        hostops.Jails
+	zfs          hostops.ZFS
 	release      func(context.Context) (string, error)
 	stopTimeout  time.Duration
 	startTimeout time.Duration
@@ -75,9 +82,12 @@ type Service struct {
 // New returns a Service. Register its Definitions before the engine
 // starts.
 func New(opts Options) (*Service, error) {
-	if opts.NodeID == "" || opts.Store == nil || opts.Templates == nil || opts.Engine == nil ||
-		opts.Host.Jails == nil || opts.Host.Templates == nil {
-		return nil, errors.New("containers: a node ID, the container and template stores, a task engine, and the jail and template host operations are required")
+	if opts.NodeID == "" || opts.Store == nil || opts.Templates == nil || opts.Snapshots == nil || opts.Engine == nil ||
+		opts.Host.Jails == nil || opts.Host.Templates == nil || opts.Host.ZFS == nil {
+		return nil, errors.New("containers: a node ID, the container, template, and snapshot stores, a task engine, and the jail, template, and ZFS host operations are required")
+	}
+	if opts.MaxSnapshots <= 0 {
+		opts.MaxSnapshots = models.DefaultMaxSnapshotsPerResource
 	}
 	if opts.StopTimeout <= 0 {
 		opts.StopTimeout = models.DefaultContainerStopTimeoutSeconds * time.Second
@@ -92,8 +102,9 @@ func New(opts Options) (*Service, error) {
 		opts.Now = time.Now
 	}
 	return &Service{
-		nodeID: opts.NodeID, store: opts.Store, templates: opts.Templates, engine: opts.Engine,
-		conf: opts.Host.Conf, jails: opts.Host.Jails, release: opts.Host.Templates.HostRelease,
+		nodeID: opts.NodeID, store: opts.Store, templates: opts.Templates, snaps: opts.Snapshots,
+		maxSnapshots: opts.MaxSnapshots, engine: opts.Engine,
+		conf: opts.Host.Conf, jails: opts.Host.Jails, zfs: opts.Host.ZFS, release: opts.Host.Templates.HostRelease,
 		stopTimeout: opts.StopTimeout, startTimeout: opts.StartTimeout, log: opts.Logger, now: opts.Now,
 	}, nil
 }

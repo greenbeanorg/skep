@@ -245,3 +245,17 @@ func (s *SnapshotStore) CloneInProgress(ctx context.Context, targetVMID string) 
 	}
 	return n > 0, nil
 }
+
+// ContainerCloneInProgress reports whether an unfinished container.clone
+// task is making the given container: it is not provisioned yet and must
+// not be deleted under the task.
+func (s *SnapshotStore) ContainerCloneInProgress(ctx context.Context, targetID string) (bool, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM tasks WHERE type = ? AND status IN ('pending', 'running')
+		AND json_extract(payload, '$.target_container_id') = ?`, models.TaskContainerClone, targetID).Scan(&n)
+	if err != nil {
+		return false, fmt.Errorf("database: look for a clone task: %w", err)
+	}
+	return n > 0, nil
+}

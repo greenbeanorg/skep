@@ -89,6 +89,9 @@ func (s *Service) checkAction(ctx context.Context, id, taskType string) error {
 				return err
 			}
 		}
+		if err := s.checkAddressFree(ctx, c); err != nil {
+			return err
+		}
 		return s.checkLimits(ctx, c.Limits, c.Options)
 	}
 	if !running {

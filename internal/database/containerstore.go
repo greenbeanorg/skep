@@ -157,11 +157,17 @@ func (s *ContainerStore) InsertTx(ctx context.Context, tx *sql.Tx, nodeID string
 		return err
 	}
 	at := formatTime(c.CreatedAt)
+	// A linked clone starts with its source's started_once (its tree may
+	// have run code) and names its origin snapshot (decision 3).
+	var origin any
+	if c.ClonedFromSnapshotID != "" {
+		origin = c.ClonedFromSnapshotID
+	}
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO containers (id, node_id, name, kind, hostname, vnet, config, desired_state, observed_state,
-			template_id, storage_pool_id, provisioned, started_once, created_at, updated_at)
-		VALUES (?, ?, ?, 'jail', ?, 1, ?, 'stopped', 'unknown', ?, ?, 0, 0, ?, ?)`,
-		c.ID, nodeID, c.Name, c.Hostname, cfg, c.TemplateID, pool, at, at); err != nil {
+			template_id, storage_pool_id, provisioned, started_once, cloned_from_snapshot_id, created_at, updated_at)
+		VALUES (?, ?, ?, 'jail', ?, 1, ?, 'stopped', 'unknown', ?, ?, 0, ?, ?, ?, ?)`,
+		c.ID, nodeID, c.Name, c.Hostname, cfg, c.TemplateID, pool, boolInt(c.StartedOnce), origin, at, at); err != nil {
 		return fmt.Errorf("database: insert container: %w", err)
 	}
 	return insertNICs(ctx, tx, c, at)
@@ -169,7 +175,8 @@ func (s *ContainerStore) InsertTx(ctx context.Context, tx *sql.Tx, nodeID string
 
 const containerColumns = `c.id, c.name, c.hostname, c.config, c.template_id, t.name, p.name,
 	COALESCE(t.observed_release, ''), c.provisioned, c.started_once, c.desired_state, c.observed_state,
-	c.observed_jid, COALESCE(c.observed_detail, ''), c.observed_at, c.created_at, c.updated_at`
+	c.observed_jid, COALESCE(c.observed_detail, ''), c.observed_at, c.created_at, c.updated_at,
+	COALESCE(c.cloned_from_snapshot_id, '')`
 
 const containerFrom = ` FROM containers c
 	JOIN container_templates t ON t.id = c.template_id
@@ -185,7 +192,8 @@ func scanContainer(row rowScanner) (models.Container, error) {
 		created, updated         string
 	)
 	if err := row.Scan(&c.ID, &c.Name, &c.Hostname, &cfg, &c.TemplateID, &c.TemplateName, &c.Pool, &c.Release,
-		&provisioned, &startedOnce, &c.DesiredState, &c.State, &jid, &c.StateDetail, &observedAt, &created, &updated); err != nil {
+		&provisioned, &startedOnce, &c.DesiredState, &c.State, &jid, &c.StateDetail, &observedAt, &created, &updated,
+		&c.ClonedFromSnapshotID); err != nil {
 		return models.Container{}, err
 	}
 	var conf containerConfig
@@ -211,6 +219,40 @@ func scanContainer(row rowScanner) (models.Container, error) {
 	}
 	c.UpdatedAt, err = parseTime(updated)
 	return c, err
+}
+
+// StaticNIC is a NIC with a static IPv4 address, as Skep wrote it into its
+// jail's rc.conf.
+type StaticNIC struct {
+	ContainerID   string
+	ContainerName string
+	Slot          int
+	Bridge        string
+	// Address is in CIDR form.
+	Address string
+}
+
+// StaticNICs lists every container NIC with a static IPv4 address: the
+// start's check that no running jail on the same bridge holds the address
+// (amendment k).
+func (s *ContainerStore) StaticNICs(ctx context.Context) ([]StaticNIC, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT n.container_id, c.name, n.slot, n.bridge, n.ipv4_address FROM container_networks n
+		JOIN containers c ON c.id = n.container_id
+		WHERE n.ipv4_mode = 'static' AND n.ipv4_address IS NOT NULL ORDER BY c.name, n.slot`)
+	if err != nil {
+		return nil, fmt.Errorf("database: list static NICs: %w", err)
+	}
+	var out []StaticNIC
+	for rows.Next() {
+		var n StaticNIC
+		if err := rows.Scan(&n.ContainerID, &n.ContainerName, &n.Slot, &n.Bridge, &n.Address); err != nil {
+			rows.Close()
+			return nil, fmt.Errorf("database: list static NICs: %w", err)
+		}
+		out = append(out, n)
+	}
+	return out, closeRows(rows)
 }
 
 // Get returns one container, or models.ErrNotFound.

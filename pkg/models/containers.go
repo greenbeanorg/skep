@@ -14,6 +14,11 @@ const (
 	TaskContainerStart   = "container.start"
 	TaskContainerStop    = "container.stop"
 	TaskContainerRestart = "container.restart"
+	// Snapshots and linked clones of jails (decisions 2 and 3).
+	TaskContainerSnapshotCreate   = "container.snapshot.create"
+	TaskContainerSnapshotRollback = "container.snapshot.rollback"
+	TaskContainerSnapshotDelete   = "container.snapshot.delete"
+	TaskContainerClone            = "container.clone"
 )
 
 // ContainerResource is the resource type of the container tasks.
@@ -75,6 +80,12 @@ const (
 	// CodeRctlUnavailable: a CPU, memory, process, or file limit on a
 	// host where RACCT is disabled (decision 11).
 	CodeRctlUnavailable = "rctl_unavailable"
+	// CodeCloneAddressingRequired: a clone of a jail with a static
+	// address must give each such NIC new addressing (amendment k).
+	CodeCloneAddressingRequired = "clone_addressing_required"
+	// CodeContainerAddressInUse: a running Skep jail on the same bridge
+	// holds the jail's static IPv4 address (amendment k).
+	CodeContainerAddressInUse = "container_address_in_use"
 )
 
 // IPv4 addressing modes of a jail NIC (decision 10).
@@ -211,8 +222,12 @@ type Container struct {
 	Provisioned bool `json:"provisioned"`
 	// StartedOnce is true from the first start on; Skep then never writes
 	// into the jail's tree again (decision 13).
-	StartedOnce  bool   `json:"started_once"`
-	DesiredState string `json:"desired_state"`
+	StartedOnce bool `json:"started_once"`
+	// ClonedFromSnapshotID is the snapshot a linked clone was made from
+	// (decision 3); deleting it, or its jail, is refused while the clone
+	// exists.
+	ClonedFromSnapshotID string `json:"cloned_from_snapshot_id,omitempty"`
+	DesiredState         string `json:"desired_state"`
 	// State, JID, and StateDetail are observed.
 	State       string     `json:"state"`
 	JID         *int       `json:"jid,omitempty"`
@@ -266,6 +281,28 @@ type ContainerAction struct {
 type ContainerCreated struct {
 	Container Container `json:"container"`
 	Task      Task      `json:"task"`
+}
+
+// ContainerClone is a request for a linked clone of a jail (decision 3):
+// a new jail whose root is a ZFS clone of one snapshot of the source's
+// root. Without SnapshotID the task takes a snapshot first, named after
+// the clone, and leaves it behind. The clone has the source's template,
+// options, limits, SSH key, and NIC slots, with new MAC addresses.
+//
+// NICs, when given, has one entry per NIC of the source, in slot order;
+// an entry's empty fields keep the source's bridge and addressing. Every
+// NIC of the source with a static address needs new addressing here
+// (clone_addressing_required), and new addressing can be written only
+// into a clone whose tree has never run code (container_started)
+// (amendment k, decision 13). Nameservers, when given, replace the
+// source's, under the same rule.
+type ContainerClone struct {
+	Name string `json:"name"`
+	// Hostname defaults to the name, as for a create.
+	Hostname    string             `json:"hostname,omitempty"`
+	SnapshotID  string             `json:"snapshot_id,omitempty"`
+	NICs        []ContainerNICSpec `json:"nics,omitempty"`
+	Nameservers []string           `json:"nameservers,omitempty"`
 }
 
 // ContainerList is a page of containers, ordered by name.

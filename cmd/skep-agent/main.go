@@ -240,6 +240,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		NodeID:       nodeID,
 		Store:        database.NewContainerStore(db),
 		Templates:    database.NewTemplateStore(db),
+		Snapshots:    database.NewSnapshotStore(db),
+		MaxSnapshots: cfg.Storage.MaxSnapshotsPerResource,
 		Engine:       engine,
 		Host:         host,
 		StopTimeout:  time.Duration(cfg.Containers.StopTimeoutSeconds) * time.Second,

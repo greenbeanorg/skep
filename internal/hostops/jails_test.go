@@ -282,6 +282,8 @@ func TestJailParentRefusedBeforeAnything(t *testing.T) {
 	wantCode(t, err, models.CodeJailParentInsecure)
 	_, err = h.StartJail(ctx, jailSpec())
 	wantCode(t, err, models.CodeJailParentInsecure)
+	_, err = h.CloneJail(ctx, "skeptest", ctrA, vmA, ctrB)
+	wantCode(t, err, models.CodeJailParentInsecure)
 	for _, c := range run.calls {
 		if strings.HasPrefix(c, "zfs clone") || strings.HasPrefix(c, "jail ") {
 			t.Fatalf("ran %q although the parent was refused", c)
@@ -363,5 +365,23 @@ func TestPrepareJailRunRefusesOpenDirectory(t *testing.T) {
 	os.Chmod(h.conf.JailRunDir, 0o777)
 	if err := h.prepareJailRun(ctrA); err == nil {
 		t.Fatal("a world-writable jail runtime directory was accepted")
+	}
+}
+
+func TestCloneJailRefusesBadArguments(t *testing.T) {
+	h, run, _ := jailHost(t)
+	ctx := context.Background()
+	for name, args := range map[string][4]string{
+		"same ID":         {"skeptest", ctrA, vmA, ctrA},
+		"bad snapshot ID": {"skeptest", ctrA, "../x", ctrB},
+		"bad target":      {"skeptest", ctrA, vmA, "../x"},
+		"pool not listed": {"tank", ctrA, vmA, ctrB},
+	} {
+		if _, err := h.CloneJail(ctx, args[0], args[1], args[2], args[3]); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+	if len(run.calls) != 0 {
+		t.Fatalf("ran commands for refused clones: %q", run.calls)
 	}
 }

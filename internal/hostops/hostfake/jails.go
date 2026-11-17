@@ -70,6 +70,58 @@ func (j fakeJails) CreateJailRoot(_ context.Context, pool, templateID, container
 	return d, nil
 }
 
+// CloneJail implements hostops.Jails. The clone's tree is the source's,
+// so it has the files the source was given.
+func (j fakeJails) CloneJail(_ context.Context, pool, sourceID, snapshotID, targetID string) (hostops.Dataset, error) {
+	short, err := hostops.SnapshotName(snapshotID)
+	if err != nil {
+		return hostops.Dataset{}, err
+	}
+	if sourceID == targetID {
+		return hostops.Dataset{}, models.Invalid("a clone needs a new container ID")
+	}
+	src, err := j.f.conf.JailDataset(pool, sourceID)
+	if err != nil {
+		return hostops.Dataset{}, err
+	}
+	target, err := j.f.conf.JailDataset(pool, targetID)
+	if err != nil {
+		return hostops.Dataset{}, err
+	}
+	f := j.f
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	d, ok := f.datasets[src]
+	if !ok || d.ContainerID != sourceID {
+		return hostops.Dataset{}, fmt.Errorf("jail dataset %s: %w", src, models.ErrNotFound)
+	}
+	if err := checkUnlocked([]hostops.Dataset{d}); err != nil {
+		return hostops.Dataset{}, err
+	}
+	origin := src + "@" + short
+	snap, ok := f.snaps[origin]
+	if !ok {
+		return hostops.Dataset{}, fmt.Errorf("snapshot %s: %w", snapshotID, models.ErrNotFound)
+	}
+	if snap.SnapshotID != snapshotID {
+		return hostops.Dataset{}, fmt.Errorf("hostfake: refusing %s: its snapshot ID does not match its name", origin)
+	}
+	if _, ok := f.datasets[target]; ok {
+		return hostops.Dataset{}, fmt.Errorf("hostfake: the clone's dataset %s already exists", target)
+	}
+	f.txg++
+	c := hostops.Dataset{Name: target, Type: "filesystem", ContainerID: targetID, Origin: origin,
+		ReferencedBytes: snap.ReferencedBytes, CreateTxg: f.txg}
+	f.datasets[target] = c
+	snap.Clones = append(snap.Clones, target)
+	f.snaps[origin] = snap
+	if files, ok := f.jailFiles[sourceID]; ok {
+		f.jailFiles[targetID] = files
+	}
+	f.record("zfs clone %s %s", origin, target)
+	return c, nil
+}
+
 // root is the simulated path of a jail root.
 func (j fakeJails) root(pool, containerID string) (string, string, error) {
 	ds, err := j.f.conf.JailDataset(pool, containerID)
@@ -110,6 +162,9 @@ func (j fakeJails) DestroyJailRoot(_ context.Context, pool, containerID string) 
 	}
 	if d.ContainerID != containerID {
 		return nil, fmt.Errorf("hostfake: refusing %s: it does not name container %s", ds, containerID)
+	}
+	if clones := f.clonesUnder(ds); len(clones) > 0 {
+		return nil, hasClones(clones)
 	}
 	out := []hostops.Dataset{d}
 	for name, sn := range f.snaps {

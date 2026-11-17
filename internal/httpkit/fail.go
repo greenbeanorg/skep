@@ -76,6 +76,8 @@ var StatusForCode = map[string]int{
 	models.CodeEpairUnavailable:         http.StatusConflict,
 	models.CodeRctlUnavailable:          http.StatusConflict,
 	models.CodeDevfsRulesetConflict:     http.StatusConflict,
+	models.CodeCloneAddressingRequired:  http.StatusUnprocessableEntity,
+	models.CodeContainerAddressInUse:    http.StatusConflict,
 }
 
 // Fail maps a service error to an error response. Internal error text is

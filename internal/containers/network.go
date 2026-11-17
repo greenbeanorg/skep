@@ -1,6 +1,7 @@
 package containers
 
 import (
+	"context"
 	"crypto/rand"
 	"fmt"
 	"net"
@@ -233,4 +234,49 @@ func withInterfaces(c models.Container) models.Container {
 		c.NICs[i].Interface, _ = hostops.GuestInterfaceName(c.NICs[i].Slot)
 	}
 	return c
+}
+
+// sameIP reports whether two addresses in CIDR form have the same IP,
+// whatever their prefix lengths.
+func sameIP(a, b string) bool {
+	pa, errA := netip.ParsePrefix(a)
+	pb, errB := netip.ParsePrefix(b)
+	return errA == nil && errB == nil && pa.Addr() == pb.Addr()
+}
+
+// checkAddressFree refuses to start a jail when a running Skep jail on the
+// same bridge holds one of its static IPv4 addresses (amendment k). The
+// addresses are the ones Skep wrote into each jail's rc.conf; an address
+// changed inside a jail is not seen.
+func (s *Service) checkAddressFree(ctx context.Context, c models.Container) error {
+	var mine []models.ContainerNIC
+	for _, n := range c.NICs {
+		if n.IPv4.Mode == models.IPv4Static {
+			mine = append(mine, n)
+		}
+	}
+	if len(mine) == 0 {
+		return nil
+	}
+	running, err := s.jails.RunningJails(ctx)
+	if err != nil {
+		return err
+	}
+	others, err := s.store.StaticNICs(ctx)
+	if err != nil {
+		return err
+	}
+	for _, n := range mine {
+		for _, o := range others {
+			if _, up := running[o.ContainerID]; !up || o.ContainerID == c.ID || o.Bridge != n.Bridge || !sameIP(o.Address, n.IPv4.Address) {
+				continue
+			}
+			return &models.Error{Code: models.CodeContainerAddressInUse,
+				Message: fmt.Sprintf("the running jail %s holds %s on %s; stop it or give this jail another address",
+					o.ContainerName, o.Address, o.Bridge),
+				Details: map[string]any{"slot": n.Slot, "address": n.IPv4.Address, "bridge": n.Bridge,
+					"held_by_container_id": o.ContainerID, "held_by_container_name": o.ContainerName}}
+		}
+	}
+	return nil
 }

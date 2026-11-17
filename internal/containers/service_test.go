@@ -72,7 +72,7 @@ func newFixture(t *testing.T) *fixture {
 		t.Fatal(err)
 	}
 	svc, err := New(Options{NodeID: nodeID, Store: database.NewContainerStore(db), Templates: database.NewTemplateStore(db),
-		Engine: engine, Host: fake.Ops(), Logger: quiet})
+		Snapshots: database.NewSnapshotStore(db), MaxSnapshots: 4, Engine: engine, Host: fake.Ops(), Logger: quiet})
 	if err != nil {
 		t.Fatal(err)
 	}

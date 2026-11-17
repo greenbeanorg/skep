@@ -24,14 +24,14 @@ const taskSlack = time.Minute
 // not something a cancel should leave behind.
 func (s *Service) Definitions() []tasks.Definition {
 	maxStop := models.MaxContainerStopTimeoutSeconds * time.Second
-	return []tasks.Definition{
+	return append([]tasks.Definition{
 		{Type: models.TaskContainerCreate, Timeout: 5 * time.Minute, Run: s.runCreate},
 		{Type: models.TaskContainerUpdate, Timeout: 2 * time.Minute, Run: s.runUpdate},
 		{Type: models.TaskContainerDelete, Timeout: s.startTimeout + maxStop + 5*time.Minute, Run: s.runDelete},
 		{Type: models.TaskContainerStart, Timeout: s.startTimeout + maxStop + taskSlack, Run: s.runStart},
 		{Type: models.TaskContainerStop, Timeout: s.startTimeout + maxStop + taskSlack, Run: s.runStop},
 		{Type: models.TaskContainerRestart, Timeout: 2*s.startTimeout + 2*maxStop + taskSlack, Run: s.runRestart},
-	}
+	}, s.snapshotDefinitions()...)
 }
 
 func canonical(v any) (json.RawMessage, error) {
@@ -184,7 +184,7 @@ func (s *Service) CreateContainer(ctx context.Context, req models.ContainerCreat
 	if err != nil {
 		return models.ContainerCreated{}, err
 	}
-	if existing, found, err := s.replay(ctx, sub, request); err != nil {
+	if existing, found, err := s.replay(ctx, sub, models.TaskContainerCreate, request); err != nil {
 		return models.ContainerCreated{}, s.refuse(ctx, refused, err)
 	} else if found {
 		var p createPayload
@@ -222,8 +222,9 @@ func (s *Service) CreateContainer(ctx context.Context, req models.ContainerCreat
 }
 
 // replay finds the task an earlier request with the same idempotency key
-// created. A key used for another request is idempotency_key_conflict.
-func (s *Service) replay(ctx context.Context, sub Submission, request json.RawMessage) (tasks.Task, bool, error) {
+// created, for the tasks whose payload holds the request beside generated
+// IDs. A key used for another request is idempotency_key_conflict.
+func (s *Service) replay(ctx context.Context, sub Submission, taskType string, request json.RawMessage) (tasks.Task, bool, error) {
 	if sub.IdempotencyKey == "" {
 		return tasks.Task{}, false, nil
 	}
@@ -231,8 +232,10 @@ func (s *Service) replay(ctx context.Context, sub Submission, request json.RawMe
 	if err != nil || !found {
 		return tasks.Task{}, false, err
 	}
-	var p createPayload
-	same := existing.Type == models.TaskContainerCreate && existing.Actor.ID == sub.Actor.ID &&
+	var p struct {
+		Request json.RawMessage `json:"request"`
+	}
+	same := existing.Type == taskType && existing.Actor.ID == sub.Actor.ID &&
 		json.Unmarshal(existing.Payload, &p) == nil
 	if same {
 		earlier, err := tasks.CanonicalPayload(p.Request)
@@ -550,6 +553,9 @@ func (s *Service) DeleteContainer(ctx context.Context, id string, sub Submission
 	} else if running {
 		return models.Task{}, s.refuse(ctx, refused, notStopped(c))
 	}
+	if err := s.checkDeletable(ctx, c); err != nil {
+		return models.Task{}, s.refuse(ctx, refused, err)
+	}
 	payload, err := canonical(struct {
 		ContainerID string `json:"container_id"`
 	}{id})
@@ -598,6 +604,9 @@ func (s *Service) runDelete(ctx context.Context, task tasks.Task, report tasks.R
 		return nil, err
 	} else if running {
 		return nil, failure(notStopped(c))
+	}
+	if err := s.checkDeletable(ctx, c); err != nil {
+		return nil, failure(err)
 	}
 	// Epairs a crash left are the owner's to remove (decision 10).
 	ifaces, err := s.jails.DestroyJailInterfaces(ctx, c.ID)

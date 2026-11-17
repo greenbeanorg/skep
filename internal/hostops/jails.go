@@ -47,6 +47,13 @@ type Jails interface {
 	// returns it. The template must carry its ID and have @skep-base. An
 	// existing dataset of that name is refused.
 	CreateJailRoot(ctx context.Context, pool, templateID, containerID string) (Dataset, error)
+	// CloneJail makes a linked clone of one snapshot of a jail's root
+	// (decision 3): <source>@skep-<snapshot-id> cloned to the target's
+	// jail dataset, carrying the target's skep:container_id, with
+	// canmount=on and readonly=off set, and returns it. The snapshot must
+	// carry its ID; an existing target dataset is refused. Properties are
+	// not copied: the caller sets the disk quota again.
+	CloneJail(ctx context.Context, pool, sourceID, snapshotID, targetID string) (Dataset, error)
 	// JailRoot returns the path of a jail's root after checking that its
 	// dataset carries the container's ID and is mounted where it should
 	// be.

@@ -148,6 +148,74 @@ func (h *host) CreateJailRoot(ctx context.Context, pool, templateID, containerID
 	return h.oneDataset(ctx, ds)
 }
 
+// CloneJail implements Jails. When it fails after zfs clone, what it made
+// carries the target's ID, so DestroyJailRoot of the target removes it
+// without touching the source.
+func (h *host) CloneJail(ctx context.Context, pool, sourceID, snapshotID, targetID string) (Dataset, error) {
+	short, err := SnapshotName(snapshotID)
+	if err != nil {
+		return Dataset{}, err
+	}
+	if sourceID == targetID {
+		return Dataset{}, invalid("a clone needs a new container ID")
+	}
+	target, err := h.conf.JailDataset(pool, targetID)
+	if err != nil {
+		return Dataset{}, err
+	}
+	src, err := h.conf.JailDataset(pool, sourceID)
+	if err != nil {
+		return Dataset{}, err
+	}
+	if err := h.zfsLoaded(); err != nil {
+		return Dataset{}, err
+	}
+	if err := h.CheckJailsParent(ctx, pool); err != nil {
+		return Dataset{}, err
+	}
+	mp, err := h.jailsMount(ctx, pool)
+	if err != nil {
+		return Dataset{}, err
+	}
+	// The source root, owned and without children, and the snapshot on it.
+	d, err := h.ownedJail(ctx, src, sourceID)
+	if err != nil {
+		return Dataset{}, err
+	}
+	if d == nil {
+		return Dataset{}, notFound("jail dataset " + src)
+	}
+	if err := checkUnlocked([]Dataset{*d}); err != nil {
+		return Dataset{}, err
+	}
+	snaps, err := h.listSnapshots(ctx, src, false)
+	if err != nil {
+		return Dataset{}, err
+	}
+	if _, err := complete([]Dataset{*d}, indexSnapshots(snaps), snapshotID); err != nil {
+		return Dataset{}, err
+	}
+	if existing, err := h.listDatasets(ctx, target, false); err != nil {
+		return Dataset{}, err
+	} else if len(existing) > 0 {
+		return Dataset{}, fmt.Errorf("hostops: the clone's dataset %s already exists", target)
+	}
+	// readonly=off and canmount=on are set, not inherited, as for a jail
+	// made from a template.
+	if _, err := h.run.Run(ctx, zfsBinary, "clone", "-o", "canmount=on", "-o", "readonly=off",
+		"-o", propContainerID+"="+targetID, src+"@"+short, target); err != nil {
+		return Dataset{}, err
+	}
+	mounted, got, err := h.mountInfo(ctx, target)
+	if err != nil {
+		return Dataset{}, err
+	}
+	if want := filepath.Join(mp, targetID); !mounted || got != want {
+		return Dataset{}, storageUnavailable("the clone's dataset " + target + " is not mounted at " + want)
+	}
+	return h.oneDataset(ctx, target)
+}
+
 // JailRoot implements Jails.
 func (h *host) JailRoot(ctx context.Context, pool, containerID string) (string, error) {
 	ds, err := h.conf.JailDataset(pool, containerID)
