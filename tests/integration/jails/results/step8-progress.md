@@ -192,3 +192,29 @@ check: the `/dev` listing of a DHCP and a static jail.
 **hearst state:** no jails, no epairs, bridge0 with vtnet1 only, devfs
 rulesets 1 to 5 only, `if_epair` loaded (live), `57d74bb` deployed. The
 API users s7admin, s7oper, s7viewer are unchanged.
+
+## 5. Andy's answers recorded (2026-11-17): amendment i
+
+**Done.** ADR 0010 amendment i, worked into Decisions 9, 10, and 16; the
+open point under "Step 8" is closed.
+
+- Ruleset 6001 is option A: `include 1` to `include 4`, `path pf
+  unhide`, `path bpf* unhide`, checked line by line before every start.
+- A `/dev` guard for every jail, run before any process starts in it:
+  `jail -c` without `exec.start`, the jail's `/dev` listed on the host and
+  compared with an allow-list, the jail refused and removed if anything is
+  extra, and only then `/etc/rc` through Skep's own fixed `jexec` step
+  (output to console.log, start timeout). How `/etc/rc` runs after the
+  guard (`jexec -l -U root ... /bin/sh /etc/rc`) is my reading of
+  "only then run exec.start": exec.start can only run inside `jail -c`,
+  so a guard between creation and rc needs Skep to run rc itself.
+- A new Decision 16 row "Jail devfs": a real DHCP jail's and a real
+  static jail's `/dev` on hearst, compared; a refused start for an extra
+  entry. The guard's test reads a real jail's `/dev`, not the ruleset
+  text.
+- Static range: Andy's message held no numbers again ("10.79.60.-
+  10.79.60."), so I recorded his stated alternative: the live static
+  test is skipped for now, unit tests only.
+- The redeploy of the corrected build is approved.
+
+**Not built** (Andy: "Then stop. Don't build.").

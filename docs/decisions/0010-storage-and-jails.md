@@ -399,8 +399,9 @@ this milestone.
 **Recommendation: A.** Baseline, not changeable through the API:
 `enforce_statfs=2`, `children.max=0`, `securelevel=2`, `devfs_ruleset=5`
 (`devfsrules_jail_vnet`, which every Skep jail is; a jail with a DHCP
-interface gets Skep's ruleset 6001 instead, ruleset 5 plus `bpf*`,
-amendment h), `mount.devfs`, no
+interface gets Skep's ruleset 6001 instead, ruleset 5's rules plus
+`bpf*`, amendments h and i), `mount.devfs` checked against an allow-list
+before any process runs in the jail (amendment i), no
 `mount.fstab`, every `allow.*` that grants extra privileges off, with
 `allow.suser` and `allow.reserved_ports` left at their default, on
 (amendments e and f), `exec.clean`, `exec.consolelog` to
@@ -467,7 +468,11 @@ refuses a start with `epair_unavailable` when the module is absent. On
 
 - **DHCP needs bpf.** `dhclient` opens `/dev/bpf`, which ruleset 5
   hides. A jail with at least one `dhcp` interface gets Skep's own devfs
-  ruleset **6001**: rule 100 `include 5`, rule 200 `path 'bpf*' unhide`.
+  ruleset **6001**: ruleset 5's own rules plus bpf, written out as
+  `100 include 1`, `200 include 2`, `300 include 3`, `400 include 4`,
+  `500 path pf unhide`, `600 path bpf* unhide` (amendment i: devfs does
+  not resolve the includes of an included ruleset, so `include 5` would
+  hide nothing).
   A jail with only static addressing (or no interface) keeps plain
   ruleset 5. The agent adds ruleset 6001 to the kernel at runtime with
   `devfs rule -s 6001 add ...` when it is absent (no file; it is gone at
@@ -629,7 +634,8 @@ recorded, under `tests/integration/storage/` for 7a and
 | Template (dist) | A `base.txz` whose SHA-256 does not match `MANIFEST` is refused; a matching one builds |
 | Template host safety | Before and after a pkgbase build, the hashes of every file under the host's `/etc`, `/var/db/pkg`, and `/usr/share/certs` are identical; `pkg` ran with the fixed environment (shown by `procstat -e` during the build); `var/cache/pkg` is empty in `@skep-base`; how scripts and triggers ran (chrooted or not) is recorded with the trace |
 | Jail lifecycle | Create, start, stop, restart, delete; `jls` shows it under `skep-<id>`; it survives `service skep_agent restart` and `kill -9` of the agent |
-| Jail networking | DHCP address on VLAN 60, internet reachable, `10.79.20.0/24` not reachable; a static address from the approved range works the same way (amendment h); the host epair has the `skep:` description and no address, and is gone after stop and delete; a DHCP jail has devfs ruleset 6001 and a static one ruleset 5, and a start with a foreign ruleset 6001 is refused with `devfs_ruleset_conflict`; without `if_epair` a start is refused with `epair_unavailable`; a jail that forges its source IPv4 address and its source MAC on its epair reaches nothing it could not reach without (amendment f) |
+| Jail devfs | Before any process runs in the jail, its `/dev` is listed and compared with the allow-list; on `hearst`, the `/dev` of a real DHCP jail (ruleset 6001) and a real static jail (ruleset 5) are listed and compared: they differ only by `bpf` entries, and neither holds anything outside the allow-list; a jail whose `/dev` holds an extra entry is refused and removed before `/etc/rc` runs (amendment i). The test reads a real jail's `/dev`, not the ruleset text |
+| Jail networking | DHCP address on VLAN 60, internet reachable, `10.79.20.0/24` not reachable; a static address works the same way (amendment h; on `hearst` deferred, unit tests only, until a range is given: amendment i); the host epair has the `skep:` description and no address, and is gone after stop and delete; a DHCP jail has devfs ruleset 6001 and a static one ruleset 5, and a start with a foreign ruleset 6001 is refused with `devfs_ruleset_conflict`; without `if_epair` a start is refused with `epair_unavailable`; a jail that forges its source IPv4 address and its source MAC on its epair reaches nothing it could not reach without (amendment f) |
 | Jail baseline | Inside the jail: `sysctl security.jail.param` shows the baseline; `mount` and `kldload` fail; a port below 1024 can be bound; whether raw sockets work is recorded, not expected to fail (amendment f); `mlock` without a memory limit is refused with `mlock_requires_memory_limit` |
 | Jail SSH | A key works on a template with sshd and is refused with `container_ssh_unavailable` on one without; the template has no `etc/ssh/ssh_host_*`; two jails from one template have different host keys (amendment g) |
 | Jail root parent | The jail and template parent directories are `root:wheel 0700`; as an unprivileged host user, a setuid file inside a running jail cannot be reached or executed; a start after `chmod 755` of the parent is refused with `jail_parent_insecure` |
@@ -870,6 +876,40 @@ Amendments made at acceptance, worked into the text:
   (`epair_unavailable`). The host end is created and described in one
   `ifconfig` call, with IPv6 disabled on it by Skep. Static addresses are
   checked on `hearst` as well as DHCP.
+- **i. Ruleset 6001 corrected, and a `/dev` guard for every jail**
+  (Decisions 9, 10, 16; Andy, 2026-11-17, from the step 8 validation).
+  - Ruleset 6001 is ruleset 5's rules written out plus bpf: `100 include
+    1`, `200 include 2`, `300 include 3`, `400 include 4`, `500 path pf
+    unhide`, `600 path bpf* unhide`, the same single level of includes as
+    ruleset 5. The agent adds it when absent and checks it line by line
+    before every start (`devfs_ruleset_conflict` otherwise), as in
+    amendment h.
+  - **The `/dev` guard runs before any process starts in the jail.**
+    `jail -c` creates the jail with its baseline, `mount.devfs`, and its
+    epairs but **without `exec.start`**, so nothing runs in it. Skep then
+    lists the jail's `/dev` on the host (its devfs mount under the jail
+    root; no process of the jail has existed, so nothing in it can have
+    been planted) and compares every entry with a short allow-list: `fd`,
+    `null`, `zero`, `crypto`, `random`, `urandom`, `pts`, `ptmx`, `stdin`,
+    `stdout`, `stderr`, `zfs`, `fuse`, `pf`, and for a DHCP jail `bpf`
+    and `bpf<N>`. Anything else (or a missing devfs) refuses the start
+    (`container_start_failed`, naming the extra entries) and removes the
+    jail with `jail -r` before any of its code has run. Only after the
+    guard passes does Skep run the jail's `/etc/rc`, as its own fixed
+    step: `jexec -l -U root skep-<id> /bin/sh /etc/rc` with the clean
+    environment `exec.clean` gave before, output appended to the jail's
+    `console.log`, bounded by `containers.start_timeout_seconds`. `jexec`
+    stays internal; it is never exposed through the API (Decision 12).
+    `exec.stop` (`/etc/rc.shutdown`) is unchanged. The guard applies to
+    every jail, ruleset 5 included.
+  - **Its check** (Decision 16, "Jail devfs") reads the `/dev` of a real
+    DHCP jail and a real static jail on `hearst`, compares them with each
+    other and with the allow-list, and shows a refused start for a jail
+    with an extra entry; a test of the ruleset text alone is not enough.
+  - **Static addressing on `hearst`**: no range was given, so the live
+    static check is skipped for now; static addressing is covered by
+    unit tests only until a range is approved.
+  - Redeploying the corrected build on `hearst` is approved.
 
 ## Implementation notes
 
@@ -1565,11 +1605,13 @@ h above and are worked into Decisions 9, 10, and 16. Build notes and the
 validation follow in
 [step8-progress.md](../../tests/integration/jails/results/step8-progress.md).
 
-**Open (2026-11-17, from the step 8 validation).** Ruleset 6001 as
-written in amendment h (`include 5` plus `bpf*`) exposes host devices:
-devfs does not resolve the includes of an included ruleset, and ruleset
-5 is only includes plus `path pf unhide`. Found on `hearst` with the
-first DHCP jail, which was stopped and deleted; the ruleset was removed
-and the previous build redeployed. The corrected definition waits for
-Andy; options in
-[step8-progress.md](../../tests/integration/jails/results/step8-progress.md).
+**Resolved (2026-11-17, from the step 8 validation; amendment i).**
+Ruleset 6001 as first written in amendment h (`include 5` plus `bpf*`)
+exposed host devices: devfs does not resolve the includes of an included
+ruleset, and ruleset 5 is only includes plus `path pf unhide`. Found on
+`hearst` with the first DHCP jail (its `/dev` held `mem`, `kmem`, `io`,
+`da0`, ...), which was stopped and deleted at once; the ruleset was
+removed and the previous build redeployed
+([step8/devfs-include.txt](../../tests/integration/jails/results/step8/devfs-include.txt)).
+Andy's answers are amendment i below the list of amendments, worked into
+Decisions 9, 10, and 16.
