@@ -352,3 +352,11 @@ test README's check table are updated.
 
 **Still open, not part of this run:** dist validation on hearst (no
 `base.txz`); templates in directory pools (refused); step 7.
+
+## 14. After the run (Andy, 2026-11-16)
+
+The sweep's summary line (`a34749d`) is kept. Template `minimal-151`
+(`f496866f-…`) stays on hearst for step 7. `s6admin` and `s6oper` were
+disabled through the API (`PUT /api/v1/users/{id}` `{"disabled":true}`,
+200 each); their bearer tokens then got 401 and a login got
+`invalid_credentials`. Their passwords and tokens were deleted on merrick.
