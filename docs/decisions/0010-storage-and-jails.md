@@ -398,7 +398,9 @@ this milestone.
 
 **Recommendation: A.** Baseline, not changeable through the API:
 `enforce_statfs=2`, `children.max=0`, `securelevel=2`, `devfs_ruleset=5`
-(`devfsrules_jail_vnet`, which every Skep jail is), `mount.devfs`, no
+(`devfsrules_jail_vnet`, which every Skep jail is; a jail with a DHCP
+interface gets Skep's ruleset 6001 instead, ruleset 5 plus `bpf*`,
+amendment h), `mount.devfs`, no
 `mount.fstab`, every `allow.*` that grants extra privileges off, with
 `allow.suser` and `allow.reserved_ports` left at their default, on
 (amendments e and f), `exec.clean`, `exec.consolelog` to
@@ -460,6 +462,35 @@ Skep loads no modules (ADR 0009 Decision 6b), so the capability check
 refuses a start with `epair_unavailable` when the module is absent. On
 `hearst`, jails join `bridge0` on VLAN 60, and the isolation check of ADR
 0009 is repeated for a jail.
+
+**Amended 2026-11-17 (Andy, from the step 8 probe; amendment h).**
+
+- **DHCP needs bpf.** `dhclient` opens `/dev/bpf`, which ruleset 5
+  hides. A jail with at least one `dhcp` interface gets Skep's own devfs
+  ruleset **6001**: rule 100 `include 5`, rule 200 `path 'bpf*' unhide`.
+  A jail with only static addressing (or no interface) keeps plain
+  ruleset 5. The agent adds ruleset 6001 to the kernel at runtime with
+  `devfs rule -s 6001 add ...` when it is absent (no file; it is gone at
+  reboot and added again by the next DHCP start), and checks its rules
+  before every start of a DHCP jail; if 6001 holds any other rules, the
+  start is refused with `devfs_ruleset_conflict` and Skep changes
+  nothing. bpf in a VNET jail sees only the jail's own interfaces (what
+  the bridge delivers to its port) and can write any frame on its epair,
+  which is what a VM can do on its tap; amendment f already accepts
+  spoofing on the epair.
+- **`if_epair` in production**: the operator sets `kld_list="if_epair"`
+  (the installer writes it into its profiles in Milestone 10), as for
+  `vmm`. Skep checks `kldstat -q -m if_epair` before any `ifconfig epair
+  create`, which would otherwise load the module itself, and refuses with
+  `epair_unavailable`.
+- **The host end never has an address.** Skep creates and describes the
+  host end in one call, `ifconfig epair create description
+  skep:<id>:<slot> inet6 ifdisabled -auto_linklocal up`, so a crash cannot
+  leave an undescribed epair (which Skep would never destroy) and the host
+  never gets an IPv6 link-local address on a jail's link, whatever the
+  host's IPv6 configuration.
+- **Static addresses are checked on `hearst`** as well as DHCP, from a
+  range on VLAN 60 outside the Kea pool.
 
 **Orphaned epairs.** If the agent dies between `jail -r` and destroying
 the host ends of a jail's epairs, they stay on the host. At every agent
@@ -598,7 +629,7 @@ recorded, under `tests/integration/storage/` for 7a and
 | Template (dist) | A `base.txz` whose SHA-256 does not match `MANIFEST` is refused; a matching one builds |
 | Template host safety | Before and after a pkgbase build, the hashes of every file under the host's `/etc`, `/var/db/pkg`, and `/usr/share/certs` are identical; `pkg` ran with the fixed environment (shown by `procstat -e` during the build); `var/cache/pkg` is empty in `@skep-base`; how scripts and triggers ran (chrooted or not) is recorded with the trace |
 | Jail lifecycle | Create, start, stop, restart, delete; `jls` shows it under `skep-<id>`; it survives `service skep_agent restart` and `kill -9` of the agent |
-| Jail networking | DHCP address on VLAN 60, internet reachable, `10.79.20.0/24` not reachable; the host epair has the `skep:` description and is gone after stop; a jail that forges its source IPv4 address and its source MAC on its epair reaches nothing it could not reach without (amendment f) |
+| Jail networking | DHCP address on VLAN 60, internet reachable, `10.79.20.0/24` not reachable; a static address from the approved range works the same way (amendment h); the host epair has the `skep:` description and no address, and is gone after stop and delete; a DHCP jail has devfs ruleset 6001 and a static one ruleset 5, and a start with a foreign ruleset 6001 is refused with `devfs_ruleset_conflict`; without `if_epair` a start is refused with `epair_unavailable`; a jail that forges its source IPv4 address and its source MAC on its epair reaches nothing it could not reach without (amendment f) |
 | Jail baseline | Inside the jail: `sysctl security.jail.param` shows the baseline; `mount` and `kldload` fail; a port below 1024 can be bound; whether raw sockets work is recorded, not expected to fail (amendment f); `mlock` without a memory limit is refused with `mlock_requires_memory_limit` |
 | Jail SSH | A key works on a template with sshd and is refused with `container_ssh_unavailable` on one without; the template has no `etc/ssh/ssh_host_*`; two jails from one template have different host keys (amendment g) |
 | Jail root parent | The jail and template parent directories are `root:wheel 0700`; as an unprivileged host user, a setuid file inside a running jail cannot be reached or executed; a start after `chmod 755` of the parent is refused with `jail_parent_insecure` |
@@ -697,7 +728,9 @@ order, and nothing else on `hearst` changes without asking.
 
 2. `kldload if_epair` now, and `kld_list="if_epair"` in `/etc/rc.conf`
    (added to any existing list) so it loads at the next boot. For jail
-   VNET (Decision 10).
+   VNET (Decision 10). **Changed at step 8 (Andy, 2026-11-17):** on
+   `hearst` it is loaded live only, not persisted, for step 8; how
+   production loads it is amendment h.
 
 **On hearst, `/boot/loader.conf`** (boot configuration)
 
@@ -828,6 +861,15 @@ Amendments made at acceptance, worked into the text:
   template packages; no SSH host keys in a template; each jail makes its
   own at first start, and two jails from one template are checked to
   differ.
+- **h. Jail networking** (Decisions 9 and 10; Andy, 2026-11-17, from the
+  step 8 probe). A jail with a DHCP interface gets Skep's devfs ruleset
+  6001 (ruleset 5 plus `bpf*`), added by the agent at runtime and checked
+  before every start (`devfs_ruleset_conflict` if 6001 holds other
+  rules); static jails keep ruleset 5. `if_epair` is the operator's
+  (`kld_list`), checked before any `ifconfig epair create`
+  (`epair_unavailable`). The host end is created and described in one
+  `ifconfig` call, with IPv6 disabled on it by Skep. Static addresses are
+  checked on `hearst` as well as DHCP.
 
 ## Implementation notes
 
@@ -1511,3 +1553,14 @@ Not run on `hearst`: the `chmod 755` refusal of the parent (it changes a
 host directory's mode, outside the run's approvals; unit tested), and
 the epair clean-up (step 8).
 
+### Step 8: jail networking (Decision 10)
+
+Started 2026-11-17. A hand-run probe on `hearst` first
+([step8-probe.txt](../../tests/integration/jails/results/step8-probe.txt))
+confirmed the epair creation, description, renaming, `vnet.interface`,
+and teardown as written, and found that DHCP cannot work with ruleset 5:
+`dhclient` needs `/dev/bpf` ("Can't find free bpf"). Andy chose option A1
+on 2026-11-17 and approved the two smaller proposals; they are amendment
+h above and are worked into Decisions 9, 10, and 16. Build notes and the
+validation follow in
+[step8-progress.md](../../tests/integration/jails/results/step8-progress.md).

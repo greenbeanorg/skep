@@ -70,3 +70,25 @@ real naming scheme is part of the build).
 **hearst state:** no jails; no epairs; bridge0 has vtnet1 as its only
 member; `skeptest/step8-probe` destroyed; `if_epair` **loaded** (live
 only); still `57d74bb`; nothing deployed.
+
+## 2. Andy's answers recorded (2026-11-17): amendment h
+
+**Done.** ADR 0010 amendment h, worked into Decisions 9, 10, and 16, the
+hearst changes list (item 2: live only on hearst for step 8), and a new
+"Step 8" section under the implementation notes:
+
+- A1: a jail with a DHCP interface gets Skep's devfs ruleset (ruleset 5
+  plus `bpf*`) under a fixed number, added by the agent at runtime and
+  checked before every start; `devfs_ruleset_conflict` if the number
+  holds other rules. Static jails keep ruleset 5. I chose the number
+  **6001**: well away from the shipped 1 to 5 and the small numbers
+  operators usually pick.
+- `if_epair`: the operator's `kld_list`; Skep checks before any
+  `ifconfig epair create` and refuses with `epair_unavailable`.
+- The host end is created, described, and has IPv6 disabled in one
+  `ifconfig` call.
+- Static addresses are checked on hearst too, from a range on VLAN 60
+  outside the Kea pool. **The range in Andy's message came through as
+  the literal placeholder `10.79.60.X–10.79.60.Y`**, so the live static
+  check waits for the real numbers; the code and its unit tests do not.
+- `if_epair` stays loaded on hearst for this step.
