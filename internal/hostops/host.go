@@ -62,13 +62,17 @@ type host struct {
 	// epairMu serialises epair creation, so the epairs a failed
 	// "ifconfig epair create" left can be told from another start's.
 	epairMu sync.Mutex
+
+	// listDev lists a jail's /dev for the guard (amendment i); tests
+	// replace it.
+	listDev func(root string) ([]string, error)
 }
 
 func newHost(conf Confinement, run Runner, sys system, log *slog.Logger) *host {
 	if log == nil {
 		log = slog.Default()
 	}
-	return &host{conf: conf, run: run, sys: sys, log: log, ignoredMedia: map[string]bool{}}
+	return &host{conf: conf, run: run, sys: sys, log: log, ignoredMedia: map[string]bool{}, listDev: listJailDev}
 }
 
 // NewFiles returns the Files implementation alone. It is plain file I/O

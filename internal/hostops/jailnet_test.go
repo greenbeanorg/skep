@@ -102,28 +102,49 @@ func TestCheckJailParamsDevfs(t *testing.T) {
 
 const showRuleset = "devfs rule -s 6001 show"
 
+// ruleset6001 is ruleset 6001 as devfs rule show prints it (amendment i).
+const ruleset6001 = "100 include 1\n200 include 2\n300 include 3\n400 include 4\n500 path pf unhide\n600 path bpf* unhide\n"
+
 func TestEnsureDHCPRuleset(t *testing.T) {
-	add1, add2 := "devfs rule -s 6001 add 100 include 5", "devfs rule -s 6001 add 200 path bpf* unhide"
-	// Absent: added, then checked.
+	adds := []string{
+		"devfs rule -s 6001 add 100 include 1",
+		"devfs rule -s 6001 add 200 include 2",
+		"devfs rule -s 6001 add 300 include 3",
+		"devfs rule -s 6001 add 400 include 4",
+		"devfs rule -s 6001 add 500 path pf unhide",
+		"devfs rule -s 6001 add 600 path bpf* unhide",
+	}
+	// Absent: added in order, then checked. Never an include of 5: devfs
+	// does not resolve the includes of an included ruleset.
 	h, run, _ := jailHost(t)
-	run.answers[showRuleset] = []any{"", "100 include 5\n200 path bpf* unhide\n"}
+	run.answers[showRuleset] = []any{"", ruleset6001}
 	if err := h.ensureDHCPRuleset(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Contains(run.calls, add1) || !slices.Contains(run.calls, add2) {
-		t.Fatalf("calls: %q", run.calls)
+	var added []string
+	for _, c := range run.calls {
+		if strings.Contains(c, " add ") {
+			added = append(added, c)
+		}
+	}
+	if !slices.Equal(added, adds) {
+		t.Fatalf("added %q, want %q", added, adds)
 	}
 	// Present: nothing added.
 	h, run, _ = jailHost(t)
-	run.answers[showRuleset] = "100 include 5\n200 path bpf* unhide\n"
+	run.answers[showRuleset] = ruleset6001
 	if err := h.ensureDHCPRuleset(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if slices.Contains(run.calls, add1) {
-		t.Fatalf("added again: %q", run.calls)
+	for _, c := range run.calls {
+		if strings.Contains(c, " add ") {
+			t.Fatalf("added again: %q", run.calls)
+		}
 	}
-	// Someone else's: refused, nothing added or removed.
-	for _, foreign := range []string{"100 path pf unhide\n", "100 include 5\n200 path bpf* unhide\n300 path mem unhide\n"} {
+	// Someone else's, amendment h's broken one included: refused, nothing
+	// added or removed.
+	for _, foreign := range []string{"100 path pf unhide\n", "100 include 5\n200 path bpf* unhide\n",
+		ruleset6001 + "700 path mem unhide\n"} {
 		h, run, _ = jailHost(t)
 		run.answers[showRuleset] = foreign
 		wantCode(t, h.ensureDHCPRuleset(context.Background()), models.CodeDevfsRulesetConflict)

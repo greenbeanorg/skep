@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -16,9 +17,17 @@ import (
 	"github.com/greenbeanorg/skep/pkg/models"
 )
 
-// jailCommandSlack is added to a jail's own timeouts to bound jail(8):
+// jailCommandSlack bounds jail -c, which runs nothing in the jail
+// (amendment i), and is added to a jail's own timeouts to bound jail -r:
 // mounting devfs and the kernel's removal take a moment.
 const jailCommandSlack = 30 * time.Second
+
+// jailRCArgs runs a jail's /etc/rc after the /dev guard (amendment i):
+// as the jail's root, in the clean login environment exec.clean gave
+// before. jexec is never reachable through the API (decision 12).
+func jailRCArgs(name string) []string {
+	return []string{"-l", "-U", "root", name, "/bin/sh", "/etc/rc"}
+}
 
 // jailEnv is the whole environment of jail(8). exec.clean gives the
 // commands inside the jail a clean one of their own.
@@ -296,29 +305,36 @@ func checkRootOnlyDir(dir string) error {
 
 // writeJailConf renders and writes a jail's jail.conf, and returns its
 // path and the jail root.
-func (h *host) writeJailConf(ctx context.Context, spec JailSpec) (conf, root string, err error) {
+func (h *host) writeJailConf(ctx context.Context, spec JailSpec, withStop bool) (conf, root string, err error) {
 	if root, err = h.JailRoot(ctx, spec.Pool, spec.ContainerID); err != nil {
 		return "", "", err
 	}
+	conf, err = h.writeJailConfAt(spec, root, withStop)
+	return conf, root, err
+}
+
+// writeJailConfAt writes the jail.conf of a jail whose root is known;
+// withStop false leaves out exec.stop (amendment i).
+func (h *host) writeJailConfAt(spec JailSpec, root string, withStop bool) (string, error) {
 	if err := h.prepareJailRun(spec.ContainerID); err != nil {
-		return "", "", err
+		return "", err
 	}
-	conf, err = h.conf.JailRunPath(spec.ContainerID, JailConfFile)
+	conf, err := h.conf.JailRunPath(spec.ContainerID, JailConfFile)
 	if err != nil {
-		return "", "", err
+		return "", err
 	}
 	logPath, err := h.conf.JailRunPath(spec.ContainerID, JailConsoleLog)
 	if err != nil {
-		return "", "", err
+		return "", err
 	}
-	data, err := renderJailConf(spec, root, logPath)
+	data, err := renderJailConfMode(spec, root, logPath, withStop)
 	if err != nil {
-		return "", "", err
+		return "", err
 	}
 	if err := writeAtomic(conf, data); err != nil {
-		return "", "", err
+		return "", err
 	}
-	return conf, root, nil
+	return conf, nil
 }
 
 // StartJail implements Jails.
@@ -345,7 +361,7 @@ func (h *host) StartJail(ctx context.Context, spec JailSpec) (JailState, error) 
 		h.log.Warn("hostops: destroyed epairs an earlier run of the jail left", "event", "orphaned_interface_removed",
 			"container_id", spec.ContainerID, "interfaces", gone)
 	}
-	conf, root, err := h.writeJailConf(ctx, spec)
+	conf, root, err := h.writeJailConf(ctx, spec, true)
 	if err != nil {
 		return JailState{}, err
 	}
@@ -366,13 +382,39 @@ func (h *host) StartJail(ctx context.Context, spec JailSpec) (JailState, error) 
 		h.cleanJailNet(spec)
 		return JailState{}, err
 	}
+	// The jail.conf has no exec.start: jail -c creates the jail, mounts
+	// its devfs, and moves its interfaces in, and nothing runs in it.
 	if _, err := er.RunEnv(ctx, EnvCommand{Path: jailBinary, Args: []string{"-f", conf, "-c", name},
-		Env: jailEnv, Timeout: spec.StartTimeout + jailCommandSlack}); err != nil {
-		// jail(8) removes a jail whose exec.start failed; make sure.
-		h.removeAfterFailedStart(name, conf, spec)
-		return JailState{}, &models.Error{Code: models.CodeContainerStartFailed,
-			Message: "jail(8) could not start the jail: " + err.Error(), Details: map[string]any{"container_id": spec.ContainerID}}
+		Env: jailEnv, Timeout: jailCommandSlack}); err != nil {
+		h.discardAfterFailedStart(spec, root)
+		return JailState{}, startFailed(spec, "jail(8) could not create the jail: ", err)
 	}
+	jid, err := h.finishStart(ctx, spec, name, conf, root)
+	if err != nil {
+		return JailState{}, err
+	}
+	return JailState{JID: jid, Name: name, Path: root, Epairs: epairs}, nil
+}
+
+// startFailed is container_start_failed; a refusal that already is one
+// keeps its message and details.
+func startFailed(spec JailSpec, prefix string, err error) error {
+	var me *models.Error
+	if errors.As(err, &me) && me.Code == models.CodeContainerStartFailed {
+		return me
+	}
+	return &models.Error{Code: models.CodeContainerStartFailed, Message: prefix + err.Error(),
+		Details: map[string]any{"container_id": spec.ContainerID}}
+}
+
+// finishStart takes a jail jail -c just created, with nothing running in
+// it, through the checks and then /etc/rc (amendment i): its parameters,
+// its interfaces moved in, and its /dev against the allow-list. A failed
+// check removes the jail without exec.stop, since none of its code has
+// run. Then /etc/rc runs through jexec, its output appended to
+// console.log, bounded by the start timeout; if it fails or times out, the
+// jail is removed with jail -r, which runs exec.stop. It returns the JID.
+func (h *host) finishStart(ctx context.Context, spec JailSpec, name, conf, root string) (int, error) {
 	params, err := h.jailParams(ctx, name)
 	if err == nil {
 		err = checkJailParams(params, spec, root)
@@ -380,13 +422,51 @@ func (h *host) StartJail(ctx context.Context, spec JailSpec) (JailState, error) 
 	if err == nil {
 		err = h.checkMovedIn(ctx, spec)
 	}
+	if err == nil {
+		err = h.checkJailDevfs(spec, root)
+	}
 	if err != nil {
+		h.discardAfterFailedStart(spec, root)
+		return 0, startFailed(spec, "the jail was removed before any of its code ran: ", err)
+	}
+	logPath, err := h.conf.JailRunPath(spec.ContainerID, JailConsoleLog)
+	if err == nil {
+		var er EnvRunner
+		if er, err = h.envRunner(); err == nil {
+			_, err = er.RunEnv(ctx, EnvCommand{Path: jexecBinary, Args: jailRCArgs(name), Env: jailEnv,
+				Timeout: spec.StartTimeout, Output: logPath})
+		}
+	}
+	if err != nil {
+		h.log.Warn("hostops: /etc/rc failed in a jail; removing it", "event", "jail_rc_failed",
+			"container_id", spec.ContainerID, "error", err)
 		h.removeAfterFailedStart(name, conf, spec)
-		return JailState{}, &models.Error{Code: models.CodeContainerStartFailed,
-			Message: "the jail was removed again: " + err.Error(), Details: map[string]any{"container_id": spec.ContainerID}}
+		return 0, startFailed(spec, "the jail's /etc/rc failed or outlasted the start timeout, so the jail was stopped and removed (its output is in the console log): ", err)
 	}
 	jid, _ := strconv.Atoi(fmt.Sprint(params["jid"]))
-	return JailState{JID: jid, Name: name, Path: root, Epairs: epairs}, nil
+	return jid, nil
+}
+
+// checkJailDevfs is the /dev guard (amendment i): the jail's devfs,
+// listed from the host before any process has run in the jail, may hold
+// only the allow-listed entries.
+func (h *host) checkJailDevfs(spec JailSpec, root string) error {
+	entries, err := h.listDev(root)
+	if err != nil {
+		return &models.Error{Code: models.CodeContainerStartFailed,
+			Message: "the jail's /dev could not be checked, so it was removed before any of its code ran: " + err.Error(),
+			Details: map[string]any{"container_id": spec.ContainerID}}
+	}
+	dhcp := spec.devfsRuleset() == JailDHCPDevfsRuleset
+	if err := checkJailDev(spec.ContainerID, entries, dhcp); err != nil {
+		h.log.Error("hostops: a jail's /dev holds more than the allow-list; removing it before any of its code runs",
+			"event", "jail_devfs_refused", "container_id", spec.ContainerID, "ruleset", spec.devfsRuleset(), "error", err)
+		return err
+	}
+	sort.Strings(entries)
+	h.log.Info("hostops: the jail's /dev holds only the allow-list", "event", "jail_devfs_checked",
+		"container_id", spec.ContainerID, "ruleset", spec.devfsRuleset(), "entries", strings.Join(entries, " "))
+	return nil
 }
 
 // checkJailNet checks what a jail's NICs need before anything is
@@ -448,10 +528,64 @@ func (h *host) cleanJailNet(spec JailSpec) {
 	}
 }
 
-// removeAfterFailedStart removes a jail left by a failed start, and then
-// its epairs, on its own short context so a cancelled request still
-// cleans up. A failure is logged; the jail then shows as running and can
-// be stopped.
+// discardAfterFailedStart removes a jail none of whose code has run,
+// without exec.stop, and then its epairs, on its own short context so a
+// cancelled request still cleans up. A failure is logged.
+func (h *host) discardAfterFailedStart(spec JailSpec, root string) {
+	ctx, cancel := context.WithTimeout(context.Background(), spec.StopTimeout+spec.StartTimeout+jailCommandSlack)
+	defer cancel()
+	if err := h.discardJail(ctx, spec, root); err != nil {
+		h.log.Error("hostops: a jail left by a failed start could not be removed", "container_id", spec.ContainerID, "error", err)
+		return
+	}
+	h.cleanJailNet(spec)
+}
+
+// discardJail removes a jail with a jail.conf without exec.stop, so none
+// of the jail's code runs: SIGTERM, then SIGKILL, then devfs unmounted.
+func (h *host) discardJail(ctx context.Context, spec JailSpec, root string) error {
+	name, err := JailName(spec.ContainerID)
+	if err != nil {
+		return err
+	}
+	exists, err := h.jailExists(ctx, name)
+	if err != nil || !exists {
+		return err
+	}
+	conf, err := h.writeJailConfAt(spec, root, false)
+	if err != nil {
+		return err
+	}
+	return h.removeJail(ctx, name, conf, spec)
+}
+
+// DiscardJail implements Jails.
+func (h *host) DiscardJail(ctx context.Context, spec JailSpec) error {
+	name, err := JailName(spec.ContainerID)
+	if err != nil {
+		return err
+	}
+	exists, err := h.jailExists(ctx, name)
+	if err != nil {
+		return err
+	}
+	if exists {
+		root, err := h.JailRoot(ctx, spec.Pool, spec.ContainerID)
+		if err != nil {
+			return err
+		}
+		if err := h.discardJail(ctx, spec, root); err != nil {
+			return err
+		}
+	}
+	_, err = h.DestroyJailInterfaces(ctx, spec.ContainerID)
+	return err
+}
+
+// removeAfterFailedStart removes a jail whose /etc/rc failed, with
+// exec.stop, and then its epairs, on its own short context so a cancelled
+// request still cleans up. A failure is logged; the jail then shows as
+// running and can be stopped.
 func (h *host) removeAfterFailedStart(name, conf string, spec JailSpec) {
 	ctx, cancel := context.WithTimeout(context.Background(), spec.StopTimeout+spec.StartTimeout+jailCommandSlack)
 	defer cancel()
@@ -499,7 +633,7 @@ func (h *host) StopJail(ctx context.Context, spec JailSpec) error {
 	}
 	if exists {
 		// The jail.conf is written again with this stop's timeout.
-		conf, _, err := h.writeJailConf(ctx, spec)
+		conf, _, err := h.writeJailConf(ctx, spec, true)
 		if err != nil {
 			return err
 		}

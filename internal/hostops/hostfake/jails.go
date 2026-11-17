@@ -223,7 +223,7 @@ func (j fakeJails) StartJail(ctx context.Context, spec hostops.JailSpec) (hostop
 		}
 		if !f.devfsDHCP {
 			f.devfsDHCP = true
-			f.record("devfs rule -s %d add (include 5, bpf* unhide)", hostops.JailDHCPDevfsRuleset)
+			f.record("devfs rule -s %d add (include 1-4, pf, bpf* unhide)", hostops.JailDHCPDevfsRuleset)
 		}
 	}
 	f.destroyEpairsLocked(spec.ContainerID)
@@ -238,8 +238,26 @@ func (j fakeJails) StartJail(ctx context.Context, spec hostops.JailSpec) (hostop
 	jid := f.nextJID
 	f.nextJID++
 	f.jails[spec.ContainerID] = jid
-	f.record("jail -c %s", name)
+	f.record("jail -c %s; /dev checked; jexec %s /bin/sh /etc/rc", name, name)
 	return hostops.JailState{JID: jid, Name: name, Path: root, Epairs: epairs}, nil
+}
+
+// DiscardJail removes a simulated jail without exec.stop, then its
+// epairs.
+func (j fakeJails) DiscardJail(_ context.Context, spec hostops.JailSpec) error {
+	name, err := hostops.JailName(spec.ContainerID)
+	if err != nil {
+		return err
+	}
+	f := j.f
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if _, ok := f.jails[spec.ContainerID]; ok {
+		delete(f.jails, spec.ContainerID)
+		f.record("jail -r %s (no exec.stop)", name)
+	}
+	f.destroyEpairsLocked(spec.ContainerID)
+	return nil
 }
 
 // destroyEpairsLocked destroys a container's simulated epairs. f.mu is

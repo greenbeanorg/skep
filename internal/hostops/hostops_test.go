@@ -26,20 +26,28 @@ type script struct {
 	// answers maps "binary arg arg ..." to an output or an error.
 	answers map[string]any
 	calls   []string
-	// envs holds the environment of each RunEnv call, in order.
-	envs [][]string
+	// envs holds the environment of each RunEnv call, in order, and
+	// outputs its Output file.
+	envs    [][]string
+	outputs []string
+	// onRun, when set, sees every call before it is answered.
+	onRun func(call string)
 }
 
 // RunEnv implements EnvRunner: the call is recorded and answered like
-// Run, and its environment is kept.
+// Run, and its environment and output file are kept.
 func (s *script) RunEnv(ctx context.Context, c EnvCommand) ([]byte, error) {
 	s.envs = append(s.envs, c.Env)
+	s.outputs = append(s.outputs, c.Output)
 	return s.Run(ctx, c.Path, c.Args...)
 }
 
 func (s *script) Run(_ context.Context, path string, args ...string) ([]byte, error) {
 	call := filepath.Base(path) + " " + strings.Join(args, " ")
 	s.calls = append(s.calls, call)
+	if s.onRun != nil {
+		s.onRun(call)
+	}
 	v := s.answers[call]
 	if seq, ok := v.([]any); ok {
 		// A sequence answers the calls in turn; the last answer repeats.

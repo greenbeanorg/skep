@@ -75,7 +75,7 @@ func TestRenderJailConf(t *testing.T) {
 		"\tallow.set_hostname = 0;\n", "\tallow.unprivileged_proc_debug = 0;\n", "\tallow.raw_sockets = 0;\n",
 		"\tallow.mount = 0;\n", "\tallow.mlock = 0;\n", "\tallow.chflags = 0;\n", "\tallow.sysvipc = 0;\n",
 		"\tsysvshm = disable;\n", "\tsysvsem = disable;\n", "\tsysvmsg = disable;\n",
-		"\texec.clean;\n", "\texec.start = \"/bin/sh /etc/rc\";\n", "\texec.stop = \"/bin/sh /etc/rc.shutdown jail\";\n",
+		"\texec.clean;\n", "\texec.stop = \"/bin/sh /etc/rc.shutdown jail\";\n",
 		"\texec.consolelog = \"/var/run/skep/jails/" + ctrA + "/console.log\";\n",
 		"\texec.timeout = 120;\n", "\tstop.timeout = 10;\n",
 	} {
@@ -83,12 +83,25 @@ func TestRenderJailConf(t *testing.T) {
 			t.Errorf("jail.conf lacks %q", want)
 		}
 	}
-	// Never a host-side command, and nothing but the two fixed exec.* commands.
-	for _, never := range []string{"exec.prestart", "exec.poststart", "exec.prestop", "exec.poststop", "exec.created",
+	// Never a host-side command, and no exec.start: Skep runs /etc/rc
+	// itself after the /dev guard (amendment i).
+	for _, never := range []string{"exec.start", "exec.prestart", "exec.poststart", "exec.prestop", "exec.poststop", "exec.created",
 		"mount.fstab", "ip4", "ip6", "allow.vmm", "command"} {
 		if strings.Contains(s, never) {
 			t.Errorf("jail.conf contains %q", never)
 		}
+	}
+	// The removal of a jail none of whose code may run has no exec.stop
+	// either, and is otherwise the same.
+	discard, err := renderJailConfMode(jailSpec(), "/skeptest/skep/jail/"+ctrA, "/var/run/skep/jails/"+ctrA+"/console.log", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(discard), "exec.stop") || strings.Contains(string(discard), "exec.start") {
+		t.Errorf("the discard jail.conf runs something:\n%s", discard)
+	}
+	if strings.Replace(s, "\texec.stop = \"/bin/sh /etc/rc.shutdown jail\";\n", "", 1) != string(discard) {
+		t.Errorf("the discard jail.conf differs by more than exec.stop:\n%s", discard)
 	}
 	if n := strings.Count(s, "allow."); n != len(buildJailAllow) {
 		t.Errorf("%d allow.* lines, want %d", n, len(buildJailAllow))

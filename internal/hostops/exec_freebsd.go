@@ -7,9 +7,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -72,11 +74,48 @@ func (r execRunner) RunEnv(ctx context.Context, c EnvCommand) ([]byte, error) {
 	if timeout <= 0 {
 		timeout = r.timeout
 	}
+	if c.Output != "" {
+		return nil, runToFile(ctx, timeout, c)
+	}
 	limit := c.MaxOutput
 	if limit <= 0 {
 		limit = maxOutput
 	}
 	return runCommand(ctx, timeout, limit, true, c.Env, c.Path, c.Args...)
+}
+
+// runToFile runs one command with standard output and error appended to
+// c.Output.
+func runToFile(ctx context.Context, timeout time.Duration, c EnvCommand) error {
+	if !filepath.IsAbs(c.Path) || !filepath.IsAbs(c.Output) {
+		return fmt.Errorf("hostops: refusing a non-absolute command %q or output %q", c.Path, c.Output)
+	}
+	out, err := os.OpenFile(c.Output, os.O_WRONLY|os.O_APPEND|os.O_CREATE|syscall.O_NOFOLLOW|syscall.O_CLOEXEC, 0o600)
+	if err != nil {
+		return fmt.Errorf("hostops: open %s: %w", c.Output, err)
+	}
+	defer out.Close()
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, c.Path, c.Args...)
+	cmd.Env = c.Env
+	cmd.Stdout, cmd.Stderr = out, out
+	if err := cmd.Run(); err != nil {
+		name := filepath.Base(c.Path)
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return fmt.Errorf("hostops: %s timed out after %s", name, timeout)
+		}
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		ce := &CommandError{Name: name, ExitCode: -1, Err: err, Stderr: "output in " + filepath.Base(c.Output)}
+		var exit *exec.ExitError
+		if errors.As(err, &exit) {
+			ce.ExitCode = exit.ExitCode()
+		}
+		return ce
+	}
+	return nil
 }
 
 // capped keeps at most limit bytes, discards the rest, and remembers

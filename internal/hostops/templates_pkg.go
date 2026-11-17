@@ -55,6 +55,11 @@ type EnvCommand struct {
 	// MaxOutput caps what is kept of standard output; 0 uses the
 	// Runner's default.
 	MaxOutput int
+	// Output, when set, is an absolute path that standard output and
+	// standard error are appended to instead of kept (created 0600, never
+	// through a link); RunEnv then returns no output. A file, not a pipe:
+	// daemons the command starts may keep it open after it exits.
+	Output string
 }
 
 // EnvRunner runs an EnvCommand. The real Runner implements it; so must a

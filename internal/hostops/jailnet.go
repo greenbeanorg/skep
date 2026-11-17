@@ -23,13 +23,24 @@ import (
 const devfsBinary = "/sbin/devfs"
 
 // JailDHCPDevfsRuleset is Skep's devfs ruleset for jails with a DHCP
-// interface: ruleset 5 plus bpf, which dhclient needs (amendment h). The
-// agent adds it to the kernel at runtime; nothing is written to a file.
+// interface: ruleset 5's rules plus bpf, which dhclient needs (amendments
+// h and i). The agent adds it to the kernel at runtime; nothing is written
+// to a file.
 const JailDHCPDevfsRuleset = 6001
 
 // jailDHCPRules are the rules of JailDHCPDevfsRuleset exactly as
-// "devfs rule -s 6001 show" prints them.
-var jailDHCPRules = []string{"100 include 5", "200 path bpf* unhide"}
+// "devfs rule -s 6001 show" prints them. devfs does not resolve the
+// includes of an included ruleset, so "include 5" would hide nothing
+// (amendment i): ruleset 5's own rules are written out, with the same
+// single level of includes, and bpf added.
+var jailDHCPRules = []string{
+	"100 include 1",
+	"200 include 2",
+	"300 include 3",
+	"400 include 4",
+	"500 path pf unhide",
+	"600 path bpf* unhide",
+}
 
 // jailIfacePrefix starts the jail end's name: sj, ten hex digits of the
 // container ID, n, and the slot. 14 characters at most, under IFNAMSIZ.
@@ -164,11 +175,11 @@ func (h *host) ensureDHCPRuleset(ctx context.Context) error {
 	if len(rules) == 0 {
 		h.log.Info("hostops: adding Skep's devfs ruleset for DHCP jails", "event", "devfs_ruleset_added",
 			"ruleset", JailDHCPDevfsRuleset, "rules", strings.Join(jailDHCPRules, "; "))
-		if _, err := h.run.Run(ctx, devfsBinary, "rule", "-s", n, "add", "100", "include", strconv.Itoa(JailDevfsRuleset)); err != nil {
-			return fmt.Errorf("hostops: add devfs ruleset %s: %w", n, err)
-		}
-		if _, err := h.run.Run(ctx, devfsBinary, "rule", "-s", n, "add", "200", "path", "bpf*", "unhide"); err != nil {
-			return fmt.Errorf("hostops: add devfs ruleset %s: %w", n, err)
+		for _, rule := range jailDHCPRules {
+			args := append([]string{"rule", "-s", n, "add"}, strings.Fields(rule)...)
+			if _, err := h.run.Run(ctx, devfsBinary, args...); err != nil {
+				return fmt.Errorf("hostops: add devfs ruleset %s: %w", n, err)
+			}
 		}
 		if rules, err = h.devfsRules(ctx); err != nil {
 			return err

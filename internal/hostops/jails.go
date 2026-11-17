@@ -5,10 +5,13 @@ import (
 	"fmt"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/greenbeanorg/skep/pkg/models"
 )
 
 // Jails (ADR 0010 decisions 8, 9, and 13, with amendments e, f, and g).
@@ -24,7 +27,10 @@ import (
 // A jail is named skep-<id>. Its jail.conf is rendered from typed values
 // (JailSpec) and the fixed baseline below; nothing in it comes from a
 // request except the validated hostname. There is never an exec.prestart,
-// exec.poststart, or any other host-side command.
+// exec.poststart, or any other host-side command, and no exec.start:
+// jail -c creates the jail with nothing running in it, the /dev guard
+// checks its devfs, and only then does Skep run /etc/rc with jexec
+// (amendment i).
 
 // Jails creates, starts, stops, and destroys jails.
 type Jails interface {
@@ -62,10 +68,20 @@ type Jails interface {
 	TemplateHasSSHD(ctx context.Context, pool, templateID string) (bool, error)
 
 	// StartJail checks the jail directory, writes the jail's jail.conf,
-	// creates the jail with jail(8) (which runs /etc/rc), and checks its
-	// parameters as the kernel reports them. A jail whose parameters do
-	// not match is removed and the start fails.
+	// creates the jail with jail(8) with nothing running in it, checks its
+	// parameters as the kernel reports them and its /dev against the
+	// allow-list (amendment i), and only then runs /etc/rc in it with
+	// jexec, its output appended to console.log. A jail that fails a check
+	// is removed without exec.stop, since none of its code has run; one
+	// whose /etc/rc fails or outlasts the start timeout is removed with
+	// jail -r (exec.stop runs). Either way the start fails with
+	// container_start_failed and the jail's epairs are destroyed.
 	StartJail(ctx context.Context, spec JailSpec) (JailState, error)
+	// DiscardJail removes a jail without running exec.stop, then destroys
+	// its epairs: for a jail whose start an agent crash interrupted, when
+	// Skep cannot know whether its /dev was checked (amendment i). A jail
+	// that is not running is not an error.
+	DiscardJail(ctx context.Context, spec JailSpec) error
 	// StopJail removes a jail with jail(8): exec.stop (/etc/rc.shutdown),
 	// then SIGTERM, then after the stop timeout SIGKILL. It confirms the
 	// jail is gone. A jail that is not running is not an error.
@@ -115,7 +131,8 @@ type JailSpec struct {
 	// Mlock sets allow.mlock (an opt-in, accepted only with a memory
 	// limit; the service decides).
 	Mlock bool
-	// StartTimeout is exec.timeout; StopTimeout is stop.timeout.
+	// StartTimeout bounds /etc/rc (Skep's jexec step) and is exec.timeout,
+	// which bounds exec.stop; StopTimeout is stop.timeout.
 	StartTimeout time.Duration
 	StopTimeout  time.Duration
 	// NICs are the jail's VNET interfaces (decision 10).
@@ -258,6 +275,12 @@ func confValue(v string) (string, error) {
 // renderJailConf renders the jail.conf of a jail from its spec and the
 // paths hostops derived.
 func renderJailConf(spec JailSpec, root, consoleLog string) ([]byte, error) {
+	return renderJailConfMode(spec, root, consoleLog, true)
+}
+
+// renderJailConfMode renders a jail.conf; withStop false leaves out
+// exec.stop, for removing a jail whose code must not run (amendment i).
+func renderJailConfMode(spec JailSpec, root, consoleLog string, withStop bool) ([]byte, error) {
 	name, err := JailName(spec.ContainerID)
 	if err != nil {
 		return nil, err
@@ -288,7 +311,7 @@ func renderJailConf(spec JailSpec, root, consoleLog string) ([]byte, error) {
 	}
 	quoted := map[string]string{}
 	for k, v := range map[string]string{"path": root, "host.hostname": spec.Hostname, "exec.consolelog": consoleLog,
-		"exec.start": "/bin/sh /etc/rc", "exec.stop": "/bin/sh /etc/rc.shutdown jail"} {
+		"exec.stop": jailStopCommand} {
 		q, err := confValue(v)
 		if err != nil {
 			return nil, err
@@ -319,8 +342,11 @@ func renderJailConf(spec JailSpec, root, consoleLog string) ([]byte, error) {
 		"sysvsem = "+spec.sysv(),
 		"sysvmsg = "+spec.sysv(),
 		"exec.clean",
-		"exec.start = "+quoted["exec.start"],
-		"exec.stop = "+quoted["exec.stop"],
+	)
+	if withStop {
+		lines = append(lines, "exec.stop = "+quoted["exec.stop"])
+	}
+	lines = append(lines,
 		"exec.consolelog = "+quoted["exec.consolelog"],
 		"exec.timeout = "+strconv.Itoa(int(spec.StartTimeout/time.Second)),
 		"stop.timeout = "+strconv.Itoa(int(spec.StopTimeout/time.Second)),
@@ -383,6 +409,46 @@ func checkJailParams(params map[string]any, spec JailSpec, root string) error {
 	if len(bad) > 0 {
 		sort.Strings(bad)
 		return fmt.Errorf("hostops: the jail %s does not have the required parameters: %s", name, strings.Join(bad, ", "))
+	}
+	return nil
+}
+
+// jailStopCommand is exec.stop. /etc/rc, the start, is run by Skep with
+// jexec after the /dev guard (amendment i), not by jail(8).
+const jailStopCommand = "/bin/sh /etc/rc.shutdown jail"
+
+// jailDevAllowed are the only entries a jail's /dev may hold (amendment
+// i): what ruleset 5 unhides on 15.1 that a jail uses. A DHCP jail may
+// also hold bpf and bpf<N>.
+var jailDevAllowed = map[string]bool{
+	"fd": true, "null": true, "zero": true, "crypto": true, "random": true, "urandom": true,
+	"pts": true, "ptmx": true, "stdin": true, "stdout": true, "stderr": true,
+	"zfs": true, "fuse": true, "pf": true,
+}
+
+var bpfDevRE = regexp.MustCompile(`^bpf[0-9]*$`)
+
+// checkJailDev compares the entries of a jail's /dev with the allow-list
+// and refuses (container_start_failed) anything else, naming it, and an
+// empty /dev: a jail's devfs always holds null.
+func checkJailDev(containerID string, entries []string, dhcp bool) error {
+	var extra []string
+	for _, e := range entries {
+		if jailDevAllowed[e] || (dhcp && bpfDevRE.MatchString(e)) {
+			continue
+		}
+		extra = append(extra, printable(e))
+	}
+	sort.Strings(extra)
+	switch {
+	case len(extra) > 0:
+		return &models.Error{Code: models.CodeContainerStartFailed,
+			Message: "the jail's /dev holds entries outside the allow-list, so it was removed before any of its code ran: " + strings.Join(extra, " "),
+			Details: map[string]any{"container_id": containerID, "extra_devices": extra}}
+	case !slices.Contains(entries, "null"):
+		return &models.Error{Code: models.CodeContainerStartFailed,
+			Message: "the jail's /dev has no devfs (no null), so it was removed before any of its code ran",
+			Details: map[string]any{"container_id": containerID}}
 	}
 	return nil
 }
