@@ -1,0 +1,39 @@
+# Jail devfs (Decision 16, amendment i) through the deployed agent (79620ef), 2026-11-17T18:37:34Z
+DHCP jail n8dhcp2 7a1e3658-aced-47d1-bf56-8b9a2478632e (minimal-ssh-151, DHCP NIC on bridge0); no-NIC jail n8plain 2a21c1c0-ce4f-4a21-9462-0a5efb6aa138 (minimal-151)
+allow-list: fd null zero crypto random urandom pts ptmx stdin stdout stderr zfs fuse pf (+ bpf, bpf<N> for DHCP)
+## dhcp: jls devfs_ruleset
+devfs_ruleset=6001
+## dhcp: /dev from the host (ls -a of the devfs mount)
+bpf bpf0 fd null pts random stderr stdin stdout urandom zero zfs 
+## dhcp: /dev inside the jail (jexec ls -A /dev)
+bpf bpf0 fd null pts random stderr stdin stdout urandom zero zfs 
+## dhcp: mount of its /dev
+devfs			/skeptest/skep/jail/7a1e3658-aced-47d1-bf56-8b9a2478632e/dev devfs	rw		0 0
+## plain: jls devfs_ruleset
+devfs_ruleset=5
+## plain: /dev from the host (ls -a of the devfs mount)
+fd null pts random stderr stdin stdout urandom zero zfs 
+## plain: /dev inside the jail (jexec ls -A /dev)
+fd null pts random stderr stdin stdout urandom zero zfs 
+## plain: mount of its /dev
+devfs			/skeptest/skep/jail/2a21c1c0-ce4f-4a21-9462-0a5efb6aa138/dev devfs	rw		0 0
+## ruleset 6001 now
+100 include 1
+200 include 2
+300 include 3
+400 include 4
+500 path pf unhide
+600 path bpf* unhide
+## the agent's guard log lines (daemon.log)
+{"time":"2026-11-17T13:37:13.434703615-05:00","level":"INFO","msg":"hostops: the jail's /dev holds only the allow-list","event":"jail_devfs_checked","container_id":"7a1e3658-aced-47d1-bf56-8b9a2478632e","ruleset":6001,"entries":"bpf bpf0 fd null pts random stderr stdin stdout urandom zero zfs"}
+{"time":"2026-11-17T13:37:15.552719736-05:00","level":"INFO","msg":"hostops: the jail's /dev holds only the allow-list","event":"jail_devfs_checked","container_id":"2a21c1c0-ce4f-4a21-9462-0a5efb6aa138","ruleset":5,"entries":"fd null pts random stderr stdin stdout urandom zero zfs"}
+
+## Result
+Both jails' /dev hold only allow-listed entries, the same from the host
+and from inside. The DHCP jail (ruleset 6001) has exactly the no-NIC
+jail's entries (ruleset 5) plus bpf and bpf0. crypto, ptmx, fuse, and pf
+are on the allow-list but absent: the guard refuses extras, not missing
+entries, and pf is not loaded on hearst. The agent logged
+jail_devfs_checked for each start, before /etc/rc, with the same lists.
+No static address was used (no approved range); the non-DHCP comparison
+is the no-NIC jail, as Andy asked.
