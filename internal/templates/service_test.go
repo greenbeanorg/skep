@@ -110,7 +110,9 @@ func TestCreateAndDeleteTemplate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if created.Template.Provisioned || created.Task.Type != models.TaskTemplateCreate || created.Template.Packages[0] != "FreeBSD-set-minimal" {
+	// The reply's template is a snapshot that can be read after the task
+	// has finished, so its Provisioned is not asserted (amendment k, as Q5).
+	if created.Task.Type != models.TaskTemplateCreate || created.Template.Packages[0] != "FreeBSD-set-minimal" {
 		t.Fatalf("created = %+v", created)
 	}
 	task := f.wait(created.Task.ID)
