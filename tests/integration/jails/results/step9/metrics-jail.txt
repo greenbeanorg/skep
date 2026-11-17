@@ -1,0 +1,27 @@
+# /metrics with a running jail, 2026-11-17T22:41:45Z
+started
+-- as s7viewer:
+HTTP 200
+-- as s7oper:
+HTTP 200
+/containers: [
+ {
+  "id": "c5d71062-66f8-4008-862e-b5b01e963245",
+  "name": "s9dhcp",
+  "state": "running",
+  "cpu_percent": 0,
+  "cpu_time_seconds": 0,
+  "resident_memory_bytes": 36753408,
+  "processes": 10,
+  "open_file_slots": 320,
+  "disk_used_bytes": 286208,
+  "disk_referenced_bytes": 84836352
+ }
+]
+-- rctl -u on the host for comparison:
+cputime=0
+memoryuse=31940608
+maxproc=8
+openfiles=320
+vmemoryuse=129576960
+pcpu=0

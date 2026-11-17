@@ -1,0 +1,45 @@
+# Check 3: snapshot, rollback, delete (s9dhcp c5d71062-66f8-4008-862e-b5b01e963245), 2026-11-17T22:42:20Z
+HTTP 202
+container.snapshot.create succeeded  
+result: {"consistency": "crash_consistent", "container_id": "c5d71062-66f8-4008-862e-b5b01e963245", "datasets": [{"name": "skeptest/skep/jail/c5d71062-66f8-4008-862e-b5b01e963245@skep-cf3db062-1e27-408a-8043-ea5c354650e5", "type": "snapshot", "used_bytes": 0}], "name": "s1", "snapshot_id": "cf3db062-1e27-408a-8043-ea5c354650e5"}
+container.stop succeeded  
+result: {"container_id": "c5d71062-66f8-4008-862e-b5b01e963245", "state": "stopped"}
+container.snapshot.create succeeded  
+result: {"consistency": "consistent", "container_id": "c5d71062-66f8-4008-862e-b5b01e963245", "datasets": [{"name": "skeptest/skep/jail/c5d71062-66f8-4008-862e-b5b01e963245@skep-0fa43c3f-ffdb-453f-9f2f-e8e2499e65be", "type": "snapshot", "used_bytes": 0}], "name": "s2", "snapshot_id": "0fa43c3f-ffdb-453f-9f2f-e8e2499e65be"}
+-- snapshots (API):
+cf3db062-1e27-408a-8043-ea5c354650e5 s1 crash_consistent provisioned=True exists=True
+0fa43c3f-ffdb-453f-9f2f-e8e2499e65be s2 consistent provisioned=True exists=True
+-- snapshots (zfs):
+skeptest/skep/jail/c5d71062-66f8-4008-862e-b5b01e963245@skep-cf3db062-1e27-408a-8043-ea5c354650e5	cf3db062-1e27-408a-8043-ea5c354650e5
+skeptest/skep/jail/c5d71062-66f8-4008-862e-b5b01e963245@skep-0fa43c3f-ffdb-453f-9f2f-e8e2499e65be	0fa43c3f-ffdb-453f-9f2f-e8e2499e65be
+-- rollback to s1 without destroy_newer:
+
+HTTP 409
+-- rollback to s1 with destroy_newer:
+container.snapshot.rollback succeeded  
+result: {"container_id": "c5d71062-66f8-4008-862e-b5b01e963245", "datasets_destroyed": [{"name": "skeptest/skep/jail/c5d71062-66f8-4008-862e-b5b01e963245@skep-0fa43c3f-ffdb-453f-9f2f-e8e2499e65be", "type": "snapshot", "used_bytes": 0}], "destroyed_snapshots": [{"id": "0fa43c3f-ffdb-453f-9f2f-e8e2499e65be", "name": "s2"}], "name": "s1", "snapshot_id": "cf3db062-1e27-408a-8043-ea5c354650e5"}
+-- marker after rollback (host view): one
+-- started_once after rollback: True
+-- SSH key update after rollback:
+
+HTTP 409
+-- zfs after rollback:
+skeptest/skep/jail/c5d71062-66f8-4008-862e-b5b01e963245@skep-cf3db062-1e27-408a-8043-ea5c354650e5
+-- delete s1:
+container.snapshot.delete succeeded  
+result: {"container_id": "c5d71062-66f8-4008-862e-b5b01e963245", "datasets_destroyed": [{"name": "skeptest/skep/jail/c5d71062-66f8-4008-862e-b5b01e963245@skep-cf3db062-1e27-408a-8043-ea5c354650e5", "type": "snapshot", "used_bytes": 1024}], "name": "s1", "snapshot_id": "cf3db062-1e27-408a-8043-ea5c354650e5"}
+-- zfs after delete: []
+-- API list: []
+
+## Repeat of the two 409s with their bodies (my first record cut them off), 2026-11-17T22:42:35Z
+container.snapshot.create succeeded  
+container.snapshot.create succeeded  
+-- rollback to r1 without destroy_newer:
+{"error":{"code":"snapshot_not_latest","message":"the snapshot is not the latest; rolling back to it destroys the newer ones, which needs destroy_newer","request_id":"2cb66d07a57d541b481b9e7a","details":{"newer_snapshot_ids":["0b2be1a8-2905-4107-acc4-dde9859a59bb"],"snapshot_id":"16996495-5aca-4420-8c01-1f05e89bf1ad"}}}
+HTTP 409
+-- SSH key update after the first start:
+{"error":{"code":"container_started","message":"the jail has started at least once, so Skep no longer writes into its tree (an SSH key change is the jail's own business now)","request_id":"7ce1af9f9866a75dc54a33fc","details":{"container_id":"c5d71062-66f8-4008-862e-b5b01e963245"}}}
+HTTP 409
+container.snapshot.delete succeeded  
+container.snapshot.delete succeeded  
+-- zfs: []

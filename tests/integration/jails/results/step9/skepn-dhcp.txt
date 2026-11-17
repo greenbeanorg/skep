@@ -1,0 +1,27 @@
+# Check 1: skep<slot> in a DHCP jail, /metrics (003a33f), 2026-11-17T22:41:33Z
+HTTP 202
+container s9dhcp c5d71062-66f8-4008-862e-b5b01e963245
+nics: [{'id': 'bc274be2-c49c-4caa-996e-0ab4782f2488', 'slot': 0, 'bridge': 'bridge0', 'mac_address': '02:46:b1:b6:e7:cf', 'interface': 'skep0', 'ipv4': {'mode': 'dhcp'}}]
+container.create succeeded  
+result: {"container_id": "c5d71062-66f8-4008-862e-b5b01e963245", "dataset": "skeptest/skep/jail/c5d71062-66f8-4008-862e-b5b01e963245", "name": "s9dhcp", "nics": 1, "origin": "skeptest/skep/templates/dbf4243a-81fe-4914-8f7a-fd0a768476aa@skep-base", "ssh_key_installed": true, "template_id": "dbf4243a-81fe-4914-8f7a-fd0a768476aa"}
+container.start succeeded  
+result: {"container_id": "c5d71062-66f8-4008-862e-b5b01e963245", "epairs": {"0": "epair0a"}, "jid": 37, "state": "running"}
+-- rc.conf Skep wrote (host view):
+# Written by Skep before this jail's first start (ADR 0010 decision 13).
+ifconfig_skep0="SYNCDHCP"
+sshd_enable="YES"
+sshd_flags="-o PermitRootLogin=prohibit-password"
+-- host interfaces:
+vtnet0 vtnet1 lo0 bridge0 epair0a
+epair0a skep:c5d71062-66f8-4008-862e-b5b01e963245:0
+-- inside the jail (host ifconfig -j, read-only):
+lo0 skep0
+skep0: flags=1008843<UP,BROADCAST,RUNNING,SIMPLEX,MULTICAST,LOWER_UP> metric 0 mtu 1500
+	options=60001b<RXCSUM,TXCSUM,VLAN_MTU,VLAN_HWTAGGING,RXCSUM_IPV6,TXCSUM_IPV6>
+	ether 02:46:b1:b6:e7:cf
+	hwaddr 58:9c:fc:10:fd:4c
+	inet 10.79.60.106 netmask 0xffffff00 broadcast 10.79.60.255
+	groups: epair
+	media: Ethernet 10Gbase-T (10Gbase-T <full-duplex>)
+	status: active
+	nd6 options=29<PERFORMNUD,IFDISABLED,AUTO_LINKLOCAL>

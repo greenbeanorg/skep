@@ -1,0 +1,20 @@
+# Check 7: permissions (s7viewer = viewer), 2026-11-17T22:43:51Z
+-- s7viewer GET /containers/c5d71062-66f8-4008-862e-b5b01e963245/snapshots:  {"items":[{"id":"25622413-d2e6-444c-91d3-d10e6367d53f","resource_kind":"container","resource_id":"c5d71062-66f8-4008-862
+-- s7viewer GET /containers/c5d71062-66f8-4008-862e-b5b01e963245/snapshots/25622413-d2e6-444c-91d3-d10e6367d53f:  {"id":"25622413-d2e6-444c-91d3-d10e6367d53f","resource_kind":"container","resource_id":"c5d71062-66f8-4008-862e-b5b01e96
+-- s7viewer POST /containers/c5d71062-66f8-4008-862e-b5b01e963245/snapshots:  {"error":{"code":"forbidden","message":"your role does not allow this","request_id":"b3806b3af943ac6b5f36ea2e","details"
+-- s7viewer POST /containers/c5d71062-66f8-4008-862e-b5b01e963245/snapshots/25622413-d2e6-444c-91d3-d10e6367d53f/rollback:  {"error":{"code":"forbidden","message":"your role does not allow this","request_id":"13f1262625466d6e601f4a6f","details"
+-- s7viewer DELETE /containers/c5d71062-66f8-4008-862e-b5b01e963245/snapshots/25622413-d2e6-444c-91d3-d10e6367d53f:  {"error":{"code":"forbidden","message":"your role does not allow this","request_id":"54a964891089f9298a4631b3","details"
+-- s7viewer POST /containers/c5d71062-66f8-4008-862e-b5b01e963245/clone:  {"error":{"code":"forbidden","message":"your role does not allow this","request_id":"64fd337b17687a51ec741ce6","details"
+-- audit (as s7oper), the last authz.deny entries:
+authz.deny denied s7viewer container:write /api/v1/containers/{id}/clone
+authz.deny denied s7viewer container:snapshot /api/v1/containers/{id}/snapshots/{sid}
+authz.deny denied s7viewer container:snapshot /api/v1/containers/{id}/snapshots/{sid}/rollback
+authz.deny denied s7viewer container:snapshot /api/v1/containers/{id}/snapshots
+-- status codes:
+s7viewer GET /snapshots -> 200
+s7viewer GET /snapshots/25622413-d2e6-444c-91d3-d10e6367d53f -> 200
+s7viewer POST /snapshots -> 403
+s7viewer POST /snapshots/25622413-d2e6-444c-91d3-d10e6367d53f/rollback -> 403
+s7viewer DELETE /snapshots/25622413-d2e6-444c-91d3-d10e6367d53f -> 403
+s7viewer POST /clone -> 403
+snapshots still on s9dhcp: ['c9dhcp']

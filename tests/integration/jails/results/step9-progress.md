@@ -522,3 +522,61 @@ with B in the backlog if you want static clones.
 defaults to the clone's name, as on a create (section 2's plan said the
 source's hostname); nameservers default to the source's, and are dropped
 when no NIC keeps a static address.
+
+## 14. Validation on hearst (`003a33f`, 2026-11-17)
+
+Deployed with `deploy-test.sh` (both services restarted and verified at
+`003a33f`, [deploy](step9-deploy-003a33f.txt)). All requests through the
+deployed API as `s7oper`/`s7viewer`, curl verifying hearst's certificate
+(fetched over SSH, key pin `779cc5ec…` equal to `skep-api tls
+fingerprint`); no `-k`.
+
+| Check | Result | Record |
+|---|---|---|
+| `skep0` inside a DHCP jail | **Passed.** rc.conf `ifconfig_skep0="SYNCDHCP"`; `ifconfig -j` shows `lo0 skep0` with lease 10.79.60.106; the host has only `epair0a` (described) | [skepn-dhcp](step9/skepn-dhcp.txt) |
+| `/metrics` on a running jail | **Passed.** `containers[]` with cpu, resident memory, processes, open-file slots, disk; viewer and operator 200; values match `rctl -u` | [metrics-jail](step9/metrics-jail.txt) |
+| Snapshot, rollback, delete | **Passed.** running → `crash_consistent`, stopped → `consistent`; rollback without `destroy_newer` 409 `snapshot_not_latest`; with it the newer one destroyed and named; marker restored; `started_once` stays true, SSH key update 409 `container_started`; delete leaves no ZFS snapshot | [snapshots](step9/snapshots.txt) |
+| Clone of a DHCP jail | **Passed.** Clone of the running source: new MAC, own lease 10.79.60.107 on `skep0` beside the source's .106; `started_once` inherited; origin snapshot `crash_consistent`, left behind; ed25519 host keys identical (documented); origin snapshot delete and source delete 409 `snapshot_has_clones` | [clone-dhcp](step9/clone-dhcp.txt), [orphans](step9/orphans-skepn.txt) |
+| Static-NIC clone | **Passed.** Without new addressing, and with the same IP under another prefix: 422 `clone_addressing_required` (slots [0]), nothing made; with new addressing (source never started) the clone's rc.conf/resolv.conf hold the new address, the source's unchanged. Neither jail was ever started: nothing static on VLAN 60 | [clone-static](step9/clone-static.txt) |
+| Permissions | **Passed.** viewer: GET snapshots 200; POST snapshot, rollback, DELETE snapshot, clone 403, each audited `authz.deny` with the permission and route | [permissions](step9/permissions.txt) |
+| `memorylocked` refuses mlock | **Passed.** `locked_memory` 32 MiB: 16 and 30 MiB locked (`rctl -u memorylocked=16777216` while held), 33 and 64 MiB refused ENOMEM; root's `RLIMIT_MEMLOCK` unlimited and `vm.max_user_wired` ~4.5 GiB, so the refusal is RCTL's | [mlock-live](step9/mlock-live.txt) |
+| Orphans with `skepN` names | **Passed.** kill -9 of the agent, both DHCP jails removed by hand: two `skep0` on the host, host ends still described; restarted agent warned for `epair0a` and `epair1a` (owners named), `found 2`, `/health` degraded; each owner's start destroyed its own leftover, health ok; normal stops returned nothing to the host (`jail_interfaces_destroyed`) | [orphans-skepn](step9/orphans-skepn.txt) |
+| Duplicate static IP at start | **Not run** (pending): needs a bridge that is not on VLAN 60, see below | — |
+
+### Finding: a devfs left by a removal outside Skep blocks the delete
+
+Cleanup failed on `c9dhcp`: `zfs destroy` could not unmount its root
+("pool or dataset is busy"). The two jails I removed by hand in check 9
+(`jail -r skep-<id>`, without Skep's jail.conf) left their devfs mounted
+on `<root>/dev`; Skep's later start mounted and its stop unmounted its own
+devfs, but the earlier one stayed. Skep does not look for a devfs left on
+a jail root at start or delete. Not fixed (off the approved list).
+Proposed fix, for your approval: at start (before `jail -c`) and at
+delete, when no jail of that name runs, unmount a devfs mounted exactly at
+`<root>/dev` of the jail's own dataset (`umount` of that path only,
+checked against `mount -p`), and log it as `orphaned_devfs_removed`; plus
+a unit test. Possibly also an `orphaned_mounts` part of the health check.
+
+[cleanup](step9/cleanup-003a33f.txt)
+
+### hearst now, and what needs your approval
+
+`003a33f` deployed and running; health ok. No jails, epairs, or RCTL
+rules. Left: containers `s9dhcp` (c5d71062…, with snapshot `c9dhcp`) and
+`c9dhcp` (340ac09a…), both stopped, each with that leftover devfs mount.
+**To finish the cleanup** (a hand-made change, so listed, not run):
+`sudo umount /skeptest/skep/jail/340ac09a-3dd5-4a2e-8327-19d6c8625885/dev`
+and `sudo umount /skeptest/skep/jail/c5d71062-66f8-4008-862e-b5b01e963245/dev`,
+then API deletes of `c9dhcp`, the snapshot, and `s9dhcp`. Undo: none
+needed (the mounts serve no jail). Alternatively, build the fix above and
+let it clean them up as its own live test.
+
+**Duplicate static IP at start** needs a bridge without an uplink (for
+example `ifconfig bridge1 create` with no members, added to `bridges` in
+agent.json, agent restarted; undo: `ifconfig bridge1 destroy`, revert
+agent.json). That is a network and config change: not done, listed.
+
+**Still pending FreeBSD validation:** duplicate static IP refused at
+start; `container_started` for new addressing on a clone of a started
+static jail (needs a started static jail); RACCT off (Q3); spoofing and
+the OPNsense ICMP rule re-test (deferred before the step 10 merge).

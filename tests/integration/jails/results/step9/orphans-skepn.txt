@@ -1,0 +1,44 @@
+# Check 9: orphans with skep<slot> names: kill -9 of the agent, both DHCP jails removed by hand, 2026-11-17T22:44:53Z
+-- before: vtnet0 vtnet1 lo0 bridge0 epair0a epair1a | jails: skep-c5d71062-66f8-4008-862e-b5b01e963245 skep-340ac09a-3dd5-4a2e-8327-19d6c8625885 skep-d557995e-aebc-4171-be9a-b78a642dae0a 
+agent pid 12679
+jail -r s9dhcp exit 0
+jail -r c9dhcp exit 0
+-- host after the hand removal: vtnet0 vtnet1 lo0 bridge0 epair0a epair1a skep0 skep0
+-- skep0 interfaces on the host: 2
+-- epair host ends: epair0a=[skep:c5d71062-66f8-4008-862e-b5b01e963245:0] epair1a=[skep:340ac09a-3dd5-4a2e-8327-19d6c8625885:0] skep0=[] skep0=[] 
+-- agent: 15897 /usr/local/sbin/skep-agent -data-dir /var/db/skep
+-- agent log of the restart:
+-- health:
+degraded orphaned_interfaces={'status': 'degraded', 'critical': False, 'error': '2 interface(s) with a skep: description belong to a jail or VM that is not running; see the agent log'}
+-- agent log of the restart (daemon.log):
+{"time":"2026-11-17T16:53:21.241421796-05:00","level":"INFO","msg":"containers: observed the jails","containers":0,"running":0,"half_started_removed":0}
+{"time":"2026-11-17T16:53:21.244822736-05:00","level":"INFO","msg":"orphans: interface check finished","event":"orphaned_interface_check","found":0}
+{"time":"2026-11-17T17:41:03.933049161-05:00","level":"INFO","msg":"starting skep-agent","version":"0.1.0","commit":"003a33f","dev_mode":false,"data_dir":"/var/db/skep"}
+{"time":"2026-11-17T17:41:03.941823389-05:00","level":"INFO","msg":"containers: observed the jails","containers":0,"running":0,"half_started_removed":0}
+{"time":"2026-11-17T17:41:03.945517502-05:00","level":"INFO","msg":"orphans: interface check finished","event":"orphaned_interface_check","found":0}
+{"time":"2026-11-17T17:44:59.602236729-05:00","level":"INFO","msg":"starting skep-agent","version":"0.1.0","commit":"003a33f","dev_mode":false,"data_dir":"/var/db/skep"}
+{"time":"2026-11-17T17:44:59.628016409-05:00","level":"INFO","msg":"containers: observed the jails","containers":5,"running":1,"half_started_removed":0}
+{"time":"2026-11-17T17:44:59.637260394-05:00","level":"WARN","msg":"orphans: an interface Skep made belongs to a jail or VM that is not running; it is destroyed by the owner's next start, stop, or delete","event":"orphaned_interface","interface":"epair0a","kind":"epair","owner_id":"c5d71062-66f8-4008-862e-b5b01e963245","slot":0,"owner_exists":true} {"time":"2026-11-17T17:44:59.637280021-05:00","level":"WARN","msg":"orphans: an interface Skep made belongs to a jail or VM that is not running; it is destroyed by the owner's next start, stop, or delete","event":"orphaned_interface","interface":"epair1a","kind":"epair","owner_id":"340ac09a-3dd5-4a2e-8327-19d6c8625885","slot":0,"owner_exists":true} {"time":"2026-11-17T17:44:59.637283378-05:00","level":"INFO","msg":"orphans: interface check finished","event":"orphaned_interface_check","found":2}
+-- start c9dhcp (owner of epair1a):
+container.start succeeded  
+result: {"container_id": "340ac09a-3dd5-4a2e-8327-19d6c8625885", "epairs": {"0": "epair1a"}, "jid": 41, "state": "running"}
+   host: vtnet0 vtnet1 lo0 bridge0 epair0a skep0 epair1a | skep0 on host: 1
+-- start s9dhcp (owner of epair0a):
+container.start succeeded  
+result: {"container_id": "c5d71062-66f8-4008-862e-b5b01e963245", "epairs": {"0": "epair0a"}, "jid": 42, "state": "running"}
+   host: vtnet0 vtnet1 lo0 bridge0 epair1a epair0a | skep0 on host: 0
+-- log:
+{"time":"2026-11-17T17:45:34.546918445-05:00","level":"WARN","msg":"hostops: destroyed epairs an earlier run of the jail left","event":"orphaned_interface_removed","container_id":"340ac09a-3dd5-4a2e-8327-19d6c8625885","interfaces":["epair1a"]}
+{"time":"2026-11-17T17:45:36.074040209-05:00","level":"WARN","msg":"hostops: destroyed epairs an earlier run of the jail left","event":"orphaned_interface_removed","container_id":"c5d71062-66f8-4008-862e-b5b01e963245","interfaces":["epair0a"]}
+-- leases: s9dhcp 10.79.60.106, c9dhcp 10.79.60.107
+-- health: ok orphaned_interfaces=ok
+
+## Normal stop: the epairs go before jail -r, no skep0 returns
+container.stop succeeded  
+container.stop succeeded  
+-- host: vtnet0 vtnet1 lo0 bridge0 | skep0 on host: 0
+-- log: 3 jail_interfaces_destroyed lines so far; last: {"time":"2026-11-17T17:45:55.175711718-05:00","level":"INFO","msg":"hostops: destroyed the jail's epairs before removing it","event":"jail_interfaces_destroyed","container_id":"c5d71062-66f8-4008-862e-b5b01e963245","interfaces":["epair0a"]}
+
+## Delete the clone's source while the clone exists
+{"error":{"code":"snapshot_has_clones","message":"a linked clone depends on the snapshot; delete the clone first","request_id":"f6a39eb0d8b7a7b4a7a85697","details":{"clones":[{"id":"340ac09a-3dd5-4a2e-8327-19d6c8625885","name":"c9dhcp"}]}}}
+HTTP 409
