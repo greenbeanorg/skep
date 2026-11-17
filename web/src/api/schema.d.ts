@@ -1030,15 +1030,18 @@ export interface paths {
         };
         /**
          * Current resource use of the node
-         * @description Requires `system:read`, `vm:read`, and `storage:read`: the values
-         *     name pools and VMs. Current values only, with no history (ADR 0010
-         *     decision 15): the space and capacity of every allow-listed pool
-         *     and directory pool against the `storage_capacity` thresholds, the
-         *     datasets whose key is not loaded, each VM's disk use, and, while a
-         *     VM runs, the CPU time and resident memory of its bhyve process.
-         *     The agent samples every 30 seconds; a sample older than a minute
-         *     is replaced before answering. `observed_at` says when the values
-         *     were read. Per-jail values come with jails (phase 7b).
+         * @description Requires `system:read`, `vm:read`, `storage:read`, and
+         *     `container:read`: the values name pools, VMs, and jails. Current
+         *     values only, with no history (ADR 0010 decision 15): the space and
+         *     capacity of every allow-listed pool and directory pool against the
+         *     `storage_capacity` thresholds, the datasets whose key is not
+         *     loaded, each VM's disk use, and, while a VM runs, the CPU time and
+         *     resident memory of its bhyve process; each jail's root dataset
+         *     space and, while it runs on a host with RACCT enabled, its CPU,
+         *     resident memory, process count, and descriptor-table slots as
+         *     `rctl -u` reports them. The agent samples every 30 seconds; a
+         *     sample older than a minute is replaced before answering.
+         *     `observed_at` says when the values were read.
          */
         get: operations["getMetrics"];
         put?: never;
@@ -1601,6 +1604,49 @@ export interface components {
             capacity_fail_percent: number;
             pools: components["schemas"]["PoolMetrics"][];
             vms: components["schemas"]["VMMetrics"][];
+            containers: components["schemas"]["ContainerMetrics"][];
+        };
+        /**
+         * @description One jail's current use. The RACCT fields are present only while
+         *     the jail runs on a host with RACCT enabled (`System.containers.rctl`);
+         *     the disk fields are always present.
+         */
+        ContainerMetrics: {
+            /** Format: uuid */
+            id: string;
+            name: string;
+            state: string;
+            /** @description RACCT `pcpu`, a recent average where 100 is one busy CPU; approximate. */
+            cpu_percent?: number;
+            /** @description CPU time of the jail's processes (RACCT `cputime`), in whole seconds. */
+            cpu_time_seconds?: number;
+            /**
+             * Format: int64
+             * @description RACCT `memoryuse`, the jail's resident memory.
+             */
+            resident_memory_bytes?: number;
+            /** @description The number of processes in the jail (RACCT `maxproc`). */
+            processes?: number;
+            /**
+             * @description RACCT `openfiles`: the descriptor-table slots of the jail's
+             *     processes, the figure `limits.open_files` applies to. Not the
+             *     number of open files: a table grows in steps (40, 128, 256
+             *     slots) and never shrinks.
+             */
+            open_file_slots?: number;
+            /**
+             * Format: int64
+             * @description Space the jail root holds, its snapshots included.
+             */
+            disk_used_bytes: number;
+            /**
+             * Format: int64
+             * @description Space the jail root references, including the blocks it shares
+             *     with its template: what `limits.disk_quota` applies to.
+             */
+            disk_referenced_bytes: number;
+            /** @description Which values could not be read. */
+            error?: string;
         };
         PoolMetrics: {
             name: string;

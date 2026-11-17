@@ -1839,17 +1839,20 @@ paths:
       operationId: getMetrics
       summary: Current resource use of the node
       x-skep-permission: system:read
-      x-skep-also-requires: [vm:read, storage:read]
+      x-skep-also-requires: [vm:read, storage:read, container:read]
       description: |
-        Requires `system:read`, `vm:read`, and `storage:read`: the values
-        name pools and VMs. Current values only, with no history (ADR 0010
-        decision 15): the space and capacity of every allow-listed pool
-        and directory pool against the `storage_capacity` thresholds, the
-        datasets whose key is not loaded, each VM's disk use, and, while a
-        VM runs, the CPU time and resident memory of its bhyve process.
-        The agent samples every 30 seconds; a sample older than a minute
-        is replaced before answering. `observed_at` says when the values
-        were read. Per-jail values come with jails (phase 7b).
+        Requires `system:read`, `vm:read`, `storage:read`, and
+        `container:read`: the values name pools, VMs, and jails. Current
+        values only, with no history (ADR 0010 decision 15): the space and
+        capacity of every allow-listed pool and directory pool against the
+        `storage_capacity` thresholds, the datasets whose key is not
+        loaded, each VM's disk use, and, while a VM runs, the CPU time and
+        resident memory of its bhyve process; each jail's root dataset
+        space and, while it runs on a host with RACCT enabled, its CPU,
+        resident memory, process count, and descriptor-table slots as
+        `rctl -u` reports them. The agent samples every 30 seconds; a
+        sample older than a minute is replaced before answering.
+        `observed_at` says when the values were read.
       parameters:
         - $ref: "#/components/parameters/Background"
       responses:
@@ -2806,7 +2809,7 @@ components:
         compressratio: { type: string }
     Metrics:
       type: object
-      required: [node_id, observed_at, capacity_warn_percent, capacity_fail_percent, pools, vms]
+      required: [node_id, observed_at, capacity_warn_percent, capacity_fail_percent, pools, vms, containers]
       properties:
         node_id: { type: string }
         observed_at: { type: string, format: date-time }
@@ -2818,6 +2821,53 @@ components:
         vms:
           type: array
           items: { $ref: "#/components/schemas/VMMetrics" }
+        containers:
+          type: array
+          items: { $ref: "#/components/schemas/ContainerMetrics" }
+    ContainerMetrics:
+      type: object
+      description: |
+        One jail's current use. The RACCT fields are present only while
+        the jail runs on a host with RACCT enabled (`System.containers.rctl`);
+        the disk fields are always present.
+      required: [id, name, state, disk_used_bytes, disk_referenced_bytes]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        state: { type: string }
+        cpu_percent:
+          type: integer
+          description: RACCT `pcpu`, a recent average where 100 is one busy CPU; approximate.
+        cpu_time_seconds:
+          type: number
+          description: CPU time of the jail's processes (RACCT `cputime`), in whole seconds.
+        resident_memory_bytes:
+          type: integer
+          format: int64
+          description: RACCT `memoryuse`, the jail's resident memory.
+        processes:
+          type: integer
+          description: The number of processes in the jail (RACCT `maxproc`).
+        open_file_slots:
+          type: integer
+          description: |
+            RACCT `openfiles`: the descriptor-table slots of the jail's
+            processes, the figure `limits.open_files` applies to. Not the
+            number of open files: a table grows in steps (40, 128, 256
+            slots) and never shrinks.
+        disk_used_bytes:
+          type: integer
+          format: int64
+          description: Space the jail root holds, its snapshots included.
+        disk_referenced_bytes:
+          type: integer
+          format: int64
+          description: |
+            Space the jail root references, including the blocks it shares
+            with its template: what `limits.disk_quota` applies to.
+        error:
+          type: string
+          description: Which values could not be read.
     PoolMetrics:
       type: object
       required: [name, type, health, size_bytes, allocated_bytes, available_bytes, capacity_percent, capacity]

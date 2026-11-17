@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/greenbeanorg/skep/pkg/models"
 )
@@ -234,4 +235,91 @@ func (h *host) SetJailQuota(ctx context.Context, pool, containerID string, bytes
 		return err
 	}
 	return nil
+}
+
+// JailUsage is a running jail's resource use as RACCT reports it.
+type JailUsage struct {
+	// CPUPercent is RACCT's pcpu: a recent average, 100 per busy CPU.
+	CPUPercent int
+	// CPUTime is the CPU time of the jail's processes (RACCT cputime,
+	// whole seconds).
+	CPUTime time.Duration
+	// ResidentBytes is memoryuse, the jail's resident memory.
+	ResidentBytes int64
+	// Processes is maxproc, the jail's process count.
+	Processes int
+	// OpenFiles is openfiles: descriptor-table slots charged to the
+	// jail's processes, not open files.
+	OpenFiles int
+}
+
+// JailUsage implements Jails.
+func (h *host) JailUsage(ctx context.Context, containerID string) (JailUsage, error) {
+	name, err := JailName(containerID)
+	if err != nil {
+		return JailUsage{}, err
+	}
+	info, err := h.RctlInfo(ctx)
+	if err != nil {
+		return JailUsage{}, err
+	}
+	if !info.Enabled {
+		return JailUsage{}, rctlUnavailable(containerID)
+	}
+	// rctl -u reports zeros for a name no jail has, so the jail must
+	// exist before and after the read for the figures to be its own.
+	notRunning := fmt.Errorf("jail %s: %w", name, models.ErrNotFound)
+	if ok, err := h.jailExists(ctx, name); err != nil {
+		return JailUsage{}, err
+	} else if !ok {
+		return JailUsage{}, notRunning
+	}
+	out, err := h.run.Run(ctx, rctlBinary, "-u", "jail:"+name)
+	if err != nil {
+		return JailUsage{}, err
+	}
+	u, err := parseRctlUsage(out)
+	if err != nil {
+		return JailUsage{}, fmt.Errorf("hostops: rctl -u jail:%s: %w", name, err)
+	}
+	if ok, err := h.jailExists(ctx, name); err != nil {
+		return JailUsage{}, err
+	} else if !ok {
+		return JailUsage{}, notRunning
+	}
+	return u, nil
+}
+
+// parseRctlUsage reads rctl -u output: one resource=value per line, all
+// integers. The resources Skep reports must be present; others are
+// ignored.
+func parseRctlUsage(out []byte) (JailUsage, error) {
+	vals := map[string]int64{}
+	for _, line := range strings.Split(string(out), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		k, v, ok := strings.Cut(line, "=")
+		if !ok {
+			return JailUsage{}, fmt.Errorf("unexpected line %q", line)
+		}
+		n, err := strconv.ParseInt(v, 10, 64)
+		if err != nil || n < 0 {
+			return JailUsage{}, fmt.Errorf("unexpected value in %q", line)
+		}
+		vals[k] = n
+	}
+	for _, k := range []string{"cputime", rctlPCPU, rctlMemoryUse, rctlMaxProc, rctlOpenFiles} {
+		if _, ok := vals[k]; !ok {
+			return JailUsage{}, fmt.Errorf("no %s", k)
+		}
+	}
+	return JailUsage{
+		CPUPercent:    int(vals[rctlPCPU]),
+		CPUTime:       time.Duration(vals["cputime"]) * time.Second,
+		ResidentBytes: vals[rctlMemoryUse],
+		Processes:     int(vals[rctlMaxProc]),
+		OpenFiles:     int(vals[rctlOpenFiles]),
+	}, nil
 }

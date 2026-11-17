@@ -37,9 +37,12 @@ holds (snapshots included), what its disks reference now, and, while it
 runs, the CPU time and resident memory of its bhyve process. Last comes the
 dataset inventory.
 
-The same values come from `GET /api/v1/metrics`. That endpoint needs
-`system:read`, `vm:read`, and `storage:read`, because it names pools and
-VMs. The agent samples every 30 seconds and never answers with a sample
+The same values come from `GET /api/v1/metrics`, together with each
+jail's root dataset space and, while a jail runs on a host with RACCT,
+its CPU, resident memory, process count, and descriptor-table slots from
+`rctl -u` (see [Jails](jails.md#limits)). That endpoint needs
+`system:read`, `vm:read`, `storage:read`, and `container:read`, because
+it names pools, VMs, and jails. The agent samples every 30 seconds and never answers with a sample
 older than a minute; `observed_at` says when the values were read.
 
 | Value | Read from |
@@ -176,7 +179,7 @@ See [skepctl](skepctl.md).
 | `vm:snapshot` | Take, roll back, and delete VM snapshots | yes | no |
 | `vm:write` and `vm:snapshot` | Clone a VM | yes | no |
 | `vm:delete` as well as `vm:write` | Remove a disk from a VM (it destroys the zvol) | yes | no |
-| `system:read`, `vm:read`, and `storage:read` | `GET /metrics` | yes | yes |
+| `system:read`, `vm:read`, `storage:read`, and `container:read` | `GET /metrics` | yes | yes |
 | `storage:write` | Nothing yet in this release (jail templates, removing unowned datasets: phase 7b) | no | no |
 
 Every refusal is in the access audit log; every task, with what it

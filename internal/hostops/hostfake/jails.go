@@ -433,6 +433,22 @@ func (j fakeJails) RctlInfo(context.Context) (hostops.RctlInfo, error) {
 	return hostops.RctlInfo{Enabled: !f.RacctDisabled, CPUs: cpus}, nil
 }
 
+// JailUsage implements hostops.Jails: JailUsages[id] for a running jail
+// (zeros when unset).
+func (j fakeJails) JailUsage(_ context.Context, containerID string) (hostops.JailUsage, error) {
+	f := j.f
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.RacctDisabled {
+		return hostops.JailUsage{}, &models.Error{Code: models.CodeRctlUnavailable, Message: "RACCT is disabled (simulated)"}
+	}
+	if _, ok := f.jails[containerID]; !ok {
+		return hostops.JailUsage{}, fmt.Errorf("jail of %s: %w", containerID, models.ErrNotFound)
+	}
+	f.record("rctl -u jail:skep-%s", containerID)
+	return f.JailUsages[containerID], nil
+}
+
 // RctlRules returns the simulated RCTL rules on a container's jail.
 func (f *Fake) RctlRules(containerID string) []string {
 	f.mu.Lock()

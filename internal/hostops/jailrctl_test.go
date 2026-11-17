@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/greenbeanorg/skep/pkg/models"
 )
@@ -176,5 +177,80 @@ func TestParseDatasetsRefQuota(t *testing.T) {
 	list, err := parseDatasets([]byte(strings.Join(f, "\t") + "\n"))
 	if err != nil || len(list) != 1 || list[0].RefQuotaBytes != 512<<20 {
 		t.Fatalf("parse = %+v, %v", list, err)
+	}
+}
+
+// rctlUsageOutput is rctl -u of a jail on 15.1 (hearst), trimmed.
+const rctlUsageOutput = `cputime=12
+datasize=4096
+memoryuse=537001984
+memorylocked=0
+maxproc=3
+openfiles=168
+vmemoryuse=1610612736
+pcpu=48
+wallclock=96634
+`
+
+func TestJailUsage(t *testing.T) {
+	ctx := context.Background()
+	h, run := rctlHost(t, true)
+	j := "skep-" + ctrA
+	run.answers["jls -j "+j+" jid"] = "12\n"
+	run.answers["rctl -u jail:"+j] = rctlUsageOutput
+	u, err := h.JailUsage(ctx, ctrA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := JailUsage{CPUPercent: 48, CPUTime: 12 * time.Second, ResidentBytes: 537001984, Processes: 3, OpenFiles: 168}
+	if u != want {
+		t.Fatalf("usage = %+v, want %+v", u, want)
+	}
+	wantCalls := []string{"jls -j " + j + " jid", "rctl -u jail:" + j, "jls -j " + j + " jid"}
+	if strings.Join(run.calls, "|") != strings.Join(wantCalls, "|") {
+		t.Fatalf("calls = %q", run.calls)
+	}
+
+	// Not running: rctl -u is not asked (it would report zeros).
+	gone := &CommandError{Name: "jls", ExitCode: 1, Stderr: "jls: jail \"" + j + "\" not found", Err: errors.New("exit status 1")}
+	run.calls = nil
+	run.answers["jls -j "+j+" jid"] = gone
+	if _, err := h.JailUsage(ctx, ctrA); !errors.Is(err, models.ErrNotFound) {
+		t.Fatalf("not running: %v", err)
+	}
+	if len(run.calls) != 1 {
+		t.Fatalf("calls = %q", run.calls)
+	}
+
+	// Gone after the read: the zeros are not reported.
+	run.answers["jls -j "+j+" jid"] = []any{"12\n", gone}
+	run.answers["rctl -u jail:"+j] = strings.ReplaceAll(rctlUsageOutput, "maxproc=3", "maxproc=0")
+	if _, err := h.JailUsage(ctx, ctrA); !errors.Is(err, models.ErrNotFound) {
+		t.Fatalf("gone after the read: %v", err)
+	}
+}
+
+func TestJailUsageRefusals(t *testing.T) {
+	ctx := context.Background()
+	h, run := rctlHost(t, false)
+	var me *models.Error
+	if _, err := h.JailUsage(ctx, ctrA); !errors.As(err, &me) || me.Code != models.CodeRctlUnavailable {
+		t.Fatalf("RACCT off: %v", err)
+	}
+	if len(run.calls) != 0 {
+		t.Fatalf("calls = %q", run.calls)
+	}
+	h, run = rctlHost(t, true)
+	if _, err := h.JailUsage(ctx, "../x"); err == nil {
+		t.Fatal("an invalid ID was accepted")
+	}
+	j := "skep-" + ctrA
+	run.answers["jls -j "+j+" jid"] = "12\n"
+	for _, bad := range []string{"", "memoryuse=1\n", "cputime=1\npcpu=x\nmemoryuse=1\nmaxproc=1\nopenfiles=1\n", "garbage\n",
+		"cputime=1\npcpu=-1\nmemoryuse=1\nmaxproc=1\nopenfiles=1\n"} {
+		run.answers["rctl -u jail:"+j] = bad
+		if _, err := h.JailUsage(ctx, ctrA); err == nil {
+			t.Fatalf("output %q was accepted", bad)
+		}
 	}
 }

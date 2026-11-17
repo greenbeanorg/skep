@@ -270,6 +270,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		NodeID:      nodeID,
 		Host:        host,
 		VMs:         vms,
+		Containers:  containerSvc,
 		WarnPercent: cfg.Storage.CapacityWarnPercent,
 		FailPercent: cfg.Storage.CapacityFailPercent,
 		MaxAge:      2 * monitoring.DefaultInterval,

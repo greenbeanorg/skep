@@ -535,8 +535,9 @@ func TestRemovingADiskNeedsVMDelete(t *testing.T) {
 	}
 }
 
-// TestMetricsNeedVMAndStorageRead: the metrics name VMs and pools, so a
-// role with system:read alone is refused (ADR 0010 decision 15).
+// TestMetricsNeedVMAndStorageRead: the metrics name VMs, jails, and
+// pools, so a role with system:read alone, or without container:read, is
+// refused (ADR 0010 decision 15).
 func TestMetricsNeedVMAndStorageRead(t *testing.T) {
 	e := freshEnv(t)
 	ctx := t.Context()
@@ -555,6 +556,24 @@ func TestMetricsNeedVMAndStorageRead(t *testing.T) {
 	h := e.handler(newBackend(), nil)
 	body := wantError(t, e.serve(h, request{method: http.MethodGet, path: Prefix + "/metrics", role: "sys"}), http.StatusForbidden, auth.CodeForbidden)
 	if body.Details["permission"] != auth.PermVMRead {
+		t.Errorf("details = %v", body.Details)
+	}
+	// They name jails too: vm:read and storage:read without
+	// container:read is still refused.
+	if _, err := e.db.Exec(`INSERT INTO roles (id, name, permissions) VALUES ('sys2', 'sys2', '["system:read","vm:read","storage:read"]')`); err != nil {
+		t.Fatal(err)
+	}
+	u2, err := e.users.Create(ctx, auth.Actor{Name: "local:0"}, auth.NewUser{Username: "sys2", Password: testPassword, RoleID: "sys2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res2, err := e.authn.Login(ctx, auth.LoginRequest{Username: u2.Username, Password: testPassword, Kind: auth.BearerSession, SourceIP: "192.0.2.202"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.tokens["sys2"] = res2.Token
+	body = wantError(t, e.serve(h, request{method: http.MethodGet, path: Prefix + "/metrics", role: "sys2"}), http.StatusForbidden, auth.CodeForbidden)
+	if body.Details["permission"] != auth.PermContainerRead {
 		t.Errorf("details = %v", body.Details)
 	}
 	if rec := e.serve(h, request{method: http.MethodGet, path: Prefix + "/metrics", role: auth.RoleViewer}); rec.Code != http.StatusOK {

@@ -161,6 +161,15 @@ that keeps about 100 files open needs about (40 + 40 + 200) x 1.5, so
 open files" (`EMFILE`), and `rctl -u jail:skep-<id>` on the host shows
 the jail's current figure.
 
+**Usage.** `GET /api/v1/metrics` lists every jail with the space of its
+root (`disk_used_bytes`, snapshots included, and `disk_referenced_bytes`,
+what `disk_quota` applies to) and, while it runs on a host with RACCT,
+what `rctl -u jail:skep-<id>` reports: `cpu_percent` (approximate, as
+for the limit), `cpu_time_seconds`, `resident_memory_bytes`,
+`processes`, and `open_file_slots` (the figure `open_files` applies to,
+not a count of open files). The agent only reads: no rule is added or
+changed to get them.
+
 ## The fixed baseline
 
 Every jail gets the same parameters; none can be changed through the API:

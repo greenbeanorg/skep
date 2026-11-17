@@ -111,6 +111,12 @@ type Jails interface {
 	// RctlInfo reports whether RACCT is enabled and how many CPUs bound a
 	// pcpu limit (decision 11). It changes nothing.
 	RctlInfo(ctx context.Context) (RctlInfo, error)
+	// JailUsage reads a running jail's resource use from RACCT (rctl -u
+	// jail:skep-<id>; decision 15). It changes nothing. A jail that is
+	// not running before and after the read is models.ErrNotFound (rctl
+	// reports zeros for a name no jail has); RACCT disabled is
+	// rctl_unavailable.
+	JailUsage(ctx context.Context, containerID string) (JailUsage, error)
 	// SetJailQuota sets refquota on a jail's root (0 removes it), after
 	// checking that the dataset carries the container's ID. A quota
 	// below what the root already references is invalid_request.

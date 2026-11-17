@@ -73,6 +73,9 @@ type Fake struct {
 	// CPUs is hw.ncpu (4 when zero).
 	RacctDisabled bool
 	CPUs          int
+	// JailUsages is what JailUsage reports for a running jail, by
+	// container ID.
+	JailUsages map[string]hostops.JailUsage
 	// rctl holds the RCTL rules on each jail's name, by container ID.
 	rctl map[string][]string
 
