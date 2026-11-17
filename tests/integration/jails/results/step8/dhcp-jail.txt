@@ -1,0 +1,78 @@
+# DHCP jail through the deployed API (1a26e5e), 2026-11-17T14:24:50Z
+## create (s7oper)
+202
+{"container":{"id":"7b6993aa-d68e-4f52-b7e1-3c3faf05a868","name":"n8dhcp","hostname":"n8dhcp","template_id":"dbf4243a-81fe-4914-8f7a-fd0a768476aa","template_name":"minimal-ssh-151","pool":"skeptest","release":"15.1-RELEASE-p6","options":{"sysvipc":false,"mlock":false},"ssh_authorized_key":"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFASkW8Q8DB/iX4OhvEc7j1ZPzbCNHBWa/34NbjKK9Bf step8-probe","nics":[{"id":"0eca8074-6474-4953-8e90-ce26cf51d0fc","slot":0,"bridge":"bridge0","mac_address":"02:bc:a6:b8:20:8f","interface":"sj7b6993aad6n0","ipv4":{"mode":"dhcp"}}],"provisioned":false,"started_once":false,"desired_state":"stopped","state":"unknown","created_at":"2026-11-17T14:24:51.036Z","updated_at":"2026-11-17T14:24:51.036Z"},"task":{"id":"f76abd5a-547c-4466-93a5-7c3937bfbe59","node_id":"97fc6968-7e82-49c9-bda8-9026775ca964","type":"container.create","status":"pending","resource_type":"container","resource_id":"7b6993aa-d68e-4f52-b7e1-3c3faf05a868","actor":{"id":"f3b71fbe-2e24-4539-9ec2-8be0fcde53ed","name":"s7oper"},"request_id":"5692e861f5f88c8c7fd41d11","cancellable":false,"created_at":"2026-11-17T14:24:51.036Z"}}
+container 7b6993aa-d68e-4f52-b7e1-3c3faf05a868 task f76abd5a-547c-4466-93a5-7c3937bfbe59
+{"id":"f76abd5a-547c-4466-93a5-7c3937bfbe59","node_id":"97fc6968-7e82-49c9-bda8-9026775ca964","type":"container.create","status":"succeeded","resource_type":"container","resource_id":"7b6993aa-d68e-4f52-b7e1-3c3faf05a868","actor":{"id":"f3b71fbe-2e24-4539-9ec2-8be0fcde53ed","name":"s7oper"},"request_id":"5692e861f5f88c8c7fd41d11","cancellable":false,"result":{"container_id":"7b6993aa-d68e-4f52-b7e1-3c3faf05a868","dataset":"skeptest/skep/jail/7b6993aa-d68e-4f52-b7e1-3c3faf05a868","name":"n8dhcp","nics":1,"origin":"skeptest/skep/templates/dbf4243a-81fe-4914-8f7a-fd0a768476aa@skep-base","ssh_key_installed":true,"template_id":"dbf4243a-81fe-4914-8f7a-fd0a768476aa"},"created_at":"2026-11-17T14:24:51.036Z","started_at":"2026-11-17T14:24:51.037Z","finished_at":"2026-11-17T14:24:51.108Z","events":[{"id":2250,"kind":"state","level":"info","message":"task is pending","data":{"from":"","to":"pending"},"created_at":"2026-11-17T14:24:51.036Z"},{"id":2251,"kind":"state","level":"info","message":"task is running","data":{"from":"pending","to":"running"},"created_at":"2026-11-17T14:24:51.037Z"},{"id":2252,"kind":"progress","level":"info","message":"checking the jail directory","created_at":"2026-11-17T14:24:51.038Z"},{"id":2253,"kind":"progress","level":"info","message":"cloning the template","created_at":"2026-11-17T14:24:51.049Z"},{"id":2254,"kind":"progress","level":"info","message":"writing rc.conf, resolv.conf, and root's SSH key into the jail","created_at":"2026-11-17T14:24:51.091Z"},{"id":2255,"kind":"state","level":"info","message":"task is succeeded","data":{"from":"running","to":"succeeded"},"created_at":"2026-11-17T14:24:51.108Z"}]}
+## start
+202
+{"id":"cef4e41e-bf56-4b9b-9a9e-6f1f15ff4e4a","node_id":"97fc6968-7e82-49c9-bda8-9026775ca964","type":"container.start","status":"pending","resource_type":"container","resource_id":"7b6993aa-d68e-4f52-b7e1-3c3faf05a868","actor":{"id":"f3b71fbe-2e24-4539-9ec2-8be0fcde53ed","name":"s7oper"},"request_id":"457ddeeea598c319619299a0","cancellable":false,"created_at":"2026-11-17T14:24:53.1Z"}
+
+## start task (finished 14:24:54, 1 s)
+"status":"succeeded","resource_type":"container","resource_id":"7b6993aa-d68e-4f52-b7e1-3c3faf05a868","actor":{"id":"f3b71fbe-2e24-4539-9ec2-8be0fcde53ed","name":"s7oper"},"request_id":"457ddeeea598c319619299a0","cancellable":false,"result":{"container_id":"7b6993aa-d68e-4f52-b7e1-3c3faf05a868","epairs":{"0":"epair0a"},"jid":20,"state":"running"}
+## GET as the viewer
+200
+{"id":"7b6993aa-d68e-4f52-b7e1-3c3faf05a868","name":"n8dhcp","hostname":"n8dhcp","template_id":"dbf4243a-81fe-4914-8f7a-fd0a768476aa","template_name":"minimal-ssh-151","pool":"skeptest","release":"15.1-RELEASE-p6","options":{"sysvipc":false,"mlock":false},"ssh_authorized_key":"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFASkW8Q8DB/iX4OhvEc7j1ZPzbCNHBWa/34NbjKK9Bf step8-probe","nics":[{"id":"0eca8074-6474-4953-8e90-ce26cf51d0fc","slot":0,"bridge":"bridge0","mac_address":"02:bc:a6:b8:20:8f","interface":"sj7b6993aad6n0","ipv4":{"mode":"dhcp"},"host_interface":"epair0a"}],"provisioned":true,"started_once":true,"desired_state":"running","state":"running","jid":20,"observed_at":"2026-11-17T14:24:54.157Z","created_at":"2026-11-17T14:24:51.036Z","updated_at":"2026-11-17T14:24:53.104Z"}
+
+
+## on hearst
+epair0a: flags=1008943<UP,BROADCAST,RUNNING,PROMISC,SIMPLEX,MULTICAST,LOWER_UP> metric 0 mtu 1500
+	description: skep:7b6993aa-d68e-4f52-b7e1-3c3faf05a868:0
+	options=60001b<RXCSUM,TXCSUM,VLAN_MTU,VLAN_HWTAGGING,RXCSUM_IPV6,TXCSUM_IPV6>
+	ether 58:9c:fc:10:dd:98
+	groups: epair
+	media: Ethernet 10Gbase-T (10Gbase-T <full-duplex>)
+	status: active
+	nd6 options=9<PERFORMNUD,IFDISABLED>
+-- bridge0 members:
+	member: epair0a flags=143<LEARNING,DISCOVER,AUTOEDGE,AUTOPTP>
+	member: vtnet1 flags=143<LEARNING,DISCOVER,AUTOEDGE,AUTOPTP>
+-- devfs ruleset 6001:
+100 include 5
+200 path bpf* unhide
+-- jls:
+devfs_ruleset=6001 vnet=new securelevel=2 enforce_statfs=2
+-- bpf in the jail dev:
+acpi apm apmctl atkbd0 audit auditpipe bpf bpf0 bpsm0 cd0 console consolectl ctty da0 da0s1 da0s1a da0s1b devctl devctl2 devstat fd fido full geom.ctl hpet0 input io iso9660 kbd0 kbd1 kbdmux0 klog kmem mdctl mem mlx5ctl netdump netmap null pass0 pass1 pci pfil psm0 pts pvclock random reroot sndstat stderr stdin stdout sysmouse tcp_log ttyV0.1 ttyv0 ttyv1 ttyv2 ttyv3 ttyv4 ttyv5 ttyv6 ttyv7 ttyv8 ttyv9 ttyva ttyvb ufssuspend ugen0.1 ugen1.1 ugen2.1 ugen3.1 ugen4.1 ugen5.1 ugen6.1 ugen7.1 ugen7.2 uinput urandom usb usbctl vmmctl vtcon xpt0 zero zfs zvol 
+-- jail end on the host?
+ifconfig: interface sj7b6993aad6n0 does not exist
+-- jail.conf:
+	vnet;
+	vnet.interface = "sj7b6993aad6n0";
+	mount.devfs;
+	devfs_ruleset = 6001;
+-- the jail rc.conf:
+# Written by Skep before this jail's first start (ADR 0010 decision 13).
+ifconfig_sj7b6993aad6n0="SYNCDHCP"
+sshd_enable="YES"
+sshd_flags="-o PermitRootLogin=prohibit-password"
+-- in the jail:
+sj7b6993aad6n0: flags=1008843<UP,BROADCAST,RUNNING,SIMPLEX,MULTICAST,LOWER_UP> metric 0 mtu 1500
+	options=60001b<RXCSUM,TXCSUM,VLAN_MTU,VLAN_HWTAGGING,RXCSUM_IPV6,TXCSUM_IPV6>
+	ether 02:bc:a6:b8:20:8f
+	hwaddr 58:9c:fc:10:fd:4c
+	inet 10.79.60.103 netmask 0xffffff00 broadcast 10.79.60.255
+	groups: epair
+	media: Ethernet 10Gbase-T (10Gbase-T <full-duplex>)
+	status: active
+	nd6 options=29<PERFORMNUD,IFDISABLED,AUTO_LINKLOCAL>
+Routing tables
+
+Internet:
+Destination        Gateway            Flags         Netif Expire
+default            10.79.60.1         UGS    sj7b6993aad6
+10.79.60.0/24      link#6             U      sj7b6993aad6
+10.79.60.103       link#7             UHS             lo0
+127.0.0.1          link#7             UH              lo0
+# Generated by resolvconf
+search greenbean.org
+nameserver 10.79.10.250
+nameserver 10.79.10.249
+
+## console.log (API, viewer)
+dhclient.
+DHCPDISCOVER on sj7b6993aad6n0 to 255.255.255.255 port 67 interval 6
+DHCPOFFER from 10.79.60.1
+DHCPREQUEST on sj7b6993aad6n0 to 255.255.255.255 port 67
+DHCPACK from 10.79.60.1
+bound to 10.79.60.103 -- renewal in 2000 seconds.

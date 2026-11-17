@@ -92,3 +92,103 @@ hearst changes list (item 2: live only on hearst for step 8), and a new
   the literal placeholder `10.79.60.X–10.79.60.Y`**, so the live static
   check waits for the real numbers; the code and its unit tests do not.
 - `if_epair` stays loaded on hearst for this step.
+
+## 3. Build (merrick)
+
+**Done.** Commits `f439aed` (hostops), `c6fece1` (service, store,
+orphan check), `315f852` (OpenAPI, web types), `1a26e5e` (native writer
+test). `go test ./...`, `make lint` (gofmt, vet for Linux and FreeBSD,
+staticcheck) and `npm run typecheck` pass on merrick.
+
+- hostops: `JailSpec.NICs`. Before `jail -c`: `if_epair` checked
+  (`epair_unavailable`), each bridge checked (allow-listed, no
+  management member), ruleset 6001 ensured for a DHCP jail, epairs of an
+  earlier run destroyed. One `ifconfig epair create inet6 description
+  skep:<id>:<slot> ifdisabled -auto_linklocal up` per NIC; the jail end
+  renamed `sj<10 hex>n<slot>` and given its MAC; the host end added to
+  the bridge; `vnet.interface` in jail.conf; after `jail -c` the jail
+  ends must be gone from the host. Stop and a failed start destroy the
+  host ends. A failed create destroys only a new epair with this
+  description and logs an undescribed one without destroying it.
+  Command forms checked by hand on hearst first
+  ([step8/commands.txt](step8/commands.txt)): `inet6` right after
+  `create` works; `inet6` after `description` fails ("inet6: bad
+  value") *after* the epair is created.
+- Service: `nics` (bridge, MAC, IPv4 dhcp or static with an optional
+  gateway) and `nameservers` on create and update, stored in
+  `container_networks` (agent/0005, no migration) and `config`; rc.conf
+  lines per NIC and `resolv.conf` (decision 13 names it) before the
+  first start; after it only bridge and MAC may change
+  (`container_started`).
+- `internal/orphans`: epairs and taps with a `skep:` description whose
+  owner is not running; a warning event per interface at agent start
+  (after both observations) and the `orphaned_interfaces` health check
+  (names no interface; cached 15 s).
+
+**Decisions made (small, easy to undo):** the jail end name
+`sj<first 10 hex of the ID>n<slot>`, with a create-time retry if another
+container shares the prefix; at most 8 NICs; one gateway per jail;
+`nameservers` only without DHCP; a generated MAC is left out of the
+idempotency comparison; **no IPv6 addressing** (the schema has the
+columns; nothing on VLAN 60 answered IPv6 in the probe, so it could not
+be validated); the health check's text names no interface.
+
+## 4. Deploy and the first DHCP jail: STOPPED (ruleset 6001 exposes host devices)
+
+**Native tests** (the hostops test binary as root, from a scratch
+dataset `skeptest/step8-scratch`, destroyed afterwards): 35 pass, 2 skip
+by design, the new resolv.conf writer test with a planted link
+included. [step8/hostops-native.log](step8/hostops-native.log)
+
+**Deploy** of `1a26e5e` ([step8/deploy.txt](step8/deploy.txt)): the
+agent logged `orphaned_interface_check found=0` before its socket.
+
+**DHCP jail** `n8dhcp` (s7oper, minimal-ssh-151, one DHCP NIC on
+bridge0; [step8/dhcp-jail.txt](step8/dhcp-jail.txt)): the start took one
+second; ruleset 6001 was added; the host end `epair0a` was described
+`skep:<id>:0`, with IPv6 IFDISABLED, AUTO_LINKLOCAL off, and no address,
+in bridge0; the jail end `sj7b6993aad6n0` was gone from the host. Inside,
+DHCP from 10.79.60.1 gave 10.79.60.103/24, default route 10.79.60.1,
+and resolv.conf from DHCP (10.79.10.250, .249).
+
+**Found:** the jail's `/dev` held almost every host device (`mem`,
+`kmem`, `io`, `da0`, `pass0`, `netmap`, ...). devfs(8): "Include
+commands in the referenced ruleset are not resolved." Ruleset 5 is only
+includes of 1 to 4 plus `path pf unhide`, so `include 5` hides nothing.
+Amendment h's ruleset ("ruleset 5 plus bpf*" as `include 5`) cannot be
+built as written. Record and assessment:
+[step8/devfs-include.txt](step8/devfs-include.txt). My unit test encoded
+the same wrong rules, so it passed.
+
+**Done at once:** the jail stopped and deleted, ruleset 6001 removed,
+`57d74bb` redeployed (the approved undo), so no build with the bad
+ruleset runs.
+
+**Stopped** under the run's rule. Not done: isolation and spoofing
+tests, SSH from merrick, stop/delete and kill -9 orphan checks on
+hearst, static addressing (range not given).
+
+**Options (for Andy):**
+
+- **A. Ruleset 6001 mirrors ruleset 5's rules, plus bpf (recommended):**
+  `100 include 1`, `200 include 2`, `300 include 3`, `400 include 4`,
+  `500 path pf unhide`, `600 path bpf* unhide`. The same single level of
+  includes as ruleset 5, so it resolves to exactly what ruleset 5 gives
+  plus bpf. Checked line for line before every start, as now.
+- B. Copy ruleset 5's rules at runtime and add bpf: follows a local
+  change to ruleset 5, but 6001's content is then whatever 5 is, which
+  is harder to check.
+- C. Flatten completely (every `path` rule of 1 to 4 written out): no
+  includes at all; long, and tied to 15.1's rulesets.
+- D. Static addressing only for now (no bpf, no ruleset 6001).
+
+**Also proposed, whichever option:** after `jail -c`, Skep lists the
+jail's `/dev` and removes the jail (`container_start_failed`) if any
+entry is outside an allow-list (`null zero crypto random urandom pts fd
+stdin stdout stderr ptmx zfs fuse pf`, plus `bpf*` for a DHCP jail). It
+applies to every jail and would have caught this. A new Decision 16
+check: the `/dev` listing of a DHCP and a static jail.
+
+**hearst state:** no jails, no epairs, bridge0 with vtnet1 only, devfs
+rulesets 1 to 5 only, `if_epair` loaded (live), `57d74bb` deployed. The
+API users s7admin, s7oper, s7viewer are unchanged.

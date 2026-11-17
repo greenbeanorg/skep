@@ -1564,3 +1564,12 @@ on 2026-11-17 and approved the two smaller proposals; they are amendment
 h above and are worked into Decisions 9, 10, and 16. Build notes and the
 validation follow in
 [step8-progress.md](../../tests/integration/jails/results/step8-progress.md).
+
+**Open (2026-11-17, from the step 8 validation).** Ruleset 6001 as
+written in amendment h (`include 5` plus `bpf*`) exposes host devices:
+devfs does not resolve the includes of an included ruleset, and ruleset
+5 is only includes plus `path pf unhide`. Found on `hearst` with the
+first DHCP jail, which was stopped and deleted; the ruleset was removed
+and the previous build redeployed. The corrected definition waits for
+Andy; options in
+[step8-progress.md](../../tests/integration/jails/results/step8-progress.md).
