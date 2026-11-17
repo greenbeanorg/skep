@@ -40,8 +40,9 @@ POST /api/v1/containers
 - The template must be built and have the host's major.minor release
   (`template_not_provisioned`, `release_unsupported`).
 - `options.sysvipc` gives the jail its own System V IPC (PostgreSQL needs
-  it). `options.mlock` needs a memory limit (`mlock_requires_memory_limit`),
-  which arrives with step 9, so it is refused for now.
+  it). `options.mlock` needs a locked-memory limit, `limits.locked_memory`,
+  and RACCT (`mlock_requires_memory_limit`).
+- `limits`: see [Limits](#limits).
 - `ssh_authorized_key` is one OpenSSH public key line without options. It
   needs a template with sshd: otherwise `container_ssh_unavailable` (422).
   Templates built with the default `storage.template_packages` include
@@ -110,6 +111,33 @@ whose start the agent's death interrupted (between `jail -c` and the end
 of `/etc/rc`) is removed at the next agent start, without
 `/etc/rc.shutdown`, since Skep cannot tell whether its `/dev` was checked;
 `state_detail` says so.
+
+## Limits
+
+`limits` on create, or on an update of a stopped jail (which replaces
+every limit), takes these fields; absent or zero means none (ADR 0010
+decision 11, amendment j). All but `disk_quota` are RCTL deny rules on
+`jail:skep-<id>`. They need RACCT: `kern.racct.enable=1` in
+`/boot/loader.conf` and a reboot, the operator's choice (RACCT costs a
+little on every process on the host). Without it a jail that asks for one
+is refused with `rctl_unavailable` (409), at create, update, and every
+start; Skep never starts a jail without the limits it was given. `GET
+/api/v1/system` reports `containers.rctl` and `containers.max_cpu_percent`.
+
+The rules are added after `jail -c`, while nothing runs in the jail, read
+back before the `/dev` guard and `/etc/rc`, and removed when the jail
+stops (RCTL would otherwise keep them on the jail's name).
+
+What each limit does on FreeBSD 15.1, measured on the test host:
+
+| Field | Mechanism | Behaviour |
+|---|---|---|
+| `memory` | RCTL `memoryuse` (≥ 16 MiB) | **Soft.** An allocation past it is not refused: a jail held twice its limit at once. While it is over, the host moves its pages to the inactive queue a little at a time (after about 80 s, under 1 MiB/s on the test host), so they are the first memory reclaimed when the host runs short; nothing is swapped out while memory is free. A target and an accounting figure, not a cap. An address-space limit (`vmemoryuse`) is not offered in this release. |
+| `locked_memory` | RCTL `memorylocked` | The memory the jail may lock with mlock(2); `options.mlock` needs it. At most `memory` when both are set. |
+| `cpu_percent` | RCTL `pcpu` | 100 is one CPU, up to 100 per host CPU. Throttles, approximately: RACCT samples and averages, so a busy jail swings around the limit (50 gave samples from 28 to 74; the loop ran at 61 % of its unthrottled speed). |
+| `max_processes` | RCTL `maxproc` | A fork past it fails ("Cannot fork"). |
+| `open_files` | RCTL `openfiles` (≥ 64) | Counts descriptor-table slots, not open files. Each process is charged its table size, which grows in steps (40, 128, 256, ... slots) and never shrinks; helper processes count too (FreeBSD's `tail` opens files through a Capsicum helper). With 256, one `tail -f` opened 59 files. Size it well above what the jail keeps open. |
+| `disk_quota` | ZFS `refquota` on the jail root (≥ 64 MiB) | Works without RACCT; snapshots do not count. It includes the blocks the root shares with its template (about 78 MiB for a minimal template), so a 512 MiB quota left room for about 434 MiB of new data. Changed at once by an update; a quota below what the jail already references is refused. |
 
 ## The fixed baseline
 

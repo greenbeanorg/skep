@@ -894,9 +894,15 @@ export interface paths {
          *     The template must be built (`template_not_provisioned`) and have
          *     the host's major.minor (`release_unsupported`). An SSH key needs a
          *     template with sshd (`container_ssh_unavailable`); it is one
-         *     OpenSSH public key line without options. `mlock` needs a memory
-         *     limit (`mlock_requires_memory_limit`), which this release does not
-         *     offer yet.
+         *     OpenSSH public key line without options. `mlock` needs a
+         *     locked-memory limit, `limits.locked_memory`, and RACCT
+         *     (`mlock_requires_memory_limit`).
+         *
+         *     Limits (ADR 0010 decision 11, amendment j; see `ContainerLimits`):
+         *     every limit but `disk_quota` is an RCTL rule and needs RACCT
+         *     (`kern.racct.enable`); without it the request is refused with
+         *     `rctl_unavailable` (409), and so is a later start of a jail that
+         *     has such a limit. `GET /system` reports `containers.rctl`.
          *
          *     Each NIC is an epair (ADR 0010 decision 10): its host end joins an
          *     allow-listed bridge (`bridge_not_allowed`) and its jail end, named
@@ -937,6 +943,9 @@ export interface paths {
          *     the jail's tree, so it can change only before the jail's first
          *     start; afterwards a change is `container_started` (ADR 0010
          *     decision 13). An empty `ssh_authorized_key` removes the key.
+         *     `limits` replaces every limit (absent ones are removed); the disk
+         *     quota changes at once, the RCTL limits at the next start. A quota
+         *     below what the jail already references is refused.
          */
         put: operations["updateContainer"];
         post?: never;
@@ -1318,8 +1327,68 @@ export interface components {
         ContainerOptions: {
             /** @description Its own System V shared memory, semaphores, and message queues. */
             sysvipc?: boolean;
-            /** @description May lock memory. Needs a memory limit (`mlock_requires_memory_limit`). */
+            /** @description May lock memory (allow.mlock). Needs `limits.locked_memory` and RACCT (`mlock_requires_memory_limit`). */
             mlock?: boolean;
+        };
+        /**
+         * @description A jail's resource limits (ADR 0010 decision 11, amendment j);
+         *     absent or zero means none. All but `disk_quota` are RCTL deny
+         *     rules on the jail, need RACCT (`rctl_unavailable` otherwise), and
+         *     are added before any process runs in the jail and removed when it
+         *     stops. What each does on FreeBSD 15.1, as measured on the test
+         *     host:
+         */
+        ContainerLimits: {
+            /**
+             * @description **Soft.** RCTL `memoryuse`, the jail's resident memory, at
+             *     least 16 MiB. FreeBSD does not refuse an allocation past it: a
+             *     jail can hold more than the limit at once. While it is over,
+             *     the host slowly moves its pages to the inactive queue (on the
+             *     test host, after about 80 s, under 1 MiB/s), so they are the
+             *     first memory reclaimed when the host is short of memory; they
+             *     are not swapped out while the host has memory free. Use it as
+             *     a target and for accounting, not as a cap.
+             */
+            memory?: components["schemas"]["ByteSize"];
+            /**
+             * @description RCTL `memorylocked`, the memory the jail may lock with
+             *     mlock(2). The `mlock` option needs it. Not more than `memory`
+             *     when both are set.
+             */
+            locked_memory?: components["schemas"]["ByteSize"];
+            /**
+             * @description RCTL `pcpu`: 100 is one CPU, at most 100 per CPU of the host
+             *     (`containers.max_cpu_percent` in `GET /system`). Approximate:
+             *     RACCT samples and averages, so a busy jail swings above and
+             *     below the limit around it (on the test host, 50 gave samples
+             *     between 28 and 74).
+             */
+            cpu_percent?: number;
+            /** @description RCTL `maxproc`, the processes in the jail; a fork past it fails. */
+            max_processes?: number;
+            /**
+             * @description RCTL `openfiles`, at least 64. It counts descriptor-table
+             *     slots, not open files: each process is charged the size of
+             *     its table, which grows in steps (40, 128, 256, ... slots) and
+             *     does not shrink, and helper processes such as Capsicum's
+             *     casper count too. Size it well above the descriptors the
+             *     jail's programs keep open.
+             */
+            open_files?: number;
+            /**
+             * @description ZFS `refquota` on the jail's root, at least 64 MiB; works
+             *     without RACCT, and snapshots do not count against it. It
+             *     includes the data the root shares with its template (about
+             *     78 MiB for a minimal template), so the room left for the
+             *     jail's own data is the quota less that.
+             */
+            disk_quota?: components["schemas"]["ByteSize"];
+        };
+        ContainerCapabilities: {
+            /** @description kern.racct.enable. Without it, every limit but `disk_quota` is refused with `rctl_unavailable`, and a jail that has one does not start. */
+            rctl: boolean;
+            /** @description 100 per CPU of the host, the bound of `cpu_percent`. */
+            max_cpu_percent: number;
         };
         ContainerIPv4: {
             /** @enum {string} */
@@ -1361,6 +1430,7 @@ export interface components {
             /** @description The template's userland release. */
             release?: string;
             options: components["schemas"]["ContainerOptions"];
+            limits: components["schemas"]["ContainerLimits"];
             /** @description Root's SSH public key, if one was given. */
             ssh_authorized_key?: string;
             nics: components["schemas"]["ContainerNIC"][];
@@ -1393,6 +1463,7 @@ export interface components {
             /** Format: uuid */
             template_id: string;
             options?: components["schemas"]["ContainerOptions"];
+            limits?: components["schemas"]["ContainerLimits"];
             /** @description One OpenSSH public key line, "type base64 [comment]", without options. */
             ssh_authorized_key?: string;
             /** @description Slots 0, 1, ... in order. Each needs if_epair at start. */
@@ -1403,6 +1474,8 @@ export interface components {
         ContainerUpdate: {
             hostname?: string;
             options?: components["schemas"]["ContainerOptions"];
+            /** @description Replaces every limit; absent fields are removed. */
+            limits?: components["schemas"]["ContainerLimits"];
             /** @description Empty removes the key. Only before the first start. */
             ssh_authorized_key?: string;
             /** @description Replaces every NIC; empty removes them all. After the first start only the bridge and MAC address of existing slots may change (`container_started`). */
@@ -1911,6 +1984,7 @@ export interface components {
                 zfs: components["schemas"]["Capability"];
             };
             bhyve?: components["schemas"]["EngineCapabilities"];
+            containers?: components["schemas"]["ContainerCapabilities"];
             /** Format: date-time */
             started_at: string;
             /** Format: int64 */
