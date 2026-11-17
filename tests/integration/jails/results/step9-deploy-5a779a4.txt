@@ -1,0 +1,18 @@
+# Deploy of 5a779a4 to hearst with the fixed deploy-test.sh, 2026-11-17 (undo: redeploy 4c7d8e0)
+deploy-test: hearst:/usr/local/sbin/skep-agent root:wheel 0555 13349034 bytes sha256 e075465d9ec460672664bc8a06a7df676a9048e1644cd0429dec43ea4e1d604c
+deploy-test: hearst:/usr/local/sbin/skep-api root:wheel 0555 14106794 bytes sha256 ed45fd9d46e72aad051de7f6dd22ec2fedde0e4b94b0eca1039e5f8a281e4d29
+deploy-test: synced
+deploy-test: hearst:/usr/local/bin/skepctl root:wheel 0555 7217322 bytes sha256 6072a482cdeb0b27be97800cbc475c32318914b2a0d36ffe3c33039dc0285e5c
+deploy-test: synced
+deploy-test: restarting skep_api and skep_agent on hearst
+Stopping skep_api.
+Waiting for PIDS: 7757.
+Stopping skep_agent.
+Waiting for PIDS: 7697.
+Starting skep_agent.
+Starting skep_api.
+deploy-test: skep_agent pid 10535 runs /usr/local/sbin/skep-agent: skep-agent 0.1.0 (commit 5a779a4, built 2026-11-17T21:53:16Z, go1.27.4 freebsd/amd64)
+deploy-test: skep_api pid 10593 runs /usr/local/sbin/skep-api: skep-api 0.1.0 (commit 5a779a4, built 2026-11-17T21:53:16Z, go1.27.4 freebsd/amd64)
+deploy-test: hearst runs 5a779a4
+# Refusal with an uncommitted change (README.md touched locally, then reverted):
+deploy-test: refusing: the checkout has uncommitted changes, so the build is not 5a779a4; commit first (exit 2)
