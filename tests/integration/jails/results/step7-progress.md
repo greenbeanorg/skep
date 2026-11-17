@@ -126,3 +126,50 @@ Record: [step7/writer-native.log](step7/writer-native.log).
   quote, backslash, `$`, backquote, or control character.
 - sshd gets `PermitRootLogin prohibit-password` through
   `sshd_flags="-o PermitRootLogin=prohibit-password"`.
+
+## 4. Container store, service, tasks, agent wiring, internal routes
+
+**Done.** `database.ContainerStore` (the existing `containers` table of
+`agent/0001` and `agent/0005`; no migration needed), `internal/containers`
+(the service: `container.create`, `container.update`, `container.delete`,
+`container.start`, `container.stop`, `container.restart`), the agent
+wiring (the service is registered, and `ObserveAll` runs after the build
+jail sweep and before the socket is served, so a restarted agent knows
+which jails run), the internal routes (`GET|POST /internal/v1/containers`,
+`GET|PUT|DELETE /internal/v1/containers/{id}`, `POST .../actions`,
+`GET .../console-log`), the agent client calls, and HTTP statuses for the
+new codes. Unit tests: store (including the `started_once` trigger and a
+template in use), service with a real task engine and the fake host
+(lifecycle, refusals audited as denied, SSH key on templates with and
+without sshd, `container_started` after the first start, idempotent
+create, observation of a jail removed outside Skep), and the routes
+through the socket. `go test ./...` and `make lint` pass on merrick.
+
+**Decisions made (small, easy to undo):**
+
+- New codes: `container_name_taken`, `container_not_stopped`,
+  `container_not_running`, `container_not_provisioned`,
+  `container_started` (all 409), `container_start_failed` (409, like
+  `vm_start_failed`), and the ADR's `container_ssh_unavailable` and
+  `mlock_requires_memory_limit` (422).
+- `mlock` is always refused for now: it needs an RCTL memory limit, and
+  limits are step 9. `sysvipc` works.
+- A container name follows the template rule (`[A-Za-z0-9][A-Za-z0-9._-]`,
+  up to 63). The hostname defaults to the name; a name that is not a DNS
+  name (with `_`) needs an explicit hostname.
+- A jail must be stopped for update and delete (`container_not_stopped`);
+  delete does not stop it first. A hostname or option change after the
+  first start is allowed (it is a jail parameter, not a write into the
+  tree); an SSH key change then is `container_started`.
+- `started_once` is set before `jail -c` runs, so a crash right after the
+  start can never leave it 0.
+- The observed state is refreshed from one `jls` on every read, and
+  recorded when it changed; a container in the middle of a start or stop
+  is left to its task. A jail that should run but does not shows its
+  drift in `state_detail`.
+- A failed start leaves the jail removed and the container `stopped`,
+  with the error in `state_detail`.
+- The console log is `GET /containers/{id}/console-log`, at most 64 KiB
+  of the end of `console.log`, as JSON (`text`, `truncated`).
+- Step 7 jails have no NIC: VNET with only `lo0`. Epairs are Decision 10,
+  step 8, and need `if_epair`, which this run has no approval to load.

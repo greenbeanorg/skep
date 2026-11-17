@@ -54,6 +54,9 @@ type Options struct {
 	// Templates is the jail template service. Nil leaves the template
 	// routes out.
 	Templates TemplateBackend
+	// Containers is the jail service. Nil leaves the container routes
+	// out.
+	Containers ContainerBackend
 	// Metrics is the resource sampler. Nil leaves the metrics route out.
 	Metrics MetricsBackend
 	// RequestTimeout bounds the time spent on one request.
@@ -65,13 +68,14 @@ type Options struct {
 var idRE = regexp.MustCompile(httpkit.IDPattern)
 
 type handler struct {
-	backend   Backend
-	vms       VMBackend
-	console   ConsoleBroker
-	storage   StorageBackend
-	templates TemplateBackend
-	metrics   MetricsBackend
-	log       *slog.Logger
+	backend    Backend
+	vms        VMBackend
+	console    ConsoleBroker
+	storage    StorageBackend
+	templates  TemplateBackend
+	containers ContainerBackend
+	metrics    MetricsBackend
+	log        *slog.Logger
 }
 
 // NewHandler returns the internal API as an http.Handler. It must be served
@@ -82,7 +86,7 @@ func NewHandler(backend Backend, opts Options) http.Handler {
 	if log == nil {
 		log = slog.Default()
 	}
-	h := &handler{backend: backend, vms: opts.VMs, console: opts.Console, storage: opts.Storage, templates: opts.Templates, metrics: opts.Metrics, log: log}
+	h := &handler{backend: backend, vms: opts.VMs, console: opts.Console, storage: opts.Storage, templates: opts.Templates, containers: opts.Containers, metrics: opts.Metrics, log: log}
 
 	mux := http.NewServeMux()
 	mux.Handle(agentproto.Prefix+"/health", httpkit.ReadOnly(h.health))
@@ -99,6 +103,9 @@ func NewHandler(backend Backend, opts Options) http.Handler {
 	}
 	if h.templates != nil {
 		h.registerTemplates(mux)
+	}
+	if h.containers != nil {
+		h.registerContainers(mux)
 	}
 	if h.metrics != nil {
 		mux.Handle(agentproto.Prefix+"/metrics", httpkit.ReadOnly(h.nodeMetrics))

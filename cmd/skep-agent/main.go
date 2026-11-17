@@ -21,6 +21,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"syscall"
+	"time"
 
 	"github.com/greenbeanorg/skep/internal/agent"
 	"github.com/greenbeanorg/skep/internal/agentproto"
@@ -28,6 +29,7 @@ import (
 	"github.com/greenbeanorg/skep/internal/auditarchive"
 	"github.com/greenbeanorg/skep/internal/config"
 	"github.com/greenbeanorg/skep/internal/console"
+	"github.com/greenbeanorg/skep/internal/containers"
 	"github.com/greenbeanorg/skep/internal/database"
 	"github.com/greenbeanorg/skep/internal/hardware"
 	"github.com/greenbeanorg/skep/internal/hostops"
@@ -231,6 +233,26 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 			return err
 		}
 	}
+	// Jails (ADR 0010 decisions 8, 9, and 13): clones of a template, run
+	// by jail(8) from a generated jail.conf.
+	containerSvc, err := containers.New(containers.Options{
+		NodeID:       nodeID,
+		Store:        database.NewContainerStore(db),
+		Templates:    database.NewTemplateStore(db),
+		Engine:       engine,
+		Host:         host,
+		StopTimeout:  time.Duration(cfg.Containers.StopTimeoutSeconds) * time.Second,
+		StartTimeout: time.Duration(cfg.Containers.StartTimeoutSeconds) * time.Second,
+		Logger:       log,
+	})
+	if err != nil {
+		return err
+	}
+	for _, def := range containerSvc.Definitions() {
+		if err := engine.Register(def); err != nil {
+			return err
+		}
+	}
 	// The storage inventory reads the host and the database; it changes
 	// nothing.
 	storageSvc, err := storage.New(storage.Options{
@@ -335,6 +357,12 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		log.Error("could not remove every leftover template build jail", "error", err)
 	}
 
+	// A jail outlives the agent (it is persistent): look at every one
+	// before anything can ask about it.
+	if err := containerSvc.ObserveAll(ctx); err != nil {
+		log.Warn("could not observe the jails", "error", err)
+	}
+
 	// Look at every VM before anything can ask about one: a restarted
 	// agent knows what is running before it serves its socket.
 	if err := vms.ObserveAll(ctx); err != nil {
@@ -360,6 +388,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		Console:        consoles,
 		Storage:        storageSvc,
 		Templates:      templateSvc,
+		Containers:     containerSvc,
 		Metrics:        sampler,
 		RequestTimeout: cfg.Socket.RequestTimeout.Std(),
 		Logger:         log,

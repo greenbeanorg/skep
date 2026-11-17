@@ -63,6 +63,16 @@ var StatusForCode = map[string]int{
 	models.CodeTemplateNameTaken:       http.StatusConflict,
 	models.CodeTemplateNotProvisioned:  http.StatusConflict,
 	models.CodeTemplateArchiveMismatch: http.StatusUnprocessableEntity,
+
+	// Jails (ADR 0010 decisions 8, 9, 12, and 13).
+	models.CodeContainerNameTaken:       http.StatusConflict,
+	models.CodeContainerNotStopped:      http.StatusConflict,
+	models.CodeContainerNotRunning:      http.StatusConflict,
+	models.CodeContainerNotProvisioned:  http.StatusConflict,
+	models.CodeContainerStarted:         http.StatusConflict,
+	models.CodeContainerStartFailed:     http.StatusConflict,
+	models.CodeContainerSSHUnavailable:  http.StatusUnprocessableEntity,
+	models.CodeMlockRequiresMemoryLimit: http.StatusUnprocessableEntity,
 }
 
 // Fail maps a service error to an error response. Internal error text is
