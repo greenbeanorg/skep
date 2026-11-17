@@ -580,3 +580,32 @@ agent.json). That is a network and config change: not done, listed.
 start; `container_started` for new addressing on a clone of a started
 static jail (needs a started static jail); RACCT off (Q3); spoofing and
 the OPNsense ICMP rule re-test (deferred before the step 10 merge).
+
+## 15. Andy's answers (2026-11-17), recorded as amendment l
+
+Recorded in ADR 0010 as amendment l before any further work.
+
+- **Q8:** keep refusing clones of a started static jail in 7b. Backlog:
+  an opt-in through a Skep-owned `/etc/rc.conf.d` file written with the
+  `O_RESOLVE_BENEATH` in-jail writer.
+- **Approved defaults:** clone hostname = clone name; nameservers dropped
+  when no static NIC remains. Recorded: on a normal stop the epairs are
+  destroyed before `jail -r` (shutdown scripts run without NICs).
+- **Devfs fix approved,** with requirements: find the mount with
+  getfsstat where `f_mntonname` is exactly `<root>/dev` and the type is
+  devfs; unmount by fsid (`MNT_BYFSID`), never by a resolved path; run at
+  start, delete, and in the start-up sweep; a test that a jail root whose
+  `dev` is a symlink leaves the host untouched.
+- **hearst cleanup:** no hand changes; the devfs fix cleans up `s9dhcp`
+  and `c9dhcp` as its live test.
+- **Duplicate static IP test approved,** live only: `ifconfig bridge1
+  create` (no uplink, no rc.conf), `bridge1` in agent.json `bridges`,
+  192.0.2.0/24. Undo after the test: remove from agent.json, restart,
+  `ifconfig bridge1 destroy`.
+- **Security-review list (step 10):** duplicate host interface names
+  after an abnormal removal; a jail root renaming its interface to a
+  host-like name (`vtnet0`).
+
+Stopped after recording, as asked. Nothing built; hearst unchanged since
+section 14 (`003a33f`; `s9dhcp`, `c9dhcp` stopped with their leftover
+devfs mounts).

@@ -1008,6 +1008,42 @@ Amendments made at acceptance, worked into the text:
     clone. An opt-in host-key reset on clone is in the backlog.
   - The `internal/templates` flake (`TestCreateAndDeleteTemplate`
     asserting `provisioned` in the create response) gets the Q5 fix.
+- **l. Static clones, clone defaults, stop order, leftover devfs, the
+  duplicate-address test** (Decisions 3, 8, 10, 13, 16; Andy, 2026-11-17,
+  from the step 9 validation, Q8 and section 14 of
+  [step9-progress.md](../../tests/integration/jails/results/step9-progress.md)).
+  - **Q8: a clone of a jail with a static address that has started is
+    refused in 7b** (`clone_addressing_required` without new addressing,
+    `container_started` with it): Skep does not write into a tree that has
+    run code. Backlog: an opt-in that writes the clone's addressing into a
+    Skep-owned file under `/etc/rc.conf.d`, through the
+    `O_RESOLVE_BENEATH` in-jail writer.
+  - **Clone defaults (approved):** a clone's hostname defaults to the
+    clone's name, as on a create; the source's nameservers are dropped
+    when no NIC of the clone keeps a static address.
+  - **Stop order (recorded):** on a normal stop, and on every removal Skep
+    makes, the jail's epairs are destroyed before `jail -r`, so no jail end
+    returns to the host; the jail's `/etc/rc.shutdown` runs without its
+    NICs.
+  - **Leftover devfs (approved fix):** a removal outside Skep can leave a
+    devfs mounted on `<root>/dev`, which blocks the jail's delete. Skep
+    finds such a mount with getfsstat(2), only where `f_mntonname` is
+    exactly `<root>/dev` and `f_fstypename` is `devfs`, and unmounts it by
+    its fsid (`MNT_BYFSID`), never by a path it resolved. This runs before
+    a start, at delete, and in the agent's start-up sweep, only while no
+    jail of that name runs. A test shows that a jail root whose `dev` is a
+    symbolic link leaves the host untouched. The live test is the cleanup
+    of `s9dhcp` and `c9dhcp` on `hearst` (no hand changes).
+  - **Duplicate static IP at start, live test (approved):** on `hearst`,
+    `ifconfig bridge1 create` (no members, no uplink, nothing in
+    `rc.conf`), `bridge1` added to `network.bridges` in `agent.json`,
+    addresses from 192.0.2.0/24. Undo right after the test: `bridge1`
+    removed from `agent.json`, the agent restarted, `ifconfig bridge1
+    destroy`.
+  - **Security review (step 10) gets two items:** duplicate host
+    interface names after an abnormal removal (two `skep0`); a jail's root
+    can rename its interface to a host-like name (`vtnet0`), which returns
+    to the host under that name after a removal outside Skep.
 
 ## Implementation notes
 
