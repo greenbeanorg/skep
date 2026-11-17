@@ -1,0 +1,75 @@
+# /etc/rc outlasting the start timeout (n8rcfail 8a868d32-561d-41ed-9d1a-551fe9710da6, DHCP NIC on bridge0), 2026-11-17T18:38:41Z
+## test setup: /etc/rc.local in the jail's tree (written as root on hearst, before the first start)
+#!/bin/sh
+echo step8: rc.local sleeping 600
+sleep 600
+## start (s7oper); start timeout is the default 120 s
+container.start failed container_start_failed the jail's /etc/rc failed or outlasted the start timeout, so the jail was stopped and removed (its output is in the console log): hostops: jexec timed out after 2m0s started 2026-11-17T18:38:41.708Z finished 2026-11-17T18:40:42.159Z
+state stopped desired running jid None detail: the last start failed: container_start_failed: the jail's /etc/rc failed or outlasted the start timeout, so the jail was stopped and removed (its output is in the console log): hostops: jexec timed out after 2m0s
+ nic 0 bridge0 02:ac:40:31:6a:c1 sj8a868d3256n0 {'mode': 'dhcp'} host_if 
+## host afterwards
+jails: []
+epairs: [epair0a]
+ifconfig: interface sj8a868d3256n0 does not exist
+devfs mounts under the jail: 0
+## console.log (tail)
+k 0xffffff00 broadcast 10.79.60.255
+	groups: epair
+	media: Ethernet 10Gbase-T (10Gbase-T <full-duplex>)
+	status: active
+	nd6 options=29<PERFORMNUD,IFDISABLED,AUTO_LINKLOCAL>
+route: message indicates error: File exists
+add host 127.0.0.1: gateway lo0 fib 0: route already in table
+route: message indicates error: File exists
+add host ::1: gateway lo0 fib 0: route already in table
+add net fe80::: gateway ::1
+add net ff02::: gateway ::1
+add net ::ffff:0.0.0.0: gateway ::1
+add net ::0.0.0.0: gateway ::1
+Updating /var/run/os-release done.
+Clearing /tmp (X related).
+Creating and/or trimming log files.
+Updating motd:.
+Starting syslogd.
+Starting local daemons:step8: rc.local sleeping 600
+.
+Terminated
+
+## agent log
+{"time":"2026-11-17T13:38:41.774525053-05:00","level":"INFO","msg":"hostops: the jail's /dev holds only the allow-list","event":"jail_devfs_checked","container_id":"8a868d32-561d-41ed-9d1a-551fe9710da6","ruleset":6001,"entries":"bpf bpf0 fd null pts random stderr stdin stdout urandom zero zfs"}
+{"time":"2026-11-17T13:40:41.781197896-05:00","level":"WARN","msg":"hostops: /etc/rc failed in a jail; removing it","event":"jail_rc_failed","container_id":"8a868d32-561d-41ed-9d1a-551fe9710da6","error":"hostops: jexec timed out after 2m0s"}
+## the remaining epair is the running DHCP jail's
+	description: skep:7a1e3658-aced-47d1-bf56-8b9a2478632e:0
+(n8dhcp2 is 7a1e3658-aced-47d1-bf56-8b9a2478632e)
+
+## second run: /etc/rc.shutdown.local marker added (rc.d/local runs it at shutdown)
+container.start failed container_start_failed the jail's /etc/rc failed or outlasted the start timeout, so the jail was stopped and removed (its output is in the console log): hostops: jexec timed out after 2m0s started 2026-11-17T18:41:04.56Z finished 2026-11-17T18:43:04.849Z
+## host afterwards
+jails: []
+epair0a 	description: skep:7a1e3658-aced-47d1-bf56-8b9a2478632e:0
+## console.log appended by the second run (last lines)
+::1
+Updating /var/run/os-release done.
+Clearing /tmp (X related).
+Creating and/or trimming log files.
+Updating motd:.
+Starting syslogd.
+Starting local daemons:step8: rc.local sleeping 600
+Shutting down local daemons:step8: rc.shutdown.local ran
+.
+.
+Terminated
+
+
+## Result
+Twice, /etc/rc (held by a sleep 600 in rc.local) outlasted the 120 s
+start timeout: the start task failed with container_start_failed after
+2m0s, pointing at the console log; the agent logged jail_rc_failed; the
+jail was stopped with jail -r, which ran /etc/rc.shutdown (marker
+"step8: rc.shutdown.local ran" in the second run), and removed; its
+devfs mount, jail end, and epair were gone (the one remaining epair
+belongs to the running n8dhcp2). rc's output stayed in console.log. The
+container shows stopped, desired running, with the failure as its
+detail (kept on later reads: extra 2). The rc.local and
+rc.shutdown.local files were written into the jail's tree by hand, as
+root on hearst, purely as test fixtures.

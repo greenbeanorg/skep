@@ -1,0 +1,29 @@
+# Clean shutdown: jail -r runs /etc/rc.shutdown (n8plain 2a21c1c0-ce4f-4a21-9462-0a5efb6aa138), 2026-11-17T18:38:17Z
+## jail.conf exec lines
+	persist;
+	exec.clean;
+	exec.stop = "/bin/sh /etc/rc.shutdown jail";
+	exec.consolelog = "/var/run/skep/jails/2a21c1c0-ce4f-4a21-9462-0a5efb6aa138/console.log";
+	exec.timeout = 120;
+console.log before stop: 900 bytes
+## stop (s7oper)
+container.stop succeeded   started 2026-11-17T18:38:18.117Z finished 2026-11-17T18:38:18.613Z
+result: {"container_id": "2a21c1c0-ce4f-4a21-9462-0a5efb6aa138", "state": "stopped"}
+state stopped desired stopped jid None detail: 
+## console.log appended by the stop
+Stopping cron.
+Waiting for PIDS: 69144.
+.
+Terminated
+
+## host: jls, mount
+no jail
+skeptest/skep/jail/2a21c1c0-ce4f-4a21-9462-0a5efb6aa138 /skeptest/skep/jail/2a21c1c0-ce4f-4a21-9462-0a5efb6aa138 zfs	rw,nfsv4acls 	0 0
+
+## Result
+The jail.conf has persist and exec.stop and no exec.start. The stop
+appended rc.shutdown's output to console.log ("Stopping cron.", the
+wait for its PID; "Terminated" is most likely rc.shutdown's own watchdog
+sleep being killed at its end), and jail -r unmounted the jail's devfs.
+A second proof with a marker in /etc/rc.shutdown.local is in
+rc-timeout.txt.
