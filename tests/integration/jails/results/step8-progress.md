@@ -282,3 +282,51 @@ only; `/health` ok; devfs rulesets 1 to 5 and Skep's 6001 (the corrected
 rules, added by the agent, gone at reboot); `if_epair` loaded (live);
 `skeptest/step8-scratch` destroyed; the users s7admin, s7oper, s7viewer
 unchanged. **Paused before the spoofing tests.**
+
+## 8. Deferred items and two answers (2026-11-17)
+
+**Spoofing (source-IP + MAC) deferred — must run with Andy watching
+OPNsense before the step 10 merge. Also pending before merge: OPNsense
+LAB 'ICMP → any' rule lets jails ping 10/8 (Andy to fix and re-test).**
+No spoofing test was run.
+
+**a) Missing allow-list entries.** Confirmed: the guard treats the
+allow-list as "allowed if present". `checkJailDev`
+(internal/hostops/jails.go) refuses every entry not on the list (`bpf`
+and `bpf<N>` only with DHCP) and ignores absent ones, with one exception:
+a `/dev` without `null` is refused as "no devfs". Before that,
+`listJailDev` (jaildev_freebsd.go) refuses a `dev` that is a link or not
+a devfs mounted at `<root>/dev`. That is what amendment i says: "Anything
+else (or a missing devfs) refuses the start". "Missing" there means the
+devfs mount itself, not an entry of the list. On hearst, `crypto`,
+`ptmx`, `fuse` and `pf` were absent (pf is not loaded; the others are
+not created or not unhidden on 15.1 with these rulesets), and both
+jails started, as designed. The amendment's text is ambiguous enough to
+read the other way, so ADR wording was proposed to Andy (below). It is
+not committed yet.
+
+> Proposed (amendment i, the guard bullet): "... compares every entry
+> with a short allow-list: ... The list says what may be present, not
+> what must be: an entry on it that is absent (on `hearst`, `crypto`,
+> `ptmx`, `fuse`, and `pf` with `pf` not loaded) is not an error. Any
+> entry not on the list, a `dev` that is a link or not a devfs mounted
+> at `<root>/dev`, or a devfs without `null` refuses the start
+> (`container_start_failed`, naming the extra entries) ..."
+
+**b) The expected-rules override is test-only.** The expected rules are
+the unexported package variable `jailDHCPRules`
+(internal/hostops/jailnet.go:36). Production code only reads it: it adds
+the rules (line 178) and compares (line 188). The only writes are in
+internal/hostops/jaildev_freebsd_test.go:45-48, a `_test.go` file
+(also `//go:build freebsd`), which `go build` never compiles. Its gate
+`SKEP_GUARD_TEMPLATE` is read only there. No config field, environment
+variable, flag, or API reaches the variable: it is unexported and no
+production code assigns it. Checked in the binaries too: `skep-agent`,
+`skep-api` and `skepctl` built from HEAD for FreeBSD, and the ones
+installed on hearst (79620ef), contain none of the strings
+`SKEP_GUARD_TEMPLATE`, `path full unhide` or `TestNativeDevGuard`. The
+test binary `hostops.test` was installed only in the scratch dataset,
+which is destroyed; its empty mountpoint directory /skeptest/step8-scratch
+(root:wheel, inside the skeptest pool) is still there.
+
+Step 8 is otherwise closed. Step 9 not started.
