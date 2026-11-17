@@ -278,6 +278,11 @@ Record: [step7/sshd-template-task.txt](step7/sshd-template-task.txt).
   this run's approvals do not cover. Unit tested only.
 - The epair part of "stop/destroy cleans up its epair": step 7 jails have
   no NIC; epairs are step 8 and need `if_epair`.
-- Nothing in this run read the agent's own operation audit log (it has no
-  API route, and hearst has no sqlite3); the task results list what each
-  delete destroyed, and the access log has every request.
+
+**Correction.** The first version of this entry said hearst had no
+sqlite3, so the agent's own audit log could not be read. That was not
+checked and was wrong: `/usr/local/bin/sqlite3` exists. Read with
+`sqlite3 -readonly`: every container task has its requested and finished
+entries (decision 14), the refusals are `denied` with their codes, and
+each delete's finished entry lists the dataset it destroyed.
+[step7/agent-audit.txt](step7/agent-audit.txt)

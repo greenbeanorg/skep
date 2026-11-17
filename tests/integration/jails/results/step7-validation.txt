@@ -118,6 +118,10 @@ The operator's own writes are in the access log with resource type
 container, including the denied ones (container_started,
 container_not_stopped, container_ssh_unavailable).
                   step7/permissions-requests.txt, step7/permissions-audit.txt
+The agent's own audit log (agent.db, read with sqlite3 -readonly): a
+requested and a finished entry for every container task, the refusals
+as denied with their codes, and each delete's finished entry listing the
+dataset it destroyed.                                 step7/agent-audit.txt
 
 == 12. Jails survive the agent ==                           PASS
 
