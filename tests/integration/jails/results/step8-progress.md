@@ -330,3 +330,7 @@ which is destroyed; its empty mountpoint directory /skeptest/step8-scratch
 (root:wheel, inside the skeptest pool) is still there.
 
 Step 8 is otherwise closed. Step 9 not started.
+
+**Closed (2026-11-17):** Andy approved the wording in a); it is now in
+ADR 0010 amendment i. The empty /skeptest/step8-scratch was removed
+with rmdir (his OK).

@@ -894,7 +894,11 @@ Amendments made at acceptance, worked into the text:
     been planted) and compares every entry with a short allow-list: `fd`,
     `null`, `zero`, `crypto`, `random`, `urandom`, `pts`, `ptmx`, `stdin`,
     `stdout`, `stderr`, `zfs`, `fuse`, `pf`, and for a DHCP jail `bpf`
-    and `bpf<N>`. Anything else (or a missing devfs) refuses the start
+    and `bpf<N>`. The list says what may be present, not what must be:
+    an entry on it that is absent (on `hearst`, `crypto`, `ptmx`, `fuse`,
+    and `pf` with `pf` not loaded) is not an error. Any entry not on the
+    list, a `dev` that is a link or not a devfs mounted at `<root>/dev`,
+    or a devfs without `null` refuses the start
     (`container_start_failed`, naming the extra entries) and removes the
     jail with `jail -r` before any of its code has run. Only after the
     guard passes does Skep run the jail's `/etc/rc`, as its own fixed
