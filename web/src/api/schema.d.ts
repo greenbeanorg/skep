@@ -905,8 +905,10 @@ export interface paths {
          *     has such a limit. `GET /system` reports `containers.rctl`.
          *
          *     Each NIC is an epair (ADR 0010 decision 10): its host end joins an
-         *     allow-listed bridge (`bridge_not_allowed`) and its jail end, named
-         *     `sj<10 hex digits of the ID>n<slot>`, moves into the jail. The
+         *     allow-listed bridge (`bridge_not_allowed`) and its jail end moves
+         *     into the jail, where it is named `skep<slot>` (`skep0`, `skep1`,
+         *     ...) in every jail (amendment k), so a clone's copied tree
+         *     configures its own NICs. The
          *     addressing (DHCP by default, or a static IPv4 address with an
          *     optional gateway, one gateway per jail) is written into the jail's
          *     `/etc/rc.conf`, and `nameservers` (static addressing only) into
@@ -1408,7 +1410,7 @@ export interface components {
             bridge: string;
             /** @description The jail end's MAC address. */
             mac_address: string;
-            /** @description The jail end's name inside the jail, the same on every start. */
+            /** @description The jail end's name inside the jail, skep<slot> (skep0, skep1, ...), the same for every jail and on every start; the jail's rc.conf names it. */
             interface: string;
             ipv4: components["schemas"]["ContainerIPv4"];
             /** @description The epair's host end, while the jail runs. */

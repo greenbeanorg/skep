@@ -16,8 +16,12 @@ import (
 // is an epair: the host end (epairNa) is created, described
 // skep:<container-id>:<slot>, and given no address in one ifconfig call,
 // then joins an allow-listed bridge; the jail end is renamed on the host
-// to a stable name and moved into the jail by jail(8)'s vnet.interface.
-// Destroying the host end destroys both ends.
+// on the host to an ID-based name (unique while it is there) and moved into
+// the jail by jail(8)'s vnet.interface, then renamed inside the jail to its
+// fixed guest name, skep<slot> (amendment k), so a jail's network
+// configuration does not depend on its container ID. Destroying the host
+// end destroys both ends, wherever the jail end is and whatever it is
+// called.
 
 // devfsBinary manages the devfs rulesets.
 const devfsBinary = "/sbin/devfs"
@@ -42,9 +46,14 @@ var jailDHCPRules = []string{
 	"600 path bpf* unhide",
 }
 
-// jailIfacePrefix starts the jail end's name: sj, ten hex digits of the
-// container ID, n, and the slot. 14 characters at most, under IFNAMSIZ.
+// jailIfacePrefix starts the jail end's name on the host: sj, ten hex
+// digits of the container ID, n, and the slot. 14 characters at most,
+// under IFNAMSIZ.
 const jailIfacePrefix = "sj"
+
+// guestIfacePrefix starts the jail end's name inside the jail: skep and
+// the slot (amendment k).
+const guestIfacePrefix = "skep"
 
 var (
 	epairHostRE = regexp.MustCompile(`^epair[0-9]{1,5}a$`)
@@ -95,8 +104,19 @@ func parseDescription(desc string) (id string, slot int, ok bool) {
 // MaxJailNICSlot bounds a jail NIC's slot: the name has one digit for it.
 const MaxJailNICSlot = models.MaxContainerNICs - 1
 
-// JailInterfaceName is the stable name of a jail NIC's jail end, the same
-// on every start, so the jail's rc.conf can refer to it.
+// GuestInterfaceName is the name of a jail NIC's jail end inside the jail,
+// skep<slot>, the same for every jail (amendment k): the jail's rc.conf
+// names it, so a clone's copied tree configures its own NICs.
+func GuestInterfaceName(slot int) (string, error) {
+	if slot < 0 || slot > MaxJailNICSlot {
+		return "", invalid("invalid jail NIC slot")
+	}
+	return guestIfacePrefix + strconv.Itoa(slot), nil
+}
+
+// JailInterfaceName is the name of a jail NIC's jail end on the host,
+// between its creation and the move into the jail: derived from the
+// container ID, so it is unique on the host.
 func JailInterfaceName(containerID string, slot int) (string, error) {
 	if !ValidID(containerID) {
 		return "", invalid("invalid container ID")

@@ -75,7 +75,13 @@ it:
 
 1. its parameters, read back from the kernel, must be the baseline
    below;
-2. its interfaces must have left the host;
+2. its interfaces must have left the host; each is then renamed inside
+   the jail to `skep<slot>` (`skep0`, `skep1`, ...) with the host's
+   `ifconfig -j skep-<id> <name> name skep<slot>`, so every jail's
+   `rc.conf` names `skep0` whatever its ID, and a clone's copied tree
+   configures its own NICs (ADR 0010 amendment k). While an epair is on
+   the host its jail end has an ID-based name, `sj<10 hex digits>n<slot>`,
+   and its host end keeps the description `skep:<id>:<slot>`;
 3. **the `/dev` guard:** the jail's `/dev`, listed from the host, must be
    a devfs and hold nothing outside the allow-list `fd`, `null`, `zero`,
    `crypto`, `random`, `urandom`, `pts`, `ptmx`, `stdin`, `stdout`,
@@ -93,7 +99,10 @@ run the jail's `/etc/rc` itself, as `jexec -l -U root skep-<id> /bin/sh
 `/var/run/skep/jails/<id>/console.log`, which `GET .../console-log`
 serves; it is gone after a host reboot.
 
-**Stop.** `jail -r` runs `/etc/rc.shutdown`, sends SIGTERM to what is
+**Stop.** Skep first destroys the jail's epairs (destroying a host end
+removes its jail end inside the jail), so no jail end comes back to the
+host; the jail's `/etc/rc.shutdown` therefore runs without its NICs. Then
+`jail -r` runs `/etc/rc.shutdown`, sends SIGTERM to what is
 left, and after the stop timeout SIGKILL; the kernel then removes the
 jail and its devfs mount. A jail cannot refuse to stop, so there is no
 force stop. The timeout is `containers.stop_timeout_seconds` (default 10)
@@ -204,6 +213,16 @@ interface as a VM can on its NIC.
 `securelevel=2` means base system files with the `schg` flag cannot be
 replaced from inside the jail, so `pkg upgrade` of `FreeBSD-*` packages
 in a jail fails. Packages from ports install normally.
+
+**A jail removed outside Skep** (`jail -r` by hand, or a crash between
+removing a jail and destroying its epairs) returns its jail ends to the
+host named `skep<slot>`, and two such jails return two interfaces both
+named `skep0`: FreeBSD 15.1 allows that on a return. Skep never acts on
+those names. It finds a jail's epairs by their host ends' description
+`skep:<id>:<slot>`; the `orphaned_interfaces` health check reports them,
+and the jail's next start, stop, or delete destroys them (destroying a
+host end removes its own jail end, whatever it is called). Don't run
+`ifconfig skep0 ...` on the host while two exist: it acts on one of them.
 
 ## Writing into a jail only before its first start
 

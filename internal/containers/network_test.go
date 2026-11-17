@@ -8,7 +8,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/greenbeanorg/skep/internal/hostops"
 	"github.com/greenbeanorg/skep/pkg/models"
 )
 
@@ -28,8 +27,8 @@ func TestNetworkStatic(t *testing.T) {
 	if len(c.NICs) != 2 {
 		t.Fatalf("NICs = %+v", c.NICs)
 	}
-	jif0, _ := hostops.JailInterfaceName(c.ID, 0)
-	jif1, _ := hostops.JailInterfaceName(c.ID, 1)
+	// Fixed guest names by slot, whatever the container ID (amendment k).
+	jif0, jif1 := "skep0", "skep1"
 	n0, n1 := c.NICs[0], c.NICs[1]
 	if n0.Slot != 0 || n0.Interface != jif0 || !strings.HasPrefix(n0.MACAddress, "02:") || n0.IPv4 != *static("192.0.2.10/24", "192.0.2.1") ||
 		n1.Interface != jif1 || n1.MACAddress != "02:aa:00:00:00:02" || n1.Bridge != "bridge1" || n0.HostInterface != "" {
@@ -99,7 +98,7 @@ func TestNetworkDHCP(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
 	c := f.create(models.ContainerCreate{Name: "d1", TemplateID: f.minimal, NICs: []models.ContainerNICSpec{{Bridge: "bridge0"}}})
-	jif, _ := hostops.JailInterfaceName(c.ID, 0)
+	jif := "skep0"
 	files, ok := f.fake.JailFiles(c.ID)
 	if !ok || !slices.Equal(files.RCConf, []string{`ifconfig_` + jif + `="SYNCDHCP"`}) || len(files.Nameservers) != 0 || files.AuthorizedKey != "" {
 		t.Fatalf("files = %+v", files)
@@ -125,7 +124,7 @@ func TestNetworkDHCP(t *testing.T) {
 	readdressed := []models.ContainerNICSpec{{Bridge: "bridge0", IPv4: static("192.0.2.20/24", "192.0.2.1")}}
 	ns := []string{"192.0.2.53"}
 	f.succeed(f.svc.UpdateContainer(ctx, c2.ID, models.ContainerUpdate{NICs: &readdressed, Nameservers: &ns}, f.sub))
-	jif2, _ := hostops.JailInterfaceName(c2.ID, 0)
+	jif2 := "skep0"
 	files, _ = f.fake.JailFiles(c2.ID)
 	if !slices.Equal(files.RCConf, []string{`ifconfig_` + jif2 + `="inet 192.0.2.20/24"`, `defaultrouter="192.0.2.1"`}) ||
 		!slices.Equal(files.Nameservers, ns) {

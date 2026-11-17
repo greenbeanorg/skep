@@ -194,11 +194,12 @@ func sameAddressing(a, b []models.ContainerNIC) bool {
 }
 
 // netRCConf is what the jail's rc.conf needs for its NICs: one ifconfig_
-// line per NIC by its stable name, and the default route.
+// line per NIC by its guest name skep<slot> (amendment k), and the default
+// route.
 func netRCConf(c models.Container) ([]string, error) {
 	var lines []string
 	for _, n := range c.NICs {
-		jif, err := hostops.JailInterfaceName(c.ID, n.Slot)
+		jif, err := hostops.GuestInterfaceName(n.Slot)
 		if err != nil {
 			return nil, err
 		}
@@ -223,13 +224,13 @@ func jailNICs(c models.Container) []hostops.JailNIC {
 	return out
 }
 
-// withInterfaces fills in the stable name of each NIC's jail end.
+// withInterfaces fills in the name of each NIC's jail end inside the jail.
 func withInterfaces(c models.Container) models.Container {
 	if c.NICs == nil {
 		c.NICs = []models.ContainerNIC{}
 	}
 	for i := range c.NICs {
-		c.NICs[i].Interface, _ = hostops.JailInterfaceName(c.ID, c.NICs[i].Slot)
+		c.NICs[i].Interface, _ = hostops.GuestInterfaceName(c.NICs[i].Slot)
 	}
 	return c
 }

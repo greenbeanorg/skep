@@ -101,8 +101,9 @@ type ContainerIPv4 struct {
 }
 
 // ContainerNIC is one VNET interface of a jail: an epair whose host end
-// joins Bridge and whose jail end, named Interface, moves into the jail
-// (decision 10). The addressing is written into the jail's rc.conf before
+// joins Bridge and whose jail end moves into the jail and is named
+// Interface there: skep<slot>, the same for every jail (decision 10,
+// amendment k). The addressing is written into the jail's rc.conf before
 // its first start; after that it describes what Skep wrote, and changing
 // it is the jail's own business.
 type ContainerNIC struct {

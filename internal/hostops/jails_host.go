@@ -418,7 +418,8 @@ func startFailed(spec JailSpec, prefix string, err error) error {
 
 // finishStart takes a jail jail -c just created, with nothing running in
 // it, through the checks and then /etc/rc (amendment i): its parameters,
-// its interfaces moved in, and its /dev against the allow-list. A failed
+// its interfaces moved in and renamed to skep<slot> (amendment k), and its
+// /dev against the allow-list. A failed
 // check removes the jail without exec.stop, since none of its code has
 // run. Then /etc/rc runs through jexec, its output appended to
 // console.log, bounded by the start timeout; if it fails or times out, the
@@ -434,6 +435,9 @@ func (h *host) finishStart(ctx context.Context, spec JailSpec, name, conf, root 
 	}
 	if err == nil {
 		err = h.checkMovedIn(ctx, spec)
+	}
+	if err == nil {
+		err = h.renameInJail(ctx, spec, name)
 	}
 	if err == nil {
 		err = h.checkJailDevfs(spec, root)
@@ -521,6 +525,33 @@ func (h *host) checkMovedIn(ctx context.Context, spec JailSpec) error {
 			return err
 		} else if exists {
 			return fmt.Errorf("hostops: the interface %s is still on the host after jail -c", jif)
+		}
+	}
+	return nil
+}
+
+// renameInJail gives each jail end, moved in by jail -c, its guest name
+// skep<slot> (amendment k), with the host's ifconfig run in the jail's
+// network stack: fixed arguments, and none of the jail's code runs. It
+// runs before the /dev guard and /etc/rc, so nothing in the jail has
+// had a chance to rename anything.
+func (h *host) renameInJail(ctx context.Context, spec JailSpec, name string) error {
+	for _, nic := range spec.NICs {
+		jif, err := JailInterfaceName(spec.ContainerID, nic.Slot)
+		if err != nil {
+			return err
+		}
+		guest, err := GuestInterfaceName(nic.Slot)
+		if err != nil {
+			return err
+		}
+		out, err := h.run.Run(ctx, ifconfigBinary, "-j", name, jif, "name", guest)
+		if err != nil {
+			return fmt.Errorf("hostops: rename %s to %s inside the jail: %w", jif, guest, err)
+		}
+		// ifconfig prints the interface's new name.
+		if got := strings.TrimSpace(string(out)); got != guest {
+			return fmt.Errorf("hostops: renaming %s inside the jail gave %q, not %s", jif, printable(got), guest)
 		}
 	}
 	return nil
@@ -615,12 +646,26 @@ func (h *host) removeAfterFailedStart(name, conf string, spec JailSpec) {
 	h.cleanJailNet(spec)
 }
 
-// removeJail runs jail -r with the jail's own jail.conf, which runs
-// exec.stop, and confirms the jail is gone.
+// removeJail destroys the jail's epairs, then runs jail -r with the
+// jail's own jail.conf (whose exec.stop, if any, runs) and confirms the
+// jail is gone.
+//
+// The epairs go first (amendment k, "or its epair destroyed"): destroying
+// a host end destroys its jail end inside the running jail, so no jail end
+// returns to the host on a removal Skep makes. Otherwise every jail's end
+// would return named skep<slot> (or whatever the jail's root renamed it
+// to), and two of them can share a name on the host (the probe of
+// amendment k). The jail's shutdown therefore runs without its NICs.
 func (h *host) removeJail(ctx context.Context, name, conf string, spec JailSpec) error {
 	er, err := h.envRunner()
 	if err != nil {
 		return err
+	}
+	if gone, err := h.DestroyJailInterfaces(ctx, spec.ContainerID); err != nil {
+		return err
+	} else if len(gone) > 0 {
+		h.log.Info("hostops: destroyed the jail's epairs before removing it", "event", "jail_interfaces_destroyed",
+			"container_id", spec.ContainerID, "interfaces", gone)
 	}
 	if _, err := er.RunEnv(ctx, EnvCommand{Path: jailBinary, Args: []string{"-f", conf, "-r", name},
 		Env: jailEnv, Timeout: spec.StartTimeout + spec.StopTimeout + jailCommandSlack}); err != nil {
@@ -661,8 +706,9 @@ func (h *host) StopJail(ctx context.Context, spec JailSpec) error {
 			return err
 		}
 	}
-	// jail -r returned the jail ends to the host; destroying the host
-	// ends removes both (decision 10).
+	// Epairs a jail removed outside Skep returned to the host (their jail
+	// ends named skep<slot>): destroying the host ends removes both
+	// (decision 10).
 	_, err = h.DestroyJailInterfaces(ctx, spec.ContainerID)
 	return err
 }

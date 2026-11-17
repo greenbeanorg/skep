@@ -227,3 +227,107 @@ func TestFinishStartBadParamsSkipGuardAndRC(t *testing.T) {
 		t.Fatalf("rc ran: %q", rc)
 	}
 }
+
+// nicJail is startedJail with one static NIC whose jail end jail -c moved
+// in, so it is gone from the host.
+func nicJail(t *testing.T) (*host, *script, string, JailSpec) {
+	t.Helper()
+	h, run, root := startedJail(t)
+	spec := jailSpec()
+	spec.NICs = []JailNIC{{Slot: 0, Bridge: "bridge0", MAC: "02:00:5e:00:00:01"}, {Slot: 1, Bridge: "bridge0", MAC: "02:00:5e:00:00:02"}}
+	for slot := range 2 {
+		jif, _ := JailInterfaceName(ctrA, slot)
+		run.answers["ifconfig "+jif] = noSuchInterface(jif)
+		guest, _ := GuestInterfaceName(slot)
+		run.answers["ifconfig -j skep-"+ctrA+" "+jif+" name "+guest] = guest + "\n"
+	}
+	return h, run, root, spec
+}
+
+func TestFinishStartRenamesInJailBeforeTheGuard(t *testing.T) {
+	h, run, root, spec := nicJail(t)
+	name := "skep-" + ctrA
+	h.listDev = func(string) ([]string, error) {
+		if n := len(callsWith(run.calls, "ifconfig -j ")); n != 2 {
+			t.Errorf("the /dev guard ran after %d renames, want 2", n)
+		}
+		return devStep7, nil
+	}
+	conf, err := h.writeJailConfAt(spec, root, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.finishStart(context.Background(), spec, name, conf, root); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"ifconfig -j " + name + " sjc0c0c0c011n0 name skep0",
+		"ifconfig -j " + name + " sjc0c0c0c011n1 name skep1",
+	}
+	if got := callsWith(run.calls, "ifconfig -j "); !slices.Equal(got, want) {
+		t.Fatalf("renames: %q", got)
+	}
+	// Moved in first, then renamed, then /etc/rc.
+	moved := slices.Index(run.calls, "ifconfig sjc0c0c0c011n1")
+	renamed := slices.Index(run.calls, want[0])
+	rc := slices.Index(run.calls, "jexec -l -U root "+name+" /bin/sh /etc/rc")
+	if moved < 0 || renamed < moved || rc < renamed {
+		t.Fatalf("order: moved %d, renamed %d, rc %d: %q", moved, renamed, rc, run.calls)
+	}
+}
+
+func TestFinishStartRenameFailureRemovesWithoutRC(t *testing.T) {
+	for what, answer := range map[string]any{
+		"error":      &CommandError{Name: "ifconfig", ExitCode: 1, Stderr: "ifconfig: ioctl SIOCSIFNAME (set name): File exists", Err: errors.New("exit status 1")},
+		"wrong name": "skep9\n",
+	} {
+		h, run, root, spec := nicJail(t)
+		name := "skep-" + ctrA
+		run.answers["ifconfig -j "+name+" sjc0c0c0c011n1 name skep1"] = answer
+		h.listDev = func(string) ([]string, error) {
+			t.Errorf("%s: the guard ran after a failed rename", what)
+			return devStep7, nil
+		}
+		conf, err := h.writeJailConfAt(spec, root, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = h.finishStart(context.Background(), spec, name, conf, root)
+		wantCode(t, err, models.CodeContainerStartFailed)
+		if !strings.Contains(err.Error(), "skep1") {
+			t.Fatalf("%s: the refusal does not name the interface: %v", what, err)
+		}
+		if rc := callsWith(run.calls, "jexec"); len(rc) != 0 {
+			t.Fatalf("%s: rc ran: %q", what, rc)
+		}
+		if r := callsWith(run.calls, "jail "); !slices.Equal(r, []string{"jail -f " + conf + " -r " + name}) {
+			t.Fatalf("%s: removal: %q", what, r)
+		}
+		data, _ := os.ReadFile(conf)
+		if strings.Contains(string(data), "exec.stop") {
+			t.Fatalf("%s: removed with exec.stop", what)
+		}
+	}
+}
+
+// Every removal Skep makes (stop, discard, failed /etc/rc) destroys the
+// epairs before jail -r, so no jail end returns to the host named
+// skep<slot> (amendment k).
+func TestRemoveJailDestroysEpairsFirst(t *testing.T) {
+	h, run, root := startedJail(t)
+	run.answers["ifconfig -g epair"] = "epair0a\nepair0b\n"
+	run.answers["ifconfig epair0a"] = ifconfigShow("epair0a", "skep:"+ctrA+":0")
+	name := "skep-" + ctrA
+	conf, err := h.writeJailConfAt(jailSpec(), root, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := h.removeJail(context.Background(), name, conf, jailSpec()); err != nil {
+		t.Fatal(err)
+	}
+	destroy := slices.Index(run.calls, "ifconfig epair0a destroy")
+	remove := slices.Index(run.calls, "jail -f "+conf+" -r "+name)
+	if destroy < 0 || remove < 0 || destroy > remove {
+		t.Fatalf("destroy at %d, jail -r at %d: %q", destroy, remove, run.calls)
+	}
+}

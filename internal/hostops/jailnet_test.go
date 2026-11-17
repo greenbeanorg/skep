@@ -313,3 +313,43 @@ func TestJailFilesNameservers(t *testing.T) {
 		}
 	}
 }
+
+func TestGuestInterfaceName(t *testing.T) {
+	for slot, want := range map[int]string{0: "skep0", 1: "skep1", 7: "skep7"} {
+		if got, err := GuestInterfaceName(slot); err != nil || got != want {
+			t.Fatalf("GuestInterfaceName(%d) = %q, %v", slot, got, err)
+		}
+	}
+	for _, slot := range []int{-1, 8} {
+		if _, err := GuestInterfaceName(slot); err == nil {
+			t.Fatalf("slot %d accepted", slot)
+		}
+	}
+}
+
+// After a jail is removed outside Skep its jail ends return named skep0,
+// two of them alike (the probe of amendment k on hearst). Only the host
+// ends identify the owners.
+func TestSkepInterfacesIgnoresReturnedGuestNames(t *testing.T) {
+	h, run, _ := jailHost(t)
+	run.answers["ifconfig -g epair"] = "epair0a\nepair1a\nskep0\nskep0\n"
+	run.answers["ifconfig -g tap"] = ""
+	run.answers["ifconfig epair0a"] = ifconfigShow("epair0a", "skep:"+ctrA+":0")
+	run.answers["ifconfig epair1a"] = ifconfigShow("epair1a", "skep:"+ctrB+":0")
+	got, err := h.SkepInterfaces(context.Background())
+	want := []SkepInterface{{Name: "epair0a", Kind: "epair", OwnerID: ctrA, Slot: 0}, {Name: "epair1a", Kind: "epair", OwnerID: ctrB, Slot: 0}}
+	if err != nil || !slices.Equal(got, want) {
+		t.Fatalf("SkepInterfaces = %+v, %v", got, err)
+	}
+	if slices.Contains(run.calls, "ifconfig skep0") {
+		t.Fatalf("read a returned jail end by its ambiguous name: %q", run.calls)
+	}
+	if _, err := h.DestroyJailInterfaces(context.Background(), ctrA); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range run.calls {
+		if strings.HasSuffix(c, " destroy") && c != "ifconfig epair0a destroy" {
+			t.Fatalf("destroyed %q", c)
+		}
+	}
+}
