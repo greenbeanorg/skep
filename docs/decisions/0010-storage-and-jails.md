@@ -972,6 +972,42 @@ Amendments made at acceptance, worked into the text:
     for the jail's own data is the quota less that; `pcpu` is
     approximate (RACCT samples and averages, so a busy jail swings above
     and below the limit around its mean).
+- **k. Fixed in-jail interface names, clone addressing, host keys**
+  (Decisions 3, 10, 13, 14, 15; Andy, 2026-11-17, from the step 9 stop,
+  Q7 in [step9-progress.md](../../tests/integration/jails/results/step9-progress.md)).
+  - **In-jail interface names are fixed by slot: `skep0`, `skep1`, ...**
+    (Q7, option C), for every jail, not only clones. Skep's `rc.conf`
+    lines in a jail's tree name `skep<slot>`, so a jail's network
+    configuration does not depend on its container ID, and a clone's
+    copied tree works unchanged (Decisions 3 and 13 hold: Skep still does
+    not rewrite a started tree). After `vnet.interface` has moved the jail
+    end into the jail, and before the `/dev` guard and `/etc/rc`, Skep
+    renames it inside the jail with `ifconfig -j skep-<id> <name> name
+    skep<slot>`: the host's ifconfig, fixed arguments, and none of the
+    jail's code runs. The host end's name and its
+    `skep:<container-id>:<slot>` description stay ID-based, and orphan
+    detection keys on the host end.
+  - **On a normal stop**, each jail end is renamed back to its ID-based
+    name (or its epair destroyed) before the jail is removed, so no two
+    interfaces named `skep0` return to the host.
+  - **Probe first** (before any of this is built): on `hearst`, what
+    15.1 does when a jail is removed abnormally and two returned
+    interfaces are both named `skep0` (whether the rename or the return
+    fails, and what is left), and whether orphan detection still
+    identifies them by their host ends. If that is unsafe, the build
+    stops and the findings go to Andy.
+  - **Static addresses on clones:** a clone request must give new
+    addressing for every NIC of the source that has a static address;
+    without it the request is refused (422). Separately, a start is
+    refused when the jail's static IPv4 address is already held by a
+    running Skep jail on the same bridge.
+  - **`GET /metrics` requires `container:read`** as well (confirmed): the
+    values name jails, as they name VMs and pools.
+  - **SSH host keys:** a clone has its source's `/etc/ssh` host keys
+    (Decision 3); the docs say so and say to regenerate them inside the
+    clone. An opt-in host-key reset on clone is in the backlog.
+  - The `internal/templates` flake (`TestCreateAndDeleteTemplate`
+    asserting `provisioned` in the create response) gets the Q5 fix.
 
 ## Implementation notes
 

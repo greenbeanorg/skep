@@ -406,3 +406,31 @@ code is the same. No containers, jails, epairs, or RCTL rules were
 created in this run. The only commands run on hearst were the deploy,
 `fstat`, `procstat`, `stat`, `rctl -u` on a nonexistent jail and on cron's
 process, and `man ifconfig`.
+
+## 11. Andy's answers (2026-11-17), recorded as amendment k
+
+Recorded in ADR 0010 as amendment k before any further work.
+
+- **Q7: option C.** Every jail uses fixed in-jail interface names by slot,
+  `skep0`, `skep1`, and so on, renamed after the vnet move with
+  `ifconfig -j` (the host's binary; no jail code runs). Host-end names and
+  descriptions stay ID-based, and orphan detection keys on the host end.
+  On a normal stop each jail end is renamed back (or its epair destroyed)
+  before the jail is removed. Skep's rc.conf lines use `skepN`.
+  **Before building:** probe on hearst what 15.1 does when a jail is
+  removed abnormally and two returned interfaces are both named `skep0`,
+  and confirm orphan detection still identifies them. If that is unsafe,
+  stop and report.
+- **Static addresses on clones:** the clone request must give new
+  addressing for every static NIC, or it is refused with 422. A start is
+  also refused when the jail's static IP is already held by a running Skep
+  jail on the same bridge.
+- **`/metrics` requiring `container:read`:** confirmed.
+- **Flake:** approved; apply the Q5 helper fix to
+  `TestCreateAndDeleteTemplate`.
+- **Docs:** clones share the source's SSH host keys (regenerate them
+  inside the clone). An opt-in host-key reset on clone goes in the
+  backlog.
+
+Stopped after recording, as asked. Nothing built yet; hearst unchanged
+since section 10 (`5a779a4`, no jails, epairs, or RCTL rules).
