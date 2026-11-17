@@ -1,0 +1,63 @@
+# Limits through the deployed API (a3ef267), 2026-11-17T20:15:45Z
+## mlock without a memory limit (s7oper)
+{"error":{"code":"mlock_requires_memory_limit","message":"mlock is accepted only together with a memory limit (limits.memory), because locked memory cannot be paged out","request_id":"0d2be04519ef9f1eff3bd3b0"}}
+
+HTTP 422
+## cpu_percent past the host (s7oper)
+{"error":{"code":"invalid_request","message":"limits.cpu_percent is at most 400 on this host (100 per CPU, 4 CPUs)","request_id":"f16bd5197c40a9ed908736a6"}}
+
+HTTP 400
+## create s9lim (s7oper)
+HTTP 202
+## create task
+{"status":"succeeded","error":null,"result":{"container_id":"cea95763-0103-49c9-a43a-0eac38f1d70c","dataset":"skeptest/skep/jail/cea95763-0103-49c9-a43a-0eac38f1d70c","name":"s9lim","nics":0,"origin":"skeptest/skep/templates/f496866f-32ba-4527-bcee-5a717a2f74c0@skep-base","ssh_key_installed":false,"template_id":"f496866f-32ba-4527-bcee-5a717a2f74c0"}}
+## start (s7oper)
+{"status":"succeeded","error":null,"result":{"container_id":"cea95763-0103-49c9-a43a-0eac38f1d70c","jid":28,"state":"running"}}
+## on hearst while running
+-- rctl jail:skep-cea95763-0103-49c9-a43a-0eac38f1d70c
+jail:skep-cea95763-0103-49c9-a43a-0eac38f1d70c:openfiles:deny=256
+jail:skep-cea95763-0103-49c9-a43a-0eac38f1d70c:maxproc:deny=40
+jail:skep-cea95763-0103-49c9-a43a-0eac38f1d70c:pcpu:deny=50
+jail:skep-cea95763-0103-49c9-a43a-0eac38f1d70c:memoryuse:deny=268435456
+-- rctl (all rules)
+jail:skep-cea95763-0103-49c9-a43a-0eac38f1d70c:openfiles:deny=256
+jail:skep-cea95763-0103-49c9-a43a-0eac38f1d70c:maxproc:deny=40
+jail:skep-cea95763-0103-49c9-a43a-0eac38f1d70c:pcpu:deny=50
+jail:skep-cea95763-0103-49c9-a43a-0eac38f1d70c:memoryuse:deny=268435456
+-- refquota
+refquota	512M	local
+quota	none	default
+used	242K	-
+referenced	77.7M	-
+-- jail params
+allow.mlock
+securelevel=2
+enforce_statfs=2
+children.max=0
+devfs_ruleset=5
+-- usage
+memoryuse=2764800
+maxproc=1
+openfiles=40
+vmemoryuse=14643200
+pcpu=1
+## agent log
+"msg":"task accepted"
+"msg":"task accepted"
+"msg":"http request"
+"msg":"hostops: the jail's /dev holds only the allow-list"
+"entries":"fd null pts random stderr stdin stdout urandom zero zfs"
+
+## stop (s7oper), 2026-11-17T20:19:45Z
+{"status":"succeeded","error":null,"result":{"container_id":"cea95763-0103-49c9-a43a-0eac38f1d70c","state":"stopped"}}
+-- rctl jail:skep-cea95763-0103-49c9-a43a-0eac38f1d70c after stop
+-- all rules
+(end)
+   JID  IP Address      Hostname                      Path
+"msg":"hostops: removed the RCTL rules of a jail"
+## delete (s7oper)
+{"status":"succeeded","error":null,"result":{"container_id":"cea95763-0103-49c9-a43a-0eac38f1d70c","datasets_destroyed":[{"name":"skeptest/skep/jail/cea95763-0103-49c9-a43a-0eac38f1d70c","type":"filesystem","used_bytes":303616}],"name":"s9lim"}}
+-- after delete
+skeptest/skep/jail
+   JID  IP Address      Hostname                      Path
+vtnet0 vtnet1 lo0 bridge0

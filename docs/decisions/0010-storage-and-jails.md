@@ -1655,3 +1655,23 @@ the start-up sweep after `kill -9`, and an orphaned epair reported and
 cleaned. Static addressing on `hearst` stays skipped. Results in
 [step8-progress.md](../../tests/integration/jails/results/step8-progress.md),
 section 7.
+
+### Step 9: limits, quotas, snapshots, clones (Decisions 11, 2, 3)
+
+Started 2026-11-17. **Built:** the RCTL limits and the disk quota of
+Decision 11 (`memoryuse`, `pcpu`, `maxproc`, `openfiles` deny rules on
+`jail:skep-<id>`, added after `jail -c` and read back before the `/dev`
+guard and `/etc/rc`, removed at every removal; `refquota` on the jail
+root; `rctl_unavailable`; `mlock` with a memory limit). Snapshots and
+clones are not built yet.
+
+**`memoryuse` deny is not a hard limit** (the check of Decision 11, on
+`hearst`, `a3ef267`): a jail with `memoryuse` 256 MiB held 514 MiB
+resident for 19 s with nothing refused or paged out, the host having
+free memory. `vmemoryuse` deny refuses at allocation but counts address
+space (about 3x resident for `dd`). The memory limit is therefore not
+verified; the choice is open (Q4 in
+[step9-progress.md](../../tests/integration/jails/results/step9-progress.md),
+section 5). `pcpu`, `maxproc`, `openfiles`, and `refquota` were verified
+on `hearst`.
+

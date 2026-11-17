@@ -1,0 +1,13 @@
+# pcpu deny 50: one busy sh loop in the jail for 20 s, 2026-11-17T20:18:10Z. hw.ncpu=4
+t=2s pcpu=78 
+t=4s pcpu=28 
+t=6s pcpu=74 
+t=8s pcpu=28 
+t=10s pcpu=74 
+t=12s pcpu=28 
+t=14s pcpu=73 
+t=16s pcpu=28 
+t=18s pcpu=73 
+loop iterations 21374
+-- the same loop on the host, unlimited, 5 s, for comparison
+host loop iterations in 5 s: 8832

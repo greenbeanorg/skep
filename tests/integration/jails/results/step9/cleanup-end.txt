@@ -1,0 +1,18 @@
+# End state of hearst, 2026-11-17T20:20:05Z
+{"containers":0}
+{"commit":"a3ef267","containers":{"rctl":true,"max_cpu_percent":400}}
+-- jls
+   JID  IP Address      Hostname                      Path
+-- rctl rules
+(none above)
+-- interfaces
+vtnet0 vtnet1 lo0 bridge0
+	member: vtnet1 flags=143<LEARNING,DISCOVER,AUTOEDGE,AUTOPTP>
+-- jail datasets
+skeptest/skep/jail
+-- /tmp leftovers
+0
+skep_agent is running as pid 74974 (supervisor pid 74973).
+skep_api is running as pid 75035 (supervisor pid 75034).
+-- GET /api/v1/health (pinned certificate)
+{"status":"ok","not_ok":[]}

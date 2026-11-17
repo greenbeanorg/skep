@@ -110,7 +110,90 @@ deferred.
 - **RACCT off** (`rctl_unavailable`): needs a reboot without
   `kern.racct.enable`, not approved. Unit tests only.
 
-## 3. Open questions for Andy
+## 3. Built (2026-11-17)
+
+- `188c8d7` **feat(jails): RCTL limits and the disk quota.** As planned
+  in section 2, items 1 to 3. `models.ContainerLimits` (`memory`,
+  `cpu_percent`, `max_processes`, `open_files`, `disk_quota`) on create,
+  update, and the container, stored in `containers.config` (no
+  migration). `hostops/jailrctl.go`: `rctl -a` after `jail -c`, read back
+  with `rctl jail:skep-<id>` and compared before the parameter check, the
+  `/dev` guard, and `/etc/rc`; rules removed after every `jail -r` and
+  before every start and delete (list first: `rctl -r` exits 1 when
+  nothing matches, and `rctl -l` only works for processes, both found by
+  the read-only probe). `refquota` set at create and update
+  (owner-checked; a new `refquota` column in the fixed `zfs list`
+  columns). `rctl_unavailable` (409) on create, update, and start;
+  `mlock` accepted with a memory limit and RACCT. `GET /system` has
+  `containers: {rctl, max_cpu_percent}`. The fake mirrors it. Unit tests:
+  `internal/hostops/jailrctl_test.go`, `internal/containers/limits_test.go`.
+- `a3ef267` **fix(hostops): read one- and two-byte sysctls.** Found on
+  hearst: `kern.racct.enable` is a one-byte bool on 15.1, so reading it
+  failed ("unexpected integer size of 1 bytes"), the capabilities were
+  missing, and every start would have failed. Native test
+  `TestSysctlWidthsNative` passed on hearst.
+- On merrick: `go build`, `go vet` (Linux and FreeBSD), `go test ./...`,
+  `make test` (race detector), and the pre-push `make lint` all passed.
+- **Not built** (I stopped first, section 5): jail snapshots, rollback,
+  clones, their routes, OpenAPI, and docs.
+
+## 4. Validation on hearst (`a3ef267`, 2026-11-17)
+
+Through the deployed agent and API as `s7oper` and `s7viewer`, with
+curl verifying the certificate pinned against `skep-api tls fingerprint`.
+Test jail `s9lim` from `minimal-151`, no NIC.
+
+| Check | Result | Record |
+|---|---|---|
+| Deploy | `188c8d7`, then `a3ef267` with `deploy-test.sh` | [deploy](step9-deploy-188c8d7.txt), [deploy](step9-deploy-a3ef267.txt) |
+| Capabilities | `containers: {"rctl":true,"max_cpu_percent":400}` (missing before the fix) | [cleanup-end](step9/cleanup-end.txt) |
+| `mlock` without a memory limit | 422 `mlock_requires_memory_limit` | [limits](step9/limits.txt) |
+| `cpu_percent` 401 on 4 CPUs | 400 `invalid_request` | [limits](step9/limits.txt) |
+| Rules while running | exactly Skep's four (`memoryuse:deny=268435456`, `pcpu:deny=50`, `maxproc:deny=40`, `openfiles:deny=256`), no others on the host; `allow.mlock` on; `/dev` guard passed (allow-list entries only) | [limits](step9/limits.txt) |
+| **`memoryuse` 256 MiB** | **Not enforced.** The jail held 514 MiB resident (`memoryuse=539623424`) for 19 s; nothing refused, nothing paged out, host swap 0. See section 5. | [memoryuse](step9/memoryuse.txt) |
+| `vmemoryuse` evaluation | Refuses at allocation (`dd: input buffer: Cannot allocate memory`), but counts address space: at 256 MiB even a 128 MiB buffer fails; a 64 MiB buffer is 76 MB resident and 229 MB of address space. A rule added by hand on the test jail and removed afterwards | [vmemoryuse-eval](step9/vmemoryuse-eval.txt) |
+| `pcpu` 50 | Throttled: samples alternate 28/74 (mean 56); the loop ran at 61 % of the host's unthrottled rate | [pcpu](step9/pcpu.txt) |
+| `maxproc` 40 | 39 processes, then `Cannot fork: Resource temporarily unavailable` | [maxproc-openfiles-quota](step9/maxproc-openfiles-quota.txt) |
+| `openfiles` 256 | `tail: f1: Too many open files` (241 of 300 refused) | same |
+| `refquota` 512M | Random data stopped at 434 MiB written, `referenced` = 512 MiB; freed on `rm` | same |
+| Stop | no RCTL rule left on the name or on the host; `jail_rctl_removed` logged | [limits](step9/limits.txt) |
+| Delete | dataset destroyed and listed in the result | [limits](step9/limits.txt) |
+
+Not run: RACCT off (needs a reboot; unit tests only). Snapshots,
+rollback, `started_once`, and clones: not built.
+
+## 5. STOP: the memory limit needs your decision (Q4)
+
+Decision 11: "If it can [allocate past the limit] ... that is recorded
+... and `vmemoryuse` deny ... is evaluated as the memory limit, or as a
+second limit beside it, before the feature is called verified." It can,
+so the choice is yours. **Q4. What should `limits.memory` be?**
+
+- **A. Keep `memoryuse` deny, documented as soft.** It is accounted
+  (`rctl -u`, monitoring) but not a hard cap: a jail exceeds it while the
+  host has free memory. The pageout daemon may push an over-limit jail
+  out under memory pressure (not tested: it needs pressure on hearst's
+  6 GiB). The UI and docs would say "resident memory target, not
+  enforced at allocation". Not "verified" as a limit.
+- **B. Use `vmemoryuse` deny instead.** Hard, at allocation. But it caps
+  address space, not memory: about 3x resident for `dd` here, and much
+  more for programs that reserve address space up front (Go, Java,
+  jemalloc arenas). Operators must size it well above the memory they
+  mean; the field would be `address_space`, not `memory`.
+- **C. Both, as two fields:** `memory` (`memoryuse`, soft, documented)
+  and `address_space` (`vmemoryuse`, hard, optional).
+- **D. No memory limit in 7b** (CPU, processes, files, quota stay). The
+  `mlock` opt-in is then never accepted.
+
+Related, for `mlock`: RCTL has `memorylocked`, which caps locked memory
+directly. Decision 9 ties `mlock` to a memory limit; tying it to a
+`memorylocked` limit instead would make the opt-in safe whatever Q4
+decides. Built now as the ADR says (memory limit required).
+
+I recommend C plus `memorylocked` for `mlock`. Nothing beyond the
+limits piece is built until you answer.
+
+## 6. Open questions for Andy
 
 - **Q1. Permission for `container.clone`.** Decision 14's table puts
   clone under `container:write` only. For VMs the same table says "clone
@@ -126,6 +209,25 @@ deferred.
   or 10 of the implementation order. Options: **A.** step 9 (it reads
   the same RCTL state), **B.** step 10 with the UI. Not built until you
   say.
+- **Q4.** The memory limit, section 5.
+- **Q5. A test fix outside step 9, for approval.** `fixture.create` in
+  `internal/containers/service_test.go` asserts that the create reply is
+  `provisioned: false`, but the task can finish before the reply reads
+  the row. Under CPU load the package fails about 1 run in 8 on the base
+  commit and about 4 in 8 with step 9 (more tests use the helper). The
+  full `go test ./...` failed 3 tests this way once. Proposed fix: drop
+  the `Provisioned` part of that assertion (the reply is a snapshot).
+  Not changed.
+- **Q6. CLAUDE.md is out of date** on hearst's size: it says 2 cores and
+  2 GB; hearst has 4 CPUs, 6 GiB, and 4 GiB swap. Not changed.
 - **Q3. RACCT-off live check.** Unit tests only unless you approve a
   reboot of hearst with `kern.racct.enable` removed from `loader.conf`
   and put back afterwards (two reboots).
+
+## 7. hearst's state at the stop
+
+`a3ef267` deployed (undo: redeploy `79620ef`); `skep_agent` and
+`skep_api` running; `/api/v1/health` ok. No containers, jails, epairs, or
+RCTL rules; bridge0 has vtnet1 only; `skeptest/skep/jail` empty. No files
+left in hearst's `/tmp`. Templates and the users s7admin, s7oper,
+s7viewer unchanged. [step9/cleanup-end.txt](step9/cleanup-end.txt).
