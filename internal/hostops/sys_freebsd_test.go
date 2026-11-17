@@ -4,6 +4,7 @@ package hostops
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"os"
@@ -90,4 +91,18 @@ func (ownerAsRoot) StatDir(path string) (DirStat, error) {
 		st.UID = 0
 	}
 	return st, err
+}
+
+// TestSysctlWidthsNative reads integer sysctls of each width the agent
+// uses: kern.racct.enable is a one-byte bool on 15.1, hw.ncpu an int.
+func TestSysctlWidthsNative(t *testing.T) {
+	var k kernel
+	if v, err := k.SysctlUint64(sysctlRacct); err != nil && !errors.Is(err, errNoSuchOID) {
+		t.Fatalf("%s: %v", sysctlRacct, err)
+	} else if err == nil && v > 1 {
+		t.Fatalf("%s = %d", sysctlRacct, v)
+	}
+	if v, err := k.SysctlUint64(sysctlNCPU); err != nil || v < 1 {
+		t.Fatalf("%s = %d, %v", sysctlNCPU, v, err)
+	}
 }

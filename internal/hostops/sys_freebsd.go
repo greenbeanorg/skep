@@ -37,7 +37,12 @@ func (kernel) SysctlUint64(name string) (uint64, error) {
 		}
 		return 0, err
 	}
+	// kern.racct.enable is a bool, one byte (FreeBSD 15.1).
 	switch len(raw) {
+	case 1:
+		return uint64(raw[0]), nil
+	case 2:
+		return uint64(binary.NativeEndian.Uint16(raw)), nil
 	case 4:
 		return uint64(binary.NativeEndian.Uint32(raw)), nil
 	case 8:
