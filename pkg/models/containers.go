@@ -60,8 +60,8 @@ const (
 	// CodeContainerSSHUnavailable: an SSH key was given for a jail whose
 	// template has no sshd (amendment g).
 	CodeContainerSSHUnavailable = "container_ssh_unavailable"
-	// CodeMlockRequiresMemoryLimit: mlock without an RCTL memory limit
-	// (decision 9).
+	// CodeMlockRequiresMemoryLimit: mlock without an RCTL locked-memory
+	// limit, or without RACCT (decision 9, amendment j).
 	CodeMlockRequiresMemoryLimit = "mlock_requires_memory_limit"
 	// CodeContainerStartFailed: jail(8) or /etc/rc failed, or the jail's
 	// parameters were not the baseline; the message says which.
@@ -130,18 +130,21 @@ type ContainerOptions struct {
 	// SysVIPC gives the jail its own System V shared memory, semaphores,
 	// and message queues.
 	SysVIPC bool `json:"sysvipc"`
-	// Mlock lets the jail lock memory. It needs a memory limit.
+	// Mlock lets the jail lock memory. It needs a locked-memory limit
+	// (limits.locked_memory, amendment j).
 	Mlock bool `json:"mlock"`
 }
 
 // ContainerLimits are a jail's resource limits (decision 11); zero or
-// absent means none. Memory, CPUPercent, MaxProcesses, and OpenFiles are
-// RCTL rules with the deny action on the jail and need RACCT
+// absent means none. Memory, CPUPercent, MaxProcesses, OpenFiles, and
+// LockedMemory are RCTL rules with the deny action on the jail and need RACCT
 // (rctl_unavailable otherwise); DiskQuota is ZFS refquota on the jail's
 // root, so its snapshots do not count against it, and works without
 // RACCT.
 type ContainerLimits struct {
-	// Memory is RCTL memoryuse: the jail's resident memory.
+	// Memory is RCTL memoryuse: the jail's resident memory. It is a soft
+	// limit (amendment j): FreeBSD accounts resident memory and does not
+	// refuse an allocation past it.
 	Memory ByteSize `json:"memory,omitempty"`
 	// CPUPercent is RCTL pcpu: 100 is one CPU, so a jail is throttled to
 	// CPUPercent/100 CPUs. At most 100 per CPU of the host.
@@ -149,8 +152,12 @@ type ContainerLimits struct {
 	// MaxProcesses is RCTL maxproc; OpenFiles is RCTL openfiles.
 	MaxProcesses int `json:"max_processes,omitempty"`
 	OpenFiles    int `json:"open_files,omitempty"`
-	// DiskQuota is the most the jail's root may reference.
+	// DiskQuota is the most the jail's root may reference, the data it
+	// shares with its template included.
 	DiskQuota ByteSize `json:"disk_quota,omitempty"`
+	// LockedMemory is RCTL memorylocked: the memory the jail may lock
+	// with mlock(2). The mlock opt-in needs it (amendment j).
+	LockedMemory ByteSize `json:"locked_memory,omitempty"`
 }
 
 // Bounds of the jail limits.
@@ -165,7 +172,7 @@ const (
 
 // RCTL reports whether the host can enforce RCTL limits.
 func (l ContainerLimits) RCTL() bool {
-	return l.Memory > 0 || l.CPUPercent > 0 || l.MaxProcesses > 0 || l.OpenFiles > 0
+	return l.Memory > 0 || l.CPUPercent > 0 || l.MaxProcesses > 0 || l.OpenFiles > 0 || l.LockedMemory > 0
 }
 
 // ContainerCapabilities is what the host offers jails, in the system

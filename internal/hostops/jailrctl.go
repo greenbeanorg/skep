@@ -34,23 +34,27 @@ const sysctlRacct = "kern.racct.enable"
 // The RCTL resources Skep sets (decision 11).
 const (
 	rctlMemoryUse = "memoryuse"
+	rctlMemLocked = "memorylocked"
 	rctlPCPU      = "pcpu"
 	rctlMaxProc   = "maxproc"
 	rctlOpenFiles = "openfiles"
 )
 
 // JailLimits are the RCTL limits of a jail; zero means none. CPUPercent
-// is RCTL's pcpu, where 100 is one CPU.
+// is RCTL's pcpu, where 100 is one CPU. LockedMemoryBytes is
+// memorylocked, the limit the mlock opt-in needs (amendment j).
 type JailLimits struct {
-	MemoryBytes  int64
-	CPUPercent   int
-	MaxProcesses int
-	OpenFiles    int
+	MemoryBytes       int64
+	CPUPercent        int
+	MaxProcesses      int
+	OpenFiles         int
+	LockedMemoryBytes int64
 }
 
 // Any reports whether a limit is set.
 func (l JailLimits) Any() bool {
-	return l.MemoryBytes > 0 || l.CPUPercent > 0 || l.MaxProcesses > 0 || l.OpenFiles > 0
+	return l.MemoryBytes > 0 || l.CPUPercent > 0 || l.MaxProcesses > 0 || l.OpenFiles > 0 ||
+		l.LockedMemoryBytes > 0
 }
 
 // RctlInfo is what the host offers for jail limits.
@@ -69,7 +73,7 @@ func JailRctlRules(containerID string, l JailLimits) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	if l.MemoryBytes < 0 || l.CPUPercent < 0 || l.MaxProcesses < 0 || l.OpenFiles < 0 {
+	if l.MemoryBytes < 0 || l.CPUPercent < 0 || l.MaxProcesses < 0 || l.OpenFiles < 0 || l.LockedMemoryBytes < 0 {
 		return nil, invalid("a jail limit cannot be negative")
 	}
 	var rules []string
@@ -82,13 +86,14 @@ func JailRctlRules(containerID string, l JailLimits) ([]string, error) {
 	add(rctlPCPU, int64(l.CPUPercent))
 	add(rctlMaxProc, int64(l.MaxProcesses))
 	add(rctlOpenFiles, int64(l.OpenFiles))
+	add(rctlMemLocked, l.LockedMemoryBytes)
 	return rules, nil
 }
 
 // rctlUnavailable is the refusal of a limit on a host without RACCT.
 func rctlUnavailable(containerID string) error {
 	return &models.Error{Code: models.CodeRctlUnavailable,
-		Message: "the jail has CPU, memory, process, or file limits, and RACCT is disabled on this host (kern.racct.enable=1 in loader.conf, then a reboot); Skep does not start a jail without the limits it was given",
+		Message: "the jail has CPU, memory, process, file, or locked-memory limits, and RACCT is disabled on this host (kern.racct.enable=1 in loader.conf, then a reboot); Skep does not start a jail without the limits it was given",
 		Details: map[string]any{"container_id": containerID}}
 }
 

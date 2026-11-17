@@ -136,7 +136,7 @@ type JailSpec struct {
 	Hostname string
 	// SysVIPC sets sysvshm, sysvsem, and sysvmsg to new (an opt-in).
 	SysVIPC bool
-	// Mlock sets allow.mlock (an opt-in, accepted only with a memory
+	// Mlock sets allow.mlock (an opt-in, accepted only with a locked-memory
 	// limit; the service decides).
 	Mlock bool
 	// StartTimeout bounds /etc/rc (Skep's jexec step) and is exec.timeout,

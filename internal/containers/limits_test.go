@@ -17,7 +17,8 @@ func (f *fixture) called(want string) bool {
 func TestLimitsReachTheJail(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
-	limits := models.ContainerLimits{Memory: 256 << 20, CPUPercent: 50, MaxProcesses: 200, OpenFiles: 4096, DiskQuota: 1 << 30}
+	limits := models.ContainerLimits{Memory: 256 << 20, CPUPercent: 50, MaxProcesses: 200, OpenFiles: 4096, DiskQuota: 1 << 30,
+		LockedMemory: 32 << 20}
 	c := f.create(models.ContainerCreate{Name: "lim", TemplateID: f.minimal, Limits: &limits,
 		Options: &models.ContainerOptions{Mlock: true}})
 	if c.Limits != limits || !c.Options.Mlock {
@@ -28,7 +29,8 @@ func TestLimitsReachTheJail(t *testing.T) {
 	}
 	f.succeed(f.svc.Action(ctx, c.ID, models.ContainerAction{Action: "start"}, f.sub))
 	j := "jail:skep-" + c.ID + ":"
-	want := []string{j + "memoryuse:deny=268435456", j + "pcpu:deny=50", j + "maxproc:deny=200", j + "openfiles:deny=4096"}
+	want := []string{j + "memoryuse:deny=268435456", j + "pcpu:deny=50", j + "maxproc:deny=200", j + "openfiles:deny=4096",
+		j + "memorylocked:deny=33554432"}
 	if got := f.fake.RctlRules(c.ID); strings.Join(got, " ") != strings.Join(want, " ") {
 		t.Fatalf("rules = %q", got)
 	}
@@ -38,8 +40,8 @@ func TestLimitsReachTheJail(t *testing.T) {
 	}
 
 	// An update replaces the limits: the quota follows, and mlock without
-	// the memory limit is refused.
-	_, err := f.svc.UpdateContainer(ctx, c.ID, models.ContainerUpdate{Limits: &models.ContainerLimits{CPUPercent: 25}}, f.sub)
+	// the locked-memory limit is refused, even with a memory limit.
+	_, err := f.svc.UpdateContainer(ctx, c.ID, models.ContainerUpdate{Limits: &models.ContainerLimits{CPUPercent: 25, Memory: 256 << 20}}, f.sub)
 	wantCode(t, err, models.CodeMlockRequiresMemoryLimit)
 	f.succeed(f.svc.UpdateContainer(ctx, c.ID, models.ContainerUpdate{Limits: &models.ContainerLimits{CPUPercent: 25},
 		Options: &models.ContainerOptions{}}, f.sub))
@@ -64,13 +66,16 @@ func TestLimitRefusals(t *testing.T) {
 		opts   models.ContainerOptions
 		code   string
 	}{
-		"negative":          {models.ContainerLimits{MaxProcesses: -1}, models.ContainerOptions{}, models.CodeInvalidRequest},
-		"memory too small":  {models.ContainerLimits{Memory: 1 << 20}, models.ContainerOptions{}, models.CodeInvalidRequest},
-		"cpu past the host": {models.ContainerLimits{CPUPercent: 401}, models.ContainerOptions{}, models.CodeInvalidRequest},
-		"too few files":     {models.ContainerLimits{OpenFiles: 10}, models.ContainerOptions{}, models.CodeInvalidRequest},
-		"quota too small":   {models.ContainerLimits{DiskQuota: 1 << 20}, models.ContainerOptions{}, models.CodeInvalidRequest},
-		"mlock, no memory":  {models.ContainerLimits{CPUPercent: 50}, models.ContainerOptions{Mlock: true}, models.CodeMlockRequiresMemoryLimit},
-		"mlock, only quota": {models.ContainerLimits{DiskQuota: 1 << 30}, models.ContainerOptions{Mlock: true}, models.CodeMlockRequiresMemoryLimit},
+		"negative":           {models.ContainerLimits{MaxProcesses: -1}, models.ContainerOptions{}, models.CodeInvalidRequest},
+		"memory too small":   {models.ContainerLimits{Memory: 1 << 20}, models.ContainerOptions{}, models.CodeInvalidRequest},
+		"cpu past the host":  {models.ContainerLimits{CPUPercent: 401}, models.ContainerOptions{}, models.CodeInvalidRequest},
+		"too few files":      {models.ContainerLimits{OpenFiles: 10}, models.ContainerOptions{}, models.CodeInvalidRequest},
+		"quota too small":    {models.ContainerLimits{DiskQuota: 1 << 20}, models.ContainerOptions{}, models.CodeInvalidRequest},
+		"mlock, no memory":   {models.ContainerLimits{CPUPercent: 50}, models.ContainerOptions{Mlock: true}, models.CodeMlockRequiresMemoryLimit},
+		"mlock, only quota":  {models.ContainerLimits{DiskQuota: 1 << 30}, models.ContainerOptions{Mlock: true}, models.CodeMlockRequiresMemoryLimit},
+		"mlock, memory only": {models.ContainerLimits{Memory: 256 << 20}, models.ContainerOptions{Mlock: true}, models.CodeMlockRequiresMemoryLimit},
+		"locked over memory": {models.ContainerLimits{Memory: 64 << 20, LockedMemory: 128 << 20}, models.ContainerOptions{Mlock: true}, models.CodeInvalidRequest},
+		"negative locked":    {models.ContainerLimits{LockedMemory: -1}, models.ContainerOptions{}, models.CodeInvalidRequest},
 	} {
 		l, o := c.limits, c.opts
 		_, err := f.svc.CreateContainer(ctx, models.ContainerCreate{Name: "w", TemplateID: f.minimal, Limits: &l, Options: &o}, f.sub)
@@ -108,10 +113,10 @@ func TestRacctDisabled(t *testing.T) {
 	wantCode(t, err, models.CodeRctlUnavailable)
 	_, err = f.svc.UpdateContainer(ctx, plain.ID, models.ContainerUpdate{Limits: &models.ContainerLimits{MaxProcesses: 10}}, f.sub)
 	wantCode(t, err, models.CodeRctlUnavailable)
-	// mlock with a memory limit needs RACCT too: the memory limit is
+	// mlock with a locked-memory limit needs RACCT too: the limit is
 	// refused first.
 	_, err = f.svc.CreateContainer(ctx, models.ContainerCreate{Name: "w", TemplateID: f.minimal,
-		Limits: &models.ContainerLimits{Memory: 256 << 20}, Options: &models.ContainerOptions{Mlock: true}}, f.sub)
+		Limits: &models.ContainerLimits{LockedMemory: 16 << 20}, Options: &models.ContainerOptions{Mlock: true}}, f.sub)
 	wantCode(t, err, models.CodeRctlUnavailable)
 
 	// A disk quota works without RACCT, and so does a jail without

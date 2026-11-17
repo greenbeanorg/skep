@@ -21,12 +21,14 @@ func rctlHost(t *testing.T, racct bool) (*host, *script) {
 }
 
 func TestJailRctlRules(t *testing.T) {
-	rules, err := JailRctlRules(ctrA, JailLimits{MemoryBytes: 256 << 20, CPUPercent: 50, MaxProcesses: 100, OpenFiles: 1024})
+	rules, err := JailRctlRules(ctrA, JailLimits{MemoryBytes: 256 << 20, CPUPercent: 50, MaxProcesses: 100, OpenFiles: 1024,
+		LockedMemoryBytes: 64 << 20})
 	if err != nil {
 		t.Fatal(err)
 	}
 	j := "jail:skep-" + ctrA + ":"
-	want := []string{j + "memoryuse:deny=268435456", j + "pcpu:deny=50", j + "maxproc:deny=100", j + "openfiles:deny=1024"}
+	want := []string{j + "memoryuse:deny=268435456", j + "pcpu:deny=50", j + "maxproc:deny=100", j + "openfiles:deny=1024",
+		j + "memorylocked:deny=67108864"}
 	if strings.Join(rules, " ") != strings.Join(want, " ") {
 		t.Fatalf("rules = %q, want %q", rules, want)
 	}
