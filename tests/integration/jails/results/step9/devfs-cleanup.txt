@@ -1,0 +1,72 @@
+# Leftover devfs cleanup on hearst (ADR 0010 amendment l live test), 2026-11-17T23:19:58Z
+
+## Before the deploy (hearst at 003a33f)
+$ mount -p -t devfs
+devfs			/dev			devfs	rw		0 0
+devfs			/skeptest/skep/jail/c5d71062-66f8-4008-862e-b5b01e963245/dev devfs	rw		0 0
+devfs			/skeptest/skep/jail/340ac09a-3dd5-4a2e-8327-19d6c8625885/dev devfs	rw		0 0
+$ mount -p | wc -l
+      11
+$ mount -p
+/dev/da0s1a		/			ufs	rw		1 1
+devfs			/dev			devfs	rw		0 0
+skeptest		/skeptest		zfs	rw,nfsv4acls 	0 0
+skeptest/skep/templates	/skeptest/skep/templates zfs	rw,nfsv4acls 	0 0
+skeptest/skep/templates/f496866f-32ba-4527-bcee-5a717a2f74c0 /skeptest/skep/templates/f496866f-32ba-4527-bcee-5a717a2f74c0 zfs	ro,nfsv4acls 	0 0
+skeptest/skep/templates/dbf4243a-81fe-4914-8f7a-fd0a768476aa /skeptest/skep/templates/dbf4243a-81fe-4914-8f7a-fd0a768476aa zfs	ro,nfsv4acls 	0 0
+skeptest/skep/jail	/skeptest/skep/jail	zfs	rw,nfsv4acls 	0 0
+skeptest/skep/jail/c5d71062-66f8-4008-862e-b5b01e963245 /skeptest/skep/jail/c5d71062-66f8-4008-862e-b5b01e963245 zfs	rw,nfsv4acls 	0 0
+devfs			/skeptest/skep/jail/c5d71062-66f8-4008-862e-b5b01e963245/dev devfs	rw		0 0
+skeptest/skep/jail/340ac09a-3dd5-4a2e-8327-19d6c8625885 /skeptest/skep/jail/340ac09a-3dd5-4a2e-8327-19d6c8625885 zfs	rw,nfsv4acls 	0 0
+devfs			/skeptest/skep/jail/340ac09a-3dd5-4a2e-8327-19d6c8625885/dev devfs	rw		0 0
+
+## After the deploy (b5b0546): the agent's start-up sweep
+$ grep orphaned_devfs|observed /var/log/daemon.log (new lines)
+Nov 17 18:20:15 hearst skep-agent[18296]: {"time":"2026-11-17T18:20:15.335162153-05:00","level":"WARN","msg":"hostops: unmounted a devfs a removal outside Skep left on the jail's root","event":"orphaned_devfs_removed","container_id":"340ac09a-3dd5-4a2e-8327-19d6c8625885","mountpoint":"/skeptest/skep/jail/340ac09a-3dd5-4a2e-8327-19d6c8625885/dev","fsids":["FSID:1895890709:113"]}
+Nov 17 18:20:15 hearst skep-agent[18296]: {"time":"2026-11-17T18:20:15.34352627-05:00","level":"WARN","msg":"hostops: unmounted a devfs a removal outside Skep left on the jail's root","event":"orphaned_devfs_removed","container_id":"c5d71062-66f8-4008-862e-b5b01e963245","mountpoint":"/skeptest/skep/jail/c5d71062-66f8-4008-862e-b5b01e963245/dev","fsids":["FSID:1895890708:113"]}
+Nov 17 18:20:15 hearst skep-agent[18296]: {"time":"2026-11-17T18:20:15.343555258-05:00","level":"INFO","msg":"containers: observed the jails","containers":2,"running":0,"half_started_removed":0}
+$ mount -p -t devfs
+devfs			/dev			devfs	rw		0 0
+$ diff (mount -p before deploy) (mount -p after deploy)
+9d8
+< devfs			/skeptest/skep/jail/c5d71062-66f8-4008-862e-b5b01e963245/dev devfs	rw		0 0
+11d9
+< devfs			/skeptest/skep/jail/340ac09a-3dd5-4a2e-8327-19d6c8625885/dev devfs	rw		0 0
+
+## API deletes
+$ DELETE /api/v1/containers/340ac09a-3dd5-4a2e-8327-19d6c8625885 (as s7oper)
+{"id":"0d5a528b-f447-40a8-80fa-15c5793ca86d","node_id":"97fc6968-7e82-49c9-bda8-9026775ca964","type":"container.delete","status":"pending","resource_type":"container","resource_id":"340ac09a-3dd5-4a2e-8327-19d6c8625885","actor":{"id":"f3b71fbe-2e24-4539-9ec2-8be0fcde53ed","name":"s7oper"},"request_id":"d99f4272eda763d2ebc72140","cancellable":false,"created_at":"2026-11-17T23:20:41.958Z"}
+
+HTTP 202
+(My helper first polled the actor's ID and logged in on every poll, which the login rate limit refused; the delete task itself is below.)
+$ GET /api/v1/tasks/0d5a528b-f447-40a8-80fa-15c5793ca86d
+{"id": "0d5a528b-f447-40a8-80fa-15c5793ca86d", "node_id": "97fc6968-7e82-49c9-bda8-9026775ca964", "type": "container.delete", "status": "succeeded", "resource_type": "container", "resource_id": "340ac09a-3dd5-4a2e-8327-19d6c8625885", "actor": {"id": "f3b71fbe-2e24-4539-9ec2-8be0fcde53ed", "name": "s7oper"}, "request_id": "d99f4272eda763d2ebc72140", "cancellable": false, "result": {"container_id": "340ac09a-3dd5-4a2e-8327-19d6c8625885", "datasets_destroyed": [{"name": "skeptest/skep/jail/340ac09a-3dd5-4a2e-8327-19d6c8625885", "type": "filesystem", "used_bytes": 279552}], "name": "c9dhcp"}, "created_at": "2026-11-17T23:20:41.958Z", "started_at": "2026-11-17T23:20:41.959Z", "finished_at": "2026-11-17T23:20:41.997Z"}
+$ DELETE /api/v1/containers/c5d71062-66f8-4008-862e-b5b01e963245/snapshots/25622413-d2e6-444c-91d3-d10e6367d53f (as s7oper)
+{"id":"73d906d6-b25a-40f4-934b-d575556c75b7","node_id":"97fc6968-7e82-49c9-bda8-9026775ca964","type":"container.snapshot.delete","status":"pending","resource_type":"container","resource_id":"c5d71062-66f8-4008-862e-b5b01e963245","actor":{"id":"f3b71fbe-2e24-4539-9ec2-8be0fcde53ed","name":"s7oper"},"request_id":"5672cd5be9879cce43902467","cancellable":false,"created_at":"2026-11-17T23:23:10.497Z"}
+
+HTTP 202
+$ GET /api/v1/tasks/73d906d6-b25a-40f4-934b-d575556c75b7
+{"id": "73d906d6-b25a-40f4-934b-d575556c75b7", "node_id": "97fc6968-7e82-49c9-bda8-9026775ca964", "type": "container.snapshot.delete", "status": "succeeded", "resource_type": "container", "resource_id": "c5d71062-66f8-4008-862e-b5b01e963245", "actor": {"id": "f3b71fbe-2e24-4539-9ec2-8be0fcde53ed", "name": "s7oper"}, "request_id": "5672cd5be9879cce43902467", "cancellable": false, "result": {"container_id": "c5d71062-66f8-4008-862e-b5b01e963245", "datasets_destroyed": [{"name": "skeptest/skep/jail/c5d71062-66f8-4008-862e-b5b01e963245@skep-25622413-d2e6-444c-91d3-d10e6367d53f", "type": "snapshot", "used_bytes": 232960}], "name": "c9dhcp", "snapshot_id": "25622413-d2e6-444c-91d3-d10e6367d53f"}, "created_at": "2026-11-17T23:23:10.497Z", "started_at": "2026-11-17T23:23:10.498Z", "finished_at": "2026-11-17T23:23:10.513Z"}
+$ DELETE /api/v1/containers/c5d71062-66f8-4008-862e-b5b01e963245 (as s7oper)
+{"id":"f0045276-66a0-48ba-8f63-c0d09f5f646a","node_id":"97fc6968-7e82-49c9-bda8-9026775ca964","type":"container.delete","status":"pending","resource_type":"container","resource_id":"c5d71062-66f8-4008-862e-b5b01e963245","actor":{"id":"f3b71fbe-2e24-4539-9ec2-8be0fcde53ed","name":"s7oper"},"request_id":"1a460a2485464a7b8e288a21","cancellable":false,"created_at":"2026-11-17T23:23:10.562Z"}
+
+HTTP 202
+$ GET /api/v1/tasks/f0045276-66a0-48ba-8f63-c0d09f5f646a
+{"id": "f0045276-66a0-48ba-8f63-c0d09f5f646a", "node_id": "97fc6968-7e82-49c9-bda8-9026775ca964", "type": "container.delete", "status": "succeeded", "resource_type": "container", "resource_id": "c5d71062-66f8-4008-862e-b5b01e963245", "actor": {"id": "f3b71fbe-2e24-4539-9ec2-8be0fcde53ed", "name": "s7oper"}, "request_id": "1a460a2485464a7b8e288a21", "cancellable": false, "result": {"container_id": "c5d71062-66f8-4008-862e-b5b01e963245", "datasets_destroyed": [{"name": "skeptest/skep/jail/c5d71062-66f8-4008-862e-b5b01e963245", "type": "filesystem", "used_bytes": 293888}], "name": "s9dhcp"}, "created_at": "2026-11-17T23:23:10.562Z", "started_at": "2026-11-17T23:23:10.563Z", "finished_at": "2026-11-17T23:23:10.599Z"}
+
+## After the deletes
+$ GET /api/v1/containers
+{"items":[]}
+
+HTTP 200
+$ mount -p -t devfs
+devfs			/dev			devfs	rw		0 0
+$ zfs list -r -t all skeptest/skep/jail
+NAME
+skeptest/skep/jail
+$ diff (mount -p after deploy) (mount -p at the end)
+8,9d7
+< skeptest/skep/jail/c5d71062-66f8-4008-862e-b5b01e963245 /skeptest/skep/jail/c5d71062-66f8-4008-862e-b5b01e963245 zfs	rw,nfsv4acls 	0 0
+< skeptest/skep/jail/340ac09a-3dd5-4a2e-8327-19d6c8625885 /skeptest/skep/jail/340ac09a-3dd5-4a2e-8327-19d6c8625885 zfs	rw,nfsv4acls 	0 0
+$ jls; ifconfig -l
+vtnet0 vtnet1 lo0 bridge0
