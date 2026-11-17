@@ -218,3 +218,67 @@ open point under "Step 8" is closed.
 - The redeploy of the corrected build is approved.
 
 **Not built** (Andy: "Then stop. Don't build.").
+
+## 6. Andy's confirmation recorded, amendment i built and deployed (2026-11-17)
+
+**Recorded** (`ac10276`): Skep runs `/etc/rc` itself with `jexec -l -U
+root skep-<id> /bin/sh /etc/rc`; `persist`; `exec.stop` kept; an rc
+failure or timeout stops and removes the jail (`container_start_failed`,
+output kept in console.log); a half-started jail is handled by the
+start-up sweep; the live static test is skipped. My reading, recorded as
+such: a guard refusal and a sweep removal run **without** `exec.stop`.
+
+**Built** (`49809c1` hostops, `79620ef` containers): ruleset 6001 as
+`include 1` to `include 4`, `path pf unhide`, `path bpf* unhide`; the
+jail.conf without `exec.start`; after `jail -c` the parameter check, the
+interface check, and the `/dev` guard (the jail root opened without
+following links, `dev` beneath it, `fstatfs` devfs mounted at
+`<root>/dev`, top-level entries against the allow-list); then rc through
+`jexec`, output appended to console.log (a file, not a pipe, so daemons
+cannot hold the runner); `DiscardJail` and the start-up sweep of
+containers still recorded `starting`. `go test ./...`, `make lint`
+(gofmt, vet for Linux and FreeBSD, staticcheck) pass on merrick.
+
+**Approved extras, listed before the deploy** (Andy, 2026-11-17): the two
+removals without `exec.stop`; `observe` keeps a recorded stopped detail
+(a failed start's reason was lost on the next read); one
+`jail_devfs_checked` info line per start; the start task's progress text.
+
+**Deployed** `79620ef` with `scripts/deploy-test.sh`
+([step8/deploy-79620ef.txt](step8/deploy-79620ef.txt)); the agent's
+start-up line now carries `half_started_removed`.
+
+## 7. Step 8 validation on hearst (2026-11-17, unattended, spoofing excluded)
+
+| Check | Result | Record |
+|---|---|---|
+| Jail devfs: guard refusal | **Passed.** Native test: the expected 6001 rules changed to 6001 plus `path full unhide`, real `StartJail`, real allow-list; refused with `extra_devices [full]`, removed before rc (empty console.log, jail.conf without exec.*), epair, jail end, ruleset, and dataset gone | [step8/guard-refusal.txt](step8/guard-refusal.txt) |
+| Jail devfs: real jails | **Passed.** DHCP jail (6001): `bpf bpf0 fd null pts random stderr stdin stdout urandom zero zfs`; no-NIC jail (5): the same without `bpf bpf0`; host and jail views identical; no extras; the agent's `jail_devfs_checked` lines match | [step8/devfs-check.txt](step8/devfs-check.txt) |
+| Clean shutdown | **Passed.** Stop appended rc.shutdown's output to console.log ("Stopping cron."); devfs unmounted | [step8/shutdown.txt](step8/shutdown.txt) |
+| rc timeout | **Passed** (twice). `sleep 600` in rc.local: failed after 2m0s with `container_start_failed`; `jail -r` ran rc.shutdown (marker in rc.shutdown.local); jail, devfs, jail end, epair gone; output in console.log | [step8/rc-timeout.txt](step8/rc-timeout.txt) |
+| SSH from merrick | **Passed.** root by key to 10.79.60.104 (DHCP); seen from 10.79.20.80; jailed, securelevel 2; password refused | [step8/ssh.txt](step8/ssh.txt) |
+| Isolation | **Passed for TCP; one finding.** TCP to hearst (22, 8443), merrick, 10.79.20.1, and 172.16/12 and 192.168/16 samples dropped; internet, DNS (10.79.10.250/.249), NTP (10.79.60.1) work. **ICMP echo from VLAN 60 reaches 10/8 hosts, hearst included** (capture on hearst's vtnet0: the request arrives routed, hearst replies): the LAB rules pass ICMP echo. hearst has no other address a jail can reach; no link-local presence on VLAN 60 | [step8/isolation.txt](step8/isolation.txt) |
+| Stop/delete cleanup | **Passed.** Stop destroyed the epair; delete of a jail with an orphan destroyed it (`interfaces_destroyed`) | [step8/cleanup.txt](step8/cleanup.txt) |
+| kill -9 mid-start (sweep) | **Passed.** Restarted agent: task `interrupted`, jail removed without exec.stop (no new rc.shutdown marker), epair gone, container stopped with the sweep's detail | [step8/cleanup.txt](step8/cleanup.txt) |
+| kill -9 + orphan | **Passed.** Jail removed by hand while the agent was down: at restart a warning `orphaned_interface` (epair0a, owner, slot), `found 1`, `/health` degraded on `orphaned_interfaces`; cleared by the owner's delete | [step8/cleanup.txt](step8/cleanup.txt) |
+| Static addressing | **Skipped** (no approved range; unit tests only) | |
+| Spoofing | **Not run** (waits for Andy at OPNsense) | |
+
+**Seen on the way, not fixed:**
+
+- While a start runs, a container keeps the previous start's failure as
+  its `state_detail` (`MarkStarting` does not clear it). Cosmetic.
+- Pre-existing flake: `TestNetworkRefusals` (internal/containers), the
+  duplicate-MAC case, failed once in about 240 runs on merrick: the
+  second create returned the first container ("a") instead of a refusal.
+  The create path, untouched by this work; it also failed 0 of 200 runs
+  with and without the amendment i diff. Not fixed (Andy).
+- NTP answers to a hand-made query were intermittent for 10.79.60.1 and
+  a public server alike (likely rate limiting of back-to-back queries).
+
+**End state of hearst** ([step8/cleanup-end.txt](step8/cleanup-end.txt)):
+`79620ef` deployed; no containers, jails, or epairs; bridge0 has vtnet1
+only; `/health` ok; devfs rulesets 1 to 5 and Skep's 6001 (the corrected
+rules, added by the agent, gone at reboot); `if_epair` loaded (live);
+`skeptest/step8-scratch` destroyed; the users s7admin, s7oper, s7viewer
+unchanged. **Paused before the spoofing tests.**

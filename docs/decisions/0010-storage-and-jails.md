@@ -1640,3 +1640,14 @@ removed and the previous build redeployed
 ([step8/devfs-include.txt](../../tests/integration/jails/results/step8/devfs-include.txt)).
 Andy's answers are amendment i below the list of amendments, worked into
 Decisions 9, 10, and 16.
+
+**Validated on `hearst` (2026-11-17, `79620ef`)**, spoofing excluded: the
+"Jail devfs" check of Decision 16 (a real DHCP jail and a no-NIC jail,
+which differ only by `bpf` and `bpf0` and hold nothing outside the
+allow-list; a refusal triggered on a real jail), rc.shutdown on stop and
+after an rc timeout, SSH from `merrick`, isolation (TCP into the private
+ranges dropped; ICMP echo into 10/8 passes the LAB rules), epair cleanup,
+the start-up sweep after `kill -9`, and an orphaned epair reported and
+cleaned. Static addressing on `hearst` stays skipped. Results in
+[step8-progress.md](../../tests/integration/jails/results/step8-progress.md),
+section 7.

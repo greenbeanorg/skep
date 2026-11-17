@@ -1,0 +1,27 @@
+# End-of-run cleanup, 2026-11-17T18:52:06Z
+-- delete plain 2a21c1c0-ce4f-4a21-9462-0a5efb6aa138
+container.delete succeeded   started 2026-11-17T18:52:06.205Z finished 2026-11-17T18:52:06.237Z
+result: {"container_id": "2a21c1c0-ce4f-4a21-9462-0a5efb6aa138", "datasets_destroyed": [{"name": "skeptest/skep/jail/2a21c1c0-ce4f-4a21-9462-0a5efb6aa138", "type": "filesystem", "used_bytes": 250368}], "name": "n8plain"}
+-- delete rcfail 8a868d32-561d-41ed-9d1a-551fe9710da6
+container.delete succeeded   started 2026-11-17T18:52:06.291Z finished 2026-11-17T18:52:06.315Z
+result: {"container_id": "8a868d32-561d-41ed-9d1a-551fe9710da6", "datasets_destroyed": [{"name": "skeptest/skep/jail/8a868d32-561d-41ed-9d1a-551fe9710da6", "type": "filesystem", "used_bytes": 274432}], "name": "n8rcfail"}
+-- containers left:
+{"items":[]}
+
+
+-- scratch dataset:
+skeptest/step8-scratch destroyed
+-- hearst:
+jails: []
+epairs: []
+bridge0 members: vtnet1 
+devfs rulesets: 1 2 3 4 5 6001 
+ruleset 6001: 100 include 1;200 include 2;300 include 3;400 include 4;500 path pf unhide;600 path bpf* unhide;
+if_epair loaded
+datasets under skeptest/skep/jail: []
+skeptest
+skeptest/skep
+skeptest/skep-enc
+skep-agent 0.1.0 (commit 79620ef, built 2026-11-17T18:32:01Z, go1.27.4 freebsd/amd64)
+-- health:
+status ok orphaned_interfaces ok
