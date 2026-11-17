@@ -98,6 +98,8 @@ type Config struct {
 	Hypervisor HypervisorConfig `json:"hypervisor"`
 	Storage    StorageConfig    `json:"storage"`
 	Network    NetworkConfig    `json:"network"`
+	// Containers configures jails (ADR 0010 decision 8).
+	Containers ContainersConfig `json:"containers"`
 }
 
 // RetentionConfig says how long history is kept (ADR 0007). The fields are

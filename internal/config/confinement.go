@@ -86,7 +86,8 @@ type StorageConfig struct {
 	CapacityFailPercent int `json:"capacity_fail_percent"`
 	// TemplatePackages are the base packages a pkgbase jail template
 	// installs (ADR 0010 decision 7a). Never taken from a request. Unset
-	// means FreeBSD-set-minimal; an empty list means no pkgbase source.
+	// means DefaultTemplatePackages; an empty list means no pkgbase
+	// source.
 	TemplatePackages []string `json:"template_packages"`
 	// DistDir is the root-owned directory where the operator places
 	// base.txz and its MANIFEST for dist templates. Empty means no dist
@@ -94,9 +95,33 @@ type StorageConfig struct {
 	DistDir string `json:"dist_dir"`
 }
 
-// DefaultTemplatePackage is what a pkgbase template installs when
-// storage.template_packages is not set.
-const DefaultTemplatePackage = "FreeBSD-set-minimal"
+// DefaultTemplatePackages is what a pkgbase template installs when
+// storage.template_packages is not set: the minimal set, and sshd, which
+// the minimal set lacks (ADR 0010 amendment g; FreeBSD-ssh has no package
+// scripts or trigger files on 15.1, so the allowlist covers it).
+var DefaultTemplatePackages = []string{"FreeBSD-set-minimal", "FreeBSD-ssh"}
+
+// ContainersConfig configures jails (ADR 0010 decision 8).
+type ContainersConfig struct {
+	// StopTimeoutSeconds is stop.timeout: how long jail(8) waits between
+	// SIGTERM and SIGKILL when a jail stops. 0 means
+	// DefaultContainerStopTimeout.
+	StopTimeoutSeconds int `json:"stop_timeout_seconds"`
+	// StartTimeoutSeconds is exec.timeout: how long /etc/rc and
+	// /etc/rc.shutdown may run in a jail. 0 means
+	// DefaultContainerStartTimeout.
+	StartTimeoutSeconds int `json:"start_timeout_seconds"`
+}
+
+// Defaults and bounds of the jail timeouts, in seconds.
+const (
+	DefaultContainerStopTimeout  = 10
+	DefaultContainerStartTimeout = 120
+	MaxContainerTimeout          = 600
+	// JailRunDirName is the directory of per-jail runtime state, next to
+	// the agent socket. It is gone after a reboot.
+	JailRunDirName = "jails"
+)
 
 // templatePackageRE is the shape of a base package name (ADR 0010
 // decision 7a).
@@ -163,7 +188,13 @@ func (c *Config) applyConfinementDefaults() {
 		c.Storage.Directories = []DirectoryPool{}
 	}
 	if c.Storage.TemplatePackages == nil {
-		c.Storage.TemplatePackages = []string{DefaultTemplatePackage}
+		c.Storage.TemplatePackages = append([]string(nil), DefaultTemplatePackages...)
+	}
+	if c.Containers.StopTimeoutSeconds == 0 {
+		c.Containers.StopTimeoutSeconds = DefaultContainerStopTimeout
+	}
+	if c.Containers.StartTimeoutSeconds == 0 {
+		c.Containers.StartTimeoutSeconds = DefaultContainerStartTimeout
 	}
 	if c.Storage.MaxSnapshotsPerResource == 0 {
 		c.Storage.MaxSnapshotsPerResource = DefaultMaxSnapshotsPerResource
@@ -254,6 +285,12 @@ func (c Config) validateConfinement() []error {
 		}
 		pkgs[p] = true
 	}
+	for name, v := range map[string]int{"containers.stop_timeout_seconds": c.Containers.StopTimeoutSeconds,
+		"containers.start_timeout_seconds": c.Containers.StartTimeoutSeconds} {
+		if v < 1 || v > MaxContainerTimeout {
+			add("%s must be between 1 and %d", name, MaxContainerTimeout)
+		}
+	}
 	if d := c.Storage.DistDir; d != "" && (!filepath.IsAbs(d) || filepath.Clean(d) != d || d == "/") {
 		add("storage.dist_dir %q must be an absolute, clean path other than /", d)
 	}
@@ -287,6 +324,12 @@ func (c Config) validateConfinement() []error {
 // socket, so under /var/run/skep in production.
 func (c Config) VMRunDir() string {
 	return filepath.Join(filepath.Dir(c.Socket.Path), VMRunDirName)
+}
+
+// JailRunDir is the directory of per-jail runtime state (jail.conf and
+// console.log), next to the agent socket. It is gone after a reboot.
+func (c Config) JailRunDir() string {
+	return filepath.Join(filepath.Dir(c.Socket.Path), JailRunDirName)
 }
 
 // VMStateDir is the directory of per-VM persistent state: next to the

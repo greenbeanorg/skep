@@ -84,6 +84,9 @@ type Templates interface {
 	// TemplateRelease reads USERLAND_VERSION from the template's
 	// bin/freebsd-version without running it.
 	TemplateRelease(ctx context.Context, pool, templateID string) (string, error)
+	// SSHHostKeys lists the template's etc/ssh/ssh_host_* entries; a
+	// template must have none (amendment g).
+	SSHHostKeys(ctx context.Context, pool, templateID string) ([]string, error)
 	// DeferredTriggers lists the files in the template's
 	// var/db/pkg/triggers.
 	DeferredTriggers(ctx context.Context, pool, templateID string) ([]string, error)
@@ -194,7 +197,7 @@ func BuildJailName(templateID string) (string, error) {
 func jailParentInsecure(dir, why string) error {
 	return &models.Error{
 		Code:    models.CodeJailParentInsecure,
-		Message: "the templates directory " + dir + " " + why + "; it must be a directory owned by root:wheel with mode 0700",
+		Message: "the directory " + dir + " " + why + "; it must be a directory owned by root:wheel with mode 0700, because it holds jail and template roots",
 		Details: map[string]any{"path": dir},
 	}
 }
@@ -246,6 +249,13 @@ func (h *host) templatesMount(ctx context.Context, pool string) (string, error) 
 	if err != nil {
 		return "", err
 	}
+	return h.privateMount(ctx, name)
+}
+
+// privateMount returns the mountpoint of one of the 0700 parent datasets
+// (<root>/templates, <root>/jail), which must be mounted at an absolute,
+// clean path. A dataset that does not exist is jail_parent_insecure.
+func (h *host) privateMount(ctx context.Context, name string) (string, error) {
 	mounted, mp, err := h.mountInfo(ctx, name)
 	if err != nil {
 		if stderrContains(err, "does not exist") {
@@ -254,21 +264,18 @@ func (h *host) templatesMount(ctx context.Context, pool string) (string, error) 
 		return "", err
 	}
 	if !mounted || !filepath.IsAbs(mp) || filepath.Clean(mp) != mp || mp == "/" {
-		return "", storageUnavailable("the dataset " + name + " is not mounted at an absolute path; templates need it mounted")
+		return "", storageUnavailable("the dataset " + name + " is not mounted at an absolute path; jails and templates need it mounted")
 	}
 	return mp, nil
 }
 
 // CheckTemplatesParent implements Templates.
 func (h *host) CheckTemplatesParent(ctx context.Context, pool string) error {
-	if err := h.zfsLoaded(); err != nil {
-		return err
-	}
-	mp, err := h.templatesMount(ctx, pool)
+	name, err := h.conf.TemplatesDataset(pool)
 	if err != nil {
 		return err
 	}
-	return checkPrivateDir(mp)
+	return h.checkPrivateParent(ctx, name)
 }
 
 // EnsureTemplatesParent implements Templates. It creates <pool>/<root>
@@ -280,6 +287,13 @@ func (h *host) EnsureTemplatesParent(ctx context.Context, pool string) error {
 	if err != nil {
 		return err
 	}
+	return h.ensurePrivateParent(ctx, pool, name)
+}
+
+// ensurePrivateParent creates <pool>/<root> and one of the 0700 parent
+// datasets under it on first use, mounted, with its directory set to
+// root:wheel 0700, and then checks it. An existing one is only checked.
+func (h *host) ensurePrivateParent(ctx context.Context, pool, name string) error {
 	if err := h.zfsLoaded(); err != nil {
 		return err
 	}
@@ -298,12 +312,12 @@ func (h *host) EnsureTemplatesParent(ctx context.Context, pool string) error {
 		if err := checkUnlocked(existing); err != nil {
 			return err
 		}
-		return h.CheckTemplatesParent(ctx, pool)
+		return h.checkPrivateParent(ctx, name)
 	}
 	if _, err := h.run.Run(ctx, zfsBinary, "create", "-o", "canmount=on", name); err != nil {
 		return err
 	}
-	mp, err := h.templatesMount(ctx, pool)
+	mp, err := h.privateMount(ctx, name)
 	if err != nil {
 		return err
 	}
@@ -313,7 +327,19 @@ func (h *host) EnsureTemplatesParent(ctx context.Context, pool string) error {
 	if err := os.Chmod(mp, 0o700); err != nil {
 		return err
 	}
-	return h.CheckTemplatesParent(ctx, pool)
+	return h.checkPrivateParent(ctx, name)
+}
+
+// checkPrivateParent checks the directory of a 0700 parent dataset.
+func (h *host) checkPrivateParent(ctx context.Context, name string) error {
+	if err := h.zfsLoaded(); err != nil {
+		return err
+	}
+	mp, err := h.privateMount(ctx, name)
+	if err != nil {
+		return err
+	}
+	return checkPrivateDir(mp)
 }
 
 // templatePaths derives the paths of a template from the templates
@@ -646,6 +672,21 @@ func readFull(f *os.File, buf []byte) (int, error) {
 // DeferredTriggers implements Templates.
 func (h *host) DeferredTriggers(ctx context.Context, pool, templateID string) ([]string, error) {
 	return h.entries(ctx, pool, templateID, "var/db/pkg/triggers")
+}
+
+// SSHHostKeys implements Templates.
+func (h *host) SSHHostKeys(ctx context.Context, pool, templateID string) ([]string, error) {
+	all, err := h.entries(ctx, pool, templateID, "etc/ssh")
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, e := range all {
+		if strings.HasPrefix(path.Base(e), "ssh_host_") {
+			out = append(out, e)
+		}
+	}
+	return out, nil
 }
 
 // CacheEntries implements Templates.

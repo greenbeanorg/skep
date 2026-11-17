@@ -220,6 +220,18 @@ func (b *Builder) Build(ctx context.Context, spec BuildSpec, progress Progress) 
 		return res, &models.Error{Code: models.CodeTemplateTriggerLeft,
 			Message: "pkg left deferred triggers in the template", Details: map[string]any{"files": left}}
 	}
+	// No SSH host keys in a template: each jail makes its own at its first
+	// start (amendment g). pkg installs none; this proves it.
+	progress("checking that the template holds no SSH host keys")
+	hostKeys, err := b.Host.SSHHostKeys(ctx, spec.Pool, spec.TemplateID)
+	if err != nil {
+		return res, err
+	}
+	if len(hostKeys) > 0 {
+		return res, &models.Error{Code: models.CodeTemplateBuildFailed,
+			Message: "the template holds SSH host keys; every jail must generate its own at its first start",
+			Details: map[string]any{"files": hostKeys}}
+	}
 	progress("removing the repository catalogues and checking the package cache")
 	if err = b.Host.RemoveCatalogues(ctx, spec.Pool, spec.TemplateID); err != nil {
 		return res, err

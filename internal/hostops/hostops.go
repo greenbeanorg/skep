@@ -41,6 +41,9 @@ type Ops struct {
 	Procs Procs
 	// Templates builds jail templates (ADR 0010 decision 7).
 	Templates Templates
+	// Jails creates, runs, and destroys jails (ADR 0010 decisions 8, 9,
+	// and 13).
+	Jails Jails
 }
 
 // ZFS creates, lists, and destroys the datasets of VMs inside the

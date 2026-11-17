@@ -156,7 +156,14 @@ func (t fakeTemplates) PkgInstall(_ context.Context, pool, id string, pkgs []str
 			return models.Invalid("invalid template package name")
 		}
 	}
-	t.f.locked(func() { t.f.record("pkg install %s into template %s", strings.Join(pkgs, " "), id) })
+	t.f.locked(func() {
+		t.f.record("pkg install %s into template %s", strings.Join(pkgs, " "), id)
+		for _, p := range pkgs {
+			if p == "FreeBSD-ssh" {
+				t.f.sshdTemplates[id] = true
+			}
+		}
+	})
 	return nil
 }
 
@@ -176,6 +183,9 @@ func (t fakeTemplates) DeferredTriggers(context.Context, string, string) ([]stri
 	return nil, nil
 }
 func (t fakeTemplates) RemoveCatalogues(context.Context, string, string) error { return nil }
+func (t fakeTemplates) SSHHostKeys(context.Context, string, string) ([]string, error) {
+	return nil, nil
+}
 func (t fakeTemplates) CacheEntries(context.Context, string, string) ([]string, error) {
 	return nil, nil
 }

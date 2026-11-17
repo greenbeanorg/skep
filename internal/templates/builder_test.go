@@ -25,6 +25,7 @@ type fakeHost struct {
 	pkgs        []hostops.PackageScripts
 	triggers    []hostops.TriggerFile
 	deferred    []string
+	hostKeys    []string
 	cache       []string
 	// hostFiles are returned in order, one per HostFiles call; the last
 	// repeats.
@@ -111,6 +112,9 @@ func (f *fakeHost) TemplateRelease(ctx context.Context, _, _ string) (string, er
 func (f *fakeHost) DeferredTriggers(ctx context.Context, _, _ string) ([]string, error) {
 	return f.deferred, f.step(ctx, "DeferredTriggers")
 }
+func (f *fakeHost) SSHHostKeys(ctx context.Context, _, _ string) ([]string, error) {
+	return f.hostKeys, f.step(ctx, "SSHHostKeys")
+}
 func (f *fakeHost) RemoveCatalogues(ctx context.Context, _, _ string) error {
 	return f.step(ctx, "RemoveCatalogues")
 }
@@ -194,7 +198,7 @@ func TestBuildSequence(t *testing.T) {
 		"exec /usr/bin/cap_mkdb -l /etc/login.conf",
 		"exec /usr/bin/makewhatis /usr/share/man",
 		"exec /usr/bin/makewhatis /usr/share/openssl/man",
-		"RemoveBuildJail", "DeferredTriggers", "RemoveCatalogues", "CacheEntries", "HostFiles",
+		"RemoveBuildJail", "DeferredTriggers", "SSHHostKeys", "RemoveCatalogues", "CacheEntries", "HostFiles",
 		"RemoveWorkArea", "FinishTemplate",
 	}
 	if !reflect.DeepEqual(f.calls, want) {
@@ -366,6 +370,19 @@ func TestBuildDeferredTriggerLeft(t *testing.T) {
 	assertCleanedUp(t, f)
 }
 
+func TestBuildRefusesSSHHostKeys(t *testing.T) {
+	withFakeTrigger(t)
+	f := newFakeHost()
+	f.hostKeys = []string{"etc/ssh/ssh_host_ed25519_key", "etc/ssh/ssh_host_ed25519_key.pub"}
+	_, err := testBuilder(f).Build(context.Background(), pkgbaseSpec(), nil)
+	var me *models.Error
+	if !errors.As(err, &me) || me.Code != models.CodeTemplateBuildFailed || !strings.Contains(me.Message, "SSH host keys") ||
+		fmt.Sprint(me.Details["files"]) != "[etc/ssh/ssh_host_ed25519_key etc/ssh/ssh_host_ed25519_key.pub]" {
+		t.Fatalf("err = %v", err)
+	}
+	assertCleanedUp(t, f)
+}
+
 func TestBuildCacheNotEmpty(t *testing.T) {
 	withFakeTrigger(t)
 	f := newFakeHost()
@@ -439,7 +456,7 @@ func TestBuildDist(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []string{"HostRelease", "EnsureTemplatesParent", "HostFiles", "PrepareTemplate", "ExtractDist", "TemplateRelease",
-		"DeferredTriggers", "RemoveCatalogues", "CacheEntries", "HostFiles", "RemoveWorkArea", "FinishTemplate"}
+		"DeferredTriggers", "SSHHostKeys", "RemoveCatalogues", "CacheEntries", "HostFiles", "RemoveWorkArea", "FinishTemplate"}
 	if !reflect.DeepEqual(f.calls, want) {
 		t.Fatalf("calls = %v", f.calls)
 	}

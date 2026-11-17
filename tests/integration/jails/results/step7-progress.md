@@ -74,3 +74,55 @@ has no clones; nothing deployed (still `a34749d`); no other change.
 jails and datasets under skeptest; fresh API test accounts, passwords in
 the scratchpad. Not approved, so not done: anything on hearst's network
 configuration, `if_epair` (step 8), the VLAN test.
+
+## 3. hostops: the Jails interface, jail.conf, baseline, openat writer
+
+**Done.** `internal/hostops`: `jails.go` (the interface, layout, names,
+`renderJailConf`, `checkJailParams`), `jails_host.go` (the real
+implementation), `jailfiles.go` (rc.conf and SSH key content and
+validation), `jailwrite_freebsd.go` (the decision 13 writer) with a
+non-FreeBSD stub, and the fake (`hostfake/jails.go`). The shared 0700
+parent code of `templates.go` now serves `<root>/jail` as well. The
+template builder refuses a template with `etc/ssh/ssh_host_*`
+(amendment g). Configuration: `containers.stop_timeout_seconds` (default
+10) and `containers.start_timeout_seconds` (default 120, `exec.timeout`),
+both 1 to 600; the default `storage.template_packages` is now
+`FreeBSD-set-minimal` and `FreeBSD-ssh`. Unit tests pass on merrick
+(`go test ./...`, `go vet` for Linux and FreeBSD).
+
+Natively on hearst, as root, from `skeptest/step7-scratch` (new, approved
+scope: a dataset under skeptest): the writer tests pass, including eight
+planted links (rc.conf, etc, root, .ssh, authorized_keys, and the
+temporary name pointing outside, absolute and relative). Nothing outside
+the jail root changed in any case. A separate test shows
+`O_RESOLVE_BENEATH` on its own: four escapes fail with ENOTCAPABLE
+("capabilities insufficient"), and a link that stays inside works.
+Record: [step7/writer-native.log](step7/writer-native.log).
+
+**Decisions made (small, easy to undo):**
+
+- The runtime directory is `/var/run/skep/jails/<id>/` (beside the VM
+  one), not "`<RunDir>/jails`": the agent's `RunDir` is the VM directory
+  `/var/run/skep/vm`. It and each jail's directory are checked to be the
+  agent's own and not writable by others before a jail.conf goes in.
+- The jail.conf keeps `allow.raw_sockets = 0` although a VNET jail
+  ignores it (amendment f), so the kernel reports it off and the
+  parameter check stays uniform.
+- After `jail -c`, the parameters are checked as the kernel reports them
+  (as for the build jail): name, path, hostname, `vnet=new`, `persist`,
+  `enforce_statfs`, `children.max`, `securelevel`, `devfs_ruleset=5`,
+  `sysv*`, and every `allow.*` (suser and reserved_ports on, mlock as
+  asked, the rest off). A mismatch removes the jail and fails the start
+  with `container_start_failed`.
+- The writer opens one component at a time, each with `O_RESOLVE_BENEATH |
+  O_NOFOLLOW`, replaces files by a new file and `renameat` (which replaces
+  a planted link rather than following it), and refuses to replace or
+  remove an `/etc/rc.conf` that does not start with Skep's header.
+  `x/sys/unix` (already a dependency for sysctl) provides `Openat` and the
+  constant; Go's `syscall` has neither on FreeBSD. No new dependency.
+- An SSH key is one `type base64 [comment]` line of a known type whose
+  blob names the same type; options (`command=`, `from=`) are refused.
+- rc.conf lines are checked to be plain `name="value"` assignments with no
+  quote, backslash, `$`, backquote, or control character.
+- sshd gets `PermitRootLogin prohibit-password` through
+  `sshd_flags="-o PermitRootLogin=prohibit-password"`.

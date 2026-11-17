@@ -75,7 +75,14 @@ type Fake struct {
 	snaps     map[string]hostops.Dataset
 	txg       int64
 	instances map[string]bool
-	calls     []string
+	// sshdTemplates are the templates whose packages included
+	// FreeBSD-ssh; jails maps a running jail's container ID to its JID;
+	// jailFiles holds what ConfigureJail wrote.
+	sshdTemplates map[string]bool
+	jails         map[string]int
+	nextJID       int
+	jailFiles     map[string]hostops.JailFiles
+	calls         []string
 	// taps maps a tap to its description and bridge.
 	taps    map[string]fakeTap
 	nextTap int
@@ -131,13 +138,17 @@ func New(conf hostops.Confinement, opts Options) *Fake {
 		UnusableDirs:   map[string]string{},
 		snaps:          map[string]hostops.Dataset{},
 		instances:      map[string]bool{},
+		sshdTemplates:  map[string]bool{},
+		jails:          map[string]int{},
+		nextJID:        1,
+		jailFiles:      map[string]hostops.JailFiles{},
 	}
 }
 
 // Ops returns the fake as the hostops surface.
 func (f *Fake) Ops() hostops.Ops {
 	return hostops.Ops{Conf: f.conf, ZFS: f, Dirs: fakeDirs{f}, Net: f, VMM: f, Files: fakeFiles{Files: f.files, f: f}, Procs: f,
-		Templates: fakeTemplates{f}}
+		Templates: fakeTemplates{f}, Jails: fakeJails{f}}
 }
 
 // Calls returns what was called so far, one line per mutating call.

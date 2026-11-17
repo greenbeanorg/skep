@@ -396,6 +396,7 @@ func confinement(cfg config.Config) hostops.Confinement {
 		FirmwareDir:          cfg.Hypervisor.Bhyve.FirmwareDir,
 		RunDir:               cfg.VMRunDir(),
 		StateDir:             cfg.VMStateDir(),
+		JailRunDir:           cfg.JailRunDir(),
 		DistDir:              cfg.Storage.DistDir,
 	}
 }

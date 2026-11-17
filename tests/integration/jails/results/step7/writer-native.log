@@ -1,0 +1,47 @@
+# hostops.test (FreeBSD, 2a28541+uncommitted jails layer), as root on hearst, TMPDIR=/skeptest/step7-scratch/tmp
+# sudo env TMPDIR=... hostops.test -test.v -test.run 'WriteJailFiles|ResolveBeneath'
+=== RUN   TestWriteJailFilesNative
+--- PASS: TestWriteJailFilesNative (0.00s)
+=== RUN   TestWriteJailFilesRefusesForeignRCConf
+--- PASS: TestWriteJailFilesRefusesForeignRCConf (0.00s)
+=== RUN   TestWriteJailFilesPlantedLinks
+=== RUN   TestWriteJailFilesPlantedLinks/rc.conf_link_to_an_outside_file
+    jailwrite_freebsd_test.go:169: write: hostops: open rc.conf in the jail: too many links
+    jailwrite_freebsd_test.go:182: remove: hostops: open rc.conf in the jail: too many links
+=== RUN   TestWriteJailFilesPlantedLinks/rc.conf_relative_link_out
+    jailwrite_freebsd_test.go:169: write: hostops: open rc.conf in the jail: too many links
+    jailwrite_freebsd_test.go:182: remove: hostops: open rc.conf in the jail: too many links
+=== RUN   TestWriteJailFilesPlantedLinks/etc_absolute_link_out
+    jailwrite_freebsd_test.go:169: write: hostops: open etc in the jail: too many links
+    jailwrite_freebsd_test.go:182: remove: hostops: open etc in the jail: too many links
+=== RUN   TestWriteJailFilesPlantedLinks/etc_relative_link_out
+    jailwrite_freebsd_test.go:169: write: hostops: open etc in the jail: too many links
+    jailwrite_freebsd_test.go:182: remove: hostops: open etc in the jail: too many links
+=== RUN   TestWriteJailFilesPlantedLinks/root_home_link_out
+    jailwrite_freebsd_test.go:169: write: hostops: open root in the jail: too many links
+    jailwrite_freebsd_test.go:182: remove: hostops: open root in the jail: too many links
+=== RUN   TestWriteJailFilesPlantedLinks/.ssh_link_out
+    jailwrite_freebsd_test.go:169: write: hostops: open .ssh in the jail: too many links
+    jailwrite_freebsd_test.go:182: remove: hostops: open .ssh in the jail: too many links
+=== RUN   TestWriteJailFilesPlantedLinks/authorized_keys_link_out
+    jailwrite_freebsd_test.go:169: write: <nil>
+    jailwrite_freebsd_test.go:182: remove: <nil>
+=== RUN   TestWriteJailFilesPlantedLinks/temporary_name_link_out
+    jailwrite_freebsd_test.go:169: write: <nil>
+    jailwrite_freebsd_test.go:182: remove: <nil>
+--- PASS: TestWriteJailFilesPlantedLinks (0.01s)
+    --- PASS: TestWriteJailFilesPlantedLinks/rc.conf_link_to_an_outside_file (0.00s)
+    --- PASS: TestWriteJailFilesPlantedLinks/rc.conf_relative_link_out (0.00s)
+    --- PASS: TestWriteJailFilesPlantedLinks/etc_absolute_link_out (0.00s)
+    --- PASS: TestWriteJailFilesPlantedLinks/etc_relative_link_out (0.00s)
+    --- PASS: TestWriteJailFilesPlantedLinks/root_home_link_out (0.00s)
+    --- PASS: TestWriteJailFilesPlantedLinks/.ssh_link_out (0.00s)
+    --- PASS: TestWriteJailFilesPlantedLinks/authorized_keys_link_out (0.00s)
+    --- PASS: TestWriteJailFilesPlantedLinks/temporary_name_link_out (0.00s)
+=== RUN   TestResolveBeneathNative
+    jailwrite_freebsd_test.go:209: out/victim: capabilities insufficient
+    jailwrite_freebsd_test.go:209: etc/../../outside/victim: capabilities insufficient
+    jailwrite_freebsd_test.go:209: /etc/passwd: capabilities insufficient
+    jailwrite_freebsd_test.go:209: ../outside/victim: capabilities insufficient
+--- PASS: TestResolveBeneathNative (0.00s)
+PASS

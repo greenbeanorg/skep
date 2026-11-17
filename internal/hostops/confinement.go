@@ -32,6 +32,9 @@ type Confinement struct {
 	// reboot. StateDir holds one persistent directory per VM.
 	RunDir   string
 	StateDir string
+	// JailRunDir holds one runtime directory per jail (its jail.conf and
+	// console.log); it is gone after a reboot.
+	JailRunDir string
 	// DistDir is storage.dist_dir: the root-owned directory where the
 	// operator places base.txz and its MANIFEST for dist templates. Empty
 	// means there is no dist source.
