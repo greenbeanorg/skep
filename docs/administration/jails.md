@@ -136,8 +136,30 @@ What each limit does on FreeBSD 15.1, measured on the test host:
 | `locked_memory` | RCTL `memorylocked` | The memory the jail may lock with mlock(2); `options.mlock` needs it. At most `memory` when both are set. |
 | `cpu_percent` | RCTL `pcpu` | 100 is one CPU, up to 100 per host CPU. Throttles, approximately: RACCT samples and averages, so a busy jail swings around the limit (50 gave samples from 28 to 74; the loop ran at 61 % of its unthrottled speed). |
 | `max_processes` | RCTL `maxproc` | A fork past it fails ("Cannot fork"). |
-| `open_files` | RCTL `openfiles` (≥ 64) | Counts descriptor-table slots, not open files. Each process is charged its table size, which grows in steps (40, 128, 256, ... slots) and never shrinks; helper processes count too (FreeBSD's `tail` opens files through a Capsicum helper). With 256, one `tail -f` opened 59 files. Size it well above what the jail keeps open. |
+| `open_files` | RCTL `openfiles` (≥ 64) | Counts descriptor-table slots, not open files: see below. |
 | `disk_quota` | ZFS `refquota` on the jail root (≥ 64 MiB) | Works without RACCT; snapshots do not count. It includes the blocks the root shares with its template (about 78 MiB for a minimal template), so a 512 MiB quota left room for about 434 MiB of new data. Changed at once by an update; a quota below what the jail already references is refused. |
+
+**`open_files` counts file-table slots, not open files.** RACCT charges
+each process of the jail the size of its descriptor table, and the
+jail's figure is the sum. A table grows in steps as the process uses
+higher descriptor numbers (40 slots, then 128, then 256, then larger
+steps), and it never shrinks while the process lives, even after the
+files are closed. A process that has never needed more than its first
+few descriptors is not charged at all. Helper processes count too:
+FreeBSD's `tail` opens files through a Capsicum helper, which has its
+own table. On the test host an idle minimal jail was charged 40 (cron
+with 5 files open), and with `open_files` 256 one `tail -f` opened only
+59 files: at the 60th its table and its helper's needed 128 slots each,
+and 40 + 128 + 128 is past 256.
+
+A rough sizing rule: for every process the jail runs at once, count at
+least 40, or about twice the most files it ever has open, whichever is
+larger (count helpers as processes); add the processes up and leave half
+as much again for headroom. A jail running cron, sshd, and one daemon
+that keeps about 100 files open needs about (40 + 40 + 200) x 1.5, so
+420, or 512 to be safe. When a limit is hit, opens fail with "Too many
+open files" (`EMFILE`), and `rctl -u jail:skep-<id>` on the host shows
+the jail's current figure.
 
 ## The fixed baseline
 
