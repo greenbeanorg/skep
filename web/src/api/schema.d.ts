@@ -886,16 +886,27 @@ export interface paths {
          *     `authorized_keys` into the jail before it has ever run (ADR 0010
          *     decision 13). The jail runs with a fixed baseline: its own network
          *     stack (VNET), `enforce_statfs=2`, `children.max=0`,
-         *     `securelevel=2`, devfs ruleset 5, `allow.suser` and
-         *     `allow.reserved_ports` on and every other `allow.*` off. Nothing in
-         *     the request becomes a host-side command.
+         *     `securelevel=2`, devfs ruleset 5 (6001, ruleset 5 plus `bpf*`, for
+         *     a jail with a DHCP NIC), `allow.suser` and `allow.reserved_ports`
+         *     on and every other `allow.*` off. Nothing in the request becomes a
+         *     host-side command.
          *
          *     The template must be built (`template_not_provisioned`) and have
          *     the host's major.minor (`release_unsupported`). An SSH key needs a
          *     template with sshd (`container_ssh_unavailable`); it is one
          *     OpenSSH public key line without options. `mlock` needs a memory
          *     limit (`mlock_requires_memory_limit`), which this release does not
-         *     offer yet. Jails have no network interface yet besides `lo0`.
+         *     offer yet.
+         *
+         *     Each NIC is an epair (ADR 0010 decision 10): its host end joins an
+         *     allow-listed bridge (`bridge_not_allowed`) and its jail end, named
+         *     `sj<10 hex digits of the ID>n<slot>`, moves into the jail. The
+         *     addressing (DHCP by default, or a static IPv4 address with an
+         *     optional gateway, one gateway per jail) is written into the jail's
+         *     `/etc/rc.conf`, and `nameservers` (static addressing only) into
+         *     its `/etc/resolv.conf`, before the first start. After that the
+         *     addressing describes what Skep wrote; changing it is the jail's own
+         *     business. No IPv6 addressing yet.
          */
         post: operations["createContainer"];
         delete?: never;
@@ -958,12 +969,16 @@ export interface paths {
          * @description Requires `container:power`. `start` creates the jail with jail(8),
          *     which runs `/etc/rc`; the parameters the kernel reports are then
          *     checked against the baseline, and a jail that does not match is
-         *     removed (`container_start_failed`). The first start marks the jail
+         *     removed (`container_start_failed`). A jail with NICs needs the
+         *     `if_epair` module (`epair_unavailable`, refused before a task
+         *     exists); a jail with a DHCP NIC needs devfs ruleset 6001 to be
+         *     Skep's or absent (`devfs_ruleset_conflict`). An epair an earlier
+         *     crash left is destroyed first. The first start marks the jail
          *     as started for good: Skep never writes into its tree again. `stop`
          *     runs `/etc/rc.shutdown`, then sends SIGTERM and, after `timeout`
          *     seconds (default `containers.stop_timeout_seconds`), SIGKILL; a
-         *     jail cannot refuse, so there is no force stop. `restart` is a stop
-         *     and a start.
+         *     jail cannot refuse, so there is no force stop. A stop destroys the
+         *     jail's epairs. `restart` is a stop and a start.
          */
         post: operations["containerAction"];
         delete?: never;
@@ -1306,6 +1321,34 @@ export interface components {
             /** @description May lock memory. Needs a memory limit (`mlock_requires_memory_limit`). */
             mlock?: boolean;
         };
+        ContainerIPv4: {
+            /** @enum {string} */
+            mode: "dhcp" | "static";
+            /** @description Static only. An IPv4 address with its prefix length, such as 192.0.2.10/24. */
+            address?: string;
+            /** @description Static only, optional. Another address in the prefix; the jail's default route. One NIC at most has one. */
+            gateway?: string;
+        };
+        ContainerNIC: {
+            /** Format: uuid */
+            id: string;
+            slot: number;
+            bridge: string;
+            /** @description The jail end's MAC address. */
+            mac_address: string;
+            /** @description The jail end's name inside the jail, the same on every start. */
+            interface: string;
+            ipv4: components["schemas"]["ContainerIPv4"];
+            /** @description The epair's host end, while the jail runs. */
+            host_interface?: string;
+        };
+        ContainerNICSpec: {
+            /** @description An allow-listed bridge (network.bridges). */
+            bridge: string;
+            /** @description Generated (02:xx:xx:xx:xx:xx) when left out; on an update, the slot keeps its MAC. */
+            mac_address?: string;
+            ipv4?: components["schemas"]["ContainerIPv4"];
+        };
         Container: {
             /** Format: uuid */
             id: string;
@@ -1320,6 +1363,9 @@ export interface components {
             options: components["schemas"]["ContainerOptions"];
             /** @description Root's SSH public key, if one was given. */
             ssh_authorized_key?: string;
+            nics: components["schemas"]["ContainerNIC"][];
+            /** @description Written into the jail's resolv.conf before its first start (static addressing). */
+            nameservers?: string[];
             provisioned: boolean;
             /** @description True from the first start on; Skep then never writes into the jail's tree. */
             started_once: boolean;
@@ -1349,12 +1395,20 @@ export interface components {
             options?: components["schemas"]["ContainerOptions"];
             /** @description One OpenSSH public key line, "type base64 [comment]", without options. */
             ssh_authorized_key?: string;
+            /** @description Slots 0, 1, ... in order. Each needs if_epair at start. */
+            nics?: components["schemas"]["ContainerNICSpec"][];
+            /** @description IPv4 or IPv6 addresses for resolv.conf. Only when no NIC uses DHCP (dhclient writes resolv.conf). */
+            nameservers?: string[];
         };
         ContainerUpdate: {
             hostname?: string;
             options?: components["schemas"]["ContainerOptions"];
             /** @description Empty removes the key. Only before the first start. */
             ssh_authorized_key?: string;
+            /** @description Replaces every NIC; empty removes them all. After the first start only the bridge and MAC address of existing slots may change (`container_started`). */
+            nics?: components["schemas"]["ContainerNICSpec"][];
+            /** @description Only before the first start. */
+            nameservers?: string[];
         };
         ContainerAction: {
             /** @enum {string} */
