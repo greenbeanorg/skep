@@ -12,7 +12,7 @@ the `skepctl` command-line client, the web interface, read-only host
 discovery, a task engine with history, two audit logs, bhyve virtual
 machines (Milestone 6), and storage management: snapshots, rollback,
 clones, disk changes, directory pools, and resource monitoring (phase 7a).
-It cannot manage jails (phase 7b) or networks yet.
+It cannot give jails a network interface yet (phase 7b, step 8), and it does not manage host networks.
 
 > **Security notice:** this is pre-release software. `skep-api` listens on
 > loopback by default; opening it to a network is an explicit
@@ -41,8 +41,9 @@ It cannot manage jails (phase 7b) or networks yet.
 | Web interface | Served by `skep-api` on the same address as the API, embedded in the binary; cookie-session login; dashboard, node, tasks (with cancel), virtual machines (with the serial console and snapshots), storage, users, roles, access audit log, settings, own account; the other sections are placeholders that name their milestone |
 | Virtual machines (Milestone 6) | bhyve UEFI guests with zvol disks, bridged virtio-net, and install media: create, update while stopped, delete, start, stop, force-stop, restart, all as tasks; a per-VM runner that survives the agent; the serial console in the browser; `skepctl vm`. Host confinement in `agent.json`. **Verified on FreeBSD 15.1** (`hearst`): every check of ADR 0009 decision 11 passed (guest network isolation after a fix to the lab firewall) (see [tests/integration/vm](tests/integration/vm/README.md) and the [guide](docs/administration/virtual-machines.md)) |
 | Storage (Milestone 7, phase 7a) | Snapshots of VMs (also while running, crash-consistent), rollback, linked clones, disks added, grown, and removed after creation, directory pools for hosts without ZFS, the dataset inventory, current resource use (`GET /metrics`) with the `storage_capacity` and `storage_locked` health checks; the Storage section and a VM's snapshots in the web interface; `skepctl vm snapshot` and `vm clone`. **Verified on FreeBSD 15.1** (`hearst`): every 7a check of ADR 0010 decision 16 (see [tests/integration/storage](tests/integration/storage/README.md) and the [guide](docs/administration/storage.md)) |
-| Jail templates (Milestone 7, phase 7b, in progress) | `GET/POST /storage/templates`, `GET/DELETE /storage/templates/{id}`, `GET /storage/template-sources` (admin-only builds): a FreeBSD userland built from the host's pkgbase repositories with package scripts and triggers off, the scripts' known commands run in a throwaway no-network build jail, every script and trigger checked against a compiled allowlist, and the host's `/etc`, `/var/db/pkg`, and `/usr/share/certs` checked unchanged; or from an operator-placed `base.txz`. The pkgbase builder **ran on FreeBSD 15.1** (`hearst`) through its test binary; through a deployed agent, and the `dist` source, **pending FreeBSD validation** (see the [guide](docs/administration/jail-templates.md)) |
-| Not yet | Jails themselves (the rest of phase 7b), network management, graphical consoles, metric history, clustering |
+| Jail templates (Milestone 7, phase 7b, in progress) | `GET/POST /storage/templates`, `GET/DELETE /storage/templates/{id}`, `GET /storage/template-sources` (admin-only builds): a FreeBSD userland built from the host's pkgbase repositories with package scripts and triggers off, the scripts' known commands run in a throwaway no-network build jail, every script and trigger checked against a compiled allowlist, and the host's `/etc`, `/var/db/pkg`, and `/usr/share/certs` checked unchanged; or from an operator-placed `base.txz`. The pkgbase builder **ran on FreeBSD 15.1** (`hearst`), through its test binary and through the deployed agent; the `dist` source is **pending FreeBSD validation** (see the [guide](docs/administration/jail-templates.md)) |
+| Jails (Milestone 7, phase 7b, in progress) | `GET/POST /containers`, `GET/PUT/DELETE /containers/{id}`, `POST /containers/{id}/actions`, `GET /containers/{id}/console-log`: jails on ZFS clones of a template, run by jail(8) from a generated `jail.conf` with a fixed baseline (VNET, securelevel 2, every `allow.*` off but `suser` and `reserved_ports`), checked against the kernel after every start; root's SSH key and sshd written before the first start through `O_RESOLVE_BENEATH` opens, never after. **Verified on FreeBSD 15.1** (`hearst`) for step 7 (see [tests/integration/jails](tests/integration/jails/README.md) and the [guide](docs/administration/jails.md)). No network interface yet (step 8), no limits, snapshots, or clones (step 9), no UI or `skepctl` (step 10) |
+| Not yet | Jail networking, limits, snapshots, and their UI (the rest of phase 7b), network management, graphical consoles, metric history, clustering |
 
 ## Platforms
 
@@ -412,6 +413,7 @@ docs/                  architecture, security, and decision records
 - [Virtual machines](docs/administration/virtual-machines.md)
 - [Storage](docs/administration/storage.md)
 - [Jail templates](docs/administration/jail-templates.md)
+- [Jails](docs/administration/jails.md)
 - Decision records:
   [0001 Go toolchain and SQLite driver](docs/decisions/0001-go-toolchain-and-sqlite-driver.md),
   [0002 Discovery abstraction](docs/decisions/0002-discovery-abstraction.md),

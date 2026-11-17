@@ -21,7 +21,14 @@ run is **pending FreeBSD validation**, whatever CI says.
 | Template host safety: host hashes identical, `pkg` environment fixed (`procstat -e`), `var/cache/pkg` empty in `@skep-base`, no build jail left, no deferred trigger | **passed** (2026-11-16) by the builder's own check and from outside, for the test binary and for the deployed agent (763 files with `/var/db/pkg/vuln.xml` excluded, ADR 0010 item 7) | [step6-build.txt](results/step6-build.txt), [step6-deployed.txt](results/step6-deployed.txt) |
 | Permissions: `operator` refused `storage:write` with a real `container.template.create` request, and audited | **passed** (2026-11-16): 403 `forbidden`, `permission: storage:write`, `authz.deny` in the access log | [step6-deployed.txt](results/step6-deployed.txt) |
 | Agent start-up sweep of `skep-build-*` jails, with none present | **passed** (2026-11-16): `build_jail_sweep found=0` before the socket is served | [step6-deployed.txt](results/step6-deployed.txt) |
-| Jail lifecycle, networking, baseline, root parent, orphaned epairs, `started_once`, limits, clone identity, symlink rule, monitoring, permissions | pending (steps 7 to 10) | |
+| Feasibility of the step 7 specification (a jail on a template clone with the baseline and `/etc/rc`), hand-run before building it | **resolved**: three findings (reserved ports, raw sockets in VNET, no sshd in the minimal set); Andy chose A1, B1, C1 (amendments f and g) | [step7-probe.txt](results/step7-probe.txt) |
+| Jail lifecycle: create, start, stop, restart, delete; `jls` shows `skep-<id>`; survives `service skep_agent restart` and `kill -9` of the agent | **passed** (2026-11-16, `57d74bb`) | [step7-validation.txt](results/step7-validation.txt) §2, 3, 12, 13 |
+| Jail baseline: the kernel's parameters; `mount` and `kldload` fail; a port below 1024 binds; raw sockets recorded (they work: amendment f); `mlock` refused without a memory limit | **passed** (2026-11-16); `mlock` refusal unit tested (limits are step 9) | [step7-validation.txt](results/step7-validation.txt) §4 to 6 |
+| Jail SSH: a key works on a template with sshd and is refused (`container_ssh_unavailable`) without; no host key in a template; two jails' host keys differ | **passed** (2026-11-16); the login is over the jail's own `lo0` (no NIC in step 7) | [step7-validation.txt](results/step7-validation.txt) §1, 7, 8 |
+| Jail root parent: `root:wheel 0700`; an unprivileged host user cannot reach a setuid file in a running jail; a start after `chmod 755` is refused | **passed** for the first two (2026-11-16); the `chmod 755` refusal is unit tested only, waiting for Andy's OK to change the directory's mode on hearst | [step7-validation.txt](results/step7-validation.txt) §10 |
+| Symlink rule: a started jail cannot be updated in a way that writes into its tree; `O_RESOLVE_BENEATH` with planted links fails safely (natively) | **passed** (2026-11-16) | [step7-validation.txt](results/step7-validation.txt) §0, 9 |
+| Permissions (jails): operator allowed `container:*`, refused `storage:write`; viewer reads and is refused every write; refusals audited | **passed** (2026-11-16) | [step7-validation.txt](results/step7-validation.txt) §11 |
+| Jail networking (including epair clean-up and spoofing), orphaned epairs, `started_once` after a rollback, limits, clone identity, monitoring | pending (steps 8 to 10) | |
 
 Not verifiable on this host and pending regardless: a ZFS-root host; a host
 installed from distribution sets (the `dist` source is checked, the host
@@ -46,6 +53,9 @@ shape is not).
 - [step6-deployed/](step6-deployed/): the deployed agent's run
   (`hashhost.sh`, the host files from outside with nothing excluded;
   `compare.sh`, two template trees entry by entry).
+- [step7-probe/](step7-probe/): the hand-run jail probe before step 7
+  (`probe-jail.sh`) and the checks run inside a jail during the
+  validation (`inside-checks.sh`, piped to `sudo sh -s <container-id>`).
 
 `skeptest/trace-7b`, `/var/tmp/skep-trace7b`, `skeptest/step6` and
 `skeptest/step6-scratch` were destroyed on 2026-11-16 with Andy's approval

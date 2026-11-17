@@ -40,7 +40,7 @@ packages.
 
 | Key | Default | Meaning |
 |---|---|---|
-| `storage.template_packages` | `["FreeBSD-set-minimal"]` | The base packages a pkgbase template installs. Each must match `^FreeBSD-[a-z0-9][a-z0-9-]*$`. An empty list means no pkgbase source. Never taken from a request |
+| `storage.template_packages` | `["FreeBSD-set-minimal", "FreeBSD-ssh"]` | The base packages a pkgbase template installs. Each must match `^FreeBSD-[a-z0-9][a-z0-9-]*$`. An empty list means no pkgbase source. Never taken from a request |
 | `storage.dist_dir` | empty | A root-owned directory holding `base.txz` and its `MANIFEST`, for dist templates. Empty means no dist source |
 
 The pool must be in `storage.pools`. The request names only a template

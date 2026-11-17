@@ -286,3 +286,11 @@ checked and was wrong: `/usr/local/bin/sqlite3` exists. Read with
 entries (decision 14), the refusals are `denied` with their codes, and
 each delete's finished entry lists the dataset it destroyed.
 [step7/agent-audit.txt](step7/agent-audit.txt)
+
+## 8. Documentation
+
+**Done.** New guide `docs/administration/jails.md`; a "Jails" section in
+`docs/security/overview.md` and in `docs/architecture/overview.md`; the
+templates guide's default packages; the README's status table and guide
+list; ADR 0010's step 7 "Built" notes; the check table and script list of
+`tests/integration/jails/README.md`.

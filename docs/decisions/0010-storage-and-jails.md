@@ -1457,3 +1457,57 @@ are worked into Decisions 9, 12, and 16. Build notes and the validation
 follow in
 [step7-progress.md](../../tests/integration/jails/results/step7-progress.md).
 
+#### Built: jails (2026-11-16)
+
+Built to Decisions 8, 9, and 13 with amendments e, f, and g. The choices
+the text left open are listed with their reasons in
+[step7-progress.md](../../tests/integration/jails/results/step7-progress.md).
+The ones that shape behaviour:
+
+- **Layout.** `<root>/jail` is a mounted dataset whose directory is the
+  `root:wheel 0700` parent of every jail root, like `<root>/templates`. A
+  jail root is `zfs clone` of `@skep-base` with `skep:container_id` and
+  `readonly=off` set explicitly. The jail.conf and console.log live in
+  `/var/run/skep/jails/<id>/` (the agent's `RunDir` is the VM directory),
+  checked to be the agent's own and not writable by others.
+- **The parameters are checked after `jail -c`**, as for the build jail:
+  name, path, hostname, `vnet=new`, `persist`, `enforce_statfs`,
+  `children.max`, `securelevel`, `devfs_ruleset=5`, `sysv*`, and every
+  `allow.*` the kernel reports (suser and reserved_ports on, mlock as
+  asked, the rest off). A mismatch removes the jail
+  (`container_start_failed`).
+- **The writer** opens one component at a time with `O_RESOLVE_BENEATH |
+  O_NOFOLLOW` relative to the jail root's descriptor, replaces files by a
+  new file and `renameat`, and touches only Skep's own `etc/rc.conf`
+  (recognised by its header) and `root/.ssh/authorized_keys`. It uses
+  `golang.org/x/sys/unix`, already a dependency; no new one.
+- **`started_once`** is set before `jail -c`. Hostname and options are jail
+  parameters and can change whenever the jail is stopped; the SSH key is a
+  write into the tree and is `container_started` after the first start.
+- **`mlock`** is refused (`mlock_requires_memory_limit`) until limits exist
+  (step 9). `container:snapshot` stays undeclared until its routes exist.
+- **New codes** besides the ADR's: `container_name_taken`,
+  `container_not_stopped`, `container_not_running`,
+  `container_not_provisioned`, `container_started`,
+  `container_start_failed` (all 409).
+- **No NIC.** A step 7 jail is VNET with only `lo0`; epairs are step 8.
+
+Validated on `hearst` through the deployed agent and API (`57d74bb`;
+[step7-validation.txt](../../tests/integration/jails/results/step7-validation.txt)):
+a clone of the read-only template is writable; `/etc/rc` starts cleanly;
+the kernel reports the baseline; root binds port 22; raw sockets work and
+are recorded (amendment f); mount, kldload, sysctl writes, sethostname,
+lowering the securelevel, and clearing `schg` fail; an SSH key works on a
+template with sshd (login over the jail's `lo0`) and is refused with
+`container_ssh_unavailable` on one without; two jails from one template
+have different host keys; a key change after the first start is
+`container_started`; the jail and template parents are `root:wheel 0700`
+and an unprivileged host user cannot reach a setuid file in a running
+jail; the operator's and viewer's allowed and refused requests match
+Decision 14, with every refusal audited; jails survive an agent restart
+and `kill -9`; stop leaves no jail, mount, or interface behind and delete
+no dataset. The writer's native tests pass, including planted links.
+Not run on `hearst`: the `chmod 755` refusal of the parent (it changes a
+host directory's mode, outside the run's approvals; unit tested), and
+the epair clean-up (step 8).
+

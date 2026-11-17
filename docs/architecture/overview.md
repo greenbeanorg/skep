@@ -333,6 +333,34 @@ skep-agent
 - **Development machines** simulate a whole build in `hostfake`, with the
   real 15.1 script texts, so the allowlist and the tasks run unchanged.
 
+## Jails
+
+Phase 7b, step 7 ([ADR 0010](../decisions/0010-storage-and-jails.md),
+decisions 8, 9, and 13):
+
+```
+skep-api  /api/v1/containers (container:read, write, delete, power)
+   |
+skep-agent
+   internal/containers  the service and its tasks (create, update, delete,
+                        start, stop, restart), observation from jls
+   internal/hostops     Jails: the 0700 <root>/jail parent, zfs clone of
+                        @skep-base, the jail.conf renderer and the baseline
+                        check, jail -c / jail -r, the O_RESOLVE_BENEATH writer
+   internal/database    ContainerStore (the containers table of agent/0001
+                        and agent/0005)
+```
+
+- **No runner process.** A jail is `persist`ent in the kernel and outlives
+  the agent; the agent observes every jail from one `jls` before it
+  serves its socket and on every read.
+- **The jail.conf** is rendered from a typed `JailSpec` into
+  `/var/run/skep/jails/<id>/` before every start and stop; the kernel's
+  view of the parameters is checked after `jail -c`.
+- **Writes into a jail** (rc.conf and root's SSH key, only before the first
+  start) go through `jailwrite_freebsd.go`; other systems have a stub, and
+  the dev fake records what would have been written.
+
 ## FreeBSD validation status
 
 Validated means it ran on FreeBSD 15.1-RELEASE-p6 (amd64, UFS-root, `hearst`)

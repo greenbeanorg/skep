@@ -481,6 +481,51 @@ Ordinary jails (step 7) keep `allow.suser` on. With it off, root in a jail
 has no privilege and `/etc/rc` fails (ADR 0010, amendment e). Only the
 build jail turns it off.
 
+
+## Jails (Milestone 7b, step 7)
+
+A jail shares the host's kernel, so its isolation rests on parameters
+Skep fixes and nobody can change through the API
+([ADR 0010](../decisions/0010-storage-and-jails.md), decisions 8, 9, and
+13, amendments e and f; [guide](../administration/jails.md)).
+
+- **A generated jail.conf, no host-side command.** jail(8) reads a
+  root-only `jail.conf` that Skep renders from typed values: the path is
+  derived from the pool and the ID, the hostname is a validated DNS name,
+  and the only commands are `exec.start="/bin/sh /etc/rc"` and
+  `exec.stop="/bin/sh /etc/rc.shutdown jail"`, which run inside the jail.
+  There is never an `exec.prestart`, `exec.poststart`, or any other
+  command on the host, and no `mount.fstab`.
+- **The baseline.** VNET, `enforce_statfs=2`, `children.max=0`,
+  `securelevel=2`, devfs ruleset 5, `allow.suser` and
+  `allow.reserved_ports` on and every other `allow.*` off. After `jail -c`
+  the agent reads the parameters back from the kernel and removes a jail
+  that does not match.
+- **Raw sockets cannot be taken away from a VNET jail.** FreeBSD 15.1
+  grants them to every jail with its own network stack before it looks
+  at `allow.raw_sockets`. A jail can therefore craft and spoof packets
+  (source IP and MAC) on its own interface, as a VM can on its NIC. The
+  isolation test of the networking step includes spoofing from a jail.
+- **Host users never reach a jail's tree.** The directory that holds the
+  jail roots, like the templates directory, is `root:wheel 0700` and
+  checked before every start: a jail controls setuid binaries in its tree,
+  and a host user who reached one could run it with the jail root's IDs.
+  Checked on hearst: an unprivileged user gets Permission denied on the
+  jail root and on a setuid file inside a running jail.
+- **Skep writes into a jail only before its first start**, and then only
+  `etc/rc.conf` (its own, recognised by its header) and root's
+  `authorized_keys`, each opened relative to the jail root's directory
+  descriptor with `O_RESOLVE_BENEATH | O_NOFOLLOW` and replaced by a
+  rename, so a planted symbolic link can neither be followed nor lead
+  outside the root (natively tested). `started_once` is set before the
+  jail first runs and never goes back; afterwards such a write is
+  `container_started`.
+- **SSH keys, not passwords.** The only credential Skep handles for a jail
+  is root's public key, accepted only as one plain OpenSSH key line
+  without options, and only for a template that has sshd. sshd allows
+  root with a key only. Templates hold no SSH host keys (the build fails
+  if one is present); each jail generates its own at its first start.
+- **No console, no jexec.** Nothing in the API enters a jail.
 ## Audit logs and retention
 
 There are two audit logs: the agent's operation audit in `agent.db` and
