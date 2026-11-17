@@ -1,0 +1,149 @@
+ADR 0010 phase 7b, step 7: a hand-run probe of the jail specification
+(Decisions 8, 9, 12, 13) on hearst before building it. Recorded
+2026-11-16 (hearst FreeBSD 15.1-RELEASE-p6, amd64, UFS root, RACCT on;
+Skep a34749d installed and untouched). Script:
+../step7-probe/probe-jail.sh, piped over ssh to `sudo sh -s VARIANT`.
+Files: step7-probe/ (the two generated jail.conf files and console logs).
+
+What ran: a clone of the step 6 template minimal-151
+(skeptest/skep/templates/f496866f-...@skep-base) in a new dataset
+skeptest/step7-probe (mounted, its directory set root:wheel 0700), and a
+jail on it started with jail(8) from a jail.conf in that dataset holding
+Decision 9's baseline: vnet, persist, enforce_statfs=2, children.max=0,
+securelevel=2, mount.devfs, devfs_ruleset=5, exec.clean, exec.start
+"/bin/sh /etc/rc", exec.stop "/bin/sh /etc/rc.shutdown jail",
+exec.consolelog, exec.timeout 60, stop.timeout 10, and the allow.*
+parameters below. No interface was given to it (VNET with lo0 only:
+networking is step 8; if_epair is not loaded and was not needed). The
+checks inside the jail used jexec on the host, as root, for the probe
+only; Skep will never expose jexec (Decision 12).
+
+Afterwards the jail was removed (jail -r, which ran exec.stop) and
+skeptest/step7-probe destroyed. The template has no clones again. Nothing
+outside skeptest changed.
+
+== 1. Held as specified ==
+
+- Clone of a read-only template is writable. zfs clone gives
+  skeptest/step7-probe/root readonly=off (source: default: a clone does not
+  copy the origin's local properties), while the template stays
+  readonly=on (local). A file was created and removed in the clone.
+- /etc/rc starts cleanly. console.log (console-A.log, console-B.log): ldconfig;
+  "Starting Network: lo0." with 127.0.0.1 and ::1; os-release, /tmp, newsyslog,
+  motd; "Starting syslogd."; "Starting cron.". The only noise is
+  rc.d/routing's two "route: message indicates error: File exists ...
+  route already in table" lines for 127.0.0.1 and ::1, which every VNET
+  jail prints (lo0's own routes exist before rc.d/routing adds them);
+  harmless. Processes afterwards: syslogd -s (and its casper helpers),
+  cron -s. exec.stop stopped cron and the jail went.
+- jls: vnet new, securelevel 2, enforce_statfs 2, children.max 0,
+  devfs_ruleset 5. Inside: kern.securelevel 2, security.jail.jailed 1,
+  security.jail.vnet 1.
+- devfs ruleset 5 (devfsrules_jail_vnet) is loaded on hearst (rules 100 to
+  400 include rulesets 1 to 4, 500 unhides pf). The jail's /dev: fd null
+  pts random stderr stdin stdout urandom zero zfs. (/dev/zfs is in the
+  stock ruleset; with allow.mount.zfs off and no jailed dataset it reaches
+  nothing.)
+- Refused inside, as root: mount -t tmpfs (Operation not permitted),
+  kldload (Operation not permitted), sysctl kern.hostname=x (Operation not
+  permitted), hostname other (sethostname: Operation not permitted),
+  chflags noschg /bin/sh (no output, and securelevel 2 forbids it).
+
+== 2. FOUND: allow.reserved_ports off breaks every service below port 1024 ==
+
+Decision 9 as amended: "every allow.* that grants extra privileges off,
+with allow.suser left at its default, on". Variant A took that literally:
+every allow.* off but allow.suser. The 15.1 kernel's defaults for a new
+jail are set_hostname, reserved_ports, unprivileged_proc_debug and suser
+(JAIL_DEFAULT_ALLOW, sys/kern/kern_jail.c), so A turns three defaults
+off.
+
+  Variant A (allow.reserved_ports=0), as the jail's root:
+    nc -l 127.0.0.1 22    -> "nc: Permission denied", not listening
+    nc -l 127.0.0.1 2222  -> listening
+  Variant B (A plus allow.reserved_ports=1), as the jail's root:
+    nc -l 127.0.0.1 22    -> listening (sockstat: root nc tcp4 127.0.0.1:22)
+  kern_jail.c: PRIV_NETINET_RESERVEDPORT is granted only with
+  PR_ALLOW_RESERVED_PORTS.
+
+So with the literal reading, sshd, a web server on 80/443, or DNS on 53
+cannot start in a Skep jail. This is the same kind of problem amendment e
+solved for allow.suser. The other two defaults turned off by A cost less:
+allow.set_hostname off stops the jail changing the hostname Skep gave it;
+allow.unprivileged_proc_debug off stops non-root users in the jail from
+debugging their own processes (root still can).
+
+== 3. FOUND: allow.raw_sockets has no effect in a VNET jail ==
+
+Decision 9 offers allow_raw_sockets as an opt-in, and the "Jail baseline"
+check of Decision 16 expects raw sockets to fail without it and ping to
+work with it. In variant A and B (allow.raw_sockets=0; jls reports
+allow.noraw_sockets):
+    ping -c2 127.0.0.1 as root            -> 2 received, exit 0
+    su -m nobody -c "ping -c1 127.0.0.1"  -> 1 received, exit 0 (ping is setuid)
+Cause, in hearst's own source (/usr/src, 15.1 RELEASE-p6,
+sys/kern/kern_jail.c, prison_priv_check): the block for jails with their
+own network stack (PR_VNET) grants PRIV_NETINET_RAW at line 4282, together
+with the other per-stack privileges (PF, IPFW, ND6, ...), before the
+general check of PR_ALLOW_RAW_SOCKETS at line 4531, which therefore only
+applies to jails without VNET. Every Skep jail is VNET (Decision 10), so
+the opt-in can never change anything and the check cannot pass as
+written. The raw sockets act on the jail's own stack and interfaces only,
+which is what a VM on the same bridge can do with its NIC.
+
+== 4. FOUND: the template has no sshd (Decision 12) ==
+
+Decision 12: "an optional SSH public key at create, installed for root
+with sshd_enable and PermitRootLogin prohibit-password". minimal-151
+(FreeBSD-set-minimal 15.1) has no /usr/sbin/sshd, no /etc/ssh/sshd_config,
+and no /etc/rc.conf. sshd is in FreeBSD-ssh, which is not in the minimal
+set. On hearst, FreeBSD-ssh 15.1p4 has no scripts, no Lua scripts, no
+dependencies and no trigger files, so adding it to a template's packages
+needs no allowlist change; a template must then be rebuilt to have it.
+
+== 5. Also noted, no decision needed ==
+
+- FreeBSD's sshd defaults to PermitRootLogin no. Skep can set
+  prohibit-password without editing sshd_config, through rc.conf:
+  sshd_flags="-o PermitRootLogin=prohibit-password".
+- O_RESOLVE_BENEATH is 0x00800000 in hearst's /usr/include/sys/fcntl.h.
+  Go's syscall package has Openat for FreeBSD but not the constant; it can
+  be defined in a _freebsd.go file without golang.org/x/sys/unix.
+- if_epair is not needed for a VNET jail with no interface; step 7 needs
+  no hearst change.
+
+== Options (Andy to decide; nothing was built) ==
+
+A. reserved_ports (finding 2)
+   A1 (recommended). Amend Decision 9 like amendment e: allow.suser and
+      allow.reserved_ports stay at their default, on, in ordinary jails;
+      every other allow.* is off, set_hostname and
+      unprivileged_proc_debug included. Variant B is this baseline.
+   A2. reserved_ports off by default, as a fourth opt-in
+      (allow_reserved_ports). Services below 1024 need it.
+   A3. Keep the literal text: no service below 1024 in a jail.
+
+B. raw sockets (finding 3)
+   B1 (recommended). Drop the allow_raw_sockets opt-in. Document that every
+      VNET jail has raw sockets on its own stack, as a VM has on its NIC,
+      and change the baseline check to "ping works in a VNET jail; that is
+      recorded, not refused".
+   B2. Keep the field, but refuse it with a clear code because it does
+      nothing in a VNET jail.
+   B3. Find another mechanism (for example a devfs or mac_* policy) to
+      take raw sockets away. That is new design, not step 7.
+
+C. sshd (finding 4)
+   C1 (recommended). Offer the SSH key only when the template has
+      /usr/sbin/sshd, and refuse it otherwise with a new 422 code
+      (container_ssh_unavailable) naming the template. Add FreeBSD-ssh to
+      the default storage.template_packages (no allowlist change). A
+      template with sshd would then be built for the SSH check.
+      minimal-151 stays usable for everything else in step 7.
+   C2. As C1, but leave the default packages alone; the operator adds
+      FreeBSD-ssh to storage.template_packages.
+   C3. Leave the SSH key out of step 7 and decide later. Step 7 then
+      writes nothing into a jail's tree: the openat writer is built and
+      tested natively on hearst, but its first caller is step 8 (the
+      addressing in rc.conf), and the "update of a started jail is
+      refused with container_started" check waits for that caller.
