@@ -1,0 +1,148 @@
+== setup
+host end 1: epair0a
+host end 2: epair1a
++ ifconfig epair0b name sj6b0be00100n0
+sj6b0be00100n0
+  (exit 0)
++ ifconfig epair1b name sj6b0be00200n0
+sj6b0be00200n0
+  (exit 0)
++ jail -c name=probek1 path=/tmp/skep-probe-k vnet persist vnet.interface=sj6b0be00100n0
+  (exit 0)
++ jail -c name=probek2 path=/tmp/skep-probe-k vnet persist vnet.interface=sj6b0be00200n0
+  (exit 0)
+== rename inside the jails
++ ifconfig -j probek1 sj6b0be00100n0 name skep0
+skep0
+  (exit 0)
++ ifconfig -j probek2 sj6b0be00200n0 name skep0
+skep0
+  (exit 0)
++ ifconfig -j probek1 -l
+lo0 skep0
+  (exit 0)
++ ifconfig -j probek2 -l
+lo0 skep0
+  (exit 0)
++ ifconfig -l
+vtnet0 vtnet1 lo0 bridge0 epair0a epair1a
+  (exit 0)
+== scenario A: both jails removed without renaming back
++ jail -r probek1
+  (exit 0)
++ ifconfig -l
+vtnet0 vtnet1 lo0 bridge0 epair0a epair1a skep0
+  (exit 0)
++ jail -r probek2
+  (exit 0)
++ ifconfig -l
+vtnet0 vtnet1 lo0 bridge0 epair0a epair1a skep0 skep0
+  (exit 0)
++ ifconfig -g epair
+epair0a
+epair1a
+skep0
+skep0
+  (exit 0)
++ ifconfig epair0a
+epair0a: flags=1008843<UP,BROADCAST,RUNNING,SIMPLEX,MULTICAST,LOWER_UP> metric 0 mtu 1500
+	description: skep:6b0be001-0000-4000-8000-000000000001:0
+	options=60001b<RXCSUM,TXCSUM,VLAN_MTU,VLAN_HWTAGGING,RXCSUM_IPV6,TXCSUM_IPV6>
+	ether 58:9c:fc:10:dd:98
+	groups: epair
+	media: Ethernet 10Gbase-T (10Gbase-T <full-duplex>)
+	status: active
+	nd6 options=9<PERFORMNUD,IFDISABLED>
+  (exit 0)
++ ifconfig epair1a
+epair1a: flags=1008843<UP,BROADCAST,RUNNING,SIMPLEX,MULTICAST,LOWER_UP> metric 0 mtu 1500
+	description: skep:6b0be002-0000-4000-8000-000000000002:0
+	options=60001b<RXCSUM,TXCSUM,VLAN_MTU,VLAN_HWTAGGING,RXCSUM_IPV6,TXCSUM_IPV6>
+	ether 58:9c:fc:10:cd:4a
+	groups: epair
+	media: Ethernet 10Gbase-T (10Gbase-T <full-duplex>)
+	status: active
+	nd6 options=9<PERFORMNUD,IFDISABLED>
+  (exit 0)
+-- interfaces named skep0 on the host:
+2
+skep0: flags=1008842<BROADCAST,RUNNING,SIMPLEX,MULTICAST,LOWER_UP> metric 0 mtu 1500
+	options=60001b<RXCSUM,TXCSUM,VLAN_MTU,VLAN_HWTAGGING,RXCSUM_IPV6,TXCSUM_IPV6>
+	ether 58:9c:fc:10:fd:4c
+	groups: epair
+--
+skep0: flags=1008842<BROADCAST,RUNNING,SIMPLEX,MULTICAST,LOWER_UP> metric 0 mtu 1500
+	options=60001b<RXCSUM,TXCSUM,VLAN_MTU,VLAN_HWTAGGING,RXCSUM_IPV6,TXCSUM_IPV6>
+	ether 58:9c:fc:10:04:97
+	groups: epair
+-- destroy host end 1 (what Skep does)
++ ifconfig epair0a destroy
+  (exit 0)
++ ifconfig -l
+vtnet0 vtnet1 lo0 bridge0 epair1a skep0
+  (exit 0)
+-- destroy host end 2
++ ifconfig epair1a destroy
+  (exit 0)
++ ifconfig -l
+vtnet0 vtnet1 lo0 bridge0
+  (exit 0)
+== scenario B: normal stop (rename back, then remove)
+host end 1: epair0a
++ ifconfig epair0b name sj6b0be00100n0
+sj6b0be00100n0
+  (exit 0)
++ jail -c name=probek1 path=/tmp/skep-probe-k vnet persist vnet.interface=sj6b0be00100n0
+  (exit 0)
++ ifconfig -j probek1 sj6b0be00100n0 name skep0
+skep0
+  (exit 0)
++ ifconfig -j probek1 -l
+lo0 skep0
+  (exit 0)
++ ifconfig -j probek1 skep0 name sj6b0be00100n0
+sj6b0be00100n0
+  (exit 0)
++ jail -r probek1
+  (exit 0)
++ ifconfig -l
+vtnet0 vtnet1 lo0 bridge0 epair0a sj6b0be00100n0
+  (exit 0)
++ ifconfig epair0a destroy
+  (exit 0)
++ ifconfig -l
+vtnet0 vtnet1 lo0 bridge0
+  (exit 0)
+== scenario C: skep0 already on the host when a jail end named skep0 returns
+host end 1: epair0a
++ ifconfig epair0b name skep0
+skep0
+  (exit 0)
+host end 2: epair1a
++ ifconfig epair1b name sj6b0be00200n0
+sj6b0be00200n0
+  (exit 0)
++ jail -c name=probek2 path=/tmp/skep-probe-k vnet persist vnet.interface=sj6b0be00200n0
+  (exit 0)
++ ifconfig -j probek2 sj6b0be00200n0 name skep0
+skep0
+  (exit 0)
++ jail -r probek2
+  (exit 0)
++ ifconfig -l
+vtnet0 vtnet1 lo0 bridge0 epair0a skep0 epair1a skep0
+  (exit 0)
+2
++ ifconfig epair0a destroy
+  (exit 0)
++ ifconfig epair1a destroy
+  (exit 0)
++ ifconfig -l
+vtnet0 vtnet1 lo0 bridge0
+  (exit 0)
+== end
++ jls
+   JID  IP Address      Hostname                      Path
+  (exit 0)
++ ifconfig -g epair
+  (exit 0)

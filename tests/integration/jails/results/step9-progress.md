@@ -434,3 +434,47 @@ Recorded in ADR 0010 as amendment k before any further work.
 
 Stopped after recording, as asked. Nothing built yet; hearst unchanged
 since section 10 (`5a779a4`, no jails, epairs, or RCTL rules).
+
+## 12. Amendment k probe (2026-11-17): safe, build continued
+
+Run on hearst with sudo, as approved (item 1 of the run). Two epairs on
+no bridge with no address, host ends described `skep:<test-id>:0`, and
+empty vnet jails (`path` an empty 0700 directory in `/tmp`, `persist`,
+nothing executed in them). Records: [probe-k](step9/probe-k.txt),
+[probe-k2](step9/probe-k2.txt).
+
+| Question | Result on 15.1-RELEASE-p6 |
+|---|---|
+| `ifconfig -j <jail> sj…n0 name skep0` | Works; prints `skep0`; two jails can each have `skep0` |
+| Two jails removed without renaming back | Both `jail -r` exit 0; the host then has **two interfaces named `skep0`** (`ifconfig -l` lists both); nothing fails and nothing is lost |
+| Host ends after that | Unchanged: `epair0a`/`epair1a`, descriptions intact, so orphan detection (host ends by description; `skep0` never matches `epair[0-9]+a`) still finds both owners |
+| Destroying each host end | Removes exactly its own peer `skep0` |
+| `skep0` already on the host when another returns | Return succeeds; two `skep0` again |
+| Normal stop, renamed back first | Returns as `sj…n0`, destroyed with its host end |
+| `jail -r -f <conf>` with `vnet.interface` after the in-jail rename | Exit 0: jail(8) runs no `-vnet` command at removal (the vnet teardown returns the interface), so a missing name never fails a removal |
+| Destroying the host end while the jail runs | Removes the jail end inside the jail (seen in the first attempt of probe-k2) |
+
+**My mistake in probe-k2's first attempt:** its jail.conf had
+`exec.stop = "/usr/bin/true"`, which the empty root does not have, so
+`jail -r` failed and left `probek1` (JID 34, nothing running in it). I
+removed it with `jail -r probek1` straight away and reran without
+`exec.stop`. Record: [first attempt](step9/probe-k2-first-attempt.txt).
+
+**Verdict:** safe. Duplicate names are possible only after a removal
+Skep did not make, and Skep never addresses a returned jail end by name.
+
+**Built choice (within amendment k's "renamed back (or its epair
+destroyed)"):** every removal Skep makes destroys the epairs *before*
+`jail -r`, rather than renaming back. Reasons: it does not depend on
+the jail's interface list, which the jail's root controls (it can rename
+`skep0` away, or to `vtnet0`); and no jail end ever returns to the host on
+a Skep removal. Cost: the jail's `/etc/rc.shutdown` runs without its NICs
+(a rename-back would also take `skep0` away before shutdown).
+
+**Finding, already true before amendment k:** a jail's root can rename
+its interface to any name (`vtnet0`, `bridge0`) and, if the jail is then
+removed outside Skep, it returns to the host under that name, beside the
+real one. Skep's own removals no longer return anything; removals outside
+Skep still can. Not fixed; for your judgement.
+
+hearst after the probes: no jails, no epairs, `/tmp` probe files removed.
