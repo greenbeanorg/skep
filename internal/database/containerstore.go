@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/greenbeanorg/skep/pkg/models"
@@ -24,15 +25,111 @@ type ContainerStore struct {
 // NewContainerStore returns the container store for the agent database.
 func NewContainerStore(db *sql.DB) *ContainerStore { return &ContainerStore{db: db} }
 
-// containerConfig is the JSON of containers.config.
+// containerConfig is the JSON of containers.config. The NICs have their
+// own table, container_networks.
 type containerConfig struct {
 	Options          models.ContainerOptions `json:"options"`
 	SSHAuthorizedKey string                  `json:"ssh_authorized_key,omitempty"`
+	Nameservers      []string                `json:"nameservers,omitempty"`
 }
 
 func configJSON(c models.Container) (string, error) {
-	raw, err := json.Marshal(containerConfig{Options: c.Options, SSHAuthorizedKey: c.SSHAuthorizedKey})
+	raw, err := json.Marshal(containerConfig{Options: c.Options, SSHAuthorizedKey: c.SSHAuthorizedKey, Nameservers: c.Nameservers})
 	return string(raw), err
+}
+
+// insertNICs stores a container's NICs. A MAC address another jail or VM
+// already uses is refused.
+func insertNICs(ctx context.Context, tx *sql.Tx, c models.Container, at string) error {
+	for _, nic := range c.NICs {
+		var n int
+		if err := tx.QueryRowContext(ctx, `SELECT (SELECT COUNT(*) FROM container_networks WHERE mac_address = ? AND container_id <> ?)
+			+ (SELECT COUNT(*) FROM vm_networks WHERE mac_address = ?)`, nic.MACAddress, c.ID, nic.MACAddress).Scan(&n); err != nil {
+			return fmt.Errorf("database: check MAC address: %w", err)
+		}
+		if n > 0 {
+			return models.Invalid("the MAC address " + nic.MACAddress + " is already used by another network interface")
+		}
+		var addr, gw any
+		if nic.IPv4.Address != "" {
+			addr = nic.IPv4.Address
+		}
+		if nic.IPv4.Gateway != "" {
+			gw = nic.IPv4.Gateway
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO container_networks (id, container_id, slot, mac_address, bridge, ipv4_mode, ipv4_address, ipv4_gateway, created_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			nic.ID, c.ID, nic.Slot, nic.MACAddress, nic.Bridge, nic.IPv4.Mode, addr, gw, at); err != nil {
+			return fmt.Errorf("database: insert container NIC: %w", err)
+		}
+	}
+	return nil
+}
+
+// loadNICs fills in the NICs of the containers.
+func (s *ContainerStore) loadNICs(ctx context.Context, list []models.Container) error {
+	if len(list) == 0 {
+		return nil
+	}
+	index := map[string]*models.Container{}
+	args := make([]any, 0, len(list))
+	marks := make([]string, 0, len(list))
+	for i := range list {
+		list[i].NICs = []models.ContainerNIC{}
+		index[list[i].ID] = &list[i]
+		args = append(args, list[i].ID)
+		marks = append(marks, "?")
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT container_id, id, slot, COALESCE(mac_address, ''), bridge, ipv4_mode, COALESCE(ipv4_address, ''),
+			COALESCE(ipv4_gateway, ''), COALESCE(observed_epair, '')
+		FROM container_networks WHERE container_id IN (`+strings.Join(marks, ",")+`) ORDER BY container_id, slot`, args...)
+	if err != nil {
+		return fmt.Errorf("database: read container NICs: %w", err)
+	}
+	for rows.Next() {
+		var id string
+		var nic models.ContainerNIC
+		if err := rows.Scan(&id, &nic.ID, &nic.Slot, &nic.MACAddress, &nic.Bridge, &nic.IPv4.Mode, &nic.IPv4.Address,
+			&nic.IPv4.Gateway, &nic.HostInterface); err != nil {
+			rows.Close()
+			return fmt.Errorf("database: read container NICs: %w", err)
+		}
+		index[id].NICs = append(index[id].NICs, nic)
+	}
+	return closeRows(rows)
+}
+
+// IDPrefixTaken reports whether another container's ID, without hyphens,
+// starts with prefix: the jail end of a NIC is named after it.
+func (s *ContainerStore) IDPrefixTaken(ctx context.Context, prefix string) (bool, error) {
+	var n int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM containers WHERE substr(replace(id, '-', ''), 1, ?) = ?`,
+		len(prefix), prefix).Scan(&n); err != nil {
+		return false, fmt.Errorf("database: check container IDs: %w", err)
+	}
+	return n > 0, nil
+}
+
+// SaveEpairs records the host ends of a running jail's epairs by slot,
+// and clears those of slots not listed. Observed columns only.
+func (s *ContainerStore) SaveEpairs(ctx context.Context, id string, epairs map[int]string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx, `UPDATE container_networks SET observed_epair = NULL WHERE container_id = ?`, id); err != nil {
+		return fmt.Errorf("database: clear observed epairs: %w", err)
+	}
+	for slot, name := range epairs {
+		if _, err := tx.ExecContext(ctx, `UPDATE container_networks SET observed_epair = ? WHERE container_id = ? AND slot = ?`,
+			name, id, slot); err != nil {
+			return fmt.Errorf("database: record observed epair: %w", err)
+		}
+	}
+	return tx.Commit()
 }
 
 // InsertTx stores a new, unprovisioned container in the transaction that
@@ -66,7 +163,7 @@ func (s *ContainerStore) InsertTx(ctx context.Context, tx *sql.Tx, nodeID string
 		c.ID, nodeID, c.Name, c.Hostname, cfg, c.TemplateID, pool, at, at); err != nil {
 		return fmt.Errorf("database: insert container: %w", err)
 	}
-	return nil
+	return insertNICs(ctx, tx, c, at)
 }
 
 const containerColumns = `c.id, c.name, c.hostname, c.config, c.template_id, t.name, p.name,
@@ -94,7 +191,7 @@ func scanContainer(row rowScanner) (models.Container, error) {
 	if err := json.Unmarshal([]byte(cfg), &conf); err != nil {
 		return models.Container{}, fmt.Errorf("database: container config: %w", err)
 	}
-	c.Options, c.SSHAuthorizedKey = conf.Options, conf.SSHAuthorizedKey
+	c.Options, c.SSHAuthorizedKey, c.Nameservers = conf.Options, conf.SSHAuthorizedKey, conf.Nameservers
 	c.Provisioned, c.StartedOnce = provisioned == 1, startedOnce == 1
 	if jid.Valid {
 		v := int(jid.Int64)
@@ -124,7 +221,11 @@ func (s *ContainerStore) Get(ctx context.Context, id string) (models.Container, 
 	if err != nil {
 		return models.Container{}, fmt.Errorf("database: get container: %w", err)
 	}
-	return c, nil
+	one := []models.Container{c}
+	if err := s.loadNICs(ctx, one); err != nil {
+		return models.Container{}, err
+	}
+	return one[0], nil
 }
 
 // List returns a page of containers ordered by name, and the cursor of the
@@ -153,6 +254,9 @@ func (s *ContainerStore) List(ctx context.Context, limit int, cursor string) ([]
 		list = append(list, c)
 	}
 	if err := closeRows(rows); err != nil {
+		return nil, "", err
+	}
+	if err := s.loadNICs(ctx, list); err != nil {
 		return nil, "", err
 	}
 	next := ""
@@ -227,14 +331,33 @@ func (s *ContainerStore) SaveObserved(ctx context.Context, id, state string, jid
 		state, j, d, formatTime(at), id)
 }
 
-// UpdateConfig records a changed hostname, options, or SSH key.
+// UpdateConfig records a changed hostname, options, SSH key, nameservers,
+// or NICs (replaced whole).
 func (s *ContainerStore) UpdateConfig(ctx context.Context, c models.Container, at time.Time) error {
 	cfg, err := configJSON(c)
 	if err != nil {
 		return err
 	}
-	return s.exec(ctx, "update container", c.ID,
-		`UPDATE containers SET hostname = ?, config = ?, updated_at = ? WHERE id = ?`, c.Hostname, cfg, formatTime(at), c.ID)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	res, err := tx.ExecContext(ctx, `UPDATE containers SET hostname = ?, config = ?, updated_at = ? WHERE id = ?`,
+		c.Hostname, cfg, formatTime(at), c.ID)
+	if err != nil {
+		return fmt.Errorf("database: update container: %w", err)
+	}
+	if err := oneRow(res, "container", c.ID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM container_networks WHERE container_id = ?`, c.ID); err != nil {
+		return fmt.Errorf("database: replace container NICs: %w", err)
+	}
+	if err := insertNICs(ctx, tx, c, formatTime(at)); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // Delete removes a container's row and, by trigger, its snapshot rows.

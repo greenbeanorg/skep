@@ -151,7 +151,7 @@ func (s *Service) spec(c models.Container, stopTimeout time.Duration) hostops.Ja
 		stopTimeout = s.stopTimeout
 	}
 	return hostops.JailSpec{Pool: c.Pool, ContainerID: c.ID, Hostname: c.Hostname, SysVIPC: c.Options.SysVIPC,
-		Mlock: c.Options.Mlock, StartTimeout: s.startTimeout, StopTimeout: stopTimeout}
+		Mlock: c.Options.Mlock, StartTimeout: s.startTimeout, StopTimeout: stopTimeout, NICs: jailNICs(c)}
 }
 
 // Containers lists the containers by name, with their state as the host
@@ -175,6 +175,9 @@ func (s *Service) Containers(ctx context.Context, opts models.ContainerListOptio
 			list[i] = s.observe(ctx, list[i], running, false)
 		}
 	}
+	for i := range list {
+		list[i] = withInterfaces(list[i])
+	}
 	return models.ContainerList{Items: list, NextCursor: next}, nil
 }
 
@@ -191,9 +194,9 @@ func (s *Service) Container(ctx context.Context, id string) (models.Container, e
 	running, err := s.jails.RunningJails(ctx)
 	if err != nil {
 		s.log.Warn("containers: cannot list the running jails", "error", err)
-		return c, nil
+		return withInterfaces(c), nil
 	}
-	return s.observe(ctx, c, running, false), nil
+	return withInterfaces(s.observe(ctx, c, running, false)), nil
 }
 
 // observe compares a container's recorded state with the running jails and
@@ -215,6 +218,9 @@ func (s *Service) observe(ctx context.Context, c models.Container, running map[s
 	if state == models.ContainerStopped && c.DesiredState == models.ContainerRunning {
 		detail = "the jail is not running although it should be: it was removed outside Skep, or the host restarted"
 	}
+	if state != models.ContainerRunning {
+		c = s.clearEpairs(ctx, c)
+	}
 	same := state == c.State && detail == c.StateDetail && ((jid == nil) == (c.JID == nil)) && (jid == nil || *jid == *c.JID)
 	if same {
 		return c
@@ -225,6 +231,27 @@ func (s *Service) observe(ctx context.Context, c models.Container, running map[s
 		return c
 	}
 	c.State, c.JID, c.StateDetail, c.ObservedAt = state, jid, detail, &at
+	return c
+}
+
+// clearEpairs forgets the observed epairs of a jail that does not run.
+// Any that are still on the host are orphans, reported by the interface
+// check and removed by the next start, stop, or delete.
+func (s *Service) clearEpairs(ctx context.Context, c models.Container) models.Container {
+	stale := false
+	for _, n := range c.NICs {
+		stale = stale || n.HostInterface != ""
+	}
+	if !stale {
+		return c
+	}
+	if err := s.store.SaveEpairs(ctx, c.ID, nil); err != nil {
+		s.log.Warn("containers: could not clear the observed epairs", "container_id", c.ID, "error", err)
+		return c
+	}
+	for i := range c.NICs {
+		c.NICs[i].HostInterface = ""
+	}
 	return c
 }
 

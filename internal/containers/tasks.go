@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/greenbeanorg/skep/internal/hostops"
@@ -114,8 +115,59 @@ func (s *Service) normalizeCreate(ctx context.Context, req models.ContainerCreat
 	if c.SSHAuthorizedKey, err = s.checkSSH(ctx, t, req.SSHAuthorizedKey); err != nil {
 		return c, t, err
 	}
+	if c.NICs, c.Nameservers, err = s.normalizeNICs(req.NICs, req.Nameservers, nil); err != nil {
+		return c, t, err
+	}
 	c.TemplateName, c.Pool, c.Release = t.Name, t.Pool, t.Release
 	return c, t, nil
+}
+
+// currentSpecs are a container's NICs as a request would give them.
+func currentSpecs(c models.Container) []models.ContainerNICSpec {
+	out := []models.ContainerNICSpec{}
+	for _, n := range c.NICs {
+		v4 := n.IPv4
+		out = append(out, models.ContainerNICSpec{Bridge: n.Bridge, MACAddress: n.MACAddress, IPv4: &v4})
+	}
+	return out
+}
+
+// normalSpecs are a request's NICs as normalised, for the idempotency
+// comparison: a generated MAC is left out, so a replay matches.
+func normalSpecs(req []models.ContainerNICSpec, nics []models.ContainerNIC) []models.ContainerNICSpec {
+	var out []models.ContainerNICSpec
+	for i, n := range nics {
+		spec := models.ContainerNICSpec{Bridge: n.Bridge, IPv4: &models.ContainerIPv4{}}
+		*spec.IPv4 = n.IPv4
+		if req[i].MACAddress != "" {
+			spec.MACAddress = n.MACAddress
+		}
+		out = append(out, spec)
+	}
+	return out
+}
+
+// maxIDTries bounds the retries for a container ID whose interface prefix
+// another container has (one chance in 2^40 each).
+const maxIDTries = 5
+
+// newContainerID returns an ID whose first ten hex digits no other
+// container has, so the jail ends of their NICs never share a name.
+func (s *Service) newContainerID(ctx context.Context) (string, error) {
+	for range maxIDTries {
+		id, err := ids.NewUUID()
+		if err != nil {
+			return "", err
+		}
+		taken, err := s.store.IDPrefixTaken(ctx, hostops.JailInterfacePrefix(id))
+		if err != nil {
+			return "", err
+		}
+		if !taken {
+			return id, nil
+		}
+	}
+	return "", errors.New("containers: could not find a container ID with a free interface prefix")
 }
 
 // createPayload is the payload of container.create. Request is the
@@ -135,7 +187,7 @@ func (s *Service) CreateContainer(ctx context.Context, req models.ContainerCreat
 		return models.ContainerCreated{}, s.refuse(ctx, refused, err)
 	}
 	normal := models.ContainerCreate{Name: c.Name, Hostname: c.Hostname, TemplateID: c.TemplateID,
-		Options: &c.Options, SSHAuthorizedKey: c.SSHAuthorizedKey}
+		Options: &c.Options, SSHAuthorizedKey: c.SSHAuthorizedKey, NICs: normalSpecs(req.NICs, c.NICs), Nameservers: c.Nameservers}
 	request, err := canonical(normal)
 	if err != nil {
 		return models.ContainerCreated{}, err
@@ -152,9 +204,9 @@ func (s *Service) CreateContainer(ctx context.Context, req models.ContainerCreat
 		} else if err != nil {
 			return models.ContainerCreated{}, err
 		}
-		return models.ContainerCreated{Container: got, Task: existing.Public()}, nil
+		return models.ContainerCreated{Container: withInterfaces(got), Task: existing.Public()}, nil
 	}
-	if c.ID, err = ids.NewUUID(); err != nil {
+	if c.ID, err = s.newContainerID(ctx); err != nil {
 		return models.ContainerCreated{}, err
 	}
 	c.CreatedAt = s.now().UTC()
@@ -174,7 +226,7 @@ func (s *Service) CreateContainer(ctx context.Context, req models.ContainerCreat
 	if err != nil {
 		return models.ContainerCreated{}, err
 	}
-	return models.ContainerCreated{Container: stored, Task: task.Public()}, nil
+	return models.ContainerCreated{Container: withInterfaces(stored), Task: task.Public()}, nil
 }
 
 // replay finds the task an earlier request with the same idempotency key
@@ -201,13 +253,25 @@ func (s *Service) replay(ctx context.Context, sub Submission, request json.RawMe
 	return existing, true, nil
 }
 
-// jailFiles is what Skep writes into a jail before its first start: with
-// an SSH key, sshd on and the key for root; without, nothing.
-func jailFiles(c models.Container) hostops.JailFiles {
-	if c.SSHAuthorizedKey == "" {
-		return hostops.JailFiles{}
+// jailFiles is what Skep writes into a jail before its first start: the
+// rc.conf lines of its NICs; with an SSH key, sshd on and the key for
+// root; and, for static addressing, the nameservers. Empty when there is
+// nothing to write.
+func jailFiles(c models.Container) (hostops.JailFiles, error) {
+	lines, err := netRCConf(c)
+	if err != nil {
+		return hostops.JailFiles{}, err
 	}
-	return hostops.JailFiles{RCConf: hostops.SSHRCConf, AuthorizedKey: c.SSHAuthorizedKey}
+	f := hostops.JailFiles{RCConf: lines, Nameservers: c.Nameservers}
+	if c.SSHAuthorizedKey != "" {
+		f.RCConf = append(f.RCConf, hostops.SSHRCConf...)
+		f.AuthorizedKey = c.SSHAuthorizedKey
+	}
+	return f, nil
+}
+
+func emptyFiles(f hostops.JailFiles) bool {
+	return len(f.RCConf) == 0 && f.AuthorizedKey == "" && len(f.Nameservers) == 0
 }
 
 // CreateResult is the result of container.create.
@@ -218,12 +282,13 @@ type CreateResult struct {
 	Dataset     string `json:"dataset"`
 	Origin      string `json:"origin"`
 	SSHKey      bool   `json:"ssh_key_installed"`
+	NICs        int    `json:"nics"`
 }
 
 // AuditDetails implements tasks.Audited.
 func (r CreateResult) AuditDetails() map[string]any {
 	return map[string]any{"container_id": r.ContainerID, "container_name": r.Name, "template_id": r.TemplateID,
-		"dataset": r.Dataset, "origin": r.Origin, "ssh_key_installed": r.SSHKey}
+		"dataset": r.Dataset, "origin": r.Origin, "ssh_key_installed": r.SSHKey, "nics": r.NICs}
 }
 
 func (s *Service) runCreate(ctx context.Context, task tasks.Task, report tasks.Reporter) (any, error) {
@@ -247,9 +312,13 @@ func (s *Service) runCreate(ctx context.Context, task tasks.Task, report tasks.R
 	if err != nil {
 		return nil, failure(err)
 	}
-	files := jailFiles(c)
-	if files.AuthorizedKey != "" {
-		report.Progress("writing rc.conf and root's SSH key into the jail", nil)
+	files, err := jailFiles(c)
+	if err != nil {
+		s.destroyAfterFailure(c)
+		return nil, err
+	}
+	if !emptyFiles(files) {
+		report.Progress("writing rc.conf, resolv.conf, and root's SSH key into the jail", nil)
 		if err := s.jails.ConfigureJail(ctx, c.Pool, c.ID, files); err != nil {
 			s.destroyAfterFailure(c)
 			return nil, failure(err)
@@ -263,7 +332,7 @@ func (s *Service) runCreate(ctx context.Context, task tasks.Task, report tasks.R
 		return nil, err
 	}
 	return CreateResult{ContainerID: c.ID, Name: c.Name, TemplateID: c.TemplateID, Dataset: ds.Name,
-		Origin: ds.Origin, SSHKey: files.AuthorizedKey != ""}, nil
+		Origin: ds.Origin, SSHKey: files.AuthorizedKey != "", NICs: len(c.NICs)}, nil
 }
 
 // destroyAfterFailure removes a jail root a failed create left, on its own
@@ -308,8 +377,10 @@ type updatePayload struct {
 	Hostname         string                  `json:"hostname"`
 	Options          models.ContainerOptions `json:"options"`
 	SSHAuthorizedKey string                  `json:"ssh_authorized_key"`
-	// WriteFiles is true when the SSH key changed, which writes into the
-	// jail's tree.
+	NICs             []models.ContainerNIC   `json:"nics"`
+	Nameservers      []string                `json:"nameservers"`
+	// WriteFiles is true when the SSH key, the addressing, or the
+	// nameservers changed, which writes into the jail's tree.
 	WriteFiles bool `json:"write_files"`
 }
 
@@ -343,10 +414,34 @@ func (s *Service) normalizeUpdate(ctx context.Context, id string, req models.Con
 	if !c.Provisioned {
 		return updatePayload{}, notProvisioned(c)
 	}
-	if req.Hostname == nil && req.Options == nil && req.SSHAuthorizedKey == nil {
-		return updatePayload{}, models.Invalid("nothing to change: give hostname, options, or ssh_authorized_key")
+	if req.Hostname == nil && req.Options == nil && req.SSHAuthorizedKey == nil && req.NICs == nil && req.Nameservers == nil {
+		return updatePayload{}, models.Invalid("nothing to change: give hostname, options, ssh_authorized_key, nics, or nameservers")
 	}
-	p := updatePayload{Hostname: c.Hostname, Options: c.Options, SSHAuthorizedKey: c.SSHAuthorizedKey}
+	p := updatePayload{Hostname: c.Hostname, Options: c.Options, SSHAuthorizedKey: c.SSHAuthorizedKey,
+		NICs: c.NICs, Nameservers: c.Nameservers}
+	if req.NICs != nil || req.Nameservers != nil {
+		specs, ns := currentSpecs(c), c.Nameservers
+		if req.NICs != nil {
+			specs = *req.NICs
+		}
+		if req.Nameservers != nil {
+			ns = *req.Nameservers
+		}
+		nics, nameservers, err := s.normalizeNICs(specs, ns, c.NICs)
+		if err != nil {
+			return p, err
+		}
+		if !sameAddressing(nics, c.NICs) || !slices.Equal(nameservers, c.Nameservers) {
+			// The jail's rc.conf or resolv.conf changes (decision 13).
+			if c.StartedOnce {
+				return p, &models.Error{Code: models.CodeContainerStarted,
+					Message: "the jail has started at least once, so Skep no longer writes into its tree: after the first start only the bridge and MAC address of an existing NIC can change; its addressing is the jail's own business now",
+					Details: map[string]any{"container_id": c.ID}}
+			}
+			p.WriteFiles = true
+		}
+		p.NICs, p.Nameservers = nics, nameservers
+	}
 	if req.Hostname != nil {
 		if !hostops.ValidHostname(*req.Hostname) {
 			return p, models.Invalid("the hostname must be a DNS name: labels of letters, digits, and hyphens, separated by dots")
@@ -399,7 +494,7 @@ func (s *Service) runUpdate(ctx context.Context, task tasks.Task, report tasks.R
 	} else if running {
 		return nil, failure(notStopped(c))
 	}
-	c.Hostname, c.Options, c.SSHAuthorizedKey = p.Hostname, p.Options, p.SSHAuthorizedKey
+	c.Hostname, c.Options, c.SSHAuthorizedKey, c.NICs, c.Nameservers = p.Hostname, p.Options, p.SSHAuthorizedKey, p.NICs, p.Nameservers
 	if p.WriteFiles {
 		// Checked again here: the jail may have started since the
 		// request was accepted.
@@ -410,8 +505,12 @@ func (s *Service) runUpdate(ctx context.Context, task tasks.Task, report tasks.R
 		if fresh.StartedOnce {
 			return nil, failure(started(fresh))
 		}
-		report.Progress("writing rc.conf and root's SSH key into the jail", nil)
-		if err := s.jails.ConfigureJail(ctx, c.Pool, c.ID, jailFiles(c)); err != nil {
+		files, err := jailFiles(c)
+		if err != nil {
+			return nil, err
+		}
+		report.Progress("writing rc.conf, resolv.conf, and root's SSH key into the jail", nil)
+		if err := s.jails.ConfigureJail(ctx, c.Pool, c.ID, files); err != nil {
 			return nil, failure(err)
 		}
 	}
@@ -419,7 +518,8 @@ func (s *Service) runUpdate(ctx context.Context, task tasks.Task, report tasks.R
 		return nil, err
 	}
 	return map[string]any{"container_id": c.ID, "hostname": c.Hostname, "options": c.Options,
-		"ssh_key_installed": c.SSHAuthorizedKey != "", "files_written": p.WriteFiles}, nil
+		"ssh_key_installed": c.SSHAuthorizedKey != "", "nics": withInterfaces(c).NICs, "nameservers": c.Nameservers,
+		"files_written": p.WriteFiles}, nil
 }
 
 // DeleteContainer submits the task that destroys a stopped container and
@@ -463,12 +563,18 @@ type DeleteResult struct {
 	ContainerID string        `json:"container_id"`
 	Name        string        `json:"name"`
 	Destroyed   []DatasetInfo `json:"datasets_destroyed"`
+	// Interfaces are epairs an earlier crash left, destroyed with it.
+	Interfaces []string `json:"interfaces_destroyed,omitempty"`
 }
 
 // AuditDetails implements tasks.Audited: every dataset destroyed is listed
 // (decision 14).
 func (r DeleteResult) AuditDetails() map[string]any {
-	return map[string]any{"container_id": r.ContainerID, "container_name": r.Name, "datasets_destroyed": r.Destroyed}
+	d := map[string]any{"container_id": r.ContainerID, "container_name": r.Name, "datasets_destroyed": r.Destroyed}
+	if len(r.Interfaces) > 0 {
+		d["interfaces_destroyed"] = r.Interfaces
+	}
+	return d
 }
 
 func (s *Service) runDelete(ctx context.Context, task tasks.Task, report tasks.Reporter) (any, error) {
@@ -481,6 +587,11 @@ func (s *Service) runDelete(ctx context.Context, task tasks.Task, report tasks.R
 	} else if running {
 		return nil, failure(notStopped(c))
 	}
+	// Epairs a crash left are the owner's to remove (decision 10).
+	ifaces, err := s.jails.DestroyJailInterfaces(ctx, c.ID)
+	if err != nil {
+		return nil, failure(err)
+	}
 	report.Progress("destroying the jail's dataset", nil)
 	destroyed, err := s.jails.DestroyJailRoot(ctx, c.Pool, c.ID)
 	if err != nil {
@@ -492,7 +603,7 @@ func (s *Service) runDelete(ctx context.Context, task tasks.Task, report tasks.R
 	if err := s.store.Delete(ctx, c.ID); err != nil {
 		return nil, err
 	}
-	res := DeleteResult{ContainerID: c.ID, Name: c.Name, Destroyed: []DatasetInfo{}}
+	res := DeleteResult{ContainerID: c.ID, Name: c.Name, Destroyed: []DatasetInfo{}, Interfaces: ifaces}
 	for _, d := range destroyed {
 		res.Destroyed = append(res.Destroyed, DatasetInfo{Name: d.Name, Type: d.Type, UsedBytes: d.UsedBytes})
 	}

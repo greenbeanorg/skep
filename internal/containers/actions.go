@@ -84,6 +84,11 @@ func (s *Service) checkAction(ctx context.Context, id, taskType string) error {
 		if running {
 			return notStopped(c)
 		}
+		if len(c.NICs) > 0 {
+			if err := s.jails.EpairAvailable(ctx); err != nil {
+				return err
+			}
+		}
 		return optionsError(c.Options)
 	}
 	if !running {
@@ -98,6 +103,8 @@ type ActionResult struct {
 	ContainerID string `json:"container_id"`
 	State       string `json:"state"`
 	JID         int    `json:"jid,omitempty"`
+	// Epairs are the host ends of the jail's epairs by slot.
+	Epairs map[int]string `json:"epairs,omitempty"`
 }
 
 func (s *Service) runStart(ctx context.Context, task tasks.Task, report tasks.Reporter) (any, error) {
@@ -128,13 +135,19 @@ func (s *Service) start(ctx context.Context, c models.Container, report tasks.Re
 		if serr := s.store.SaveObserved(rctx, c.ID, models.ContainerStopped, nil, "the last start failed: "+err.Error(), at); serr != nil {
 			s.log.Warn("containers: could not record a failed start", "container_id", c.ID, "error", serr)
 		}
+		if serr := s.store.SaveEpairs(rctx, c.ID, nil); serr != nil {
+			s.log.Warn("containers: could not clear the observed epairs", "container_id", c.ID, "error", serr)
+		}
 		return nil, failure(err)
 	}
 	jid := st.JID
 	if err := s.store.SaveObserved(rctx, c.ID, models.ContainerRunning, &jid, "", at); err != nil {
 		return nil, err
 	}
-	return ActionResult{ContainerID: c.ID, State: models.ContainerRunning, JID: jid}, nil
+	if err := s.store.SaveEpairs(rctx, c.ID, st.Epairs); err != nil {
+		return nil, err
+	}
+	return ActionResult{ContainerID: c.ID, State: models.ContainerRunning, JID: jid, Epairs: st.Epairs}, nil
 }
 
 func (s *Service) runStop(ctx context.Context, task tasks.Task, report tasks.Reporter) (any, error) {
@@ -173,6 +186,9 @@ func (s *Service) stop(ctx context.Context, c models.Container, timeout time.Dur
 			s.log.Warn("containers: could not record a failed stop", "container_id", c.ID, "error", serr)
 		}
 		return failure(err)
+	}
+	if err := s.store.SaveEpairs(rctx, c.ID, nil); err != nil {
+		return err
 	}
 	return s.store.SaveObserved(rctx, c.ID, models.ContainerStopped, nil, "", s.now().UTC())
 }

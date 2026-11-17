@@ -51,7 +51,8 @@ func newFixture(t *testing.T) *fixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	conf := hostops.Confinement{Pools: []string{"devpool"}, DatasetRoot: "skep", JailRunDir: "/var/run/skep/jails"}
+	conf := hostops.Confinement{Pools: []string{"devpool"}, DatasetRoot: "skep", JailRunDir: "/var/run/skep/jails",
+		Bridges: []string{"bridge0", "bridge1"}, ManagementInterfaces: []string{"vtnet0"}}
 	quiet := slog.New(slog.NewTextHandler(io.Discard, nil))
 	fake := hostfake.New(conf, hostfake.Options{Logger: quiet})
 	t.Cleanup(fake.Close)

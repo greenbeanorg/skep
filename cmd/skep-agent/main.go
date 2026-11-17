@@ -37,6 +37,7 @@ import (
 	"github.com/greenbeanorg/skep/internal/internalapi"
 	"github.com/greenbeanorg/skep/internal/logging"
 	"github.com/greenbeanorg/skep/internal/monitoring"
+	"github.com/greenbeanorg/skep/internal/orphans"
 	"github.com/greenbeanorg/skep/internal/retention"
 	"github.com/greenbeanorg/skep/internal/storage"
 	"github.com/greenbeanorg/skep/internal/sysaccount"
@@ -279,6 +280,20 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	}
 	checks[models.CheckStorageCapacity] = sampler.CapacityProbe
 	checks[models.CheckStorageLocked] = sampler.LockedProbe
+	// Interfaces Skep made whose owner is not running (ADR 0010 decision
+	// 10): reported at start and by a health check, destroyed by the
+	// owner's next start, stop, or delete.
+	orphanChecker, err := orphans.New(orphans.Options{
+		Jails:     host.Jails,
+		VMM:       host.VMM,
+		Container: orphans.ContainerOwner(database.NewContainerStore(db).Get),
+		VM:        orphans.VMOwner(database.NewVMStore(db).Get),
+		Logger:    log,
+	})
+	if err != nil {
+		return err
+	}
+	checks[models.CheckOrphanedInterfaces] = orphanChecker.Probe
 	svc, err := agent.NewService(agent.Options{
 		Bhyve:      vms.Capabilities,
 		NodeID:     nodeID,
@@ -368,6 +383,10 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if err := vms.ObserveAll(ctx); err != nil {
 		log.Warn("could not observe the virtual machines", "error", err)
 	}
+
+	// After both observations, which reset the starting and stopping a
+	// crash left: report every epair and tap whose owner is not running.
+	_ = orphanChecker.Report(ctx)
 	go vms.Watch(ctx, cfg.Hypervisor.Bhyve.WatchInterval.Std())
 	go sampler.Run(ctx, monitoring.DefaultInterval)
 	if caps := vms.Capabilities(ctx); caps.Available {
