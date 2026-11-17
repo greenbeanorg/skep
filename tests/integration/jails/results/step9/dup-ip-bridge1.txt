@@ -1,0 +1,175 @@
+# Duplicate static IP at start, live test on bridge1 (ADR 0010 amendment l), 2026-11-17T23:24:17Z
+
+## Before
+$ ifconfig -l
+vtnet0 vtnet1 lo0 bridge0
+agent.json network.bridges: ["bridge0"]
+
+## The approved change
+$ sudo ifconfig bridge1 create
+bridge1: flags=8802<BROADCAST,SIMPLEX,MULTICAST> metric 0 mtu 1500
+	options=10<VLAN_HWTAGGING>
+	ether 58:9c:fc:10:8c:43
+	id 00:00:00:00:00:00 priority 32768 hellotime 2 fwddelay 15
+	maxage 20 holdcnt 6 proto rstp maxaddr 2000 timeout 1200
+	root id 00:00:00:00:00:00 priority 0 ifcost 0 port 0
+	bridge flags=0<>
+	groups: bridge
+	nd6 options=9<PERFORMNUD,IFDISABLED>
+$ agent.json network.bridges -> ["bridge0", "bridge1"] (deploy-test.sh, root:wheel 0600)
+deploy-test: hearst:/usr/local/etc/skep/agent.json root:wheel 0600 599 bytes sha256 db402bf1b05fb78834d0cff860191f73e188f9748123d8a89177c61bb1f63b7a
+deploy-test: synced
+$ sudo service skep_api stop; sudo service skep_agent restart; sudo service skep_api start
+Stopping skep_api.
+Waiting for PIDS: 18358.
+Stopping skep_agent.
+Waiting for PIDS: 18296.
+Starting skep_agent.
+Starting skep_api.
+skep_agent is running as pid 18836 (supervisor pid 18835).
+skep_api is running as pid 18897 (supervisor pid 18895).
+
+## Create three static jails on bridge1
+$ POST /api/v1/containers (as s7oper) {"name":"dupa","template_id":"f496866f-32ba-4527-bcee-5a717a2f74c0","nics":[{"bridge":"bridge1","ipv4":{"mode":"static","address":"192.0.2.10/24","gateway":"192.0.2.1"}}]}
+{"container":{"id":"e9091753-a5bb-4e90-bce1-158fe256938c","name":"dupa","hostname":"dupa","template_id":"f496866f-32ba-4527-bcee-5a717a2f74c0","template_name":"minimal-151","pool":"skeptest","release":"15.1-RELEASE-p6","options":{"sysvipc":false,"mlock":false},"limits":{},"nics":[{"id":"06615d49-9edc-4211-95b1-600800744e8e","slot":0,"bridge":"bridge1","mac_address":"02:bf:ed:e3:16:3b","interface":"skep0","ipv4":{"mode":"static","address":"192.0.2.10/24","gateway":"192.0.2.1"}}],"provisioned":false,"started_once":false,"desired_state":"stopped","state":"unknown","created_at":"2026-11-17T23:24:37.547Z","updated_at":"2026-11-17T23:24:37.547Z"},"task":{"id":"519a8796-4618-45eb-84c0-e7e1e472fa9c","node_id":"97fc6968-7e82-49c9-bda8-9026775ca964","type":"container.create","status":"pending","resource_type":"container","resource_id":"e9091753-a5bb-4e90-bce1-158fe256938c","actor":{"id":"f3b71fbe-2e24-4539-9ec2-8be0fcde53ed","name":"s7oper"},"request_id":"89318f4de4d7046776b50497","cancellable":false,"created_at":"2026-11-17T23:24:37.548Z"}}
+
+HTTP 202
+$ POST /api/v1/containers (as s7oper) {"name":"dupb","template_id":"f496866f-32ba-4527-bcee-5a717a2f74c0","nics":[{"bridge":"bridge1","ipv4":{"mode":"static","address":"192.0.2.10/24","gateway":"192.0.2.1"}}]}
+{"container":{"id":"5b96ad95-5d65-46ab-ab74-eac235cce0c9","name":"dupb","hostname":"dupb","template_id":"f496866f-32ba-4527-bcee-5a717a2f74c0","template_name":"minimal-151","pool":"skeptest","release":"15.1-RELEASE-p6","options":{"sysvipc":false,"mlock":false},"limits":{},"nics":[{"id":"01968e66-a3b2-48cd-b85d-3d9779c37539","slot":0,"bridge":"bridge1","mac_address":"02:39:ab:6d:7f:f8","interface":"skep0","ipv4":{"mode":"static","address":"192.0.2.10/24","gateway":"192.0.2.1"}}],"provisioned":false,"started_once":false,"desired_state":"stopped","state":"unknown","created_at":"2026-11-17T23:24:37.614Z","updated_at":"2026-11-17T23:24:37.614Z"},"task":{"id":"3ade0cde-c708-4517-89cb-2f716c84be85","node_id":"97fc6968-7e82-49c9-bda8-9026775ca964","type":"container.create","status":"pending","resource_type":"container","resource_id":"5b96ad95-5d65-46ab-ab74-eac235cce0c9","actor":{"id":"f3b71fbe-2e24-4539-9ec2-8be0fcde53ed","name":"s7oper"},"request_id":"e608275272273664868ae5d9","cancellable":false,"created_at":"2026-11-17T23:24:37.615Z"}}
+
+HTTP 202
+$ POST /api/v1/containers (as s7oper) {"name":"dupc","template_id":"f496866f-32ba-4527-bcee-5a717a2f74c0","nics":[{"bridge":"bridge1","ipv4":{"mode":"static","address":"192.0.2.11/24","gateway":"192.0.2.1"}}]}
+{"container":{"id":"0dc7bf39-63fa-455c-bf04-fa7959ce16d0","name":"dupc","hostname":"dupc","template_id":"f496866f-32ba-4527-bcee-5a717a2f74c0","template_name":"minimal-151","pool":"skeptest","release":"15.1-RELEASE-p6","options":{"sysvipc":false,"mlock":false},"limits":{},"nics":[{"id":"6cc19173-62e7-4051-9054-8e31e80e125c","slot":0,"bridge":"bridge1","mac_address":"02:b0:89:95:dd:ee","interface":"skep0","ipv4":{"mode":"static","address":"192.0.2.11/24","gateway":"192.0.2.1"}}],"provisioned":false,"started_once":false,"desired_state":"stopped","state":"unknown","created_at":"2026-11-17T23:24:37.685Z","updated_at":"2026-11-17T23:24:37.685Z"},"task":{"id":"0e4e077e-0705-4cd3-9e81-87682f09a4bf","node_id":"97fc6968-7e82-49c9-bda8-9026775ca964","type":"container.create","status":"pending","resource_type":"container","resource_id":"0dc7bf39-63fa-455c-bf04-fa7959ce16d0","actor":{"id":"f3b71fbe-2e24-4539-9ec2-8be0fcde53ed","name":"s7oper"},"request_id":"d744c7f9d1cfac84fd6042b7","cancellable":false,"created_at":"2026-11-17T23:24:37.685Z"}}
+
+HTTP 202
+$ task 519a8796-4618-45eb-84c0-e7e1e472fa9c
+{"id": "519a8796-4618-45eb-84c0-e7e1e472fa9c", "node_id": "97fc6968-7e82-49c9-bda8-9026775ca964", "type": "container.create", "status": "succeeded", "resource_type": "container", "resource_id": "e9091753-a5bb-4e90-bce1-158fe256938c", "actor": {"id": "f3b71fbe-2e24-4539-9ec2-8be0fcde53ed", "name": "s7oper"}, "request_id": "89318f4de4d7046776b50497", "cancellable": false, "result": {"container_id": "e9091753-a5bb-4e90-bce1-158fe256938c", "dataset": "skeptest/skep/jail/e9091753-a5bb-4e90-bce1-158fe256938c", "name": "dupa", "nics": 1, "origin": "skeptest/skep/templates/f496866f-32ba-4527-bcee-5a717a2f74c0@skep-base", "ssh_key_installed": false, "template_id": "f496866f-32ba-4527-bcee-5a717a2f74c0"}, "created_at": "2026-11-17T23:24:37.548Z", "started_at": "2026-11-17T23:24:37.548Z", "finished_at": "2026-11-17T23:24:37.613Z"}
+$ task 3ade0cde-c708-4517-89cb-2f716c84be85
+{"id": "3ade0cde-c708-4517-89cb-2f716c84be85", "node_id": "97fc6968-7e82-49c9-bda8-9026775ca964", "type": "container.create", "status": "succeeded", "resource_type": "container", "resource_id": "5b96ad95-5d65-46ab-ab74-eac235cce0c9", "actor": {"id": "f3b71fbe-2e24-4539-9ec2-8be0fcde53ed", "name": "s7oper"}, "request_id": "e608275272273664868ae5d9", "cancellable": false, "result": {"container_id": "5b96ad95-5d65-46ab-ab74-eac235cce0c9", "dataset": "skeptest/skep/jail/5b96ad95-5d65-46ab-ab74-eac235cce0c9", "name": "dupb", "nics": 1, "origin": "skeptest/skep/templates/f496866f-32ba-4527-bcee-5a717a2f74c0@skep-base", "ssh_key_installed": false, "template_id": "f496866f-32ba-4527-bcee-5a717a2f74c0"}, "created_at": "2026-11-17T23:24:37.615Z", "started_at": "2026-11-17T23:24:37.616Z", "finished_at": "2026-11-17T23:24:37.681Z"}
+$ task 0e4e077e-0705-4cd3-9e81-87682f09a4bf
+{"id": "0e4e077e-0705-4cd3-9e81-87682f09a4bf", "node_id": "97fc6968-7e82-49c9-bda8-9026775ca964", "type": "container.create", "status": "succeeded", "resource_type": "container", "resource_id": "0dc7bf39-63fa-455c-bf04-fa7959ce16d0", "actor": {"id": "f3b71fbe-2e24-4539-9ec2-8be0fcde53ed", "name": "s7oper"}, "request_id": "d744c7f9d1cfac84fd6042b7", "cancellable": false, "result": {"container_id": "0dc7bf39-63fa-455c-bf04-fa7959ce16d0", "dataset": "skeptest/skep/jail/0dc7bf39-63fa-455c-bf04-fa7959ce16d0", "name": "dupc", "nics": 1, "origin": "skeptest/skep/templates/f496866f-32ba-4527-bcee-5a717a2f74c0@skep-base", "ssh_key_installed": false, "template_id": "f496866f-32ba-4527-bcee-5a717a2f74c0"}, "created_at": "2026-11-17T23:24:37.685Z", "started_at": "2026-11-17T23:24:37.686Z", "finished_at": "2026-11-17T23:24:37.752Z"}
+
+## Start dupa (192.0.2.10/24)
+$ POST /api/v1/containers/e9091753-a5bb-4e90-bce1-158fe256938c/actions (as s7oper) {"action":"start"}
+{"id":"c83781bc-7ad9-4069-a812-f6da7166f961","node_id":"97fc6968-7e82-49c9-bda8-9026775ca964","type":"container.start","status":"pending","resource_type":"container","resource_id":"e9091753-a5bb-4e90-bce1-158fe256938c","actor":{"id":"f3b71fbe-2e24-4539-9ec2-8be0fcde53ed","name":"s7oper"},"request_id":"039baadf12dbfb4c5eb4de37","cancellable":false,"created_at":"2026-11-17T23:24:54.794Z"}
+
+HTTP 202
+$ task c83781bc-7ad9-4069-a812-f6da7166f961
+{"id": "c83781bc-7ad9-4069-a812-f6da7166f961", "node_id": "97fc6968-7e82-49c9-bda8-9026775ca964", "type": "container.start", "status": "succeeded", "resource_type": "container", "resource_id": "e9091753-a5bb-4e90-bce1-158fe256938c", "actor": {"id": "f3b71fbe-2e24-4539-9ec2-8be0fcde53ed", "name": "s7oper"}, "request_id": "039baadf12dbfb4c5eb4de37", "cancellable": false, "result": {"container_id": "e9091753-a5bb-4e90-bce1-158fe256938c", "epairs": {"0": "epair0a"}, "jid": 43, "state": "running"}, "created_at": "2026-11-17T23:24:54.794Z", "started_at": "2026-11-17T23:24:54.795Z", "finished_at": "2026-11-17T23:24:55.117Z"}
+$ jls; ifconfig -j skep-<dupa> ; ifconfig bridge1 | grep member
+43 skep-e9091753-a5bb-4e90-bce1-158fe256938c
+skep0: flags=1008843<UP,BROADCAST,RUNNING,SIMPLEX,MULTICAST,LOWER_UP> metric 0 mtu 1500
+	options=60001b<RXCSUM,TXCSUM,VLAN_MTU,VLAN_HWTAGGING,RXCSUM_IPV6,TXCSUM_IPV6>
+	inet 192.0.2.10 netmask 0xffffff00 broadcast 192.0.2.255
+	member: epair0a flags=143<LEARNING,DISCOVER,AUTOEDGE,AUTOPTP>
+
+## Start dupb (the same 192.0.2.10/24 on bridge1): must be refused
+$ POST /api/v1/containers/5b96ad95-5d65-46ab-ab74-eac235cce0c9/actions (as s7oper) {"action":"start"}
+{"error":{"code":"container_address_in_use","message":"the running jail dupa holds 192.0.2.10/24 on bridge1; stop it or give this jail another address","request_id":"3a55078d80479cf75236ae8a","details":{"address":"192.0.2.10/24","bridge":"bridge1","held_by_container_id":"e9091753-a5bb-4e90-bce1-158fe256938c","held_by_container_name":"dupa","slot":0}}}
+
+HTTP 409
+$ jls
+43 skep-e9091753-a5bb-4e90-bce1-158fe256938c
+
+## Start dupc (192.0.2.11/24, control)
+$ POST /api/v1/containers/0dc7bf39-63fa-455c-bf04-fa7959ce16d0/actions (as s7oper) {"action":"start"}
+{"id":"12d0299b-213f-4dd1-9538-d87780a3b976","node_id":"97fc6968-7e82-49c9-bda8-9026775ca964","type":"container.start","status":"pending","resource_type":"container","resource_id":"0dc7bf39-63fa-455c-bf04-fa7959ce16d0","actor":{"id":"f3b71fbe-2e24-4539-9ec2-8be0fcde53ed","name":"s7oper"},"request_id":"45d0f844c5adb330ffd8c0b2","cancellable":false,"created_at":"2026-11-17T23:24:57.312Z"}
+
+HTTP 202
+$ task 12d0299b-213f-4dd1-9538-d87780a3b976
+{"id": "12d0299b-213f-4dd1-9538-d87780a3b976", "node_id": "97fc6968-7e82-49c9-bda8-9026775ca964", "type": "container.start", "status": "succeeded", "resource_type": "container", "resource_id": "0dc7bf39-63fa-455c-bf04-fa7959ce16d0", "actor": {"id": "f3b71fbe-2e24-4539-9ec2-8be0fcde53ed", "name": "s7oper"}, "request_id": "45d0f844c5adb330ffd8c0b2", "cancellable": false, "result": {"container_id": "0dc7bf39-63fa-455c-bf04-fa7959ce16d0", "epairs": {"0": "epair1a"}, "jid": 44, "state": "running"}, "created_at": "2026-11-17T23:24:57.312Z", "started_at": "2026-11-17T23:24:57.313Z", "finished_at": "2026-11-17T23:24:57.636Z"}
+$ jls; ifconfig -j skep-<dupc> skep0 inet
+43 skep-e9091753-a5bb-4e90-bce1-158fe256938c
+44 skep-0dc7bf39-63fa-455c-bf04-fa7959ce16d0
+skep0: flags=1008843<UP,BROADCAST,RUNNING,SIMPLEX,MULTICAST,LOWER_UP> metric 0 mtu 1500
+	options=60001b<RXCSUM,TXCSUM,VLAN_MTU,VLAN_HWTAGGING,RXCSUM_IPV6,TXCSUM_IPV6>
+	inet 192.0.2.11 netmask 0xffffff00 broadcast 192.0.2.255
+
+## Stop dupa; dupb now starts
+$ POST /api/v1/containers/e9091753-a5bb-4e90-bce1-158fe256938c/actions (as s7oper) {"action":"stop"}
+{"id":"f0404124-603e-4b3b-aae9-99a4ea945222","node_id":"97fc6968-7e82-49c9-bda8-9026775ca964","type":"container.stop","status":"pending","resource_type":"container","resource_id":"e9091753-a5bb-4e90-bce1-158fe256938c","actor":{"id":"f3b71fbe-2e24-4539-9ec2-8be0fcde53ed","name":"s7oper"},"request_id":"a591740156e986e8d3ee98db","cancellable":false,"created_at":"2026-11-17T23:25:10.421Z"}
+
+HTTP 202
+$ task f0404124-603e-4b3b-aae9-99a4ea945222
+{"id": "f0404124-603e-4b3b-aae9-99a4ea945222", "node_id": "97fc6968-7e82-49c9-bda8-9026775ca964", "type": "container.stop", "status": "succeeded", "resource_type": "container", "resource_id": "e9091753-a5bb-4e90-bce1-158fe256938c", "actor": {"id": "f3b71fbe-2e24-4539-9ec2-8be0fcde53ed", "name": "s7oper"}, "request_id": "a591740156e986e8d3ee98db", "cancellable": false, "result": {"container_id": "e9091753-a5bb-4e90-bce1-158fe256938c", "state": "stopped"}, "created_at": "2026-11-17T23:25:10.421Z", "started_at": "2026-11-17T23:25:10.422Z", "finished_at": "2026-11-17T23:25:10.781Z"}
+$ POST /api/v1/containers/5b96ad95-5d65-46ab-ab74-eac235cce0c9/actions (as s7oper) {"action":"start"}
+{"id":"983bb48a-3386-4b90-a48c-36ee97cc7f1b","node_id":"97fc6968-7e82-49c9-bda8-9026775ca964","type":"container.start","status":"pending","resource_type":"container","resource_id":"5b96ad95-5d65-46ab-ab74-eac235cce0c9","actor":{"id":"f3b71fbe-2e24-4539-9ec2-8be0fcde53ed","name":"s7oper"},"request_id":"196e4527feb28e0f536a556b","cancellable":false,"created_at":"2026-11-17T23:25:12.527Z"}
+
+HTTP 202
+$ task 983bb48a-3386-4b90-a48c-36ee97cc7f1b
+{"id": "983bb48a-3386-4b90-a48c-36ee97cc7f1b", "node_id": "97fc6968-7e82-49c9-bda8-9026775ca964", "type": "container.start", "status": "succeeded", "resource_type": "container", "resource_id": "5b96ad95-5d65-46ab-ab74-eac235cce0c9", "actor": {"id": "f3b71fbe-2e24-4539-9ec2-8be0fcde53ed", "name": "s7oper"}, "request_id": "196e4527feb28e0f536a556b", "cancellable": false, "result": {"container_id": "5b96ad95-5d65-46ab-ab74-eac235cce0c9", "epairs": {"0": "epair0a"}, "jid": 45, "state": "running"}, "created_at": "2026-11-17T23:25:12.527Z", "started_at": "2026-11-17T23:25:12.528Z", "finished_at": "2026-11-17T23:25:12.836Z"}
+$ jls; ifconfig -j skep-<dupb> skep0 inet
+44 skep-0dc7bf39-63fa-455c-bf04-fa7959ce16d0
+45 skep-5b96ad95-5d65-46ab-ab74-eac235cce0c9
+skep0: flags=1008843<UP,BROADCAST,RUNNING,SIMPLEX,MULTICAST,LOWER_UP> metric 0 mtu 1500
+	options=60001b<RXCSUM,TXCSUM,VLAN_MTU,VLAN_HWTAGGING,RXCSUM_IPV6,TXCSUM_IPV6>
+	inet 192.0.2.10 netmask 0xffffff00 broadcast 192.0.2.255
+
+## The /dev guard on each start (agent log)
+"container_id":"e9091753-a5bb-4e90-bce1-158fe256938c","ruleset":5,"entries":"fd null pts random stderr stdin stdout urandom zero zfs"}
+"container_id":"0dc7bf39-63fa-455c-bf04-fa7959ce16d0","ruleset":5,"entries":"fd null pts random stderr stdin stdout urandom zero zfs"}
+"container_id":"5b96ad95-5d65-46ab-ab74-eac235cce0c9","ruleset":5,"entries":"fd null pts random stderr stdin stdout urandom zero zfs"}
+
+## Stop and delete all three
+$ POST /api/v1/containers/5b96ad95-5d65-46ab-ab74-eac235cce0c9/actions (as s7oper) {"action":"stop"}
+{"id":"6f9fb3b8-a959-413c-9989-508ed4188d05","node_id":"97fc6968-7e82-49c9-bda8-9026775ca964","type":"container.stop","status":"pending","resource_type":"container","resource_id":"5b96ad95-5d65-46ab-ab74-eac235cce0c9","actor":{"id":"f3b71fbe-2e24-4539-9ec2-8be0fcde53ed","name":"s7oper"},"request_id":"569de1a0fb9de8652617e529","cancellable":false,"created_at":"2026-11-17T23:25:14.956Z"}
+
+HTTP 202
+$ task 6f9fb3b8-a959-413c-9989-508ed4188d05
+{"id": "6f9fb3b8-a959-413c-9989-508ed4188d05", "node_id": "97fc6968-7e82-49c9-bda8-9026775ca964", "type": "container.stop", "status": "succeeded", "resource_type": "container", "resource_id": "5b96ad95-5d65-46ab-ab74-eac235cce0c9", "actor": {"id": "f3b71fbe-2e24-4539-9ec2-8be0fcde53ed", "name": "s7oper"}, "request_id": "569de1a0fb9de8652617e529", "cancellable": false, "result": {"container_id": "5b96ad95-5d65-46ab-ab74-eac235cce0c9", "state": "stopped"}, "created_at": "2026-11-17T23:25:14.956Z", "started_at": "2026-11-17T23:25:14.957Z", "finished_at": "2026-11-17T23:25:15.608Z"}
+$ POST /api/v1/containers/0dc7bf39-63fa-455c-bf04-fa7959ce16d0/actions (as s7oper) {"action":"stop"}
+{"id":"69c383fa-a534-4a83-9639-f60b7317818e","node_id":"97fc6968-7e82-49c9-bda8-9026775ca964","type":"container.stop","status":"pending","resource_type":"container","resource_id":"0dc7bf39-63fa-455c-bf04-fa7959ce16d0","actor":{"id":"f3b71fbe-2e24-4539-9ec2-8be0fcde53ed","name":"s7oper"},"request_id":"1d94367fdda9132c570dbe92","cancellable":false,"created_at":"2026-11-17T23:25:17.052Z"}
+
+HTTP 202
+$ task 69c383fa-a534-4a83-9639-f60b7317818e
+{"id": "69c383fa-a534-4a83-9639-f60b7317818e", "node_id": "97fc6968-7e82-49c9-bda8-9026775ca964", "type": "container.stop", "status": "succeeded", "resource_type": "container", "resource_id": "0dc7bf39-63fa-455c-bf04-fa7959ce16d0", "actor": {"id": "f3b71fbe-2e24-4539-9ec2-8be0fcde53ed", "name": "s7oper"}, "request_id": "1d94367fdda9132c570dbe92", "cancellable": false, "result": {"container_id": "0dc7bf39-63fa-455c-bf04-fa7959ce16d0", "state": "stopped"}, "created_at": "2026-11-17T23:25:17.052Z", "started_at": "2026-11-17T23:25:17.053Z", "finished_at": "2026-11-17T23:25:17.58Z"}
+$ DELETE /api/v1/containers/e9091753-a5bb-4e90-bce1-158fe256938c (as s7oper) 
+{"id":"42c58014-d803-431a-aed7-c5e3cb16422d","node_id":"97fc6968-7e82-49c9-bda8-9026775ca964","type":"container.delete","status":"pending","resource_type":"container","resource_id":"e9091753-a5bb-4e90-bce1-158fe256938c","actor":{"id":"f3b71fbe-2e24-4539-9ec2-8be0fcde53ed","name":"s7oper"},"request_id":"28925a29aaaa6e78cf5cefbd","cancellable":false,"created_at":"2026-11-17T23:25:19.178Z"}
+
+HTTP 202
+$ task 42c58014-d803-431a-aed7-c5e3cb16422d
+{"id": "42c58014-d803-431a-aed7-c5e3cb16422d", "node_id": "97fc6968-7e82-49c9-bda8-9026775ca964", "type": "container.delete", "status": "succeeded", "resource_type": "container", "resource_id": "e9091753-a5bb-4e90-bce1-158fe256938c", "actor": {"id": "f3b71fbe-2e24-4539-9ec2-8be0fcde53ed", "name": "s7oper"}, "request_id": "28925a29aaaa6e78cf5cefbd", "cancellable": false, "result": {"container_id": "e9091753-a5bb-4e90-bce1-158fe256938c", "datasets_destroyed": [{"name": "skeptest/skep/jail/e9091753-a5bb-4e90-bce1-158fe256938c", "type": "filesystem", "used_bytes": 249856}], "name": "dupa"}, "created_at": "2026-11-17T23:25:19.178Z", "started_at": "2026-11-17T23:25:19.179Z", "finished_at": "2026-11-17T23:25:19.212Z"}
+$ DELETE /api/v1/containers/5b96ad95-5d65-46ab-ab74-eac235cce0c9 (as s7oper) 
+{"id":"134da453-f6de-472d-b3cc-8428271d6757","node_id":"97fc6968-7e82-49c9-bda8-9026775ca964","type":"container.delete","status":"pending","resource_type":"container","resource_id":"5b96ad95-5d65-46ab-ab74-eac235cce0c9","actor":{"id":"f3b71fbe-2e24-4539-9ec2-8be0fcde53ed","name":"s7oper"},"request_id":"f3db439ac89bf73cf10bb63d","cancellable":false,"created_at":"2026-11-17T23:25:21.313Z"}
+
+HTTP 202
+$ task 134da453-f6de-472d-b3cc-8428271d6757
+{"id": "134da453-f6de-472d-b3cc-8428271d6757", "node_id": "97fc6968-7e82-49c9-bda8-9026775ca964", "type": "container.delete", "status": "succeeded", "resource_type": "container", "resource_id": "5b96ad95-5d65-46ab-ab74-eac235cce0c9", "actor": {"id": "f3b71fbe-2e24-4539-9ec2-8be0fcde53ed", "name": "s7oper"}, "request_id": "f3db439ac89bf73cf10bb63d", "cancellable": false, "result": {"container_id": "5b96ad95-5d65-46ab-ab74-eac235cce0c9", "datasets_destroyed": [{"name": "skeptest/skep/jail/5b96ad95-5d65-46ab-ab74-eac235cce0c9", "type": "filesystem", "used_bytes": 250880}], "name": "dupb"}, "created_at": "2026-11-17T23:25:21.313Z", "started_at": "2026-11-17T23:25:21.313Z", "finished_at": "2026-11-17T23:25:21.345Z"}
+$ DELETE /api/v1/containers/0dc7bf39-63fa-455c-bf04-fa7959ce16d0 (as s7oper) 
+{"id":"a726cfaa-cbe7-49d1-a10a-014939c5581f","node_id":"97fc6968-7e82-49c9-bda8-9026775ca964","type":"container.delete","status":"pending","resource_type":"container","resource_id":"0dc7bf39-63fa-455c-bf04-fa7959ce16d0","actor":{"id":"f3b71fbe-2e24-4539-9ec2-8be0fcde53ed","name":"s7oper"},"request_id":"849f30670916b691908c0232","cancellable":false,"created_at":"2026-11-17T23:25:21.389Z"}
+
+HTTP 202
+$ task a726cfaa-cbe7-49d1-a10a-014939c5581f
+{"id": "a726cfaa-cbe7-49d1-a10a-014939c5581f", "node_id": "97fc6968-7e82-49c9-bda8-9026775ca964", "type": "container.delete", "status": "succeeded", "resource_type": "container", "resource_id": "0dc7bf39-63fa-455c-bf04-fa7959ce16d0", "actor": {"id": "f3b71fbe-2e24-4539-9ec2-8be0fcde53ed", "name": "s7oper"}, "request_id": "849f30670916b691908c0232", "cancellable": false, "result": {"container_id": "0dc7bf39-63fa-455c-bf04-fa7959ce16d0", "datasets_destroyed": [{"name": "skeptest/skep/jail/0dc7bf39-63fa-455c-bf04-fa7959ce16d0", "type": "filesystem", "used_bytes": 251904}], "name": "dupc"}, "created_at": "2026-11-17T23:25:21.389Z", "started_at": "2026-11-17T23:25:21.389Z", "finished_at": "2026-11-17T23:25:21.418Z"}
+$ GET /api/v1/containers
+{"items":[]}
+
+HTTP 200
+$ jls; ifconfig -l; mount -p -t devfs; zfs list -r -o name skeptest/skep/jail
+vtnet0 vtnet1 lo0 bridge0 bridge1
+devfs			/dev			devfs	rw		0 0
+NAME
+skeptest/skep/jail
+
+## Undo (as recorded in amendment l)
+original agent.json sha256 490bc08738a2dd835952e19c4f59e869857fd15a1a6ce8e8c0b9df1d1f3cb134
+$ agent.json restored (network.bridges ["bridge0"])
+deploy-test: hearst:/usr/local/etc/skep/agent.json root:wheel 0600 500 bytes sha256 490bc08738a2dd835952e19c4f59e869857fd15a1a6ce8e8c0b9df1d1f3cb134
+deploy-test: synced
+$ sudo service skep_api stop; sudo service skep_agent restart; sudo service skep_api start
+Stopping skep_api.
+Waiting for PIDS: 18895.
+Stopping skep_agent.
+Waiting for PIDS: 18835.
+Starting skep_agent.
+Starting skep_api.
+skep_agent is running as pid 21079 (supervisor pid 21078).
+skep_api is running as pid 21140 (supervisor pid 21138).
+$ sudo ifconfig bridge1 destroy
+exit 0
+
+## After the undo
+$ ifconfig -l; sudo sha256 -q agent.json; mount -p -t devfs; jls
+vtnet0 vtnet1 lo0 bridge0
+490bc08738a2dd835952e19c4f59e869857fd15a1a6ce8e8c0b9df1d1f3cb134
+devfs			/dev			devfs	rw		0 0
