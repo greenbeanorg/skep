@@ -1,0 +1,40 @@
+# memorylocked and the mlock opt-in through the deployed API (4c7d8e0), 2026-11-17T21:22:09Z
+## mlock with only a memory limit (s7oper): refused
+{"container":{"id":"c982a882-3da7-4eeb-8829-0b4787aee1db","name":"s9w","hostname":"s9w","template_id":"f496866f-32ba-4527-bcee-5a717a2f74c0","template_name":"minimal-151","pool":"skeptest","release":"15.1-RELEASE-p6","options":{"sysvipc":false,"mlock":true},"limits":{"memory":268435456},"nics":[],"provisioned":false,"started_once":false,"desired_state":"stopped","state":"unknown","created_at":"2026-11-17T21:22:09.861Z","updated_at":"2026-11-17T21:22:09.861Z"},"task":{"id":"b038b81c-70fd-4284-852a-af3c6f3427eb","node_id":"97fc6968-7e82-49c9-bda8-9026775ca964","type":"container.create","status":"pending","resource_type":"container","resource_id":"c982a882-3da7-4eeb-8829-0b4787aee1db","actor":{"id":"f3b71fbe-2e24-4539-9ec2-8be0fcde53ed","name":"s7oper"},"request_id":"c7ea28d296315f5df618ac3c","cancellable":false,"created_at":"2026-11-17T21:22:09.861Z"}}
+
+HTTP 202
+## mlock with locked_memory over memory: refused
+{"error":{"code":"invalid_request","message":"the request body is not the expected JSON object","request_id":"9552155eae4ee238cb8c1cc1"}}
+
+HTTP 400
+## create s9mem: memory 256 MiB, locked_memory 32 MiB, open_files 256, mlock (s7oper)
+HTTP 400
+
+# The requests above reached the services still running a3ef267 (deploy-test.sh does not restart them), so the first create was accepted by the old rule and the others were refused as unknown fields. Services restarted on 4c7d8e0; s9w deleted and the checks repeated, 2026-11-17T21:22:48Z.
+## delete s9w
+{"status":"succeeded","error":null,"result":{"container_id":"c982a882-3da7-4eeb-8829-0b4787aee1db","datasets_destroyed":[{"name":"skeptest/skep/jail/c982a882-3da7-4eeb-8829-0b4787aee1db","type":"files
+## mlock with only a memory limit (s7oper)
+{"error":{"code":"mlock_requires_memory_limit","message":"mlock is accepted only together with a locked-memory limit (limits.locked_memory), because locked memory cannot be paged out","request_id":"f77e0e1b7ad96c762fb66ce4"}}
+
+HTTP 422
+## mlock with locked_memory over memory (s7oper)
+{"error":{"code":"invalid_request","message":"limits.locked_memory cannot be more than limits.memory","request_id":"26121794e1f0f2f3622d5423"}}
+
+HTTP 400
+## create s9mem: memory 256 MiB, locked_memory 32 MiB, open_files 256, mlock (s7oper)
+HTTP 202
+## create task
+{"status":"succeeded","error":null,"result":{"container_id":"5554fdfd-280f-4a8c-973e-25c946141272","dataset":"skeptest/skep/jail/5554fdfd-280f-4a8c-973e-25c9461
+## start (s7oper)
+{"status":"succeeded","error":null,"result":{"container_id":"5554fdfd-280f-4a8c-973e-25c946141272","jid":29,"state":"running"}}
+## on hearst while running
+-- rctl jail:skep-5554fdfd-280f-4a8c-973e-25c946141272
+jail:skep-5554fdfd-280f-4a8c-973e-25c946141272:memorylocked:deny=33554432
+jail:skep-5554fdfd-280f-4a8c-973e-25c946141272:openfiles:deny=256
+jail:skep-5554fdfd-280f-4a8c-973e-25c946141272:memoryuse:deny=268435456
+-- rctl (all rules)
+jail:skep-5554fdfd-280f-4a8c-973e-25c946141272:memorylocked:deny=33554432
+jail:skep-5554fdfd-280f-4a8c-973e-25c946141272:openfiles:deny=256
+jail:skep-5554fdfd-280f-4a8c-973e-25c946141272:memoryuse:deny=268435456
+-- allow.mlock
+true

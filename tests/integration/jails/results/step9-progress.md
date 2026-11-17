@@ -258,3 +258,56 @@ Recorded in ADR 0010 as amendment j before any further work.
   `vmemoryuse` rule of section 4 was one) and no `curl -k`/unverified
   fetches (section 4's clean-up had one); such steps are listed for
   approval instead. Snapshots and clones are not built yet.
+
+## 9. After the answers (2026-11-17)
+
+**Built:** `limits.locked_memory` (RCTL `memorylocked` deny), and `mlock`
+now needs it and RACCT instead of the memory limit (`4c7d8e0`); the
+`fixture.create` fix (Q5, `ec86060`; 12 of 12 package runs passed under
+load); CLAUDE.md (Q6, `f93a3e0`); the limits in `api/openapi.yaml`
+(`ContainerLimits`, `ContainerCapabilities`, `System.containers`), the
+regenerated `web/src/api/schema.d.ts`, and a Limits section in
+`docs/administration/jails.md`. `memory` is labelled soft in both. There
+is no container UI yet, so the UI label is owed with step 10's UI.
+
+**Validated on hearst** (`4c7d8e0`, through the deployed API, pinned
+certificate). My first requests reached the old services: deploy-test.sh
+installs but never restarts, and I had not restarted them. They were
+restarted, the stray container deleted, and every check repeated; both
+are in the records.
+
+| Check | Result | Record |
+|---|---|---|
+| Deploy | `4c7d8e0`, services restarted | [deploy](step9-deploy-4c7d8e0.txt) |
+| `mlock` with only `memory` | 422 `mlock_requires_memory_limit` | [limits-locked](step9/limits-locked.txt) |
+| `locked_memory` over `memory` | 400 `invalid_request` | same |
+| Rules with `mlock` | `memoryuse`, `openfiles`, and `memorylocked:deny=33554432` exactly; `allow.mlock` true; none left after stop | same, [cleanup](step9/cleanup-4c7d8e0.txt) |
+| **`memoryuse` 256 MiB, 512 MiB held for 3 min** | Never refused. Flat at 514 MiB for about 80 s, then fell about 0.85 MiB/s to 425 MiB at 185 s. No swap used, no pageouts: the pages moved from active to inactive in RAM (vm_daemon's RACCT deactivation). Soft, as documented | [memoryuse-long](step9/memoryuse-long.txt) |
+| **Why 59 of 300 opens** | RACCT `openfiles` charges each process's descriptor-table size (40, then 128, then 256 slots; never shrinks), not open descriptors; idle, cron is charged 40 with 5 open. `tail` opens files through a Capsicum helper (`system.fileargs`) whose table is charged too. At the 60th file tail needs a 128-slot table: 40 + 128 + 128 = 296 > 256. Nothing else held ~200 files | [openfiles-analysis](step9/openfiles-analysis.txt) |
+
+`memorylocked` is applied and read back, but whether it refuses an
+`mlock` past it was **not tested live**: nothing in the minimal template
+calls mlock(2). Testing it means copying a small test program (a static
+FreeBSD binary that mlocks N MiB) into a test jail's `/tmp`, which is a
+hand-made change: **listed for approval** (undo: it goes with the
+jail's deletion).
+
+**Q2, jail usage in `/metrics`: it is the read-only kind, so step 9.**
+What it takes: one typed read operation in hostops (`rctl -u
+jail:skep-<id>`, parsed, only for running jails and only with RACCT on);
+a `containers` list in the metrics sample beside `vms` (CPU percent and
+CPU time, resident memory, processes, open files from RCTL, and disk
+used and referenced from the ZFS inventory the sampler already reads);
+the model, OpenAPI, and tests. No host change and no new privilege; I
+estimate 200 to 300 lines with tests. Not built: you asked which first.
+
+**Pending FreeBSD validation:** RACCT off, live (Q3: no reboots);
+`memorylocked` refusing `mlock` (above, needs approval); static
+addressing (amendment i). Spoofing stays deferred.
+
+**hearst now:** `4c7d8e0` deployed and running (undo: redeploy
+`a3ef267`, or `79620ef`, then restart both services); health ok; no
+containers, jails, epairs, or RCTL rules; bridge0 has vtnet1 only;
+`skeptest/skep/jail` empty. hearst's `/tmp` has four old
+`skep-adminprompt*`/`skep-api-test*` directories from 2026-11-12 to
+11-14, not from step 9; left alone.

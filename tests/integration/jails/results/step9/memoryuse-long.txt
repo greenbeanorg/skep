@@ -1,0 +1,66 @@
+# memoryuse 256 MiB, a process in the jail holding 512 MiB (2x) for about 3 minutes (4c7d8e0, s9mem), 2026-11-17T21:26:06Z
+# dd if=/dev/zero bs=512m count=1 | sleep 190: dd fills (touches) its 512 MiB buffer, then blocks writing it into the pipe.
+-- limit: jail:skep-5554fdfd-280f-4a8c-973e-25c946141272:memoryuse:deny=268435456
+t=0s memoryuse=2768896 memorylocked=0 swapuse=0  dd_rss_kib= host_swap_used_kib=0 host_free_mib=2874 host_inactive_mib=1712 host_active_mib=87 laundry_mib=0 pageouts=0
+t=5s memoryuse=539639808 memorylocked=0 swapuse=1413320704  dd_rss_kib=526996 host_swap_used_kib=0 host_free_mib=2360 host_inactive_mib=1712 host_active_mib=601 laundry_mib=0 pageouts=0
+t=10s memoryuse=539639808 memorylocked=0 swapuse=1413320704  dd_rss_kib=526996 host_swap_used_kib=0 host_free_mib=2360 host_inactive_mib=1712 host_active_mib=601 laundry_mib=0 pageouts=0
+t=15s memoryuse=539639808 memorylocked=0 swapuse=1413320704  dd_rss_kib=526996 host_swap_used_kib=0 host_free_mib=2360 host_inactive_mib=1712 host_active_mib=601 laundry_mib=0 pageouts=0
+t=20s memoryuse=539639808 memorylocked=0 swapuse=1413320704  dd_rss_kib=526996 host_swap_used_kib=0 host_free_mib=2360 host_inactive_mib=1712 host_active_mib=601 laundry_mib=0 pageouts=0
+t=25s memoryuse=539639808 memorylocked=0 swapuse=1413320704  dd_rss_kib=526996 host_swap_used_kib=0 host_free_mib=2360 host_inactive_mib=1712 host_active_mib=601 laundry_mib=0 pageouts=0
+t=30s memoryuse=539639808 memorylocked=0 swapuse=1413320704  dd_rss_kib=526996 host_swap_used_kib=0 host_free_mib=2359 host_inactive_mib=1712 host_active_mib=601 laundry_mib=0 pageouts=0
+t=35s memoryuse=539639808 memorylocked=0 swapuse=1413320704  dd_rss_kib=526996 host_swap_used_kib=0 host_free_mib=2359 host_inactive_mib=1712 host_active_mib=601 laundry_mib=0 pageouts=0
+t=40s memoryuse=539639808 memorylocked=0 swapuse=1413320704  dd_rss_kib=526996 host_swap_used_kib=0 host_free_mib=2359 host_inactive_mib=1712 host_active_mib=601 laundry_mib=0 pageouts=0
+t=45s memoryuse=539639808 memorylocked=0 swapuse=1413320704  dd_rss_kib=526996 host_swap_used_kib=0 host_free_mib=2359 host_inactive_mib=1712 host_active_mib=601 laundry_mib=0 pageouts=0
+t=50s memoryuse=539639808 memorylocked=0 swapuse=1413320704  dd_rss_kib=526996 host_swap_used_kib=0 host_free_mib=2359 host_inactive_mib=1777 host_active_mib=536 laundry_mib=0 pageouts=0
+t=55s memoryuse=539619328 memorylocked=0 swapuse=1413320704  dd_rss_kib=526976 host_swap_used_kib=0 host_free_mib=2359 host_inactive_mib=1777 host_active_mib=536 laundry_mib=0 pageouts=0
+t=60s memoryuse=539619328 memorylocked=0 swapuse=1413320704  dd_rss_kib=526976 host_swap_used_kib=0 host_free_mib=2359 host_inactive_mib=1777 host_active_mib=536 laundry_mib=0 pageouts=0
+t=65s memoryuse=539619328 memorylocked=0 swapuse=1413320704  dd_rss_kib=526976 host_swap_used_kib=0 host_free_mib=2359 host_inactive_mib=1777 host_active_mib=536 laundry_mib=0 pageouts=0
+t=70s memoryuse=539619328 memorylocked=0 swapuse=1413320704  dd_rss_kib=526976 host_swap_used_kib=0 host_free_mib=2360 host_inactive_mib=1777 host_active_mib=536 laundry_mib=0 pageouts=0
+t=75s memoryuse=539619328 memorylocked=0 swapuse=1413320704  dd_rss_kib=526976 host_swap_used_kib=0 host_free_mib=2360 host_inactive_mib=1777 host_active_mib=536 laundry_mib=0 pageouts=0
+t=80s memoryuse=539619328 memorylocked=0 swapuse=1413320704  dd_rss_kib=526976 host_swap_used_kib=0 host_free_mib=2360 host_inactive_mib=1777 host_active_mib=536 laundry_mib=0 pageouts=0
+t=85s memoryuse=536817664 memorylocked=0 swapuse=1413320704  dd_rss_kib=522188 host_swap_used_kib=0 host_free_mib=2360 host_inactive_mib=1777 host_active_mib=535 laundry_mib=0 pageouts=0
+t=90s memoryuse=530513920 memorylocked=0 swapuse=1413320704  dd_rss_kib=518084 host_swap_used_kib=0 host_free_mib=2360 host_inactive_mib=1778 host_active_mib=535 laundry_mib=0 pageouts=0
+t=95s memoryuse=526311424 memorylocked=0 swapuse=1413320704  dd_rss_kib=513980 host_swap_used_kib=0 host_free_mib=2360 host_inactive_mib=1778 host_active_mib=535 laundry_mib=0 pageouts=0
+t=100s memoryuse=522108928 memorylocked=0 swapuse=1413320704  dd_rss_kib=509876 host_swap_used_kib=0 host_free_mib=2360 host_inactive_mib=1778 host_active_mib=535 laundry_mib=0 pageouts=0
+t=105s memoryuse=517906432 memorylocked=0 swapuse=1413320704  dd_rss_kib=505772 host_swap_used_kib=0 host_free_mib=2361 host_inactive_mib=1778 host_active_mib=535 laundry_mib=0 pageouts=0
+t=110s memoryuse=513703936 memorylocked=0 swapuse=1413320704  dd_rss_kib=501668 host_swap_used_kib=0 host_free_mib=2361 host_inactive_mib=1778 host_active_mib=535 laundry_mib=0 pageouts=0
+t=115s memoryuse=509501440 memorylocked=0 swapuse=1413320704  dd_rss_kib=497564 host_swap_used_kib=0 host_free_mib=2361 host_inactive_mib=1778 host_active_mib=535 laundry_mib=0 pageouts=0
+t=120s memoryuse=505298944 memorylocked=0 swapuse=1413320704  dd_rss_kib=493460 host_swap_used_kib=0 host_free_mib=2361 host_inactive_mib=1778 host_active_mib=535 laundry_mib=0 pageouts=0
+t=125s memoryuse=498995200 memorylocked=0 swapuse=1413320704  dd_rss_kib=487304 host_swap_used_kib=0 host_free_mib=2362 host_inactive_mib=1778 host_active_mib=535 laundry_mib=0 pageouts=0
+t=130s memoryuse=494792704 memorylocked=0 swapuse=1413320704  dd_rss_kib=483200 host_swap_used_kib=0 host_free_mib=2362 host_inactive_mib=1778 host_active_mib=535 laundry_mib=0 pageouts=0
+t=135s memoryuse=490590208 memorylocked=0 swapuse=1413320704  dd_rss_kib=479096 host_swap_used_kib=0 host_free_mib=2362 host_inactive_mib=1778 host_active_mib=535 laundry_mib=0 pageouts=0
+t=140s memoryuse=486387712 memorylocked=0 swapuse=1413320704  dd_rss_kib=474992 host_swap_used_kib=0 host_free_mib=2362 host_inactive_mib=1778 host_active_mib=535 laundry_mib=0 pageouts=0
+t=145s memoryuse=482185216 memorylocked=0 swapuse=1413320704  dd_rss_kib=470888 host_swap_used_kib=0 host_free_mib=2362 host_inactive_mib=1778 host_active_mib=535 laundry_mib=0 pageouts=0
+t=150s memoryuse=477982720 memorylocked=0 swapuse=1413320704  dd_rss_kib=464732 host_swap_used_kib=0 host_free_mib=2362 host_inactive_mib=1778 host_active_mib=535 laundry_mib=0 pageouts=0
+t=155s memoryuse=471678976 memorylocked=0 swapuse=1413320704  dd_rss_kib=460628 host_swap_used_kib=0 host_free_mib=2362 host_inactive_mib=1778 host_active_mib=535 laundry_mib=0 pageouts=0
+t=160s memoryuse=467476480 memorylocked=0 swapuse=1413320704  dd_rss_kib=456524 host_swap_used_kib=0 host_free_mib=2362 host_inactive_mib=1778 host_active_mib=535 laundry_mib=0 pageouts=0
+t=165s memoryuse=463273984 memorylocked=0 swapuse=1413320704  dd_rss_kib=452420 host_swap_used_kib=0 host_free_mib=2362 host_inactive_mib=1778 host_active_mib=535 laundry_mib=0 pageouts=0
+t=170s memoryuse=459071488 memorylocked=0 swapuse=1413320704  dd_rss_kib=448316 host_swap_used_kib=0 host_free_mib=2362 host_inactive_mib=1778 host_active_mib=535 laundry_mib=0 pageouts=0
+t=175s memoryuse=454868992 memorylocked=0 swapuse=1413320704  dd_rss_kib=444212 host_swap_used_kib=0 host_free_mib=2362 host_inactive_mib=1778 host_active_mib=535 laundry_mib=0 pageouts=0
+t=180s memoryuse=450666496 memorylocked=0 swapuse=1413320704  dd_rss_kib=440108 host_swap_used_kib=0 host_free_mib=2363 host_inactive_mib=1779 host_active_mib=534 laundry_mib=0 pageouts=0
+t=185s memoryuse=446464000 memorylocked=0 swapuse=1413320704  dd_rss_kib=436004 host_swap_used_kib=0 host_free_mib=2363 host_inactive_mib=1779 host_active_mib=534 laundry_mib=0 pageouts=0
+-- dd output: 
+t=ends memoryuse=4096 memorylocked=0 swapuse=0  dd_rss_kib= host_swap_used_kib=0 host_free_mib=2877 host_inactive_mib=1778 host_active_mib=21 laundry_mib=0 pageouts=0
+
+# Conclusion
+# - The allocation was never refused: dd filled its whole 512 MiB buffer
+#   at once, twice the limit (memoryuse 514 MiB at t=5s).
+# - For about 80 s nothing happened (514 MiB, RSS 514 MiB).
+# - From about t=85s the jail's resident memory fell steadily, about
+#   0.85 MiB/s: 511 MiB at t=85s, 425 MiB at t=185s (dd's RSS fell with
+#   it). At that rate it would reach 256 MiB about 5 minutes later.
+# - Nothing was swapped out: host swap used 0 and v_swappgsout 0 in every
+#   sample. Host active memory fell by about 66 MiB (601 to 535) and
+#   inactive rose by the same (1712 to 1778): the pages left dd's map
+#   and went to the inactive queue, still in RAM. This matches FreeBSD's
+#   vm_daemon, which, with RACCT, deactivates pages of a process over
+#   its memoryuse limit a little at a time. The pages are reclaimed
+#   (laundered to swap if dirty) only when the host is short of memory,
+#   and a process that touches them again faults them back in.
+# - swapuse (1.41 GB while dd held its buffer) is RACCT's swap
+#   reservation for the jail's anonymous memory, not swap in use.
+# - So on FreeBSD 15.1, memoryuse deny is a soft limit: an allocation
+#   past it succeeds, the jail is accounted, and over minutes the host
+#   slowly moves the excess to the inactive queue, making it the first
+#   memory to go when the host needs memory. It does not cap what the
+#   jail can hold now.

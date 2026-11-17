@@ -1,0 +1,15 @@
+# Deploy of 4c7d8e0 to hearst, 2026-11-17T21:21:50Z (undo: redeploy a3ef267, or 79620ef)
+deploy-test: hearst:/usr/local/sbin/skep-agent root:wheel 0555 13349034 bytes sha256 baf18efa865badd7601d543138b801c69a12ac44d550609091dbfa0b791644ae
+deploy-test: hearst:/usr/local/sbin/skep-api root:wheel 0555 14106794 bytes sha256 37b456dfab42901686b07acd94cf429d4115a57be14435f8f3fbc9f23c9caed0
+deploy-test: synced
+deploy-test: hearst:/usr/local/bin/skepctl root:wheel 0555 7217322 bytes sha256 5c01b740c5bbe9569a3db7bfc856519f28067c87bd5ae1e3002edfa0d3544d5e
+deploy-test: synced
+# The install above did not restart the services (deploy-test.sh never does); restarted 2026-11-17T21:22:34Z:
+Stopping skep_api.
+Waiting for PIDS: 75034.
+Stopping skep_agent.
+Waiting for PIDS: 74973.
+Starting skep_agent.
+Starting skep_api.
+skep_agent is running as pid 7698 (supervisor pid 7697).
+skep_api is running as pid 7759 (supervisor pid 7757).

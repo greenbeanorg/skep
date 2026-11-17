@@ -1708,3 +1708,16 @@ verified as a cap; Andy chose to keep it as a documented soft limit
 [step9-progress.md](../../tests/integration/jails/results/step9-progress.md)). `pcpu`, `maxproc`, `openfiles`, and `refquota` were verified
 on `hearst`.
 
+**After amendment j (`4c7d8e0`, on `hearst`).** `mlock` needs
+`limits.locked_memory` (RCTL `memorylocked`); the rule is applied and read
+back, and refusing an `mlock` past it is pending live validation (no
+program in the minimal template calls mlock(2)). A longer `memoryuse`
+run (256 MiB limit, 512 MiB held for 3 minutes) was never refused; after
+about 80 s the jail's resident memory fell about 0.85 MiB/s (to 425 MiB at
+185 s), with no swap used and no pageouts: vm_daemon moves the pages of a
+jail over its limit to the inactive queue, so they are reclaimed first
+under memory pressure. That is what the docs call soft. RCTL `openfiles`
+counts descriptor-table slots, not open descriptors (each process is
+charged 40, 128, 256, ... as its table grows, and Capsicum helpers such
+as `tail`'s count too), which is why 59 of 300 opens succeeded under 256.
+
