@@ -231,3 +231,30 @@ limits piece is built until you answer.
 RCTL rules; bridge0 has vtnet1 only; `skeptest/skep/jail` empty. No files
 left in hearst's `/tmp`. Templates and the users s7admin, s7oper,
 s7viewer unchanged. [step9/cleanup-end.txt](step9/cleanup-end.txt).
+
+## 8. Andy's answers (2026-11-17), recorded as amendment j
+
+Recorded in ADR 0010 as amendment j before any further work.
+
+- **Q4: option A.** Keep `limits.memory` (`memoryuse` deny), labelled
+  soft in the API docs and the UI. No `address_space` (`vmemoryuse`) in
+  7b; backlog. `mlock` is tied to an RCTL `memorylocked` limit instead of
+  the memory limit. Before the docs: one longer `memoryuse` run (about
+  3 minutes holding twice the limit, watching `rctl -u` and whether pages
+  are swapped out), and the docs say exactly what the limit does.
+- **Q1: option B.** A jail clone needs `container:write` and
+  `container:snapshot`, as for VMs.
+- **Q2:** jail usage in `/metrics` goes in step 9 if it is a read-only
+  exposure of `rctl -u`; if bigger, backlog after 7b. Assessment owed.
+- **Q3:** no reboots; the RACCT-off live check goes on the
+  pending-FreeBSD-validation list.
+- **Q5:** approved; fix the `fixture.create` helper.
+- **Q6:** approved; fix CLAUDE.md (hearst: 4 CPUs, 6 GiB RAM, 4 GiB
+  swap).
+- **Also to answer and record:** why only 59 of 300 opens succeeded under
+  `openfiles` 256, and in the docs that `refquota` includes the
+  template's referenced data and that `pcpu` is approximate.
+- **Rules from here:** no hand-made changes on hearst (the hand-added
+  `vmemoryuse` rule of section 4 was one) and no `curl -k`/unverified
+  fetches (section 4's clean-up had one); such steps are listed for
+  approval instead. Snapshots and clones are not built yet.

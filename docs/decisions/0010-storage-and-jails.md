@@ -52,7 +52,7 @@ both.
 | 6 | Hosts without ZFS (UFS-root equivalence) | A `directory` pool type: an allow-listed directory, sparse raw files for VM disks, plain directories for jail roots; snapshots and clones are reported unsupported on it, never emulated |
 | 7 | Jail userland and templates | A template is a ZFS dataset snapshot (or a directory) of a FreeBSD userland built by a task from the host's own pkgbase repository configuration, or from an operator-placed `base.txz`; the release must equal the host's; no URL from a request; `pkg` runs with a cleared environment and fixed arguments, its cache is emptied before `@skep-base`, and the host's `/etc`, `/var/db/pkg`, and `/usr/share/certs` are checked unchanged |
 | 8 | How jails run | A generated per-jail `jail.conf` under the run directory and `jail(8)` with explicit arguments; no runner process; observed with `jls --libxo=json`; never `rc.conf`'s `jail_list` |
-| 9 | Jail parameters | A fixed hardened baseline (`enforce_statfs=2`, `children.max=0`, no `allow.*` beyond the defaults `allow.suser` and `allow.reserved_ports`, `securelevel=2`); two typed opt-ins, `mlock` only with an RCTL memory limit; the parent directory of every jail root is `root:wheel 0700`; never `exec.prestart`, `exec.poststart`, or any host-side command from a request |
+| 9 | Jail parameters | A fixed hardened baseline (`enforce_statfs=2`, `children.max=0`, no `allow.*` beyond the defaults `allow.suser` and `allow.reserved_ports`, `securelevel=2`); two typed opt-ins, `mlock` only with an RCTL locked-memory limit (amendment j); the parent directory of every jail root is `root:wheel 0700`; never `exec.prestart`, `exec.poststart`, or any host-side command from a request |
 | 10 | Jail networking | VNET only, one `epair` per NIC, the host end in an allow-listed bridge; addresses by DHCP or static, written into the jail before its first start; no shared-IP and no `inherit` |
 | 11 | Jail resource limits | RCTL limits (memory, processes, CPU percent, open files) when `kern.racct.enable=1`, refused with a clear code when not; disk by ZFS `refquota`, which needs nothing |
 | 12 | Getting into a jail | No interactive console in this milestone; an optional SSH public key and `sshd_enable` at create, only from a template that has sshd; templates hold no SSH host keys. `jexec` to a shell is never exposed |
@@ -412,7 +412,8 @@ holders as a bounded tail). Opt-ins: `sysvipc` (`sysvshm`, `sysvsem`,
 `sysvmsg` = `new`) and `mlock`. (`allow_raw_sockets` was dropped by
 amendment f: a VNET jail has raw sockets on its own stack whatever
 `allow.raw_sockets` says.) `mlock`
-is accepted only together with an RCTL `memoryuse` limit (Decision 11),
+is accepted only together with an RCTL `memorylocked` limit (Decision 11;
+amendment j, which replaced the `memoryuse` limit here),
 because locked memory cannot be paged out and an unlimited jail could pin
 the host's memory; without the limit, or with RACCT disabled, the request
 is refused with `mlock_requires_memory_limit`. `allow.chflags` was
@@ -939,6 +940,38 @@ Amendments made at acceptance, worked into the text:
       removal without `exec.stop`; `jail -r` then sends `SIGTERM` and
       `SIGKILL` as usual and unmounts devfs.
     - Static range: the live static test is skipped; unit tests only.
+- **j. Limits, `mlock`, clone permission, jail metrics** (Decisions 9,
+  11, 14, 15, 16; Andy, 2026-11-17, from the step 9 validation, Q1 to Q6
+  in [step9-progress.md](../../tests/integration/jails/results/step9-progress.md)).
+  - **`limits.memory` stays `memoryuse` deny, documented as soft**
+    (Q4, option A). On `hearst` a jail held twice its `memoryuse` limit
+    with nothing refused. Before the docs are written, one longer run
+    (about 3 minutes holding twice the limit, `rctl -u` and swap watched)
+    records what the limit does on FreeBSD, and the API docs and the UI
+    label it soft: a resident-memory target, not a cap at allocation.
+    Decision 11's check is met by recording that behaviour, not by a
+    refusal.
+  - **No address-space limit (`vmemoryuse`) in 7b**; it is in the
+    backlog.
+  - **`mlock` is tied to `memorylocked`, not to the memory limit**
+    (Decision 9 as amended): the opt-in is accepted only together with
+    an RCTL `memorylocked` deny limit (`limits.locked_memory`) and with
+    RACCT on; otherwise `mlock_requires_memory_limit` as before (the code
+    keeps its name: a locked-memory limit is the memory limit `mlock`
+    needs).
+  - **A jail clone needs `container:write` and `container:snapshot`**
+    (Q1, option B), as a VM clone needs `vm:write` and `vm:snapshot`.
+    Decision 14's table is read that way.
+  - **Jail usage in `/metrics`** (Decision 15) is built in step 9 if it
+    is a read-only exposure of `rctl -u`; if it is bigger, it goes to the
+    backlog after 7b (Q2; the assessment is in step9-progress.md).
+  - **No reboots for the RACCT-off check** (Q3): it stays on the
+    pending-FreeBSD-validation list, covered by unit tests.
+  - Docs also say: `refquota` counts the data the jail root references
+    from its template (about 78 MiB for `minimal-151`), so the room left
+    for the jail's own data is the quota less that; `pcpu` is
+    approximate (RACCT samples and averages, so a busy jail swings above
+    and below the limit around its mean).
 
 ## Implementation notes
 
@@ -1670,8 +1703,8 @@ clones are not built yet.
 resident for 19 s with nothing refused or paged out, the host having
 free memory. `vmemoryuse` deny refuses at allocation but counts address
 space (about 3x resident for `dd`). The memory limit is therefore not
-verified; the choice is open (Q4 in
-[step9-progress.md](../../tests/integration/jails/results/step9-progress.md),
-section 5). `pcpu`, `maxproc`, `openfiles`, and `refquota` were verified
+verified as a cap; Andy chose to keep it as a documented soft limit
+(amendment j, Q4 in
+[step9-progress.md](../../tests/integration/jails/results/step9-progress.md)). `pcpu`, `maxproc`, `openfiles`, and `refquota` were verified
 on `hearst`.
 
