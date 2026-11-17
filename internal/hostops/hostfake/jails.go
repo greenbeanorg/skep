@@ -3,6 +3,8 @@ package hostfake
 import (
 	"context"
 	"fmt"
+	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/greenbeanorg/skep/internal/hostops"
@@ -151,7 +153,8 @@ func (j fakeJails) ConfigureJail(_ context.Context, pool, containerID string, fi
 	if _, ok := f.datasets[ds]; !ok {
 		return fmt.Errorf("jail dataset %s: %w", ds, models.ErrNotFound)
 	}
-	f.jailFiles[containerID] = hostops.JailFiles{RCConf: append([]string(nil), files.RCConf...), AuthorizedKey: files.AuthorizedKey}
+	f.jailFiles[containerID] = hostops.JailFiles{RCConf: append([]string(nil), files.RCConf...), AuthorizedKey: files.AuthorizedKey,
+		Nameservers: append([]string(nil), files.Nameservers...)}
 	f.record("configure jail %s (%d rc.conf lines, key %t)", containerID, len(files.RCConf), files.AuthorizedKey != "")
 	return nil
 }
@@ -191,17 +194,132 @@ func (j fakeJails) StartJail(ctx context.Context, spec hostops.JailSpec) (hostop
 		return hostops.JailState{}, err
 	}
 	name, _ := hostops.JailName(spec.ContainerID)
+	for _, nic := range spec.NICs {
+		b, err := j.f.Bridge(ctx, nic.Bridge)
+		if err != nil {
+			return hostops.JailState{}, err
+		}
+		if err := hostops.CheckBridgeUsable(j.f.conf, b); err != nil {
+			return hostops.JailState{}, err
+		}
+	}
 	f := j.f
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if _, ok := f.jails[spec.ContainerID]; ok {
 		return hostops.JailState{}, &models.Error{Code: models.CodeContainerNotStopped, Message: "the jail is running"}
 	}
+	dhcp := false
+	for _, nic := range spec.NICs {
+		dhcp = dhcp || nic.DHCP
+	}
+	if len(spec.NICs) > 0 && f.NoEpair {
+		return hostops.JailState{}, &models.Error{Code: models.CodeEpairUnavailable, Message: "the if_epair module is not loaded (simulated)"}
+	}
+	if dhcp {
+		if f.DevfsConflict {
+			return hostops.JailState{}, &models.Error{Code: models.CodeDevfsRulesetConflict,
+				Message: "devfs ruleset 6001 holds rules Skep did not put there (simulated)"}
+		}
+		if !f.devfsDHCP {
+			f.devfsDHCP = true
+			f.record("devfs rule -s %d add (include 5, bpf* unhide)", hostops.JailDHCPDevfsRuleset)
+		}
+	}
+	f.destroyEpairsLocked(spec.ContainerID)
+	epairs := map[int]string{}
+	for _, nic := range spec.NICs {
+		host := fmt.Sprintf("epair%da", f.nextEpair)
+		f.nextEpair++
+		f.epairs[host] = fakeTap{desc: hostops.InterfaceDescription(spec.ContainerID, nic.Slot), bridge: nic.Bridge}
+		epairs[nic.Slot] = host
+		f.record("ifconfig epair create description %s; %s addm %s", f.epairs[host].desc, nic.Bridge, host)
+	}
 	jid := f.nextJID
 	f.nextJID++
 	f.jails[spec.ContainerID] = jid
 	f.record("jail -c %s", name)
-	return hostops.JailState{JID: jid, Name: name, Path: root}, nil
+	return hostops.JailState{JID: jid, Name: name, Path: root, Epairs: epairs}, nil
+}
+
+// destroyEpairsLocked destroys a container's simulated epairs. f.mu is
+// held.
+func (f *Fake) destroyEpairsLocked(containerID string) []string {
+	var out []string
+	for name, e := range f.epairs {
+		if strings.HasPrefix(e.desc, "skep:"+containerID+":") {
+			delete(f.epairs, name)
+			f.record("ifconfig %s destroy", name)
+			out = append(out, name)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+func (j fakeJails) EpairAvailable(context.Context) error {
+	j.f.mu.Lock()
+	defer j.f.mu.Unlock()
+	if j.f.NoEpair {
+		return &models.Error{Code: models.CodeEpairUnavailable, Message: "the if_epair module is not loaded (simulated)"}
+	}
+	return nil
+}
+
+func (j fakeJails) DestroyJailInterfaces(_ context.Context, containerID string) ([]string, error) {
+	if !hostops.ValidID(containerID) {
+		return nil, models.Invalid("invalid container ID")
+	}
+	j.f.mu.Lock()
+	defer j.f.mu.Unlock()
+	return j.f.destroyEpairsLocked(containerID), nil
+}
+
+func (j fakeJails) SkepInterfaces(context.Context) ([]hostops.SkepInterface, error) {
+	f := j.f
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []hostops.SkepInterface
+	add := func(kind, name, desc string) {
+		rest, ok := strings.CutPrefix(desc, "skep:")
+		if !ok {
+			return
+		}
+		id, slot, ok := strings.Cut(rest, ":")
+		n, err := strconv.Atoi(slot)
+		if ok && err == nil && hostops.ValidID(id) {
+			out = append(out, hostops.SkepInterface{Name: name, Kind: kind, OwnerID: id, Slot: n})
+		}
+	}
+	for name, e := range f.epairs {
+		add("epair", name, e.desc)
+	}
+	for name, t := range f.taps {
+		add("tap", name, t.desc)
+	}
+	sort.Slice(out, func(a, b int) bool { return out[a].Name < out[b].Name })
+	return out, nil
+}
+
+// LeaveEpair simulates an epair a crashed agent left for a container.
+func (f *Fake) LeaveEpair(containerID string, slot int) string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	host := fmt.Sprintf("epair%da", f.nextEpair)
+	f.nextEpair++
+	f.epairs[host] = fakeTap{desc: hostops.InterfaceDescription(containerID, slot), bridge: "bridge0"}
+	return host
+}
+
+// Epairs returns the simulated epair host ends and their descriptions.
+func (f *Fake) Epairs() map[string]string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := map[string]string{}
+	for name, e := range f.epairs {
+		out[name] = e.desc
+	}
+	return out
 }
 
 func (j fakeJails) StopJail(_ context.Context, spec hostops.JailSpec) error {
@@ -216,6 +334,7 @@ func (j fakeJails) StopJail(_ context.Context, spec hostops.JailSpec) error {
 		delete(f.jails, spec.ContainerID)
 		f.record("jail -r %s", name)
 	}
+	f.destroyEpairsLocked(spec.ContainerID)
 	return nil
 }
 
@@ -229,6 +348,17 @@ func (j fakeJails) RunningJails(context.Context) (map[string]hostops.JailState, 
 		out[id] = hostops.JailState{JID: jid, Name: name}
 	}
 	return out, nil
+}
+
+// SetRunningJailForTest makes a container's simulated jail run without a
+// start, and returns its JID.
+func (f *Fake) SetRunningJailForTest(containerID string) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	jid := f.nextJID
+	f.nextJID++
+	f.jails[containerID] = jid
+	return jid
 }
 
 // SetJailStopped removes a simulated jail as if it had been removed

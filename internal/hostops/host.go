@@ -58,6 +58,10 @@ type host struct {
 	// already logged as ignored.
 	mediaMu      sync.Mutex
 	ignoredMedia map[string]bool
+
+	// epairMu serialises epair creation, so the epairs a failed
+	// "ifconfig epair create" left can be told from another start's.
+	epairMu sync.Mutex
 }
 
 func newHost(conf Confinement, run Runner, sys system, log *slog.Logger) *host {

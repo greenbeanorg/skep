@@ -40,7 +40,18 @@ func (s *script) RunEnv(ctx context.Context, c EnvCommand) ([]byte, error) {
 func (s *script) Run(_ context.Context, path string, args ...string) ([]byte, error) {
 	call := filepath.Base(path) + " " + strings.Join(args, " ")
 	s.calls = append(s.calls, call)
-	switch v := s.answers[call].(type) {
+	v := s.answers[call]
+	if seq, ok := v.([]any); ok {
+		// A sequence answers the calls in turn; the last answer repeats.
+		n := 0
+		for _, c := range s.calls[:len(s.calls)-1] {
+			if c == call {
+				n++
+			}
+		}
+		v = seq[min(n, len(seq)-1)]
+	}
+	switch v := v.(type) {
 	case string:
 		return []byte(v), nil
 	case error:

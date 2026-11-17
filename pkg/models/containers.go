@@ -66,7 +66,60 @@ const (
 	// CodeContainerStartFailed: jail(8) or /etc/rc failed, or the jail's
 	// parameters were not the baseline; the message says which.
 	CodeContainerStartFailed = "container_start_failed"
+	// CodeEpairUnavailable: a jail with a NIC needs if_epair, and the
+	// module is not loaded; Skep loads no modules (decision 10).
+	CodeEpairUnavailable = "epair_unavailable"
+	// CodeDevfsRulesetConflict: Skep's devfs ruleset number for DHCP jails
+	// holds rules Skep did not put there (amendment h).
+	CodeDevfsRulesetConflict = "devfs_ruleset_conflict"
 )
+
+// IPv4 addressing modes of a jail NIC (decision 10).
+const (
+	IPv4DHCP   = "dhcp"
+	IPv4Static = "static"
+)
+
+// Bounds of a jail's network configuration.
+const (
+	// MaxContainerNICs is the most NICs a jail may have.
+	MaxContainerNICs = 8
+	// MaxContainerNameservers is resolv.conf's MAXNS.
+	MaxContainerNameservers = 3
+)
+
+// ContainerIPv4 is how a jail NIC gets its IPv4 address: by DHCP, or a
+// static address in CIDR form with an optional gateway (the default
+// route; one NIC at most has one).
+type ContainerIPv4 struct {
+	Mode    string `json:"mode"`
+	Address string `json:"address,omitempty"`
+	Gateway string `json:"gateway,omitempty"`
+}
+
+// ContainerNIC is one VNET interface of a jail: an epair whose host end
+// joins Bridge and whose jail end, named Interface, moves into the jail
+// (decision 10). The addressing is written into the jail's rc.conf before
+// its first start; after that it describes what Skep wrote, and changing
+// it is the jail's own business.
+type ContainerNIC struct {
+	ID         string        `json:"id"`
+	Slot       int           `json:"slot"`
+	Bridge     string        `json:"bridge"`
+	MACAddress string        `json:"mac_address"`
+	Interface  string        `json:"interface"`
+	IPv4       ContainerIPv4 `json:"ipv4"`
+	// HostInterface is the epair's host end, while the jail runs.
+	HostInterface string `json:"host_interface,omitempty"`
+}
+
+// ContainerNICSpec asks for one NIC. MACAddress is generated when empty;
+// IPv4 defaults to DHCP.
+type ContainerNICSpec struct {
+	Bridge     string         `json:"bridge"`
+	MACAddress string         `json:"mac_address,omitempty"`
+	IPv4       *ContainerIPv4 `json:"ipv4,omitempty"`
+}
 
 // ContainerOptions are the opt-ins of decision 9 (amendment f dropped
 // allow_raw_sockets).
@@ -92,6 +145,10 @@ type Container struct {
 	Options ContainerOptions `json:"options"`
 	// SSHAuthorizedKey is root's SSH public key, if one was given.
 	SSHAuthorizedKey string `json:"ssh_authorized_key,omitempty"`
+	// NICs are the jail's VNET interfaces, by slot; Nameservers go into
+	// its resolv.conf (static addressing only).
+	NICs        []ContainerNIC `json:"nics"`
+	Nameservers []string       `json:"nameservers,omitempty"`
 	// Provisioned is true once container.create finished.
 	Provisioned bool `json:"provisioned"`
 	// StartedOnce is true from the first start on; Skep then never writes
@@ -116,14 +173,24 @@ type ContainerCreate struct {
 	Options    *ContainerOptions `json:"options,omitempty"`
 	// SSHAuthorizedKey is one OpenSSH public key line, without options.
 	SSHAuthorizedKey string `json:"ssh_authorized_key,omitempty"`
+	// NICs are slots 0, 1, ... in order. Nameservers are allowed only
+	// when no NIC uses DHCP (dhclient writes resolv.conf itself).
+	NICs        []ContainerNICSpec `json:"nics,omitempty"`
+	Nameservers []string           `json:"nameservers,omitempty"`
 }
 
 // ContainerUpdate changes a stopped jail. A field left out is unchanged;
-// an empty ssh_authorized_key removes the key.
+// an empty ssh_authorized_key removes the key, an empty nics list every
+// NIC.
 type ContainerUpdate struct {
 	Hostname         *string           `json:"hostname,omitempty"`
 	Options          *ContainerOptions `json:"options,omitempty"`
 	SSHAuthorizedKey *string           `json:"ssh_authorized_key,omitempty"`
+	// NICs replaces the whole list. After the first start only the bridge
+	// and MAC of existing slots may change: the addressing and the
+	// interface names are in the jail's rc.conf.
+	NICs        *[]ContainerNICSpec `json:"nics,omitempty"`
+	Nameservers *[]string           `json:"nameservers,omitempty"`
 }
 
 // ContainerAction asks for start, stop, or restart. Timeout applies to

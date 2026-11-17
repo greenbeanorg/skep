@@ -15,6 +15,10 @@ const (
 	// CheckStorageLocked fails when a dataset Skep uses has its
 	// encryption key unloaded.
 	CheckStorageLocked = "storage_locked"
+	// CheckOrphanedInterfaces warns while an interface with a skep:
+	// description (a jail's epair or a VM's tap) exists whose owner is not
+	// running (ADR 0010 decision 10).
+	CheckOrphanedInterfaces = "orphaned_interfaces"
 )
 
 // Capacity states of a pool in the metrics.

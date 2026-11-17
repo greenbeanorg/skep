@@ -73,6 +73,8 @@ var StatusForCode = map[string]int{
 	models.CodeContainerStartFailed:     http.StatusConflict,
 	models.CodeContainerSSHUnavailable:  http.StatusUnprocessableEntity,
 	models.CodeMlockRequiresMemoryLimit: http.StatusUnprocessableEntity,
+	models.CodeEpairUnavailable:         http.StatusConflict,
+	models.CodeDevfsRulesetConflict:     http.StatusConflict,
 }
 
 // Fail maps a service error to an error response. Internal error text is

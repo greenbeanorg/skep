@@ -4,8 +4,11 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"fmt"
+	"net/netip"
 	"regexp"
 	"strings"
+
+	"github.com/greenbeanorg/skep/pkg/models"
 )
 
 // What Skep writes into a jail before its first start (ADR 0010 decisions
@@ -74,6 +77,7 @@ var rcVarRE = regexp.MustCompile(`^[a-z_][a-z0-9_]{0,63}="[^"\\$` + "`" + `\x00-
 type jailContent struct {
 	rcConf         []byte
 	authorizedKeys []byte
+	resolvConf     []byte
 }
 
 // render checks JailFiles and renders the files. Every rc.conf line is a
@@ -99,6 +103,21 @@ func (f JailFiles) render() (jailContent, error) {
 			return jailContent{}, err
 		}
 		c.authorizedKeys = []byte(key + "\n")
+	}
+	if len(f.Nameservers) > models.MaxContainerNameservers {
+		return jailContent{}, invalid("at most %d nameservers", models.MaxContainerNameservers)
+	}
+	if len(f.Nameservers) > 0 {
+		var b strings.Builder
+		b.WriteString(RCConfHeader)
+		for _, ns := range f.Nameservers {
+			a, err := netip.ParseAddr(ns)
+			if err != nil || a.Zone() != "" || a.String() != ns {
+				return jailContent{}, fmt.Errorf("hostops: refusing a nameserver that is not a plain IP address: %q", printable(ns))
+			}
+			b.WriteString("nameserver " + ns + "\n")
+		}
+		c.resolvConf = []byte(b.String())
 	}
 	return c, nil
 }

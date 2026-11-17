@@ -20,11 +20,12 @@ import (
 
 const beneath = unix.O_RESOLVE_BENEATH | unix.O_NOFOLLOW | unix.O_CLOEXEC
 
-// The files Skep writes, relative to the jail root: etc/rc.conf and
-// root/.ssh/authorized_keys.
+// The files Skep writes, relative to the jail root: etc/rc.conf,
+// etc/resolv.conf, and root/.ssh/authorized_keys.
 const (
 	jailRCConfDir      = "etc"
 	jailRCConfName     = "rc.conf"
+	jailResolvConfName = "resolv.conf"
 	jailRootHome       = "root"
 	jailSSHDir         = ".ssh"
 	jailAuthorizedKeys = "authorized_keys"
@@ -50,6 +51,19 @@ func writeJailFiles(root string, c jailContent) error {
 		}
 	} else if err := removeSkepFile(etc, jailRCConfName); err != nil {
 		return err
+	}
+	// resolv.conf: Skep's own for static addressing. Without nameservers
+	// only Skep's own is removed; any other (a template's) stays.
+	if c.resolvConf != nil {
+		if err := replaceSkepFile(etc, jailResolvConfName, c.resolvConf, 0o644); err != nil {
+			return err
+		}
+	} else if head, missing, err := readSkepFile(etc, jailResolvConfName); err != nil {
+		return err
+	} else if !missing && bytes.Equal(head, []byte(RCConfHeader)) {
+		if err := removeSkepFile(etc, jailResolvConfName); err != nil {
+			return err
+		}
 	}
 
 	home, err := openDirBeneath(rfd, jailRootHome)

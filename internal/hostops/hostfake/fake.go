@@ -65,6 +65,10 @@ type Fake struct {
 	// IgnoreACPI lists the VMs whose guest ignores the ACPI power
 	// button, as an installer menu does.
 	IgnoreACPI map[string]bool
+	// NoEpair simulates a host without if_epair; DevfsConflict one whose
+	// devfs ruleset 6001 holds someone else's rules.
+	NoEpair       bool
+	DevfsConflict bool
 
 	datasets map[string]hostops.Dataset
 	// diskFiles and dirs are the simulated disk files and VM directories
@@ -86,12 +90,17 @@ type Fake struct {
 	// taps maps a tap to its description and bridge.
 	taps    map[string]fakeTap
 	nextTap int
-	nextPID int
-	runners map[string]*fakeRunner
-	guests  map[string]*Guest
-	ctx     context.Context
-	stop    context.CancelFunc
-	wg      sync.WaitGroup
+	// epairs maps an epair host end to its description and bridge;
+	// devfsDHCP is true once the DHCP ruleset was added.
+	epairs    map[string]fakeTap
+	nextEpair int
+	devfsDHCP bool
+	nextPID   int
+	runners   map[string]*fakeRunner
+	guests    map[string]*Guest
+	ctx       context.Context
+	stop      context.CancelFunc
+	wg        sync.WaitGroup
 }
 
 type fakeTap struct{ desc, bridge string }
@@ -118,6 +127,7 @@ func New(conf hostops.Confinement, opts Options) *Fake {
 		ctx: ctx, stop: stop,
 		IgnoreACPI: map[string]bool{},
 		taps:       map[string]fakeTap{},
+		epairs:     map[string]fakeTap{},
 		nextPID:    10000,
 		runners:    map[string]*fakeRunner{},
 		guests:     map[string]*Guest{},

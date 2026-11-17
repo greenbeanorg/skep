@@ -79,6 +79,18 @@ type Jails interface {
 	// RemoveJailRun removes a jail's runtime directory. A missing one is
 	// not an error.
 	RemoveJailRun(containerID string) error
+
+	// EpairAvailable refuses (epair_unavailable) when if_epair is not
+	// loaded. StartJail checks it before any epair is created.
+	EpairAvailable(ctx context.Context) error
+	// DestroyJailInterfaces destroys every epair whose host end is
+	// described skep:<container-id>:<slot> and returns their host ends.
+	// StopJail calls it after jail -r; a start and a delete call it for
+	// what a crash left (decision 10).
+	DestroyJailInterfaces(ctx context.Context, containerID string) ([]string, error)
+	// SkepInterfaces lists the epair host ends and taps whose description
+	// is skep:<owner-id>:<slot>.
+	SkepInterfaces(ctx context.Context) ([]SkepInterface, error)
 }
 
 // JailState is a running jail as jls reports it.
@@ -86,6 +98,9 @@ type JailState struct {
 	JID  int
 	Name string
 	Path string
+	// Epairs are the host ends of the jail's epairs by slot, as StartJail
+	// created them.
+	Epairs map[int]string
 }
 
 // JailSpec is everything a jail.conf is rendered from. Every field is
@@ -103,6 +118,8 @@ type JailSpec struct {
 	// StartTimeout is exec.timeout; StopTimeout is stop.timeout.
 	StartTimeout time.Duration
 	StopTimeout  time.Duration
+	// NICs are the jail's VNET interfaces (decision 10).
+	NICs []JailNIC
 }
 
 // JailFiles is what Skep writes into a jail before its first start.
@@ -113,6 +130,10 @@ type JailFiles struct {
 	// AuthorizedKey is root's SSH public key, one line. Empty removes
 	// root's authorized_keys.
 	AuthorizedKey string
+	// Nameservers are the nameserver lines of /etc/resolv.conf, for a
+	// jail with static addressing. None removes Skep's resolv.conf and
+	// leaves any other alone.
+	Nameservers []string
 }
 
 // The jail layout and naming.
@@ -250,6 +271,21 @@ func renderJailConf(spec JailSpec, root, consoleLog string) ([]byte, error) {
 	if err := checkTimeout("the stop timeout", spec.StopTimeout); err != nil {
 		return nil, err
 	}
+	if err := checkNICs(spec.NICs); err != nil {
+		return nil, err
+	}
+	var ifaces []string
+	for _, n := range spec.NICs {
+		jif, err := JailInterfaceName(spec.ContainerID, n.Slot)
+		if err != nil {
+			return nil, err
+		}
+		q, err := confValue(jif)
+		if err != nil {
+			return nil, err
+		}
+		ifaces = append(ifaces, q)
+	}
 	quoted := map[string]string{}
 	for k, v := range map[string]string{"path": root, "host.hostname": spec.Hostname, "exec.consolelog": consoleLog,
 		"exec.start": "/bin/sh /etc/rc", "exec.stop": "/bin/sh /etc/rc.shutdown jail"} {
@@ -263,13 +299,20 @@ func renderJailConf(spec JailSpec, root, consoleLog string) ([]byte, error) {
 		"path = " + quoted["path"],
 		"host.hostname = " + quoted["host.hostname"],
 		"vnet",
+	}
+	if len(ifaces) > 0 {
+		// jail(8) moves these into the jail's stack after creating it;
+		// hostops created and named them before (decision 10).
+		lines = append(lines, "vnet.interface = "+strings.Join(ifaces, ", "))
+	}
+	lines = append(lines,
 		"persist",
 		"enforce_statfs = 2",
 		"children.max = 0",
 		"securelevel = 2",
 		"mount.devfs",
-		"devfs_ruleset = " + strconv.Itoa(JailDevfsRuleset),
-	}
+		"devfs_ruleset = "+strconv.Itoa(spec.devfsRuleset()),
+	)
 	lines = append(lines, jailAllow(spec.Mlock)...)
 	lines = append(lines,
 		"sysvshm = "+spec.sysv(),
@@ -294,7 +337,8 @@ func renderJailConf(spec JailSpec, root, consoleLog string) ([]byte, error) {
 
 // checkJailParams confirms a jail's parameters as the kernel reports them
 // (jls --libxo=json -n): its name, path, and hostname; its own network
-// stack; the statfs, child, securelevel, and devfs limits; the System V
+// stack; the statfs, child, securelevel, and devfs limits (ruleset 5, or
+// Skep's DHCP ruleset for a jail with a DHCP NIC); the System V
 // IPC setting; allow.suser and allow.reserved_ports on, allow.mlock as
 // asked, and every other allow.* off.
 func checkJailParams(params map[string]any, spec JailSpec, root string) error {
@@ -305,7 +349,7 @@ func checkJailParams(params map[string]any, spec JailSpec, root string) error {
 	want := map[string]string{
 		"name": name, "path": root, "host.hostname": spec.Hostname, "vnet": "new",
 		"enforce_statfs": "2", "children.max": "0", "securelevel": "2",
-		"devfs_ruleset": strconv.Itoa(JailDevfsRuleset), "persist": "true",
+		"devfs_ruleset": strconv.Itoa(spec.devfsRuleset()), "persist": "true",
 		"sysvshm": spec.sysv(), "sysvsem": spec.sysv(), "sysvmsg": spec.sysv(),
 	}
 	var bad []string

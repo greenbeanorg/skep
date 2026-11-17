@@ -335,12 +335,35 @@ func (h *host) StartJail(ctx context.Context, spec JailSpec) (JailState, error) 
 	} else if running {
 		return JailState{}, containerNotStopped(spec.ContainerID)
 	}
+	if err := h.checkJailNet(ctx, spec); err != nil {
+		return JailState{}, err
+	}
+	// What a crash left: the epairs of an earlier run (decision 10).
+	if gone, err := h.DestroyJailInterfaces(ctx, spec.ContainerID); err != nil {
+		return JailState{}, err
+	} else if len(gone) > 0 {
+		h.log.Warn("hostops: destroyed epairs an earlier run of the jail left", "event", "orphaned_interface_removed",
+			"container_id", spec.ContainerID, "interfaces", gone)
+	}
 	conf, root, err := h.writeJailConf(ctx, spec)
 	if err != nil {
 		return JailState{}, err
 	}
+	epairs := map[int]string{}
+	for _, nic := range spec.NICs {
+		host, err := h.createJailEpair(ctx, spec.ContainerID, nic)
+		if host != "" {
+			epairs[nic.Slot] = host
+		}
+		if err != nil {
+			h.cleanJailNet(spec)
+			return JailState{}, &models.Error{Code: models.CodeContainerStartFailed,
+				Message: "the jail's network could not be set up: " + err.Error(), Details: map[string]any{"container_id": spec.ContainerID}}
+		}
+	}
 	er, err := h.envRunner()
 	if err != nil {
+		h.cleanJailNet(spec)
 		return JailState{}, err
 	}
 	if _, err := er.RunEnv(ctx, EnvCommand{Path: jailBinary, Args: []string{"-f", conf, "-c", name},
@@ -354,28 +377,95 @@ func (h *host) StartJail(ctx context.Context, spec JailSpec) (JailState, error) 
 	if err == nil {
 		err = checkJailParams(params, spec, root)
 	}
+	if err == nil {
+		err = h.checkMovedIn(ctx, spec)
+	}
 	if err != nil {
 		h.removeAfterFailedStart(name, conf, spec)
 		return JailState{}, &models.Error{Code: models.CodeContainerStartFailed,
 			Message: "the jail was removed again: " + err.Error(), Details: map[string]any{"container_id": spec.ContainerID}}
 	}
 	jid, _ := strconv.Atoi(fmt.Sprint(params["jid"]))
-	return JailState{JID: jid, Name: name, Path: root}, nil
+	return JailState{JID: jid, Name: name, Path: root, Epairs: epairs}, nil
 }
 
-// removeAfterFailedStart removes a jail left by a failed start, on its own
+// checkJailNet checks what a jail's NICs need before anything is
+// created: if_epair, a usable allow-listed bridge for each, and, for DHCP,
+// Skep's devfs ruleset (added when absent).
+func (h *host) checkJailNet(ctx context.Context, spec JailSpec) error {
+	if len(spec.NICs) == 0 {
+		return nil
+	}
+	if err := checkNICs(spec.NICs); err != nil {
+		return err
+	}
+	if err := h.EpairAvailable(ctx); err != nil {
+		return err
+	}
+	for _, nic := range spec.NICs {
+		b, err := h.Bridge(ctx, nic.Bridge)
+		if err != nil {
+			return err
+		}
+		if err := checkBridgeUsable(h.conf, b); err != nil {
+			return err
+		}
+	}
+	if spec.devfsRuleset() == JailDHCPDevfsRuleset {
+		return h.ensureDHCPRuleset(ctx)
+	}
+	return nil
+}
+
+// checkMovedIn confirms that every jail end left the host's stack.
+func (h *host) checkMovedIn(ctx context.Context, spec JailSpec) error {
+	for _, nic := range spec.NICs {
+		jif, err := JailInterfaceName(spec.ContainerID, nic.Slot)
+		if err != nil {
+			return err
+		}
+		if exists, err := h.interfaceExists(ctx, jif); err != nil {
+			return err
+		} else if exists {
+			return fmt.Errorf("hostops: the interface %s is still on the host after jail -c", jif)
+		}
+	}
+	return nil
+}
+
+// cleanJailNet destroys a jail's epairs after a failed start, on its own
 // short context so a cancelled request still cleans up. A failure is
-// logged; the jail then shows as running and can be stopped.
+// logged; the epairs are then orphans, reported and removed by the next
+// start, stop, or delete.
+func (h *host) cleanJailNet(spec JailSpec) {
+	if len(spec.NICs) == 0 {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), jailCommandSlack)
+	defer cancel()
+	if _, err := h.DestroyJailInterfaces(ctx, spec.ContainerID); err != nil {
+		h.log.Error("hostops: the epairs of a failed start could not be destroyed", "container_id", spec.ContainerID, "error", err)
+	}
+}
+
+// removeAfterFailedStart removes a jail left by a failed start, and then
+// its epairs, on its own short context so a cancelled request still
+// cleans up. A failure is logged; the jail then shows as running and can
+// be stopped.
 func (h *host) removeAfterFailedStart(name, conf string, spec JailSpec) {
 	ctx, cancel := context.WithTimeout(context.Background(), spec.StopTimeout+spec.StartTimeout+jailCommandSlack)
 	defer cancel()
 	exists, err := h.jailExists(ctx, name)
-	if err != nil || !exists {
+	if err != nil {
 		return
 	}
-	if err := h.removeJail(ctx, name, conf, spec); err != nil {
-		h.log.Error("hostops: a jail left by a failed start could not be removed", "jail", name, "error", err)
+	if exists {
+		if err := h.removeJail(ctx, name, conf, spec); err != nil {
+			h.log.Error("hostops: a jail left by a failed start could not be removed", "jail", name, "error", err)
+			return
+		}
 	}
+	h.cleanJailNet(spec)
 }
 
 // removeJail runs jail -r with the jail's own jail.conf, which runs
@@ -404,15 +494,23 @@ func (h *host) StopJail(ctx context.Context, spec JailSpec) error {
 		return err
 	}
 	exists, err := h.jailExists(ctx, name)
-	if err != nil || !exists {
-		return err
-	}
-	// The jail.conf is written again with this stop's timeout.
-	conf, _, err := h.writeJailConf(ctx, spec)
 	if err != nil {
 		return err
 	}
-	return h.removeJail(ctx, name, conf, spec)
+	if exists {
+		// The jail.conf is written again with this stop's timeout.
+		conf, _, err := h.writeJailConf(ctx, spec)
+		if err != nil {
+			return err
+		}
+		if err := h.removeJail(ctx, name, conf, spec); err != nil {
+			return err
+		}
+	}
+	// jail -r returned the jail ends to the host; destroying the host
+	// ends removes both (decision 10).
+	_, err = h.DestroyJailInterfaces(ctx, spec.ContainerID)
+	return err
 }
 
 // RunningJails implements Jails.
