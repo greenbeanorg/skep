@@ -10,7 +10,9 @@
   [Resolved](#resolved-the-probe-of-the-specification-2026-11-16); the
   builder, the template store, tasks and routes are built, and the builder
   is validated on `hearst`, see
-  [Built](#built-the-template-builder-2026-11-16)).
+  [Built](#built-the-template-builder-2026-11-16); step 7, jails, started
+  with a probe whose findings are amendments f and g, see
+  [Step 7](#step-7-jails-decisions-8-9-13)).
   Every recommendation was
   accepted; the review answers and the amendments made at acceptance are
   under [Decisions](#decisions) and are worked into the text. The changes
@@ -50,10 +52,10 @@ both.
 | 6 | Hosts without ZFS (UFS-root equivalence) | A `directory` pool type: an allow-listed directory, sparse raw files for VM disks, plain directories for jail roots; snapshots and clones are reported unsupported on it, never emulated |
 | 7 | Jail userland and templates | A template is a ZFS dataset snapshot (or a directory) of a FreeBSD userland built by a task from the host's own pkgbase repository configuration, or from an operator-placed `base.txz`; the release must equal the host's; no URL from a request; `pkg` runs with a cleared environment and fixed arguments, its cache is emptied before `@skep-base`, and the host's `/etc`, `/var/db/pkg`, and `/usr/share/certs` are checked unchanged |
 | 8 | How jails run | A generated per-jail `jail.conf` under the run directory and `jail(8)` with explicit arguments; no runner process; observed with `jls --libxo=json`; never `rc.conf`'s `jail_list` |
-| 9 | Jail parameters | A fixed hardened baseline (`enforce_statfs=2`, `children.max=0`, no `allow.*` beyond the default `allow.suser`, `securelevel=2`); three typed opt-ins, `mlock` only with an RCTL memory limit; the parent directory of every jail root is `root:wheel 0700`; never `exec.prestart`, `exec.poststart`, or any host-side command from a request |
+| 9 | Jail parameters | A fixed hardened baseline (`enforce_statfs=2`, `children.max=0`, no `allow.*` beyond the defaults `allow.suser` and `allow.reserved_ports`, `securelevel=2`); two typed opt-ins, `mlock` only with an RCTL memory limit; the parent directory of every jail root is `root:wheel 0700`; never `exec.prestart`, `exec.poststart`, or any host-side command from a request |
 | 10 | Jail networking | VNET only, one `epair` per NIC, the host end in an allow-listed bridge; addresses by DHCP or static, written into the jail before its first start; no shared-IP and no `inherit` |
 | 11 | Jail resource limits | RCTL limits (memory, processes, CPU percent, open files) when `kern.racct.enable=1`, refused with a clear code when not; disk by ZFS `refquota`, which needs nothing |
-| 12 | Getting into a jail | No interactive console in this milestone; an optional SSH public key and `sshd_enable` at create. `jexec` to a shell is never exposed |
+| 12 | Getting into a jail | No interactive console in this milestone; an optional SSH public key and `sshd_enable` at create, only from a template that has sshd; templates hold no SSH host keys. `jexec` to a shell is never exposed |
 | 13 | Writing into a jail's filesystem | Only before its first start, or through `O_RESOLVE_BENEATH`/`O_NOFOLLOW` opens; never by path after the jail has run |
 | 14 | Permissions | `vm:snapshot`; `container:read`, `container:write`, `container:delete`, `container:power`, `container:snapshot`; `storage:write` (templates, directory-pool housekeeping) for `admin` only |
 | 15 | Resource monitoring | Current values only (no history): pool capacity with 80 % and 90 % health warnings, per-VM and per-jail disk use, per-jail CPU and memory from RCTL, per-VM CPU time and resident memory of the bhyve process |
@@ -398,10 +400,13 @@ this milestone.
 `enforce_statfs=2`, `children.max=0`, `securelevel=2`, `devfs_ruleset=5`
 (`devfsrules_jail_vnet`, which every Skep jail is), `mount.devfs`, no
 `mount.fstab`, every `allow.*` that grants extra privileges off, with
-`allow.suser` left at its default, on (amendment e), `exec.clean`, `exec.consolelog` to
+`allow.suser` and `allow.reserved_ports` left at their default, on
+(amendments e and f), `exec.clean`, `exec.consolelog` to
 `<RunDir>/jails/<id>/console.log` (root-only, served to `container:read`
-holders as a bounded tail). Opt-ins: `allow_raw_sockets`,
-`sysvipc` (`sysvshm`, `sysvsem`, `sysvmsg` = `new`), and `mlock`. `mlock`
+holders as a bounded tail). Opt-ins: `sysvipc` (`sysvshm`, `sysvsem`,
+`sysvmsg` = `new`) and `mlock`. (`allow_raw_sockets` was dropped by
+amendment f: a VNET jail has raw sockets on its own stack whatever
+`allow.raw_sockets` says.) `mlock`
 is accepted only together with an RCTL `memoryuse` limit (Decision 11),
 because locked memory cannot be paged out and an unlimited jail could pin
 the host's memory; without the limit, or with RACCT disabled, the request
@@ -504,6 +509,20 @@ the feature is called verified.
 user inside a jail without passing a password through Skep. `jexec` is
 never exposed through the API, in any form.
 
+**Amended 2026-11-16 (Andy, from the step 7 probe; amendment g).**
+`FreeBSD-set-minimal` has no sshd. The SSH key is accepted only when the
+jail's template has `/usr/sbin/sshd`; otherwise the create or update is
+refused with `container_ssh_unavailable` (422), naming the template.
+`FreeBSD-ssh` joins the default `storage.template_packages` (it has no
+package scripts and no trigger files on 15.1, so the allowlist does not
+change). **A template holds no SSH host keys**: the build fails if
+`etc/ssh/ssh_host_*` exists in it before `@skep-base`. Each jail
+generates its own at its first start (`rc.d/sshd`), so two jails from
+one template never share a host key; the check of Decision 16 confirms
+it. FreeBSD's sshd defaults to `PermitRootLogin no`; Skep sets
+`prohibit-password` through `rc.conf` (`sshd_flags`), without editing
+`sshd_config`.
+
 ## Decision 13: writing into a jail's filesystem
 
 A root process that writes into a directory a jail controls can be
@@ -579,8 +598,9 @@ recorded, under `tests/integration/storage/` for 7a and
 | Template (dist) | A `base.txz` whose SHA-256 does not match `MANIFEST` is refused; a matching one builds |
 | Template host safety | Before and after a pkgbase build, the hashes of every file under the host's `/etc`, `/var/db/pkg`, and `/usr/share/certs` are identical; `pkg` ran with the fixed environment (shown by `procstat -e` during the build); `var/cache/pkg` is empty in `@skep-base`; how scripts and triggers ran (chrooted or not) is recorded with the trace |
 | Jail lifecycle | Create, start, stop, restart, delete; `jls` shows it under `skep-<id>`; it survives `service skep_agent restart` and `kill -9` of the agent |
-| Jail networking | DHCP address on VLAN 60, internet reachable, `10.79.20.0/24` not reachable; the host epair has the `skep:` description and is gone after stop |
-| Jail baseline | Inside the jail: `sysctl security.jail.param` shows the baseline; `mount`, `kldload`, and raw sockets fail; with `allow_raw_sockets`, `ping` works; `mlock` without a memory limit is refused with `mlock_requires_memory_limit` |
+| Jail networking | DHCP address on VLAN 60, internet reachable, `10.79.20.0/24` not reachable; the host epair has the `skep:` description and is gone after stop; a jail that forges its source IPv4 address and its source MAC on its epair reaches nothing it could not reach without (amendment f) |
+| Jail baseline | Inside the jail: `sysctl security.jail.param` shows the baseline; `mount` and `kldload` fail; a port below 1024 can be bound; whether raw sockets work is recorded, not expected to fail (amendment f); `mlock` without a memory limit is refused with `mlock_requires_memory_limit` |
+| Jail SSH | A key works on a template with sshd and is refused with `container_ssh_unavailable` on one without; the template has no `etc/ssh/ssh_host_*`; two jails from one template have different host keys (amendment g) |
 | Jail root parent | The jail and template parent directories are `root:wheel 0700`; as an unprivileged host user, a setuid file inside a running jail cannot be reached or executed; a start after `chmod 755` of the parent is refused with `jail_parent_insecure` |
 | Orphaned epairs | Killing the agent between `jail -r` and the epair destroy leaves an epair that the restarted agent reports (event and `orphaned_interfaces`) and the next start of the jail removes |
 | `started_once` | After a rollback of a started jail to a snapshot taken before its first start, an update that would write into the tree is still refused with `container_started` |
@@ -784,6 +804,30 @@ Amendments made at acceptance, worked into the text:
   and the services a jail exists to run fail. Only the template build jail
   of step 6 runs with `allow.suser` off, because its fixed commands need
   nothing beyond owning the files they write.
+- **f. `allow.reserved_ports` stays on, and the raw-socket opt-in is
+  dropped** (Decision 9; Andy, 2026-11-16, from the step 7 probe).
+  - With `allow.reserved_ports` off, a jail's root cannot bind a port
+    below 1024 (`nc -l 22`: Permission denied), so sshd, web, and DNS
+    servers fail. It stays at its default, on, like `allow.suser`. Every
+    other `allow.*` is off, the kernel defaults `allow.set_hostname` and
+    `allow.unprivileged_proc_debug` included.
+  - `allow.raw_sockets` has no effect in a VNET jail: the 15.1 kernel
+    (`prison_priv_check` in `sys/kern/kern_jail.c`) grants
+    `PRIV_NETINET_RAW` to every jail with its own network stack before it
+    looks at `allow.raw_sockets`. Every Skep jail is VNET (Decision 10),
+    so the `allow_raw_sockets` opt-in is dropped, and the baseline check
+    records whether raw sockets work instead of expecting a refusal.
+  - **Consequence for networking.** A VNET jail's root can craft and
+    spoof packets on its own epair: any source IPv4 or IPv6 address, and
+    any source MAC, as a VM can on its NIC. The VLAN isolation test of
+    step 8 must therefore include source-IP and source-MAC spoofing from
+    a jail (Decision 16, "Jail networking").
+- **g. SSH keys and host keys** (Decision 12; Andy, 2026-11-16, from the
+  step 7 probe). The key only for a template with sshd
+  (`container_ssh_unavailable` otherwise); `FreeBSD-ssh` in the default
+  template packages; no SSH host keys in a template; each jail makes its
+  own at first start, and two jails from one template are checked to
+  differ.
 
 ## Implementation notes
 
@@ -1399,3 +1443,17 @@ template apart from `local.sqlite`'s install times. An operator's request
 was refused 403 for `storage:write` and audited as `authz.deny`. A restart
 with no build jail logs `build_jail_sweep found=0` before the socket is
 served; every sweep now logs that line, so a clean one is visible.
+
+### Step 7: jails (Decisions 8, 9, 13)
+
+Started 2026-11-16. A hand-run probe on `hearst` first
+([step7-probe.txt](../../tests/integration/jails/results/step7-probe.txt))
+confirmed that a clone of a read-only template is writable and that
+`/etc/rc` starts cleanly in a jail with the baseline, and found three
+places where the text could not hold: `allow.reserved_ports`,
+`allow.raw_sockets` in a VNET jail, and the missing sshd. Andy chose the
+recommended options on 2026-11-16; they are amendments f and g above and
+are worked into Decisions 9, 12, and 16. Build notes and the validation
+follow in
+[step7-progress.md](../../tests/integration/jails/results/step7-progress.md).
+

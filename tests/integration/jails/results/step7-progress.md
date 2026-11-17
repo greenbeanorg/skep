@@ -49,3 +49,28 @@ for a template with sshd, `FreeBSD-ssh` added to the default packages).
 
 **hearst state:** no jails; `skeptest/step7-probe` destroyed; the template
 has no clones; nothing deployed (still `a34749d`); no other change.
+
+## 2. Andy's answers recorded (2026-11-16)
+
+**Done.** A1, B1, C1, with Andy's additions. ADR 0010:
+
+- Amendment f (Decision 9): `allow.reserved_ports` stays on with
+  `allow.suser`; every other `allow.*` off, `set_hostname` and
+  `unprivileged_proc_debug` included; the `allow_raw_sockets` opt-in is
+  dropped, with the kernel source as the reason. Andy's addition: VNET
+  jails can craft and spoof packets on their own epair, so the step 8 VLAN
+  isolation test must include source-IP and source-MAC spoofing from a
+  jail (added to Decision 16's "Jail networking" row).
+- Amendment g (Decision 12): the SSH key only for a template with sshd,
+  `container_ssh_unavailable` (422) otherwise; `FreeBSD-ssh` in the
+  default template packages. Andy's addition: templates hold no SSH host
+  keys, each jail makes its own at first start, and two jails from one
+  template are checked to differ (new Decision 16 row "Jail SSH").
+- The summary table, Decision 9's opt-ins, the "Jail baseline" check row,
+  and a new "Step 7" section under the implementation notes.
+
+**Approved for the build run:** deploy as often as needed (undo:
+`a34749d`); a new template with `FreeBSD-ssh`, keeping `minimal-151`;
+jails and datasets under skeptest; fresh API test accounts, passwords in
+the scratchpad. Not approved, so not done: anything on hearst's network
+configuration, `if_epair` (step 8), the VLAN test.
