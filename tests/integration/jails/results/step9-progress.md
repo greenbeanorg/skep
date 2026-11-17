@@ -609,3 +609,120 @@ Recorded in ADR 0010 as amendment l before any further work.
 Stopped after recording, as asked. Nothing built; hearst unchanged since
 section 14 (`003a33f`; `s9dhcp`, `c9dhcp` stopped with their leftover
 devfs mounts).
+
+## 16. Unattended run after amendment l (2026-11-17): final step 9 report
+
+### What this run did
+
+1. **Leftover devfs fix** (`1eff641`, docs `2a1c2f4`), as amendment l
+   says: getfsstat(2), `f_mntonname` exactly `<root>/dev` and type
+   `devfs`, unmount by fsid (`MNT_BYFSID`), never by path; before a
+   start (after the jail.conf, before any epair or `jail -c`), at delete
+   (before `zfs destroy`; a failed unmount stops the delete), and in the
+   agent's start-up sweep for every provisioned jail that does not run.
+   Logged as `orphaned_devfs_removed`. Unit tests (Linux): exact match
+   only (host `/dev`, `/devx`, `/dev/`, `/DEV`, `/usr/dev`, another
+   jail, `nullfs` on `<root>/dev` all left alone; stacked devfs newest
+   first), symlinked `dev` to `/dev` and to another devfs directory,
+   zero fsid refused, unmount failure stops the delete, running jail
+   refused before the table is read, sweep skips a running jail.
+   Native tests on hearst ([devfs-native](step9/devfs-native.txt)):
+   the real table lists the host `/dev` and both leftovers with their
+   fsids; a root whose `dev` links to `/dev` or to `/` finds nothing
+   (the unmount was replaced by one that fails the test); the table was
+   unchanged.
+2. **Deploy and live cleanup** (`b5b0546`,
+   [deploy](step9-deploy-b5b0546.txt),
+   [devfs-cleanup](step9/devfs-cleanup.txt)). The restarted agent's
+   start-up sweep unmounted both leftovers (`FSID:1895890709:113` for
+   `c9dhcp`, `FSID:1895890708:113` for `s9dhcp`); the `mount -p` diff
+   before/after the deploy is exactly those two devfs lines, host `/dev`
+   untouched. Then API deletes of `c9dhcp`, the `c9dhcp` snapshot, and
+   `s9dhcp`: all three tasks succeeded; afterwards the only change to the
+   mount table is the two jail datasets gone, `skeptest/skep/jail` empty.
+   **Note:** because the sweep ran first, the delete path's own unmount
+   had nothing left to do; on hearst only the sweep path unmounted
+   something. The start and delete paths are covered by unit tests
+   only. A live test of them needs a fresh leftover devfs, which means a
+   `jail -r` by hand (not on this run's list).
+3. **Duplicate static IP at start** ([dup-ip-bridge1](step9/dup-ip-bridge1.txt)).
+   bridge1 created (no members), added to `agent.json`, agent
+   restarted. Three static jails from `minimal-151` on bridge1:
+   `dupa` 192.0.2.10/24 started (`skep0` inet 192.0.2.10); `dupb` with
+   the same address was refused, **409 `container_address_in_use`**
+   naming `dupa`, bridge1, and slot 0, with no jail created; `dupc`
+   192.0.2.11/24 started (control); after `dupa` stopped, `dupb` started
+   with 192.0.2.10. Every `/dev` guard listing was within the allow-list
+   (`fd null pts random stderr stdin stdout urandom zero zfs`, ruleset
+   5). All stopped and deleted. **Undo done:** original `agent.json`
+   restored (sha256 `490bc087…` same as before), services restarted,
+   `ifconfig bridge1 destroy`; `ifconfig -l` is back to `vtnet0 vtnet1
+   lo0 bridge0`.
+
+hearst now: `b5b0546`, health ok (every check), no containers, no jails,
+no epairs, only the host devfs mounted, `skeptest/skep/jail` empty.
+
+### Every step 9 check
+
+| Check | Result | Where |
+|---|---|---|
+| RCTL rules while running, none left after stop | Passed | sections 4, 9 |
+| `mlock` without a memory limit / with only `memory` | Refused 422 | sections 4, 9 |
+| `cpu_percent` over the host's CPUs; `locked_memory` over `memory` | Refused 400 | sections 4, 9 |
+| `memoryuse` | Soft (pages deactivated, never refused); documented as soft (amendment j) | sections 4, 5, 9 |
+| `pcpu` 50 | Throttled | section 4 |
+| `maxproc` 40 | Fork refused at 40 | section 4 |
+| `openfiles` | Enforced; counts descriptor-table slots (documented) | sections 4, 9 |
+| `refquota` | Writes stopped at the quota | section 4 |
+| `memorylocked` refuses `mlock` | Passed | section 14 |
+| Capabilities report RCTL | Passed after the sysctl fix | section 4 |
+| Jail usage in `/metrics` | Passed | section 14 |
+| `skep0` in-jail names, epairs destroyed before removal | Passed | sections 12, 14 |
+| Orphans with `skepN` names after an abnormal removal | Passed | section 14 |
+| Snapshot, rollback, delete; `started_once` kept | Passed | section 14 |
+| Clone of a DHCP jail | Passed | section 14 |
+| Static-NIC clone rules | Passed (never-started source) | section 14 |
+| Snapshot and clone permissions | Passed | section 14 |
+| Leftover devfs: native table, symlinked `dev` | Passed | this section |
+| Leftover devfs cleaned by the fix (sweep), then deletes | Passed | this section |
+| Duplicate static IP refused at start | Passed | this section |
+| `container_started` for new addressing on a clone of a started static jail | **Not run** (needs a started static jail and a clone; bridge1 is gone again) | — |
+| Leftover devfs unmounted by the start and delete paths, live | **Not run** (sweep got there first; needs a hand `jail -r`) | — |
+| RACCT off | **Not run** (needs a reboot) | section 4 |
+
+### Commits of step 9 (after `33e73f1`)
+
+`bc43115` `188c8d7` `a3ef267` `6f7eefd` `0027ef2` `ec86060` `f93a3e0`
+`4c7d8e0` `cf95b26` `c4f28ee` `5a779a4` `18b8a92` `2595432` `2c12a76`
+`4c672ef` `3fc0b36` `f4968a8` `aa63eee` `c49e2b7` `34cf1e6` `1773c25`
+`f540414` `003a33f` `18f617c` `7b380e0`, and this run: `1eff641` (fix),
+`2a1c2f4` (docs), `b5b0546` (native record), `7d79928` (cleanup
+record), `2bad4d6` (bridge1 record), plus this report. All on
+`feat/m7b-templates`, pushed; no PR, nothing merged.
+
+### Still pending
+
+- **Spoofing** test (a jail forging its source IPv4 and MAC) and the
+  **OPNsense ICMP rule re-test**: deferred to before the step 10 merge.
+- **RACCT off** (Q3): needs a reboot; unit tests only.
+- The two **not run** checks above.
+- **Backlog (Q8):** an opt-in to clone a started static jail by writing
+  its addressing into a Skep-owned `/etc/rc.conf.d` file through the
+  `O_RESOLVE_BENEATH` writer.
+- **Step 10 security review:** duplicate host interface names after an
+  abnormal removal; a jail root renaming its interface to a host-like
+  name (`vtnet0`).
+- Possibly an `orphaned_mounts` health check (proposed in section 14,
+  not built: the sweep handles it at agent start).
+
+### My mistakes on this run
+
+- **I printed `~/.skep-test-creds`.** A `sed` meant to redact values
+  assumed `key=value`; the file is space-separated, so the three test
+  account passwords (`s7admin`, `s7oper`, `s7viewer`) went into this
+  session's tool output. They are in no commit or record. Please rotate
+  them.
+- My first task-polling helper read the actor's ID instead of the task's
+  and logged in on every poll; the API's login rate limit refused about
+  40 logins from merrick as `s7viewer` over two minutes (they will show
+  in the access log). The helper then kept one token per user.
