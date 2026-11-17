@@ -1,0 +1,31 @@
+# /dev guard refusal on hearst (native, 79620ef + jaildev_freebsd_test.go), 2026-11-17T18:36:09Z
+## before: rulesets, epairs, jails
+1 2 3 4 5 
+## run
+=== RUN   TestNativeDevGuardRefusesLeakyRuleset
+    jaildev_freebsd_test.go:68: container 301a182b-886a-420e-80a3-1063715eaaf5
+time=2026-11-17T13:36:10.247-05:00 level=INFO msg="hostops: adding Skep's devfs ruleset for DHCP jails" event=devfs_ruleset_added ruleset=6001 rules="100 include 1; 200 include 2; 300 include 3; 400 include 4; 500 path pf unhide; 600 path bpf* unhide; 700 path full unhide"
+time=2026-11-17T13:36:10.293-05:00 level=ERROR msg="hostops: a jail's /dev holds more than the allow-list; removing it before any of its code runs" event=jail_devfs_refused container_id=301a182b-886a-420e-80a3-1063715eaaf5 ruleset=6001 error="container_start_failed: the jail's /dev holds entries outside the allow-list, so it was removed before any of its code ran: full"
+    jaildev_freebsd_test.go:75: refusal: the jail's /dev holds entries outside the allow-list, so it was removed before any of its code ran: full
+--- PASS: TestNativeDevGuardRefusesLeakyRuleset (0.17s)
+PASS
+exit=0
+## after: rulesets, epairs, jails, jail datasets
+1 2 3 4 5 
+epairs: []
+jails: []
+skeptest/skep/jail
+
+## What it shows
+Ruleset 6001 is checked line by line before every start, so the agent
+cannot be given a leaky ruleset. The native test changed only the
+*expected* rules (6001's own plus "700 path full unhide"); the real
+StartJail added that ruleset, created the jail from minimal-151 with a
+DHCP NIC on bridge0 (epair created and moved in, parameters checked),
+and the real guard with the unchanged allow-list found /dev/full and
+refused: container_start_failed, extra_devices [full]. The jail was
+removed with a jail.conf without exec.start or exec.stop, its
+console.log was empty (no /etc/rc), its epair and jail end were gone,
+ruleset 6001 was removed (showsets back to 1-5), and the dataset was
+destroyed. /dev/full was chosen because it is harmless; nothing ran in
+the jail.
