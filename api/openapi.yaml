@@ -88,6 +88,8 @@ tags:
       and cancelled. They are submitted by the VM endpoints, never directly.
   - name: vms
     description: Virtual machines (bhyve)
+  - name: containers
+    description: FreeBSD jails on clones of a template
   - name: storage
     description: Storage pools and install media VMs may use
 paths:
@@ -1533,6 +1535,280 @@ paths:
           $ref: "#/components/responses/VMConflict"
         "503":
           $ref: "#/components/responses/Unavailable"
+  /containers:
+    get:
+      tags: [containers]
+      operationId: listContainers
+      summary: Jails
+      x-skep-permission: container:read
+      description: |
+        Requires `container:read`. Jails by name, cursor paginated. The
+        state is what `jls` reports at the time of the request; a jail
+        that should run but does not says so in `state_detail`.
+      parameters:
+        - $ref: "#/components/parameters/Background"
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+        - name: cursor
+          in: query
+          schema: { type: string }
+      responses:
+        "200":
+          description: One page of jails.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContainerList"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+    post:
+      tags: [containers]
+      operationId: createContainer
+      summary: Create a jail from a template
+      x-skep-permission: container:write
+      description: |
+        Requires `container:write`. Submits `container.create`, which
+        clones the template's `@skep-base` to `<pool>/<root>/jail/<id>`
+        (writable; the template stays read-only) and, with an SSH key,
+        writes `/etc/rc.conf` (sshd on, root by key only) and root's
+        `authorized_keys` into the jail before it has ever run (ADR 0010
+        decision 13). The jail runs with a fixed baseline: its own network
+        stack (VNET), `enforce_statfs=2`, `children.max=0`,
+        `securelevel=2`, devfs ruleset 5, `allow.suser` and
+        `allow.reserved_ports` on and every other `allow.*` off. Nothing in
+        the request becomes a host-side command.
+
+        The template must be built (`template_not_provisioned`) and have
+        the host's major.minor (`release_unsupported`). An SSH key needs a
+        template with sshd (`container_ssh_unavailable`); it is one
+        OpenSSH public key line without options. `mlock` needs a memory
+        limit (`mlock_requires_memory_limit`), which this release does not
+        offer yet. Jails have no network interface yet besides `lo0`.
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ContainerCreate"
+      responses:
+        "202":
+          description: The jail, not yet provisioned, and its task.
+          headers:
+            Location:
+              schema: { type: string }
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContainerCreated"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/VMConflict"
+        "422":
+          $ref: "#/components/responses/VMUnprocessable"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /containers/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [containers]
+      operationId: getContainer
+      summary: One jail
+      x-skep-permission: container:read
+      description: Requires `container:read`.
+      parameters:
+        - $ref: "#/components/parameters/Background"
+      responses:
+        "200":
+          description: The jail.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Container"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+    put:
+      tags: [containers]
+      operationId: updateContainer
+      summary: Change a stopped jail
+      x-skep-permission: container:write
+      description: |
+        Requires `container:write`. Submits `container.update`. The jail
+        must be stopped (`container_not_stopped`). The hostname and the
+        options take effect at the next start. The SSH key is written into
+        the jail's tree, so it can change only before the jail's first
+        start; afterwards a change is `container_started` (ADR 0010
+        decision 13). An empty `ssh_authorized_key` removes the key.
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ContainerUpdate"
+      responses:
+        "202":
+          description: The update task.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Task"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/VMConflict"
+        "422":
+          $ref: "#/components/responses/VMUnprocessable"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+    delete:
+      tags: [containers]
+      operationId: deleteContainer
+      summary: Delete a stopped jail and its dataset
+      x-skep-permission: container:delete
+      description: |
+        Requires `container:delete`. Submits `container.delete`, which
+        destroys the jail's dataset and snapshots and its runtime
+        directory; the task result and the audit entry list every dataset
+        destroyed. The jail must be stopped (`container_not_stopped`).
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "202":
+          description: The delete task.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Task"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/VMConflict"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /containers/{id}/actions:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      tags: [containers]
+      operationId: containerAction
+      summary: Start, stop, or restart a jail
+      x-skep-permission: container:power
+      description: |
+        Requires `container:power`. `start` creates the jail with jail(8),
+        which runs `/etc/rc`; the parameters the kernel reports are then
+        checked against the baseline, and a jail that does not match is
+        removed (`container_start_failed`). The first start marks the jail
+        as started for good: Skep never writes into its tree again. `stop`
+        runs `/etc/rc.shutdown`, then sends SIGTERM and, after `timeout`
+        seconds (default `containers.stop_timeout_seconds`), SIGKILL; a
+        jail cannot refuse, so there is no force stop. `restart` is a stop
+        and a start.
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ContainerAction"
+      responses:
+        "202":
+          description: The power task.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Task"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/VMConflict"
+        "422":
+          $ref: "#/components/responses/VMUnprocessable"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /containers/{id}/console-log:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [containers]
+      operationId: getContainerConsoleLog
+      summary: The end of a jail's console log
+      x-skep-permission: container:read
+      description: |
+        Requires `container:read`. At most the last 64 KiB of what
+        `/etc/rc` and `/etc/rc.shutdown` wrote (`exec.consolelog`). The
+        log is kept in the runtime directory and is gone after a host
+        reboot.
+      parameters:
+        - $ref: "#/components/parameters/Background"
+      responses:
+        "200":
+          description: The log tail.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContainerConsoleLog"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/Unavailable"
   /metrics:
     get:
       tags: [storage]
@@ -2139,6 +2415,109 @@ components:
           $ref: "#/components/schemas/Template"
         task:
           $ref: "#/components/schemas/Task"
+    ContainerOptions:
+      type: object
+      additionalProperties: false
+      properties:
+        sysvipc:
+          type: boolean
+          description: Its own System V shared memory, semaphores, and message queues.
+        mlock:
+          type: boolean
+          description: May lock memory. Needs a memory limit (`mlock_requires_memory_limit`).
+    Container:
+      type: object
+      required: [id, name, hostname, template_id, template_name, pool, options, provisioned, started_once, desired_state, state, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        hostname: { type: string }
+        template_id: { type: string, format: uuid }
+        template_name: { type: string }
+        pool: { type: string }
+        release:
+          type: string
+          description: The template's userland release.
+        options:
+          $ref: "#/components/schemas/ContainerOptions"
+        ssh_authorized_key:
+          type: string
+          description: Root's SSH public key, if one was given.
+        provisioned: { type: boolean }
+        started_once:
+          type: boolean
+          description: True from the first start on; Skep then never writes into the jail's tree.
+        desired_state: { type: string, enum: [stopped, running] }
+        state: { type: string, enum: [unknown, stopped, starting, running, stopping, failed] }
+        jid: { type: integer }
+        state_detail: { type: string }
+        observed_at: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    ContainerList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Container"
+        next_cursor: { type: string }
+    ContainerCreate:
+      type: object
+      additionalProperties: false
+      required: [name, template_id]
+      properties:
+        name:
+          type: string
+          pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$"
+        hostname:
+          type: string
+          maxLength: 253
+          description: A DNS name. Defaults to the name.
+        template_id: { type: string, format: uuid }
+        options:
+          $ref: "#/components/schemas/ContainerOptions"
+        ssh_authorized_key:
+          type: string
+          maxLength: 16384
+          description: One OpenSSH public key line, "type base64 [comment]", without options.
+    ContainerUpdate:
+      type: object
+      additionalProperties: false
+      properties:
+        hostname: { type: string, maxLength: 253 }
+        options:
+          $ref: "#/components/schemas/ContainerOptions"
+        ssh_authorized_key:
+          type: string
+          maxLength: 16384
+          description: Empty removes the key. Only before the first start.
+    ContainerAction:
+      type: object
+      additionalProperties: false
+      required: [action]
+      properties:
+        action: { type: string, enum: [start, stop, restart] }
+        timeout:
+          type: integer
+          minimum: 1
+          maximum: 300
+          description: Seconds between SIGTERM and SIGKILL, for stop and restart.
+    ContainerCreated:
+      type: object
+      required: [container, task]
+      properties:
+        container:
+          $ref: "#/components/schemas/Container"
+        task:
+          $ref: "#/components/schemas/Task"
+    ContainerConsoleLog:
+      type: object
+      required: [text, truncated]
+      properties:
+        text: { type: string }
+        truncated: { type: boolean }
     SnapshotCreated:
       type: object
       required: [snapshot, task]

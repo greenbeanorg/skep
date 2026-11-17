@@ -173,3 +173,22 @@ through the socket. `go test ./...` and `make lint` pass on merrick.
   of the end of `console.log`, as JSON (`text`, `truncated`).
 - Step 7 jails have no NIC: VNET with only `lo0`. Epairs are Decision 10,
   step 8, and need `if_epair`, which this run has no approval to load.
+
+## 5. Public routes, permissions, OpenAPI
+
+**Done.** skep-api serves `GET|POST /api/v1/containers`,
+`GET|PUT|DELETE /api/v1/containers/{id}`, `POST
+/api/v1/containers/{id}/actions`, and `GET
+/api/v1/containers/{id}/console-log`. `container:read`, `container:write`,
+`container:delete`, and `container:power` are now declared and enforced
+(`api/0005` already granted them: operator all four, viewer
+`container:read`). The permission matrix test walks the new routes for
+every role and checks each denial is audited; explicit rows spell out
+decision 14 for jails. Every write is audited in the access log with
+resource type `container`. OpenAPI has a `containers` tag, the paths, the
+schemas, and the codes; `web/src/api/schema.d.ts` is regenerated
+(`npm run check-types` passes).
+
+**Decision made:** `container:snapshot` stays undeclared until the jail
+snapshot routes exist (step 9), because the route table test requires
+every declared permission to be enforced.

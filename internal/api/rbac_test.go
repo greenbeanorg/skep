@@ -179,6 +179,33 @@ func TestPermissionMatrix(t *testing.T) {
 			t.Errorf("%s %s as %s: %d, want %d", tt.method, tt.path, tt.role, got, tt.want)
 		}
 	}
+	// Jails (ADR 0010 decision 14): operator holds container:read, write,
+	// delete, and power; viewer only container:read. "Allowed" means the
+	// request got past authorization (whatever the backend then said).
+	ctr := "/containers/" + e.ids[auth.RoleViewer]
+	for _, tt := range []struct {
+		role, method, path string
+		allowed            bool
+	}{
+		{auth.RoleOperator, http.MethodGet, "/containers", true},
+		{auth.RoleOperator, http.MethodPost, "/containers", true},
+		{auth.RoleOperator, http.MethodPut, ctr, true},
+		{auth.RoleOperator, http.MethodDelete, ctr, true},
+		{auth.RoleOperator, http.MethodPost, ctr + "/actions", true},
+		{auth.RoleOperator, http.MethodGet, ctr + "/console-log", true},
+		{auth.RoleViewer, http.MethodGet, "/containers", true},
+		{auth.RoleViewer, http.MethodGet, ctr, true},
+		{auth.RoleViewer, http.MethodGet, ctr + "/console-log", true},
+		{auth.RoleViewer, http.MethodPost, "/containers", false},
+		{auth.RoleViewer, http.MethodPut, ctr, false},
+		{auth.RoleViewer, http.MethodDelete, ctr, false},
+		{auth.RoleViewer, http.MethodPost, ctr + "/actions", false},
+	} {
+		got := status(tt.role, tt.method, tt.path)
+		if denied := got == http.StatusForbidden || got == http.StatusUnauthorized; denied == tt.allowed {
+			t.Errorf("%s %s as %s: %d, want allowed=%v", tt.method, tt.path, tt.role, got, tt.allowed)
+		}
+	}
 	// The viewer still exists: the operator's DELETE was refused before
 	// anything happened.
 	if status(auth.RoleViewer, http.MethodGet, "/system") != http.StatusOK {

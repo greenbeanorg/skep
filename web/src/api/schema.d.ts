@@ -862,6 +862,141 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/containers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Jails
+         * @description Requires `container:read`. Jails by name, cursor paginated. The
+         *     state is what `jls` reports at the time of the request; a jail
+         *     that should run but does not says so in `state_detail`.
+         */
+        get: operations["listContainers"];
+        put?: never;
+        /**
+         * Create a jail from a template
+         * @description Requires `container:write`. Submits `container.create`, which
+         *     clones the template's `@skep-base` to `<pool>/<root>/jail/<id>`
+         *     (writable; the template stays read-only) and, with an SSH key,
+         *     writes `/etc/rc.conf` (sshd on, root by key only) and root's
+         *     `authorized_keys` into the jail before it has ever run (ADR 0010
+         *     decision 13). The jail runs with a fixed baseline: its own network
+         *     stack (VNET), `enforce_statfs=2`, `children.max=0`,
+         *     `securelevel=2`, devfs ruleset 5, `allow.suser` and
+         *     `allow.reserved_ports` on and every other `allow.*` off. Nothing in
+         *     the request becomes a host-side command.
+         *
+         *     The template must be built (`template_not_provisioned`) and have
+         *     the host's major.minor (`release_unsupported`). An SSH key needs a
+         *     template with sshd (`container_ssh_unavailable`); it is one
+         *     OpenSSH public key line without options. `mlock` needs a memory
+         *     limit (`mlock_requires_memory_limit`), which this release does not
+         *     offer yet. Jails have no network interface yet besides `lo0`.
+         */
+        post: operations["createContainer"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/containers/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        /**
+         * One jail
+         * @description Requires `container:read`.
+         */
+        get: operations["getContainer"];
+        /**
+         * Change a stopped jail
+         * @description Requires `container:write`. Submits `container.update`. The jail
+         *     must be stopped (`container_not_stopped`). The hostname and the
+         *     options take effect at the next start. The SSH key is written into
+         *     the jail's tree, so it can change only before the jail's first
+         *     start; afterwards a change is `container_started` (ADR 0010
+         *     decision 13). An empty `ssh_authorized_key` removes the key.
+         */
+        put: operations["updateContainer"];
+        post?: never;
+        /**
+         * Delete a stopped jail and its dataset
+         * @description Requires `container:delete`. Submits `container.delete`, which
+         *     destroys the jail's dataset and snapshots and its runtime
+         *     directory; the task result and the audit entry list every dataset
+         *     destroyed. The jail must be stopped (`container_not_stopped`).
+         */
+        delete: operations["deleteContainer"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/containers/{id}/actions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start, stop, or restart a jail
+         * @description Requires `container:power`. `start` creates the jail with jail(8),
+         *     which runs `/etc/rc`; the parameters the kernel reports are then
+         *     checked against the baseline, and a jail that does not match is
+         *     removed (`container_start_failed`). The first start marks the jail
+         *     as started for good: Skep never writes into its tree again. `stop`
+         *     runs `/etc/rc.shutdown`, then sends SIGTERM and, after `timeout`
+         *     seconds (default `containers.stop_timeout_seconds`), SIGKILL; a
+         *     jail cannot refuse, so there is no force stop. `restart` is a stop
+         *     and a start.
+         */
+        post: operations["containerAction"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/containers/{id}/console-log": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        /**
+         * The end of a jail's console log
+         * @description Requires `container:read`. At most the last 64 KiB of what
+         *     `/etc/rc` and `/etc/rc.shutdown` wrote (`exec.consolelog`). The
+         *     log is kept in the runtime directory and is gone after a host
+         *     reboot.
+         */
+        get: operations["getContainerConsoleLog"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/metrics": {
         parameters: {
             query?: never;
@@ -1164,6 +1299,76 @@ export interface components {
         TemplateCreated: {
             template: components["schemas"]["Template"];
             task: components["schemas"]["Task"];
+        };
+        ContainerOptions: {
+            /** @description Its own System V shared memory, semaphores, and message queues. */
+            sysvipc?: boolean;
+            /** @description May lock memory. Needs a memory limit (`mlock_requires_memory_limit`). */
+            mlock?: boolean;
+        };
+        Container: {
+            /** Format: uuid */
+            id: string;
+            name: string;
+            hostname: string;
+            /** Format: uuid */
+            template_id: string;
+            template_name: string;
+            pool: string;
+            /** @description The template's userland release. */
+            release?: string;
+            options: components["schemas"]["ContainerOptions"];
+            /** @description Root's SSH public key, if one was given. */
+            ssh_authorized_key?: string;
+            provisioned: boolean;
+            /** @description True from the first start on; Skep then never writes into the jail's tree. */
+            started_once: boolean;
+            /** @enum {string} */
+            desired_state: "stopped" | "running";
+            /** @enum {string} */
+            state: "unknown" | "stopped" | "starting" | "running" | "stopping" | "failed";
+            jid?: number;
+            state_detail?: string;
+            /** Format: date-time */
+            observed_at?: string;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        ContainerList: {
+            items: components["schemas"]["Container"][];
+            next_cursor?: string;
+        };
+        ContainerCreate: {
+            name: string;
+            /** @description A DNS name. Defaults to the name. */
+            hostname?: string;
+            /** Format: uuid */
+            template_id: string;
+            options?: components["schemas"]["ContainerOptions"];
+            /** @description One OpenSSH public key line, "type base64 [comment]", without options. */
+            ssh_authorized_key?: string;
+        };
+        ContainerUpdate: {
+            hostname?: string;
+            options?: components["schemas"]["ContainerOptions"];
+            /** @description Empty removes the key. Only before the first start. */
+            ssh_authorized_key?: string;
+        };
+        ContainerAction: {
+            /** @enum {string} */
+            action: "start" | "stop" | "restart";
+            /** @description Seconds between SIGTERM and SIGKILL, for stop and restart. */
+            timeout?: number;
+        };
+        ContainerCreated: {
+            container: components["schemas"]["Container"];
+            task: components["schemas"]["Task"];
+        };
+        ContainerConsoleLog: {
+            text: string;
+            truncated: boolean;
         };
         SnapshotCreated: {
             snapshot: components["schemas"]["Snapshot"];
@@ -3254,6 +3459,264 @@ export interface operations {
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
             409: components["responses"]["VMConflict"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
+    listContainers: {
+        parameters: {
+            query?: {
+                limit?: number;
+                cursor?: string;
+            };
+            header?: {
+                /**
+                 * @description Marks a request the client made by itself (a timer, a refetch on
+                 *     focus). Any non-empty value. The request is authenticated as any
+                 *     other, the idle timeout included, but does not extend the idle
+                 *     timeout.
+                 */
+                "X-Skep-Background"?: components["parameters"]["Background"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description One page of jails. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ContainerList"];
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
+    createContainer: {
+        parameters: {
+            query?: never;
+            header?: {
+                /**
+                 * @description Makes a retry safe: a second request with the same key and the
+                 *     same body returns the task of the first; with a different body it
+                 *     is refused with `idempotency_key_conflict`.
+                 */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ContainerCreate"];
+            };
+        };
+        responses: {
+            /** @description The jail, not yet provisioned, and its task. */
+            202: {
+                headers: {
+                    Location?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ContainerCreated"];
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["VMConflict"];
+            422: components["responses"]["VMUnprocessable"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
+    getContainer: {
+        parameters: {
+            query?: never;
+            header?: {
+                /**
+                 * @description Marks a request the client made by itself (a timer, a refetch on
+                 *     focus). Any non-empty value. The request is authenticated as any
+                 *     other, the idle timeout included, but does not extend the idle
+                 *     timeout.
+                 */
+                "X-Skep-Background"?: components["parameters"]["Background"];
+            };
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The jail. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Container"];
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
+    updateContainer: {
+        parameters: {
+            query?: never;
+            header?: {
+                /**
+                 * @description Makes a retry safe: a second request with the same key and the
+                 *     same body returns the task of the first; with a different body it
+                 *     is refused with `idempotency_key_conflict`.
+                 */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ContainerUpdate"];
+            };
+        };
+        responses: {
+            /** @description The update task. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Task"];
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["VMConflict"];
+            422: components["responses"]["VMUnprocessable"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
+    deleteContainer: {
+        parameters: {
+            query?: never;
+            header?: {
+                /**
+                 * @description Makes a retry safe: a second request with the same key and the
+                 *     same body returns the task of the first; with a different body it
+                 *     is refused with `idempotency_key_conflict`.
+                 */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The delete task. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Task"];
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["VMConflict"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
+    containerAction: {
+        parameters: {
+            query?: never;
+            header?: {
+                /**
+                 * @description Makes a retry safe: a second request with the same key and the
+                 *     same body returns the task of the first; with a different body it
+                 *     is refused with `idempotency_key_conflict`.
+                 */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ContainerAction"];
+            };
+        };
+        responses: {
+            /** @description The power task. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Task"];
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["VMConflict"];
+            422: components["responses"]["VMUnprocessable"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
+    getContainerConsoleLog: {
+        parameters: {
+            query?: never;
+            header?: {
+                /**
+                 * @description Marks a request the client made by itself (a timer, a refetch on
+                 *     focus). Any non-empty value. The request is authenticated as any
+                 *     other, the idle timeout included, but does not extend the idle
+                 *     timeout.
+                 */
+                "X-Skep-Background"?: components["parameters"]["Background"];
+            };
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The log tail. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ContainerConsoleLog"];
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
             503: components["responses"]["Unavailable"];
         };
     };
