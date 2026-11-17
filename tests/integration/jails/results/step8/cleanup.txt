@@ -69,7 +69,7 @@ bridge0: vtnet1
 -- health after delete (15 s cache):
 status ok orphaned_interfaces {'status': 'ok', 'critical': False}
 -- the warning event of that restart:
-{"time":"2026-11-17T13:50:04.183391527-05:00","level":"INFO","msg":"orphans: interface check finished","event":"orphaned_interface_check","found":1}
+{"time":"2026-11-17T13:50:04.183374052-05:00","level":"WARN","msg":"orphans: an interface Skep made belongs to a jail or VM that is not running; it is destroyed by the owner's next start, stop, or delete","event":"orphaned_interface","interface":"epair0a","kind":"epair","owner_id":"7a1e3658-aced-47d1-bf56-8b9a2478632e","slot":0,"owner_exists":true}
 
 ## Result
 5a. A stop destroyed the jail's epair (bridge0 back to vtnet1 alone); the
