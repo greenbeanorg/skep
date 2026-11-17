@@ -205,6 +205,10 @@ func (h *host) DestroyJailRoot(ctx context.Context, pool, containerID string) ([
 	} else if running {
 		return nil, containerNotStopped(containerID)
 	}
+	// Rules a jail removed outside Skep left on its name go with it.
+	if err := h.clearJailRules(ctx, containerID); err != nil {
+		return nil, err
+	}
 	d, err := h.ownedJail(ctx, ds, containerID)
 	if err != nil || d == nil {
 		return nil, err
@@ -354,6 +358,11 @@ func (h *host) StartJail(ctx context.Context, spec JailSpec) (JailState, error) 
 	if err := h.checkJailNet(ctx, spec); err != nil {
 		return JailState{}, err
 	}
+	// A jail never runs without its limits; RCTL rules an earlier run
+	// left on the name go first (decision 11).
+	if err := h.checkRctlForStart(ctx, spec); err != nil {
+		return JailState{}, err
+	}
 	// What a crash left: the epairs of an earlier run (decision 10).
 	if gone, err := h.DestroyJailInterfaces(ctx, spec.ContainerID); err != nil {
 		return JailState{}, err
@@ -415,7 +424,11 @@ func startFailed(spec JailSpec, prefix string, err error) error {
 // console.log, bounded by the start timeout; if it fails or times out, the
 // jail is removed with jail -r, which runs exec.stop. It returns the JID.
 func (h *host) finishStart(ctx context.Context, spec JailSpec, name, conf, root string) (int, error) {
-	params, err := h.jailParams(ctx, name)
+	err := h.applyJailRules(ctx, spec)
+	var params map[string]any
+	if err == nil {
+		params, err = h.jailParams(ctx, name)
+	}
 	if err == nil {
 		err = checkJailParams(params, spec, root)
 	}
@@ -617,6 +630,13 @@ func (h *host) removeJail(ctx context.Context, name, conf string, spec JailSpec)
 		return err
 	} else if exists {
 		return fmt.Errorf("hostops: the jail %s is still there after jail -r", name)
+	}
+	// RCTL keeps rules on the name after the jail is gone. Rules left
+	// here are removed by the next start; the removal is not failed for
+	// them.
+	if err := h.clearJailRules(ctx, spec.ContainerID); err != nil {
+		h.log.Error("hostops: the RCTL rules of a removed jail could not be removed", "event", "jail_rctl_left",
+			"container_id", spec.ContainerID, "error", err)
 	}
 	return nil
 }

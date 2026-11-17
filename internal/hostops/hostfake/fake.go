@@ -69,6 +69,12 @@ type Fake struct {
 	// devfs ruleset 6001 holds someone else's rules.
 	NoEpair       bool
 	DevfsConflict bool
+	// RacctDisabled simulates a host booted without kern.racct.enable;
+	// CPUs is hw.ncpu (4 when zero).
+	RacctDisabled bool
+	CPUs          int
+	// rctl holds the RCTL rules on each jail's name, by container ID.
+	rctl map[string][]string
 
 	datasets map[string]hostops.Dataset
 	// diskFiles and dirs are the simulated disk files and VM directories
@@ -150,6 +156,7 @@ func New(conf hostops.Confinement, opts Options) *Fake {
 		instances:      map[string]bool{},
 		sshdTemplates:  map[string]bool{},
 		jails:          map[string]int{},
+		rctl:           map[string][]string{},
 		nextJID:        1,
 		jailFiles:      map[string]hostops.JailFiles{},
 	}

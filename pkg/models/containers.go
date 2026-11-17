@@ -72,6 +72,9 @@ const (
 	// CodeDevfsRulesetConflict: Skep's devfs ruleset number for DHCP jails
 	// holds rules Skep did not put there (amendment h).
 	CodeDevfsRulesetConflict = "devfs_ruleset_conflict"
+	// CodeRctlUnavailable: a CPU, memory, process, or file limit on a
+	// host where RACCT is disabled (decision 11).
+	CodeRctlUnavailable = "rctl_unavailable"
 )
 
 // IPv4 addressing modes of a jail NIC (decision 10).
@@ -131,6 +134,52 @@ type ContainerOptions struct {
 	Mlock bool `json:"mlock"`
 }
 
+// ContainerLimits are a jail's resource limits (decision 11); zero or
+// absent means none. Memory, CPUPercent, MaxProcesses, and OpenFiles are
+// RCTL rules with the deny action on the jail and need RACCT
+// (rctl_unavailable otherwise); DiskQuota is ZFS refquota on the jail's
+// root, so its snapshots do not count against it, and works without
+// RACCT.
+type ContainerLimits struct {
+	// Memory is RCTL memoryuse: the jail's resident memory.
+	Memory ByteSize `json:"memory,omitempty"`
+	// CPUPercent is RCTL pcpu: 100 is one CPU, so a jail is throttled to
+	// CPUPercent/100 CPUs. At most 100 per CPU of the host.
+	CPUPercent int `json:"cpu_percent,omitempty"`
+	// MaxProcesses is RCTL maxproc; OpenFiles is RCTL openfiles.
+	MaxProcesses int `json:"max_processes,omitempty"`
+	OpenFiles    int `json:"open_files,omitempty"`
+	// DiskQuota is the most the jail's root may reference.
+	DiskQuota ByteSize `json:"disk_quota,omitempty"`
+}
+
+// Bounds of the jail limits.
+const (
+	MinContainerMemory    = 16 << 20
+	MinContainerDiskQuota = 64 << 20
+	// MaxContainerProcesses and MaxContainerOpenFiles bound the RCTL
+	// counts; the kernel's own limits apply as well.
+	MaxContainerProcesses = 1 << 20
+	MaxContainerOpenFiles = 1 << 24
+)
+
+// RCTL reports whether the host can enforce RCTL limits.
+func (l ContainerLimits) RCTL() bool {
+	return l.Memory > 0 || l.CPUPercent > 0 || l.MaxProcesses > 0 || l.OpenFiles > 0
+}
+
+// ContainerCapabilities is what the host offers jails, in the system
+// document: whether RCTL limits can be enforced, and the bound of a CPU
+// limit. A disk quota needs only ZFS.
+type ContainerCapabilities struct {
+	// RCTL is kern.racct.enable. Without it, a CPU, memory, process, or
+	// file limit is refused with rctl_unavailable and a jail that has one
+	// does not start.
+	RCTL bool `json:"rctl"`
+	// MaxCPUPercent is 100 per CPU of the host.
+	MaxCPUPercent int `json:"max_cpu_percent"`
+}
+
 // Container is one jail.
 type Container struct {
 	ID       string `json:"id"`
@@ -143,6 +192,7 @@ type Container struct {
 	// Release is the template's userland release.
 	Release string           `json:"release,omitempty"`
 	Options ContainerOptions `json:"options"`
+	Limits  ContainerLimits  `json:"limits"`
 	// SSHAuthorizedKey is root's SSH public key, if one was given.
 	SSHAuthorizedKey string `json:"ssh_authorized_key,omitempty"`
 	// NICs are the jail's VNET interfaces, by slot; Nameservers go into
@@ -171,6 +221,7 @@ type ContainerCreate struct {
 	Hostname   string            `json:"hostname,omitempty"`
 	TemplateID string            `json:"template_id"`
 	Options    *ContainerOptions `json:"options,omitempty"`
+	Limits     *ContainerLimits  `json:"limits,omitempty"`
 	// SSHAuthorizedKey is one OpenSSH public key line, without options.
 	SSHAuthorizedKey string `json:"ssh_authorized_key,omitempty"`
 	// NICs are slots 0, 1, ... in order. Nameservers are allowed only
@@ -183,9 +234,11 @@ type ContainerCreate struct {
 // an empty ssh_authorized_key removes the key, an empty nics list every
 // NIC.
 type ContainerUpdate struct {
-	Hostname         *string           `json:"hostname,omitempty"`
-	Options          *ContainerOptions `json:"options,omitempty"`
-	SSHAuthorizedKey *string           `json:"ssh_authorized_key,omitempty"`
+	Hostname *string           `json:"hostname,omitempty"`
+	Options  *ContainerOptions `json:"options,omitempty"`
+	// Limits replaces every limit: one left out of the object is removed.
+	Limits           *ContainerLimits `json:"limits,omitempty"`
+	SSHAuthorizedKey *string          `json:"ssh_authorized_key,omitempty"`
 	// NICs replaces the whole list. After the first start only the bridge
 	// and MAC of existing slots may change: the addressing and the
 	// interface names are in the jail's rc.conf.

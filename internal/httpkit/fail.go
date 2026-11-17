@@ -74,6 +74,7 @@ var StatusForCode = map[string]int{
 	models.CodeContainerSSHUnavailable:  http.StatusUnprocessableEntity,
 	models.CodeMlockRequiresMemoryLimit: http.StatusUnprocessableEntity,
 	models.CodeEpairUnavailable:         http.StatusConflict,
+	models.CodeRctlUnavailable:          http.StatusConflict,
 	models.CodeDevfsRulesetConflict:     http.StatusConflict,
 }
 

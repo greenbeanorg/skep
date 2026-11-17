@@ -29,12 +29,13 @@ func NewContainerStore(db *sql.DB) *ContainerStore { return &ContainerStore{db: 
 // own table, container_networks.
 type containerConfig struct {
 	Options          models.ContainerOptions `json:"options"`
+	Limits           models.ContainerLimits  `json:"limits"`
 	SSHAuthorizedKey string                  `json:"ssh_authorized_key,omitempty"`
 	Nameservers      []string                `json:"nameservers,omitempty"`
 }
 
 func configJSON(c models.Container) (string, error) {
-	raw, err := json.Marshal(containerConfig{Options: c.Options, SSHAuthorizedKey: c.SSHAuthorizedKey, Nameservers: c.Nameservers})
+	raw, err := json.Marshal(containerConfig{Options: c.Options, Limits: c.Limits, SSHAuthorizedKey: c.SSHAuthorizedKey, Nameservers: c.Nameservers})
 	return string(raw), err
 }
 
@@ -191,7 +192,7 @@ func scanContainer(row rowScanner) (models.Container, error) {
 	if err := json.Unmarshal([]byte(cfg), &conf); err != nil {
 		return models.Container{}, fmt.Errorf("database: container config: %w", err)
 	}
-	c.Options, c.SSHAuthorizedKey, c.Nameservers = conf.Options, conf.SSHAuthorizedKey, conf.Nameservers
+	c.Options, c.Limits, c.SSHAuthorizedKey, c.Nameservers = conf.Options, conf.Limits, conf.SSHAuthorizedKey, conf.Nameservers
 	c.Provisioned, c.StartedOnce = provisioned == 1, startedOnce == 1
 	if jid.Valid {
 		v := int(jid.Int64)

@@ -107,6 +107,14 @@ type Jails interface {
 	// SkepInterfaces lists the epair host ends and taps whose description
 	// is skep:<owner-id>:<slot>.
 	SkepInterfaces(ctx context.Context) ([]SkepInterface, error)
+
+	// RctlInfo reports whether RACCT is enabled and how many CPUs bound a
+	// pcpu limit (decision 11). It changes nothing.
+	RctlInfo(ctx context.Context) (RctlInfo, error)
+	// SetJailQuota sets refquota on a jail's root (0 removes it), after
+	// checking that the dataset carries the container's ID. A quota
+	// below what the root already references is invalid_request.
+	SetJailQuota(ctx context.Context, pool, containerID string, bytes int64) error
 }
 
 // JailState is a running jail as jls reports it.
@@ -137,6 +145,9 @@ type JailSpec struct {
 	StopTimeout  time.Duration
 	// NICs are the jail's VNET interfaces (decision 10).
 	NICs []JailNIC
+	// Limits are the jail's RCTL limits (decision 11), added after
+	// jail -c and before any of its code runs.
+	Limits JailLimits
 }
 
 // JailFiles is what Skep writes into a jail before its first start.

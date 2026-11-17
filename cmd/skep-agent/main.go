@@ -296,6 +296,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	checks[models.CheckOrphanedInterfaces] = orphanChecker.Probe
 	svc, err := agent.NewService(agent.Options{
 		Bhyve:      vms.Capabilities,
+		Containers: containerSvc.Capabilities,
 		NodeID:     nodeID,
 		DevMode:    cfg.DevMode,
 		Discoverer: disc,

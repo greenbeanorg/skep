@@ -213,6 +213,9 @@ func (j fakeJails) StartJail(ctx context.Context, spec hostops.JailSpec) (hostop
 	for _, nic := range spec.NICs {
 		dhcp = dhcp || nic.DHCP
 	}
+	if spec.Limits.Any() && f.RacctDisabled {
+		return hostops.JailState{}, &models.Error{Code: models.CodeRctlUnavailable, Message: "RACCT is disabled (simulated)"}
+	}
 	if len(spec.NICs) > 0 && f.NoEpair {
 		return hostops.JailState{}, &models.Error{Code: models.CodeEpairUnavailable, Message: "the if_epair module is not loaded (simulated)"}
 	}
@@ -238,6 +241,15 @@ func (j fakeJails) StartJail(ctx context.Context, spec hostops.JailSpec) (hostop
 	jid := f.nextJID
 	f.nextJID++
 	f.jails[spec.ContainerID] = jid
+	rules, err := hostops.JailRctlRules(spec.ContainerID, spec.Limits)
+	if err != nil {
+		return hostops.JailState{}, err
+	}
+	delete(f.rctl, spec.ContainerID)
+	if len(rules) > 0 {
+		f.rctl[spec.ContainerID] = rules
+		f.record("rctl -a %s", strings.Join(rules, " "))
+	}
 	f.record("jail -c %s; /dev checked; jexec %s /bin/sh /etc/rc", name, name)
 	return hostops.JailState{JID: jid, Name: name, Path: root, Epairs: epairs}, nil
 }
@@ -257,6 +269,7 @@ func (j fakeJails) DiscardJail(_ context.Context, spec hostops.JailSpec) error {
 		f.record("jail -r %s (no exec.stop)", name)
 	}
 	f.destroyEpairsLocked(spec.ContainerID)
+	delete(f.rctl, spec.ContainerID)
 	return nil
 }
 
@@ -353,6 +366,7 @@ func (j fakeJails) StopJail(_ context.Context, spec hostops.JailSpec) error {
 		f.record("jail -r %s", name)
 	}
 	f.destroyEpairsLocked(spec.ContainerID)
+	delete(f.rctl, spec.ContainerID)
 	return nil
 }
 
@@ -404,5 +418,49 @@ func (j fakeJails) RemoveJailRun(containerID string) error {
 	if !hostops.ValidID(containerID) {
 		return models.Invalid("invalid container ID")
 	}
+	return nil
+}
+
+// RctlInfo implements hostops.Jails.
+func (j fakeJails) RctlInfo(context.Context) (hostops.RctlInfo, error) {
+	f := j.f
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	cpus := f.CPUs
+	if cpus == 0 {
+		cpus = 4
+	}
+	return hostops.RctlInfo{Enabled: !f.RacctDisabled, CPUs: cpus}, nil
+}
+
+// RctlRules returns the simulated RCTL rules on a container's jail.
+func (f *Fake) RctlRules(containerID string) []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.rctl[containerID]...)
+}
+
+// SetJailQuota implements hostops.Jails.
+func (j fakeJails) SetJailQuota(_ context.Context, pool, containerID string, bytes int64) error {
+	if bytes < 0 {
+		return models.Invalid("a disk quota cannot be negative")
+	}
+	ds, err := j.f.conf.JailDataset(pool, containerID)
+	if err != nil {
+		return err
+	}
+	f := j.f
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	d, ok := f.datasets[ds]
+	if !ok || d.ContainerID != containerID {
+		return fmt.Errorf("the jail dataset %s: %w", ds, models.ErrNotFound)
+	}
+	if bytes > 0 && bytes < d.ReferencedBytes {
+		return models.Invalid("the disk quota is below what the jail's root already uses")
+	}
+	d.RefQuotaBytes = bytes
+	f.datasets[ds] = d
+	f.record("zfs set refquota=%d %s", bytes, ds)
 	return nil
 }

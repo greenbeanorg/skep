@@ -89,7 +89,7 @@ func (s *Service) checkAction(ctx context.Context, id, taskType string) error {
 				return err
 			}
 		}
-		return optionsError(c.Options)
+		return s.checkLimits(ctx, c.Limits, c.Options)
 	}
 	if !running {
 		return &models.Error{Code: models.CodeContainerNotRunning, Message: "the jail is not running",
@@ -206,7 +206,7 @@ func (s *Service) runRestart(ctx context.Context, task tasks.Task, report tasks.
 	if err := s.stop(ctx, c, p.timeout(), report); err != nil {
 		return nil, err
 	}
-	if err := optionsError(c.Options); err != nil {
+	if err := s.checkLimits(ctx, c.Limits, c.Options); err != nil {
 		return nil, failure(err)
 	}
 	return s.start(ctx, c, report)

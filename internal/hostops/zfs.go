@@ -151,10 +151,10 @@ func parseBytes(s string) (int64, error) {
 var datasetColumns = strings.Join([]string{
 	"name", "type", "volsize", "used", "referenced", "refreservation", "volmode", "volblocksize",
 	"createtxg", "origin", "clones", "encryption", "keystatus", "compression", "compressratio",
-	propVMID, propDiskID, propContainerID, propTemplateID, propSnapshotID,
+	propVMID, propDiskID, propContainerID, propTemplateID, propSnapshotID, "refquota",
 }, ",")
 
-const datasetFields = 20
+const datasetFields = 21
 
 // listDatasets lists a dataset, recursively when asked. A dataset that
 // does not exist yields an empty list.
@@ -233,6 +233,9 @@ func parseDatasets(out []byte) ([]Dataset, error) {
 			return nil, fmt.Errorf("zfs list: %s: %w", f[0], err)
 		}
 		d.VolBlockSize = int(bs)
+		if d.RefQuotaBytes, err = parseBytes(f[20]); err != nil {
+			return nil, fmt.Errorf("zfs list: %s: %w", f[0], err)
+		}
 		if d.CreateTxg, err = parseBytes(f[8]); err != nil {
 			return nil, fmt.Errorf("zfs list: %s: %w", f[0], err)
 		}

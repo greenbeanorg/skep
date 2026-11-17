@@ -151,7 +151,8 @@ func (s *Service) spec(c models.Container, stopTimeout time.Duration) hostops.Ja
 		stopTimeout = s.stopTimeout
 	}
 	return hostops.JailSpec{Pool: c.Pool, ContainerID: c.ID, Hostname: c.Hostname, SysVIPC: c.Options.SysVIPC,
-		Mlock: c.Options.Mlock, StartTimeout: s.startTimeout, StopTimeout: stopTimeout, NICs: jailNICs(c)}
+		Mlock: c.Options.Mlock, StartTimeout: s.startTimeout, StopTimeout: stopTimeout, NICs: jailNICs(c),
+		Limits: jailLimits(c.Limits)}
 }
 
 // Containers lists the containers by name, with their state as the host

@@ -42,17 +42,6 @@ func canonical(v any) (json.RawMessage, error) {
 	return tasks.CanonicalPayload(raw)
 }
 
-// optionsError refuses the opt-ins this host cannot give. mlock needs an
-// RCTL memory limit (decision 9), and limits arrive in step 9, so it is
-// always refused for now.
-func optionsError(o models.ContainerOptions) error {
-	if o.Mlock {
-		return &models.Error{Code: models.CodeMlockRequiresMemoryLimit,
-			Message: "mlock is accepted only together with an RCTL memory limit, because locked memory cannot be paged out; jail memory limits are not available yet"}
-	}
-	return nil
-}
-
 // checkSSH validates an SSH key and refuses it for a template without
 // sshd (amendment g). It returns the normalised key.
 func (s *Service) checkSSH(ctx context.Context, t models.Template, key string) (string, error) {
@@ -92,7 +81,10 @@ func (s *Service) normalizeCreate(ctx context.Context, req models.ContainerCreat
 	if req.Options != nil {
 		c.Options = *req.Options
 	}
-	if err := optionsError(c.Options); err != nil {
+	if req.Limits != nil {
+		c.Limits = *req.Limits
+	}
+	if err := s.checkLimits(ctx, c.Limits, c.Options); err != nil {
 		return c, models.Template{}, err
 	}
 	if !hostops.ValidID(req.TemplateID) {
@@ -187,7 +179,7 @@ func (s *Service) CreateContainer(ctx context.Context, req models.ContainerCreat
 		return models.ContainerCreated{}, s.refuse(ctx, refused, err)
 	}
 	normal := models.ContainerCreate{Name: c.Name, Hostname: c.Hostname, TemplateID: c.TemplateID,
-		Options: &c.Options, SSHAuthorizedKey: c.SSHAuthorizedKey, NICs: normalSpecs(req.NICs, c.NICs), Nameservers: c.Nameservers}
+		Options: &c.Options, Limits: &c.Limits, SSHAuthorizedKey: c.SSHAuthorizedKey, NICs: normalSpecs(req.NICs, c.NICs), Nameservers: c.Nameservers}
 	request, err := canonical(normal)
 	if err != nil {
 		return models.ContainerCreated{}, err
@@ -312,6 +304,13 @@ func (s *Service) runCreate(ctx context.Context, task tasks.Task, report tasks.R
 	if err != nil {
 		return nil, failure(err)
 	}
+	if c.Limits.DiskQuota > 0 {
+		report.Progress("setting the disk quota", nil)
+		if err := s.jails.SetJailQuota(ctx, c.Pool, c.ID, int64(c.Limits.DiskQuota)); err != nil {
+			s.destroyAfterFailure(c)
+			return nil, failure(err)
+		}
+	}
 	files, err := jailFiles(c)
 	if err != nil {
 		s.destroyAfterFailure(c)
@@ -376,6 +375,7 @@ func started(c models.Container) error {
 type updatePayload struct {
 	Hostname         string                  `json:"hostname"`
 	Options          models.ContainerOptions `json:"options"`
+	Limits           models.ContainerLimits  `json:"limits"`
 	SSHAuthorizedKey string                  `json:"ssh_authorized_key"`
 	NICs             []models.ContainerNIC   `json:"nics"`
 	Nameservers      []string                `json:"nameservers"`
@@ -414,10 +414,10 @@ func (s *Service) normalizeUpdate(ctx context.Context, id string, req models.Con
 	if !c.Provisioned {
 		return updatePayload{}, notProvisioned(c)
 	}
-	if req.Hostname == nil && req.Options == nil && req.SSHAuthorizedKey == nil && req.NICs == nil && req.Nameservers == nil {
-		return updatePayload{}, models.Invalid("nothing to change: give hostname, options, ssh_authorized_key, nics, or nameservers")
+	if req.Hostname == nil && req.Options == nil && req.Limits == nil && req.SSHAuthorizedKey == nil && req.NICs == nil && req.Nameservers == nil {
+		return updatePayload{}, models.Invalid("nothing to change: give hostname, options, limits, ssh_authorized_key, nics, or nameservers")
 	}
-	p := updatePayload{Hostname: c.Hostname, Options: c.Options, SSHAuthorizedKey: c.SSHAuthorizedKey,
+	p := updatePayload{Hostname: c.Hostname, Options: c.Options, Limits: c.Limits, SSHAuthorizedKey: c.SSHAuthorizedKey,
 		NICs: c.NICs, Nameservers: c.Nameservers}
 	if req.NICs != nil || req.Nameservers != nil {
 		specs, ns := currentSpecs(c), c.Nameservers
@@ -449,10 +449,15 @@ func (s *Service) normalizeUpdate(ctx context.Context, id string, req models.Con
 		p.Hostname = *req.Hostname
 	}
 	if req.Options != nil {
-		if err := optionsError(*req.Options); err != nil {
+		p.Options = *req.Options
+	}
+	if req.Limits != nil {
+		p.Limits = *req.Limits
+	}
+	if req.Options != nil || req.Limits != nil {
+		if err := s.checkLimits(ctx, p.Limits, p.Options); err != nil {
 			return p, err
 		}
-		p.Options = *req.Options
 	}
 	if req.SSHAuthorizedKey != nil {
 		key := *req.SSHAuthorizedKey
@@ -494,7 +499,8 @@ func (s *Service) runUpdate(ctx context.Context, task tasks.Task, report tasks.R
 	} else if running {
 		return nil, failure(notStopped(c))
 	}
-	c.Hostname, c.Options, c.SSHAuthorizedKey, c.NICs, c.Nameservers = p.Hostname, p.Options, p.SSHAuthorizedKey, p.NICs, p.Nameservers
+	quotaChanged := p.Limits.DiskQuota != c.Limits.DiskQuota
+	c.Hostname, c.Options, c.Limits, c.SSHAuthorizedKey, c.NICs, c.Nameservers = p.Hostname, p.Options, p.Limits, p.SSHAuthorizedKey, p.NICs, p.Nameservers
 	if p.WriteFiles {
 		// Checked again here: the jail may have started since the
 		// request was accepted.
@@ -514,10 +520,16 @@ func (s *Service) runUpdate(ctx context.Context, task tasks.Task, report tasks.R
 			return nil, failure(err)
 		}
 	}
+	if quotaChanged {
+		report.Progress("setting the disk quota", nil)
+		if err := s.jails.SetJailQuota(ctx, c.Pool, c.ID, int64(c.Limits.DiskQuota)); err != nil {
+			return nil, failure(err)
+		}
+	}
 	if err := s.store.UpdateConfig(ctx, c, s.now().UTC()); err != nil {
 		return nil, err
 	}
-	return map[string]any{"container_id": c.ID, "hostname": c.Hostname, "options": c.Options,
+	return map[string]any{"container_id": c.ID, "hostname": c.Hostname, "options": c.Options, "limits": c.Limits,
 		"ssh_key_installed": c.SSHAuthorizedKey != "", "nics": withInterfaces(c).NICs, "nameservers": c.Nameservers,
 		"files_written": p.WriteFiles}, nil
 }

@@ -145,8 +145,10 @@ type Dataset struct {
 	VolSizeBytes    int64
 	UsedBytes       int64
 	ReferencedBytes int64
-	// RefReservationBytes is zero for a thin volume.
+	// RefReservationBytes is zero for a thin volume. RefQuotaBytes is a
+	// filesystem's refquota, zero when none (a jail's disk quota).
 	RefReservationBytes int64
+	RefQuotaBytes       int64
 	VolMode             string
 	VolBlockSize        int
 	// CreateTxg is the transaction group that created the dataset or
