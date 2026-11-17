@@ -1,0 +1,24 @@
+container.template.create succeeded  
+{
+ "commands_run": [
+  "/usr/sbin/certctl rehash",
+  "/usr/sbin/pwd_mkdb -i -p -d /etc /etc/master.passwd",
+  "/usr/sbin/services_mkdb -l -q -o /var/db/services.db /etc/services",
+  "/usr/bin/cap_mkdb -l /etc/login.conf",
+  "/usr/bin/makewhatis /usr/share/man",
+  "/usr/bin/makewhatis /usr/share/openssl/man"
+ ],
+ "host_files_compared": 763,
+ "host_release": "15.1-RELEASE-p6",
+ "name": "minimal-ssh-151",
+ "packages_installed": 68,
+ "patch_differs": false,
+ "release": "15.1-RELEASE-p6",
+ "scripts_allowed": 4,
+ "snapshot": "skeptest/skep/templates/dbf4243a-81fe-4914-8f7a-fd0a768476aa@skep-base",
+ "template_id": "dbf4243a-81fe-4914-8f7a-fd0a768476aa",
+ "trigger_files": [
+  "usr/share/pkg/triggers/mandoc.ucl"
+ ],
+ "used_bytes": 84792832
+}

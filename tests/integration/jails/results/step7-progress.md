@@ -192,3 +192,66 @@ schemas, and the codes; `web/src/api/schema.d.ts` is regenerated
 **Decision made:** `container:snapshot` stays undeclared until the jail
 snapshot routes exist (step 9), because the route table test requires
 every declared permission to be enforced.
+
+## 6. Deploy, the sshd template, and the first jails on hearst
+
+**Deploy.** `57d74bb` with `scripts/deploy-test.sh hearst` (services
+stopped and started with sudo). The agent's log: build jail sweep found 0,
+`containers: observed the jails` (0), then the socket. Test accounts
+`s7admin` (admin, `skep-api admin create`), `s7oper` (operator) and
+`s7viewer` (viewer) (both `POST /users`); passwords in the session
+scratchpad only. curl verifies hearst's certificate as its only CA, after
+checking its key against `skep-api tls fingerprint`.
+
+**sshd template** (approved): `POST /storage/templates`
+`minimal-ssh-151` as s7admin. The packages are the new default
+(`FreeBSD-set-minimal`, `FreeBSD-ssh`): 68 packages, the same 4 scripts
+and `mandoc.ucl` allowed, 763 host files unchanged, 15.1-RELEASE-p6, the
+new step "checking that the template holds no SSH host keys" passed.
+`usr/sbin/sshd` present; `etc/ssh` holds `moduli`, `ssh_config`,
+`sshd_config` and no host key; no `etc/rc.conf`; `readonly=on`.
+Record: [step7/sshd-template-task.txt](step7/sshd-template-task.txt).
+
+**j1** (operator, from `minimal-151`, no key):
+- Clone writable: `readonly=off` (set locally), origin
+  `minimal-151@skep-base`; a file created and removed in it. The template
+  refuses a write (`Read-only file system`).
+  [step7/j1-clone.txt](step7/j1-clone.txt)
+- Parents: `/skeptest/skep/jail` and `/skeptest/skep/templates` are
+  `root:wheel drwx------`.
+- Start: the parameter check passed on the real kernel. `/etc/rc` starts
+  cleanly (console log through the API as the viewer): lo0, syslogd,
+  cron, and only rc.d/routing's usual "route already in table" lines.
+  [step7/j1-console.txt](step7/j1-console.txt)
+- Baseline as the kernel reports it: vnet new, enforce_statfs 2,
+  children.max 0, securelevel 2, devfs_ruleset 5, sysv* disable, only
+  `allow.suser` and `allow.reserved_ports` on. Inside: `nc -l 22`
+  listens (amendment f); `ping` works (raw sockets in a VNET jail,
+  recorded, not refused: amendment f); mount, kldload, sysctl write,
+  sethostname, lowering the securelevel, and `chflags noschg` on a `schg`
+  file (`lib/libcrypt.so.5`) are refused. Only `lo0`.
+  [step7/j1-baseline.txt](step7/j1-baseline.txt)
+- As the unprivileged host user `aba`: the jail root, `usr/bin/su`
+  (setuid), `sbin/ping` (setuid), and the jail and template directories:
+  Permission denied. [step7/j1-unprivileged.txt](step7/j1-unprivileged.txt)
+
+**SSH** (amendment g):
+- A key on `minimal-151`: `422 container_ssh_unavailable`, naming the
+  template. [step7/ssh-refused-minimal.txt](step7/ssh-refused-minimal.txt)
+- j2 and j3 from `minimal-ssh-151` with a throwaway ed25519 key: before
+  the first start, `etc/rc.conf` (Skep's header, `sshd_enable`,
+  `sshd_flags`) 0644 and `root/.ssh/authorized_keys` 0600 in a 0700
+  `.ssh`, all root:wheel; no host key.
+  [step7/ssh-before-start.txt](step7/ssh-before-start.txt)
+- After the first start each has ECDSA, ED25519 and RSA host keys, and
+  every fingerprint differs between j2 and j3.
+  [step7/ssh-hostkeys.txt](step7/ssh-hostkeys.txt)
+- The key works: from inside j2 over its own lo0 (the only path: no NIC
+  in step 7), `ssh -i <key> root@127.0.0.1` logs in (`uid=0`, `j2`); another
+  key and no key: Permission denied. The private keys were put into j2's
+  /tmp for this through jexec and removed afterwards.
+  [step7/ssh-login.txt](step7/ssh-login.txt)
+- Decision 13: a key change or removal after the first start is
+  `409 container_started`, running or stopped; an update while running is
+  `409 container_not_stopped`; a hostname change after a stop is accepted.
+  [step7/started-once.txt](step7/started-once.txt)

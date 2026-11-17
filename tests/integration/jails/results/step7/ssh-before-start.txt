@@ -1,0 +1,24 @@
+== d3a83eb1-ec83-4f51-95f9-5cc64eb7c619 before its first start
+-rw-r--r--  1 root wheel uarch 141 Nov 16 21:19 /skeptest/skep/jail/d3a83eb1-ec83-4f51-95f9-5cc64eb7c619/etc/rc.conf
+-rw-------  1 root wheel uarch  97 Nov 16 21:19 /skeptest/skep/jail/d3a83eb1-ec83-4f51-95f9-5cc64eb7c619/root/.ssh/authorized_keys
+drwx------  2 root wheel uarch 3 Nov 16 21:19 /skeptest/skep/jail/d3a83eb1-ec83-4f51-95f9-5cc64eb7c619/root/.ssh
+--- rc.conf
+# Written by Skep before this jail's first start (ADR 0010 decision 13).
+sshd_enable="YES"
+sshd_flags="-o PermitRootLogin=prohibit-password"
+--- authorized_keys
+ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBAa3sk8zOgo5JscYBagoxNWBiqqFlDtadt6WQ/oYE+/ skep-step7-test
+--- host keys:
+none
+== 66ed9df5-f45c-40a7-b020-0e9f567f9023 before its first start
+-rw-r--r--  1 root wheel uarch 141 Nov 16 21:19 /skeptest/skep/jail/66ed9df5-f45c-40a7-b020-0e9f567f9023/etc/rc.conf
+-rw-------  1 root wheel uarch  97 Nov 16 21:19 /skeptest/skep/jail/66ed9df5-f45c-40a7-b020-0e9f567f9023/root/.ssh/authorized_keys
+drwx------  2 root wheel uarch 3 Nov 16 21:19 /skeptest/skep/jail/66ed9df5-f45c-40a7-b020-0e9f567f9023/root/.ssh
+--- rc.conf
+# Written by Skep before this jail's first start (ADR 0010 decision 13).
+sshd_enable="YES"
+sshd_flags="-o PermitRootLogin=prohibit-password"
+--- authorized_keys
+ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBAa3sk8zOgo5JscYBagoxNWBiqqFlDtadt6WQ/oYE+/ skep-step7-test
+--- host keys:
+none

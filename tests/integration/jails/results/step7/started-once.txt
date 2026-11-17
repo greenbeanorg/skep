@@ -1,0 +1,21 @@
+== PUT ssh key while j2 runs (as s7oper)
+{"error":{"code":"container_started","message":"the jail has started at least once, so Skep no longer writes into its tree (an SSH key change is the jail's own business now)","request_id":"841b13524f8c3d191cc3234b","details":{"container_id":"d3a83eb1-ec83-4f51-95f9-5cc64eb7c619"}}}
+
+HTTP 409
+== PUT hostname while j2 runs
+{"error":{"code":"container_not_stopped","message":"the jail is running; stop it first","request_id":"b5ad5c2143e2c66fc24475e4","details":{"container_id":"d3a83eb1-ec83-4f51-95f9-5cc64eb7c619"}}}
+
+HTTP 409
+container.stop succeeded  
+== PUT ssh key after j2 stopped (started_once is true)
+{"error":{"code":"container_started","message":"the jail has started at least once, so Skep no longer writes into its tree (an SSH key change is the jail's own business now)","request_id":"97015636a074d3ddba59dd86","details":{"container_id":"d3a83eb1-ec83-4f51-95f9-5cc64eb7c619"}}}
+
+HTTP 409
+== PUT removing the key after the first start
+{"error":{"code":"container_started","message":"the jail has started at least once, so Skep no longer writes into its tree (an SSH key change is the jail's own business now)","request_id":"5a11c107fedad437f4ed70da","details":{"container_id":"d3a83eb1-ec83-4f51-95f9-5cc64eb7c619"}}}
+
+HTTP 409
+== PUT hostname after stop (a jail parameter: allowed)
+{"id":"fc79fe2f-fb9f-4af0-b8a6-fba3b58c6d97","node_id":"97fc6968-7e82-49c9-bda8-9026775ca964","type":"container.update","status":"pending","resource_type":"container","resource_id":"d3a83eb1-ec83-4f51-95f9-5cc64eb7c619","actor":{"id":"f3b71fbe-2e24-4539-9ec2-8be0fcde53ed","name":"s7oper"},"request_id":"e682db421397f68af1d13df3","cancellable":false,"created_at":"2026-11-17T02:20:55.084Z"}
+
+HTTP 202
