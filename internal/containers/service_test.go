@@ -168,7 +168,9 @@ func (f *fixture) create(req models.ContainerCreate) models.Container {
 	if err != nil {
 		f.t.Fatal(err)
 	}
-	if created.Container.Provisioned || created.Task.Type != models.TaskContainerCreate {
+	// The reply's container is a snapshot that can be read after the task
+	// has finished, so its Provisioned is not asserted.
+	if created.Task.Type != models.TaskContainerCreate {
 		f.t.Fatalf("created = %+v", created)
 	}
 	f.succeed(created.Task, nil)
