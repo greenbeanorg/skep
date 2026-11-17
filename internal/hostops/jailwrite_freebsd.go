@@ -20,6 +20,16 @@ import (
 
 const beneath = unix.O_RESOLVE_BENEATH | unix.O_NOFOLLOW | unix.O_CLOEXEC
 
+// The files Skep writes, relative to the jail root: etc/rc.conf and
+// root/.ssh/authorized_keys.
+const (
+	jailRCConfDir      = "etc"
+	jailRCConfName     = "rc.conf"
+	jailRootHome       = "root"
+	jailSSHDir         = ".ssh"
+	jailAuthorizedKeys = "authorized_keys"
+)
+
 // writeJailFiles writes the rendered files under root, the jail root's
 // path on the host (a mountpoint under the 0700 jail directory).
 func writeJailFiles(root string, c jailContent) error {

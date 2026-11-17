@@ -16,15 +16,6 @@ import (
 // not Skep's, and Skep refuses to replace or remove it.
 const RCConfHeader = "# Written by Skep before this jail's first start (ADR 0010 decision 13).\n"
 
-// The files Skep writes, relative to the jail root.
-const (
-	jailRCConfDir      = "etc"
-	jailRCConfName     = "rc.conf"
-	jailRootHome       = "root"
-	jailSSHDir         = ".ssh"
-	jailAuthorizedKeys = "authorized_keys"
-)
-
 // MaxSSHKeyLength bounds an SSH public key line.
 const MaxSSHKeyLength = 16 << 10
 
