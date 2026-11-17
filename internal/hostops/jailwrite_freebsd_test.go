@@ -215,3 +215,53 @@ func TestResolveBeneathNative(t *testing.T) {
 	unix.Close(fd)
 	outsideUntouched(t, outside)
 }
+
+func TestWriteJailResolvConfNative(t *testing.T) {
+	root, outside := jailTree(t)
+	c, err := JailFiles{RCConf: []string{`ifconfig_sj0000000000n0="inet 192.0.2.10/24"`}, Nameservers: []string{"192.0.2.53"}}.render()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeJailFiles(root, c); err != nil {
+		t.Fatal(err)
+	}
+	p := filepath.Join(root, "etc", "resolv.conf")
+	if b, _ := os.ReadFile(p); string(b) != RCConfHeader+"nameserver 192.0.2.53\n" {
+		t.Fatalf("resolv.conf = %q", b)
+	}
+	if m, uid, gid := mode(t, p); m != 0o644 || uid != 0 || gid != 0 {
+		t.Fatalf("resolv.conf mode %v %d:%d", m, uid, gid)
+	}
+	// Without nameservers Skep's own is removed.
+	c.resolvConf = nil
+	if err := writeJailFiles(root, c); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(p); !os.IsNotExist(err) {
+		t.Fatalf("Skep's resolv.conf survived: %v", err)
+	}
+	// A template's own resolv.conf is left alone when there is nothing to
+	// write, and refused when there is.
+	if err := os.WriteFile(p, []byte("nameserver 10.0.0.1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeJailFiles(root, c); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(p); string(b) != "nameserver 10.0.0.1\n" {
+		t.Fatalf("a foreign resolv.conf changed: %q", b)
+	}
+	c2, _ := JailFiles{Nameservers: []string{"192.0.2.53"}}.render()
+	if err := writeJailFiles(root, c2); err == nil {
+		t.Fatal("a foreign resolv.conf was replaced")
+	}
+	// A planted link pointing outside is replaced, never followed.
+	os.Remove(p)
+	if err := os.Symlink(filepath.Join(outside, "victim"), p); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeJailFiles(root, c2); err == nil {
+		t.Fatal("wrote through a planted resolv.conf link")
+	}
+	outsideUntouched(t, outside)
+}
