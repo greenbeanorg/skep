@@ -6,12 +6,12 @@ you create, start, stop, and delete one, and what a jail can and cannot do.
 The design is [ADR 0010](../decisions/0010-storage-and-jails.md), decisions
 8, 9, 12, and 13, with amendments e, f, and g.
 
-Status: built in Milestone 7, phase 7b, step 7, and validated on FreeBSD
-15.1 (`hearst`, see
-[tests/integration/jails](../../tests/integration/jails/README.md)). Jails
-have **no network interface yet** besides their own `lo0`: VNET networking
-(an epair on an allow-listed bridge) is step 8. Resource limits, snapshots,
-and clones are step 9; the web interface and `skepctl container` are step 10.
+Status: built in Milestone 7, phase 7b, steps 7 to 9 (jails, VNET
+networking, limits, snapshots, and clones), validated on FreeBSD 15.1
+(`hearst`, see
+[tests/integration/jails](../../tests/integration/jails/README.md)); what
+is pending FreeBSD validation is listed in the step 9 progress log. The
+web interface and `skepctl container` are step 10.
 
 ## The API
 
@@ -23,8 +23,13 @@ and clones are step 9; the web interface and `skepctl container` are step 10.
 | `PUT /api/v1/containers/{id}` | `container:write` | Change a stopped jail (`container.update`) |
 | `POST /api/v1/containers/{id}/actions` | `container:power` | `start`, `stop` (optional `timeout`), `restart` |
 | `DELETE /api/v1/containers/{id}` | `container:delete` | Destroy a stopped jail and its dataset (`container.delete`) |
+| `GET .../containers/{id}/snapshots`, `GET .../snapshots/{sid}` | `container:read` | List or read a jail's snapshots |
+| `POST .../containers/{id}/snapshots` | `container:snapshot` | Take a snapshot (`container.snapshot.create`) |
+| `POST .../snapshots/{sid}/rollback` | `container:snapshot` | Roll a stopped jail back (`container.snapshot.rollback`) |
+| `DELETE .../snapshots/{sid}` | `container:snapshot` | Delete a snapshot (`container.snapshot.delete`) |
+| `POST .../containers/{id}/clone` | `container:write` and `container:snapshot` | Make a linked clone (`container.clone`) |
 
-The built-in `operator` role has all four permissions, `viewer` only
+The built-in `operator` role has all five permissions, `viewer` only
 `container:read`. Building templates is `storage:write`, admin only. Every
 write is a task and is audited in both logs; a delete lists every dataset
 it destroyed.
@@ -223,6 +228,66 @@ those names. It finds a jail's epairs by their host ends' description
 and the jail's next start, stop, or delete destroys them (destroying a
 host end removes its own jail end, whatever it is called). Don't run
 `ifconfig skep0 ...` on the host while two exist: it acts on one of them.
+
+## Snapshots and clones
+
+A jail's root is one ZFS dataset, so a snapshot is one `zfs snapshot` of
+it, named `@skep-<snapshot-id>` and carrying `skep:snapshot_id`, as for
+VMs ([storage](storage.md)). Taken while the jail runs it is
+`crash_consistent` (what a power cut would leave); taken while it is
+stopped, `consistent`. Memory is not saved. A jail has at most
+`storage.max_snapshots_per_resource` snapshots (default 64).
+
+**Rollback** needs a stopped jail (`container_not_stopped`). Rolling back
+to a snapshot that is not the latest destroys the newer ones and needs
+`"destroy_newer": true`; the result and the audit entry name them. A
+rollback never resets `started_once`: even after rolling back to a
+snapshot taken before the first start, Skep does not write into the tree
+again.
+
+**A clone** is a new jail whose root is `zfs clone` of one snapshot of the
+source's root. Without `snapshot_id` the task takes a snapshot first,
+named after the clone, and leaves it behind. The clone gets a new ID, the
+given name and hostname (default: the name), and new MAC addresses, and
+keeps the source's template, options, limits (the disk quota, which ZFS
+does not copy to a clone, is set again), SSH key, NIC slots, bridges, and
+addressing. Its in-jail interfaces are `skep0`, `skep1`, ... like every
+jail's, so the `rc.conf` it copied configures them. While the clone
+exists, its origin snapshot and the source cannot be deleted
+(`snapshot_has_clones`).
+
+```json
+POST /api/v1/containers/<id>/clone
+{"name": "web2", "snapshot_id": "<snapshot ID>"}
+```
+
+- **A clone has its source's `started_once`.** A snapshot of a jail that
+  has started may hold a tree that has run code, so Skep never writes
+  into such a clone.
+- **Static addresses.** Every NIC of the source with a static address
+  needs new addressing in `nics` (one entry per NIC, in slot order; empty
+  fields keep the source's), or the request is refused with
+  `clone_addressing_required` (422) and the slots. The new address must go
+  into the clone's `rc.conf`, so it is accepted only when the source has
+  never started; for a started source the request is `container_started`.
+  **A jail with a static address can therefore be cloned only before its
+  first start.** A DHCP jail can always be cloned, and its clone asks for
+  its own lease with its new MAC address.
+- **A start is refused when a running Skep jail on the same bridge holds
+  one of the jail's static addresses** (`container_address_in_use`). The
+  addresses compared are the ones Skep wrote; an address changed inside a
+  jail is not seen, and two starts submitted at the same moment are not
+  checked against each other.
+- **A clone is the same guest.** Its `/etc/ssh` host keys and
+  `/etc/hostid` are the source's. Regenerate the host keys inside the
+  clone before it shares a network with the source:
+
+  ```sh
+  rm /etc/ssh/ssh_host_*_key /etc/ssh/ssh_host_*_key.pub
+  service sshd restart   # sshd's rc script generates new keys
+  ```
+
+  An option to reset the host keys on clone is in the backlog.
 
 ## Writing into a jail only before its first start
 

@@ -478,3 +478,47 @@ real one. Skep's own removals no longer return anything; removals outside
 Skep still can. Not fixed; for your judgement.
 
 hearst after the probes: no jails, no epairs, `/tmp` probe files removed.
+
+## 13. Built after the probe (2026-11-17)
+
+- **`skep<slot>` names** (`aa63eee`): rename inside the jail after the
+  move-in check, before the `/dev` guard; every Skep removal destroys the
+  epairs before `jail -r` (section 12).
+- **Templates flake** (amendment k, as Q5).
+- **Jail snapshots and clones** (amendments j and k): the tasks
+  `container.snapshot.create/rollback/delete` and `container.clone`;
+  `hostops.CloneJail`; the routes (`container:snapshot` declared; clone
+  needs `container:write` and `container:snapshot`); the static-address
+  rules; `container_address_in_use` at start; OpenAPI, the admin guide,
+  and the ADR notes.
+
+### Q8: a started jail with a static address cannot be cloned
+
+Amendment k says a clone must give new addressing for every static NIC.
+The new address has to go into the clone's `rc.conf`, and Skep writes into
+a tree only before it has run code (Decision 13, reaffirmed in amendment
+k). A clone inherits its source's `started_once` (a snapshot of a started
+jail can hold a tree that ran code), so:
+
+| Source | Clone request | Result |
+|---|---|---|
+| any, DHCP NICs only | anything | clone works; new MAC, own lease |
+| static NIC, never started | no new addressing | `clone_addressing_required` (422) |
+| static NIC, never started | new addressing | clone works; Skep writes the clone's rc.conf |
+| static NIC, started | no new addressing | `clone_addressing_required` (422) |
+| static NIC, started | new addressing | `container_started` (409) |
+
+So a started static jail cannot be cloned at all. Built that way because
+it is the only reading that breaks no accepted decision. Options:
+**A.** Keep it (documented). **B.** Allow Skep to rewrite only its own
+`rc.conf` (the file with its header) in a clone, an exception to Decision
+13 (Q7's option B, which you did not choose). **C.** Apply the new address
+from the host with `ifconfig -j` after `/etc/rc` (no jail code runs, but
+the jail's own rc.conf still names the old address and wins on the next
+`service netif restart` inside the jail). My recommendation is A for 7b,
+with B in the backlog if you want static clones.
+
+**Also chosen without asking (please confirm):** a clone's hostname
+defaults to the clone's name, as on a create (section 2's plan said the
+source's hostname); nameservers default to the source's, and are dropped
+when no NIC keeps a static address.

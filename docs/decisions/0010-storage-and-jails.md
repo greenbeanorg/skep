@@ -1731,8 +1731,9 @@ Started 2026-11-17. **Built:** the RCTL limits and the disk quota of
 Decision 11 (`memoryuse`, `pcpu`, `maxproc`, `openfiles` deny rules on
 `jail:skep-<id>`, added after `jail -c` and read back before the `/dev`
 guard and `/etc/rc`, removed at every removal; `refquota` on the jail
-root; `rctl_unavailable`; `mlock` with a memory limit). Snapshots and
-clones are not built yet.
+root; `rctl_unavailable`; `mlock` with a memory limit), and, after
+amendment k, the fixed in-jail names, jail snapshots and clones, and the
+static-address rules (below).
 
 **`memoryuse` deny is not a hard limit** (the check of Decision 11, on
 `hearst`, `a3ef267`): a jail with `memoryuse` 256 MiB held 514 MiB
@@ -1756,4 +1757,36 @@ under memory pressure. That is what the docs call soft. RCTL `openfiles`
 counts descriptor-table slots, not open descriptors (each process is
 charged 40, 128, 256, ... as its table grows, and Capsicum helpers such
 as `tail`'s count too), which is why 59 of 300 opens succeeded under 256.
+
+**Amendment k, built (2026-11-17).** The probe on `hearst` came first
+([step9-progress.md](../../tests/integration/jails/results/step9-progress.md)
+section 12): an abnormal removal of two jails returns two host interfaces
+both named `skep0`, which 15.1 allows; host ends keep their descriptions,
+destroying a host end removes only its own peer, and `jail -r` with
+`vnet.interface` runs no `-vnet` command, so a renamed interface never
+fails a removal. Built: `finishStart` renames each jail end to
+`skep<slot>` with `ifconfig -j` after the move-in check and before the
+`/dev` guard (a failed rename removes the jail without running its code);
+Skep's `rc.conf` lines name `skep<slot>`; the API's `nics[].interface` is
+the in-jail name. Of amendment k's two options for a normal stop, every
+removal Skep makes **destroys the epairs before `jail -r`** rather than
+renaming back: it does not depend on the jail's interface list, which the
+jail's root controls, and no jail end returns to the host. The jail's
+`/etc/rc.shutdown` runs without its NICs (a rename-back would have taken
+`skep0` away at the same point).
+
+**Jail snapshots and clones (Decisions 2, 3, 13; amendments j, k).**
+`container.snapshot.create/rollback/delete` reuse the VM snapshot calls
+with the container owner; `container.clone` uses `hostops.CloneJail`
+(`zfs clone -o canmount=on -o readonly=off -o skep:container_id=<new>`,
+mount checked) and sets the disk quota again. A clone inherits its
+source's `started_once`; a rollback never resets it. Clone needs
+`container:write` and `container:snapshot`. Static addresses: a clone must
+give new addressing for each static NIC of the source
+(`clone_addressing_required`, 422); new addressing is written into the
+clone's tree only when the source never started, otherwise
+`container_started`, so **a started jail with a static address cannot be
+cloned** (Q8 in the progress log). A start is refused with
+`container_address_in_use` when a running Skep jail on the same bridge
+holds one of its static addresses (as Skep wrote them).
 
