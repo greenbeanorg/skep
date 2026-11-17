@@ -311,3 +311,98 @@ containers, jails, epairs, or RCTL rules; bridge0 has vtnet1 only;
 `skeptest/skep/jail` empty. hearst's `/tmp` has four old
 `skep-adminprompt*`/`skep-api-test*` directories from 2026-11-12 to
 11-14, not from step 9; left alone.
+
+## 10. Continued run (2026-11-17): STOP, a clone decision is needed (Q7)
+
+**Built and pushed** (on merrick: `go vet` Linux and FreeBSD, `go test
+./...`, `make web-check`, and the pre-push `make lint` passed; one
+unrelated flake, below):
+
+- `5a779a4` **fix(scripts): restart the services after a test deploy and
+  verify the running build.** `deploy-test.sh HOST` now stops skep_api and
+  skep_agent, starts them again, and succeeds only when each running
+  process's text inode (`fstat`) is the installed file's and that file's
+  `-version` names the checkout's commit. A checkout with uncommitted
+  changes is refused. Run on hearst: both services restarted and verified
+  at `5a779a4`; the refusal checked too
+  ([deploy](step9-deploy-5a779a4.txt)).
+- `2595432` **docs(jails):** `open_files` counts file-table slots (40,
+  then 128, then 256, never shrinking), with a sizing rule: per process at
+  least 40 or about twice the most files it keeps open, summed, plus half
+  again.
+- `2c12a76` **feat(monitoring): jail usage in `/metrics`** (Q2). Each jail
+  with its root's `disk_used_bytes`/`disk_referenced_bytes` and, running
+  with RACCT, `cpu_percent`, `cpu_time_seconds`, `resident_memory_bytes`,
+  `processes`, `open_file_slots` from `rctl -u jail:skep-<id>`. Read only.
+  The read probe showed `rctl -u` prints zeros (exit 0) for a jail name
+  that does not exist, so `hostops.JailUsage` checks `jls -j` before and
+  after the read. **One change for you to confirm:** `GET /metrics` now
+  also requires `container:read` (it names jails, as it already required
+  `vm:read` and `storage:read`); viewer and operator have it, so neither
+  built-in role changes. Not deployed to hearst yet.
+
+**Not built:** jail snapshots and clones (item 4), and the hearst
+validation (item 5). I stopped at the clone design before writing either.
+
+### Q7: a jail clone's NICs would not come up
+
+A jail's NIC is an epair whose jail end is renamed on the host to
+`sj<first 10 hex digits of the container ID>n<slot>` before
+`vnet.interface` moves it into the jail (amendment h; the name must be
+unique on the host while it is there). Skep's `/etc/rc.conf` in the
+jail's tree names that interface (`ifconfig_sj…n0="SYNCDHCP"`, or the
+static address). A clone has a new container ID, so its NICs get new
+names, but its tree is the source's, and its rc.conf names the source's
+interfaces. Decision 3 says Skep does not rewrite a clone's tree, and
+Decision 13 forbids writing into a tree that has run code (a clone of a
+started jail always has `started_once = 1`). Built as the ADR reads, a
+clone of any jail with NICs would boot with its NICs unconfigured. VM
+clones do not have this problem, because the guest names its NICs
+(`vtnet0`) independently of Skep's IDs.
+
+Read-only probe on hearst: `ifconfig -j <jail>` exists on 15.1 and runs the
+host's ifconfig inside a vnet jail's network stack ("even if the
+ifconfig binary is not available inside the jail"), so an interface can
+be renamed inside the jail without running any of the jail's code.
+
+| Option | What changes | Cost and risk |
+|---|---|---|
+| A. A clone keeps its source's in-jail names: each container records a "guest interface prefix" (its own ID's for a new jail, inherited by a clone). The epair's jail end is still named by the container's own ID on the host (unique there), and after `jail -c`, before the `/dev` guard and `/etc/rc`, Skep renames it inside the jail with `ifconfig -j skep-<id> <host name> name <guest name>` | The prefix goes in `containers.config` (no migration); one fixed-argument command per NIC in the start path, checked like the other steps; Decision 3 and 13 hold unchanged | A new step in every start (live validation needed); in-jail names no longer tell which container a jail is |
+| B. Rewrite Skep's own rc.conf in the clone's tree at clone time, with the clone's names | Small: `ConfigureJail` on the clone | Writes into a tree that has run code: an exception to Decision 13, and the opposite of Decision 3's "Skep does not rewrite them". Not recommended |
+| C. Fixed in-jail names for every jail (`skep0`, `skep1`, … by slot), renamed inside the jail as in A | rc.conf lines use the fixed names; the same `ifconfig -j` step as A; no prefix to store | Changes amendment h's naming for all jails, existing ones included: a jail already started has the old names in its rc.conf, and Skep may not rewrite it (none exist outside hearst's test runs) |
+| D. Build clones now but refuse to clone a jail with NICs (`storage_feature_unsupported`, saying why), and decide A or C later | Clone works for jails without NICs only | A half feature; the decision is only postponed |
+
+My recommendation is C, because it makes a jail's network configuration
+independent of its identity, as a VM's is. It costs one rename per NIC
+at start. If you would rather not touch existing jails' naming, A is the
+next best. Either way the `ifconfig -j` step needs live validation on
+hearst. Two related points need your answer whichever option you pick:
+
+- **Static addresses.** A clone copies its source's addressing (as
+  planned in section 2). With a static address, the clone and the source
+  then hold the same address, so running both conflicts. The options are
+  to document it (as for VM clones, whose guests keep their addresses), to
+  refuse starting a jail whose static address a running jail holds, or to
+  require new addressing in the clone request.
+- **Snapshots don't depend on Q7.** If you agree, I can build and
+  validate jail snapshots (create, rollback, delete, `container:snapshot`)
+  and the remaining hearst checks (`memorylocked` with the test program,
+  `/metrics`) while you decide, and leave only the clone for after.
+
+### Other findings
+
+- **A flake in `internal/templates`:** `TestCreateAndDeleteTemplate`
+  failed once in the full run (`created.Template.Provisioned` was already
+  true: the task finished before the create response was read, the same
+  race as Q5's `fixture.create`). It passed in 5 of 5 reruns and 3 of 3
+  without my changes. Not fixed: it is outside this run's scope. The fix
+  is the same as `ec86060` (don't assert the flag in the create
+  response).
+
+**hearst now:** `5a779a4` deployed by the new script, both services
+restarted and verified (undo: redeploy `4c7d8e0`). `5a779a4` differs from
+`4c7d8e0` only in `deploy-test.sh` and the results files, so the running
+code is the same. No containers, jails, epairs, or RCTL rules were
+created in this run. The only commands run on hearst were the deploy,
+`fstat`, `procstat`, `stat`, `rctl -u` on a nonexistent jail and on cron's
+process, and `man ifconfig`.
