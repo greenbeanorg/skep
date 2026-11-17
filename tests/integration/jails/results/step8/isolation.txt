@@ -1,0 +1,131 @@
+# Isolation from the DHCP jail n8dhcp2 (7a1e3658-aced-47d1-bf56-8b9a2478632e), 2026-11-17T18:44:41Z
+Probes run inside the jail with jexec as root on hearst (script: below). nc -z -v -w 4 and ping -c 2 -t 4.
+
+== jail: n8dhcp2 addr 10.79.60.104 default via 10.79.60.1
+== resolv.conf: nameserver 10.79.10.250 nameserver 10.79.10.249 
+== must be blocked: hearst
+ping 10.79.20.170 -> REPLY
+tcp 10.79.20.170:22 -> no answer (timeout)
+tcp 10.79.20.170:8443 -> no answer (timeout)
+== must be blocked: 10/8 (other)
+ping 10.79.20.80 -> REPLY
+tcp 10.79.20.80:22 -> no answer (timeout)
+ping 10.79.20.1 -> REPLY
+tcp 10.79.20.1:443 -> no answer (timeout)
+tcp 10.79.10.250:53 -> OPEN
+ping 10.79.10.250 -> REPLY
+ping 10.0.0.1 -> no reply
+== must be blocked: 172.16/12
+ping 172.16.0.1 -> no reply
+tcp 172.16.0.1:443 -> no answer (timeout)
+ping 172.31.255.254 -> no reply
+tcp 172.20.0.1:80 -> no answer (timeout)
+== must be blocked: 192.168/16
+ping 192.168.0.1 -> no reply
+tcp 192.168.1.1:443 -> no answer (timeout)
+ping 192.168.255.254 -> no reply
+tcp 192.168.100.1:80 -> no answer (timeout)
+== must work: internet
+ping 9.9.9.9 -> REPLY
+tcp 1.1.1.1:443 -> OPEN
+fetch https://www.freebsd.org/ -> OK
+== must work: DNS
+dns @10.79.10.250 www.freebsd.org A -> NO ANSWER
+dns @10.79.10.249 www.freebsd.org A -> NO ANSWER
+dns @10.79.60.1 www.freebsd.org A -> NO ANSWER
+host pkg.freebsd.org (resolv.conf) -> pkg.freebsd.org is an alias for pkgmir.geo.freebsd.org.
+== must work: NTP 10.79.60.1
+ntp query to 10.79.60.1:123 -> 0 bytes back (48 = an NTP reply)
+ntp query to hearst 10.79.20.170:123 -> 0 bytes back
+== link-local IPv6 on VLAN 60 (jail end's IPv6 enabled for this probe, disabled again after)
+3 packets transmitted, 3 packets received, 0.0% packet loss
+responders: fe80::d6:4dff:fe28:d13b%sj7a1e3658acn0, 
+own link-local: fe80::d6:4dff:fe28:d13b%sj7a1e3658acn0
+== done
+
+## the probe script
+# Runs inside the jail (jexec ... /bin/sh -s). Summarizes each probe.
+IF=sj7a1e3658acn0
+tcp() { r=$(nc -z -v -w 4 "$1" "$2" 2>&1 | tail -1); case "$r" in *succeeded*) s=OPEN;; *refused*) s="REFUSED (reachable)";; *timed*|*"timed out"*) s="no answer (timeout)";; *) s="$r";; esac; echo "tcp $1:$2 -> $s"; }
+icmp() { if ping -c 2 -t 4 -q "$1" >/dev/null 2>&1; then echo "ping $1 -> REPLY"; else echo "ping $1 -> no reply"; fi; }
+echo "== jail: $(hostname) addr $(ifconfig $IF inet | awk '/inet /{print $2}') default via $(netstat -rn -f inet | awk '$1=="default"{print $2}')"
+echo "== resolv.conf: $(grep nameserver /etc/resolv.conf | tr '\n' ' ')"
+echo "== must be blocked: hearst"
+icmp 10.79.20.170; tcp 10.79.20.170 22; tcp 10.79.20.170 8443
+echo "== must be blocked: 10/8 (other)"
+icmp 10.79.20.80; tcp 10.79.20.80 22; icmp 10.79.20.1; tcp 10.79.20.1 443; tcp 10.79.10.250 53; icmp 10.79.10.250; icmp 10.0.0.1
+echo "== must be blocked: 172.16/12"
+icmp 172.16.0.1; tcp 172.16.0.1 443; icmp 172.31.255.254; tcp 172.20.0.1 80
+echo "== must be blocked: 192.168/16"
+icmp 192.168.0.1; tcp 192.168.1.1 443; icmp 192.168.255.254; tcp 192.168.100.1 80
+echo "== must work: internet"
+icmp 9.9.9.9; tcp 1.1.1.1 443
+if fetch -q -T 15 -o /dev/null https://www.freebsd.org/ 2>/dev/null; then echo "fetch https://www.freebsd.org/ -> OK"; else echo "fetch https://www.freebsd.org/ -> FAILED"; fi
+echo "== must work: DNS"
+for ns in $(awk '/^nameserver/{print $2}' /etc/resolv.conf) 10.79.60.1; do a=$(drill @$ns www.freebsd.org A 2>&1 | awk '/^www.freebsd.org/ && $4=="A"{print $5; exit}'); echo "dns @$ns www.freebsd.org A -> ${a:-NO ANSWER}"; done
+h=$(host -W 5 pkg.freebsd.org 2>&1 | head -1); echo "host pkg.freebsd.org (resolv.conf) -> $h"
+echo "== must work: NTP 10.79.60.1"
+n=$( { printf '\033'; dd if=/dev/zero bs=47 count=1 2>/dev/null; } | nc -u -w 3 10.79.60.1 123 | wc -c | tr -d ' '); echo "ntp query to 10.79.60.1:123 -> $n bytes back (48 = an NTP reply)"
+n=$( { printf '\033'; dd if=/dev/zero bs=47 count=1 2>/dev/null; } | nc -u -w 3 10.79.20.170 123 | wc -c | tr -d ' '); echo "ntp query to hearst 10.79.20.170:123 -> $n bytes back"
+echo "== link-local IPv6 on VLAN 60 (jail end's IPv6 enabled for this probe, disabled again after)"
+ifconfig $IF inet6 -ifdisabled auto_linklocal up; sleep 3
+ping6 -c 3 -q ff02::1%$IF 2>&1 | grep -E "received|loss"
+echo "responders: $(ping6 -c 2 ff02::1%$IF 2>/dev/null | awk '/bytes from/{print $4}' | sort -u | tr '\n' ' ')"
+echo "own link-local: $(ifconfig $IF inet6 | awk '/fe80/{print $2}')"
+ifconfig $IF inet6 ifdisabled -auto_linklocal
+echo "== done"
+
+## follow-up probes (same jail, a minute later)
+== ping detail (source, ttl)
+64 bytes from 10.79.20.170: icmp_seq=0 ttl=63 time=1.016 ms
+64 bytes from 10.79.20.80: icmp_seq=0 ttl=63 time=0.466 ms
+64 bytes from 10.79.60.1: icmp_seq=0 ttl=64 time=0.347 ms
+== drill raw answer sections
+@10.79.10.250: www.freebsd.org. 243 IN CNAME web.geo.freebsd.org.;web.geo.freebsd.org. 244 IN A 96.47.72.77;
+@10.79.10.249: www.freebsd.org. 244 IN CNAME web.geo.freebsd.org.;web.geo.freebsd.org. 244 IN A 96.47.72.77;
+@10.79.60.1: 
+== NTP method check
+time.cloudflare.com 162.159.200.1 -> 0 bytes
+10.79.60.1 -> 48 bytes
+10.79.20.1 -> 0 bytes
+ls: /usr/bin/sntp: No such file or directory ls: /usr/sbin/ntpd: No such file or directory 
+-- tcpdump -n -i vtnet0 'icmp and host 10.79.60.104' on hearst during the pings above:
+13:46:36.777490 IP 10.79.60.104 > 10.79.20.170: ICMP echo request, id 26134, seq 0, length 64
+13:46:36.777537 IP 10.79.20.170 > 10.79.60.104: ICMP echo reply, id 26134, seq 0, length 64
+
+-- NTP, repeated:
+try 1: 10.79.60.1 0 bytes, 162.159.200.1 0 bytes
+try 2: 10.79.60.1 0 bytes, 162.159.200.1 0 bytes
+try 3: 10.79.60.1 48 bytes, 162.159.200.1 48 bytes
+try 4: 10.79.60.1 48 bytes, 162.159.200.1 48 bytes
+
+## Result
+Blocked as expected (TCP, no answer, dropped): hearst 10.79.20.170 on 22
+and 8443; merrick 10.79.20.80:22; 10.79.20.1:443; samples in 172.16/12
+and 192.168/16 (no answer at all; from the jail alone a drop cannot be
+told from an absent host, so OPNsense's log is the real evidence there).
+
+**Unexpected: ICMP echo passes into 10/8.** From the jail, ping gets
+replies from hearst (10.79.20.170), merrick (10.79.20.80), 10.79.20.1,
+and 10.79.10.250, all with ttl 63, i.e. routed through 10.79.60.1. The
+capture on hearst's vtnet0 shows the echo request from 10.79.60.104
+arriving and hearst replying. So the LAB rules let ICMP echo from VLAN
+60 into the management network; TCP is dropped. This is the firewall's
+rule set, not Skep; nothing was changed. 10.0.0.1 (no host) did not
+reply.
+
+Allowed, as expected: DNS to 10.79.10.250 and .249 (TCP 53 open; A
+records through a CNAME; host(1) resolves). 10.79.60.1 does not answer
+DNS. Internet: ping 9.9.9.9, TCP 1.1.1.1:443, fetch of
+https://www.freebsd.org/ all work. NTP: 10.79.60.1 answers a hand-made
+client query (48 bytes), and so does 162.159.200.1; both missed some
+back-to-back tries, most likely the servers' rate limiting, so this
+shows reachability, not reliability.
+
+hearst on any address: hearst's only address outside lo0 is
+10.79.20.170 (bridge0, vtnet1, and the epair host end have none; IPv6 is
+disabled on them). TCP to it is dropped; ICMP echo reaches it (above).
+127.0.0.1 and ::1 in a VNET jail are the jail's own loopback. With the
+jail end's IPv6 enabled for the probe, ff02::1 on VLAN 60 was answered
+only by the jail itself: hearst has no link-local presence on the jail's
+link.
