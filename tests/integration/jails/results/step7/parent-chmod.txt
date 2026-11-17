@@ -1,0 +1,17 @@
+== chmod 755
+/skeptest/skep/jail root:wheel drwxr-xr-x
+== start (as s7oper)
+container.start failed  
+
+   JID  IP Address      Hostname                      Path
+== restore 0700
+/skeptest/skep/jail root:wheel drwx------
+== start again
+container.start succeeded  
+== stop and delete jp
+container.stop succeeded  
+container.delete succeeded  
+   JID  IP Address      Hostname                      Path
+skeptest/skep/jail
+/skeptest/skep/jail root:wheel drwx------
+container.start failed {"code": "jail_parent_insecure", "message": "the directory /skeptest/skep/jail has mode 0755; it must be a directory owned by root:wheel with mode 0700, because it holds jail and template roots"}

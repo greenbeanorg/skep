@@ -294,3 +294,19 @@ each delete's finished entry lists the dataset it destroyed.
 templates guide's default packages; the README's status table and guide
 list; ADR 0010's step 7 "Built" notes; the check table and script list of
 `tests/integration/jails/README.md`.
+
+## 9. After the run (Andy, 2026-11-16)
+
+**The `chmod 755` check, approved and run.** A throwaway jail `jp` (from
+`minimal-151`, as s7oper); `chmod 0755 /skeptest/skep/jail`; start:
+the task failed with `jail_parent_insecure` ("the directory
+/skeptest/skep/jail has mode 0755; it must be a directory owned by
+root:wheel with mode 0700 ..."), no jail in `jls`. Restored with
+`chmod 0700` (`root:wheel drwx------`); the same start then succeeded.
+`jp` stopped and deleted; only the empty parent is left, 0700.
+Record: [step7/parent-chmod.txt](step7/parent-chmod.txt). Decision 16's
+"Jail root parent" row has now passed in full on hearst.
+
+**Kept:** the API users `s7admin`, `s7oper`, `s7viewer` (enabled) and the
+template `minimal-ssh-151`. Their passwords are in `~/.skep-test-creds`
+on merrick (mode 0600, outside the repository).
