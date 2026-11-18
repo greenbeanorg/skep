@@ -1139,6 +1139,23 @@ Amendments made at acceptance, worked into the text:
     the `sqlite3` edit; the hand-made epair and all test data are removed
     afterwards; every change made on hearst is recorded in the progress
     log.
+- **p. Decisions on the amendment o build** (Andy, 2026-11-18, from
+  section 15 of
+  [step10-progress.md](../../tests/integration/jails/results/step10-progress.md)).
+  - **Approved as built:** the ten changes outside the request (section
+    15.3).
+  - **rc.shutdown's output is kept** (15.4 point 1). The output `jail -r`
+    returns is appended to `console.log` after a `--- shutdown ---`
+    marker line, with its own budget: the first 32 KiB, a
+    `N bytes discarded` marker, and the last 32 KiB. The agent writes it
+    from memory after `jail -r` returns; a failure to write it never
+    fails the removal.
+  - **A failed `jail -r` reports the last line of its stderr** (15.4
+    point 2), not the first: control characters stripped, at most 200
+    bytes, and labelled as jail output in the error and in the log.
+  - **The locked-memory total stays out of `GET /system` in 7b** (15.4
+    point 3). Backlog: expose it in `GET /system` so the UI can check a
+    `locked_memory` value before sending it.
 
 ## Implementation notes
 

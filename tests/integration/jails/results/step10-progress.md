@@ -850,3 +850,20 @@ amendment; nothing was stopped on.
 
 None of these changes hearst's configuration: the SR-04 checks use the
 default total, so `agent.json` is not edited.
+
+## 16. Andy's answers to section 15 (2026-11-18), recorded as amendment p
+
+1. **Approved:** all ten changes of 15.3.
+2. **15.4 point 1, rc.shutdown's output:** append the output `jail -r`
+   returns to `console.log` after a `--- shutdown ---` marker, with its
+   own budget: 32 KiB head, a `N bytes discarded` marker, 32 KiB tail.
+   The agent writes it from memory; a failure to write it never fails
+   the removal.
+3. **15.4 point 2, a failed `jail -r`:** report the last line of stderr,
+   with control characters stripped, capped at 200 bytes, and labelled as
+   jail output in the error and the log.
+4. **15.4 point 3:** no change in 7b. Backlog: expose the locked-memory
+   total in `GET /system` so the UI can pre-check `locked_memory`.
+
+No code was written in this session; points 2 and 3 of this list are the
+next build.
