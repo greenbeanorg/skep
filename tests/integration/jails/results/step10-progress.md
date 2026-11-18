@@ -292,3 +292,29 @@ limits from the next start; a quota below the referenced size refused).
    Added to the hearst list: verify the build jail's `sysv*` = `disable`.
 2. **Edit dialog:** a save that would remove a limit (an emptied field)
    first asks for confirmation, listing the limits being removed.
+
+## 12. Built after the answers of section 11 (2026-11-17)
+
+1. **Build jail sysv** (`756a1a2`): `buildJailArgs` passes
+   `sysvshm=disable sysvsem=disable sysvmsg=disable` to `jail -c`;
+   `checkBuildJail` requires all three to be `disable` in the kernel's
+   report (a missing value, `inherit`, or `new` is refused), so
+   `StartBuildJail` fails and the builder's deferred clean-up removes the
+   build jail (covered by the existing `TestBuildJailCheckFailureRemovesJail`).
+   Unit tests: the arguments, and the check refusing `inherit`/`new`/absent.
+   The jls output recorded on hearst (`testdata/jls-build-jail-15.1.json`,
+   15.1-RELEASE-p6) already shows `disable` for all three, so the kernel
+   default was `disable` there; the explicit setting makes it not depend on
+   that. `TestStartBuildJailChecksParameters` still skips as non-root.
+   Docs: jail-templates.md step 7.
+2. **Limit removal confirmation** (this commit series): a save that would
+   remove a limit lists the limits and asks; "Keep editing" sends nothing.
+
+Checks on merrick: `make web-check` 105 tests passed (3 runs);
+`go test ./...` no failures; `make lint` passed; the hostops tests compile
+for FreeBSD. Nothing on hearst.
+
+**Hearst validation list, added:** verify the build jail's `sysvshm`,
+`sysvsem`, `sysvmsg` = `disable` (`jls -n` during a template build, or the
+check passing on a real build), and the edit dialog's removal confirmation
+against the real API.
