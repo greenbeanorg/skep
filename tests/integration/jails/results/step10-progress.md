@@ -38,3 +38,129 @@ Plus `types.ts` aliases and permissions, `client.ts` methods, the route,
 and the navigation entry.
 
 Not in scope (not asked): editing a jail (PUT), templates management.
+
+## 3. Built (2026-11-17)
+
+Screens, all in `web/src/pages/containers/`:
+
+- **Containers list** (`/containers`, `container:read`): name and hostname,
+  state, provisioning and clone badges, template and release, addressing
+  per NIC, created. "Create container" only with `container:write`. The
+  RACCT-off notice when `GET /system` reports `containers.rctl: false`.
+- **Create dialog**: built templates only (with their packages, or "from
+  base.txz", and a patch-level note); name and hostname; up to 8 NICs
+  (bridge from the allow-list, DHCP or static IPv4 with an optional
+  gateway; one gateway per jail; `skep<slot>` named); nameservers only when
+  no NIC uses DHCP (up to 3); root's SSH key (one line, no options); System
+  V IPC and Lock memory options; the six limits. Without `storage:read`
+  (needed to list templates) it says so.
+- **Limits**, shown at create and on the detail page: memory labelled
+  **soft** (resident-memory target, not a cap; pages move to the inactive
+  queue); CPU **approximate** (RACCT averages; bound
+  `max_cpu_percent`); **file-table slots** with the sizing rule
+  (descriptor-table slots, steps 40/128/256, never shrink, casper counts;
+  size well above what the programs keep open; at least 64); locked memory
+  **tied to `mlock`** (the option needs it and RACCT; not more than
+  memory); disk quota (refquota includes the ~78 MiB shared with a minimal
+  template). Without RACCT the RCTL fields are disabled and the disk quota
+  still works.
+- **Detail page** (`/containers/:id`): state, `state_detail`; Start / Stop /
+  Restart (`container:power`, by state); Delete (`container:delete`,
+  disabled while the jail runs, with the confirmation that every snapshot
+  goes too); the task of the last write followed until it ends, with its
+  latest progress event, and on failure the error code, message, and a hint
+  (`container_start_failed` points to the console log); the console log
+  (reloaded when a task ends); configuration (started-once explained);
+  network table (in-jail name, bridge, IPv4, MAC, host end); limits;
+  a warning when the jail has RCTL limits and RACCT is off; the clone
+  identity note on a linked clone.
+- **Usage card**: from `GET /metrics` (only asked for when the role has
+  `system:read`, `vm:read`, `storage:read`, and `container:read`;
+  otherwise it says which are needed): CPU % against the limit, CPU time,
+  resident memory against the limit marked soft (with a line when over),
+  processes, file-table slots, disk referenced against the quota, disk
+  used with snapshots, the sample time. While stopped, or without RACCT,
+  it says why only the disk values are there.
+- **Snapshots card**: take (`container:snapshot`; crash-consistent note
+  while running), roll back (stopped only; an older snapshot needs the
+  "destroy newer" checkbox, sent as `destroy_newer: true`; `started_once`
+  stays explained), delete (disabled while clones depend on it).
+- **Clone dialog** (needs `container:write` **and** `container:snapshot`,
+  amendment j): name, hostname (defaults to the name), from a snapshot or
+  a new one; the clone identity note (SSH host keys and `/etc/hostid` are
+  the source's; regenerate the host keys). A source with static NICs asks
+  for new addressing on each (the request is disabled until given); DHCP
+  NICs are kept. **A started jail with a static address cannot be
+  cloned**: the Clone buttons are disabled and a notice explains that
+  Skep writes addressing only into a tree that has never run code
+  (amendment l, Q8).
+
+Permission-aware throughout: actions the role lacks are hidden; actions
+the state forbids are disabled with the reason. The API decides
+everything again; the UI never enforces.
+
+Plumbing: container types and permissions in `web/src/api/types.ts`,
+client calls in `web/src/api/client.ts`, the two routes in `App.tsx`, the
+navigation entry (was a placeholder) in `navigation.ts`.
+
+## 4. Tests (merrick, 2026-11-17)
+
+- `make web-check`: type-check, generated types current, **92 tests
+  passed** (38 new in `web/src/pages/containers/`: helpers 15, create
+  dialog 8, detail page 12, list 3).
+- `go test ./...`: passed. `make lint`: passed. `vite build`: built (with
+  the chunk-size warning; I did not check whether it predates this run).
+- Every test runs against a stubbed `fetch`; nothing reached an agent.
+
+## 5. Commits
+
+`3127beb` (this log), `dc5e9d6` (API calls and helpers), `51b0a9e`
+(screens), `5449a7b` (tests), `5f09129` (docs: web-ui.md, jails.md), the
+README note, and this report. All on `feat/m7b-templates`, pushed; no PR,
+nothing merged.
+
+## 6. Open questions for Andy (not decided)
+
+- **Q1, API gap: which templates have sshd.** The API decides with
+  `TemplateHasSSHD` (a regular file `usr/sbin/sshd`) but does not expose it,
+  so the UI cannot show the SSH key field "where the template has sshd".
+  Options: (A) add a `has_sshd` boolean to `Template` (a backend change,
+  not in this run); (B) infer it in the UI from `packages` containing
+  `FreeBSD-ssh` or from `source: dist`, a guess that can be wrong;
+  (C) show the field for every template and rely on
+  `container_ssh_unavailable`, which the UI explains. **Built for now:
+  (C)**, because it needs no guess and no backend change; the help text
+  says the key needs a template with sshd. Your choice decides whether it
+  stays.
+- **Q2, bridges for jails come from `System.bhyve.bridges`.** It is the
+  same `network.bridges` list, but it sits in the bhyve block; a host
+  whose bhyve block is absent would show no bridges for jails. Options:
+  (A) keep it; (B) add the bridges to `System.containers` or a network
+  block (backend change).
+- **Q3, editing a jail** (`PUT /containers/{id}`: hostname, options,
+  limits, bridge or MAC, the key before the first start) is not in the
+  UI; it was not in this run's list. In step 10, or later?
+- **Q4, the README's jails row** is stale for steps 8 and 9 (it still says
+  no NICs, limits, snapshots, or clones). I changed only its UI fragment.
+- **Q5, clone nameservers:** an empty field keeps the source's (the API
+  has no way to clear them on a clone); the UI says "The source's, unless
+  changed here". Fine as is?
+- Template management (build and delete templates) has no UI; the create
+  dialog points to `POST /storage/templates`.
+
+## 7. Needs hearst validation (nothing was run there)
+
+Rotate the `s7*` passwords first (step 9 section 16). Then, with the
+deployed API and a browser (or Playwright):
+- create a DHCP jail and a static one from `minimal-151`; follow the task
+  to the end; start, stop, restart, delete;
+- a failed start (`container_start_failed`) shows the code, hint, and
+  rc's output in the console log;
+- take, roll back (with and without newer snapshots), delete snapshots;
+  clone a DHCP jail; a never-started static jail's clone with new
+  addressing; the refusal for a started static jail;
+- the usage card with RACCT on, against `rctl -u`;
+- the actions each of `s7admin`, `s7oper`, `s7viewer` sees, and that the
+  API refuses what the UI hides;
+- that the error hints match the real messages;
+- RACCT off (needs a reboot; stays unit-tested only, like Q3 of step 9).
