@@ -170,3 +170,30 @@ The build jail inherits the host's network stack (`vnet=inherit`, `ip4=disable`,
 10. **RBAC:** each route's permission matches what its handler does. Reads are `container:read`, create and edit are `container:write`, delete is `container:delete`, actions are `container:power`, and snapshot create, delete and rollback are `container:snapshot` (see SR-11). Clone requires both permissions, enforced as "all of" (`api.go:137-145`). Templates are `storage:read` and `storage:write`. Metrics need `system:read` plus `vm:read`, `storage:read` and `container:read`. Idempotency replays are bound to the actor.
 11. **The in-jail writer:** every open is relative to the root's descriptor with `O_RESOLVE_BENEATH|O_NOFOLLOW`. A temporary file plus `renameat` replaces a symlink or hard link instead of following it. The directory is `fchown`/`fchmod`ed after `openat`. A file without Skep's header is never replaced or removed. It runs only on trees that have never run code, with no concurrent writer. rc.conf lines are restricted to a strict assignment regex, SSH keys are normalised and options refused, and nameservers are plain IPs. The remaining case is SR-09.
 12. **Out of the list:** the host-side readers of jail trees after they have run code are limited to the devfs listing, the mount table and zfs by dataset name. The agent never parses files from a tree that has run code. The jail and template parents are checked root:wheel 0700, so host users cannot reach setuid binaries a jail plants. `JailRunDir` is checked as owned by the agent and not group- or world-writable.
+
+---
+
+## Triage (2026-11-18)
+
+Andy's dispositions, recorded as amendment n of ADR 0010 before any code was
+written.
+
+| Finding | Severity | Disposition |
+|---|---|---|
+| SR-01 console.log descriptor | high | Probe and propose only; not built in this run. The options are compared in step10-progress.md, and Andy decides the fix. |
+| SR-02 L2/L3 anti-spoofing | medium | Deferred until the spoofing tests with Andy at OPNsense. No code. |
+| SR-03 arbitrary NIC MAC | medium | Fix now: unicast, locally administered, not all zeros (422 in create, edit, clone and the UI); the agent refuses at start a MAC already on the target bridge, its members, or another Skep container. |
+| SR-04 unbounded locked memory | medium | Fix now: `locked_memory` required with `mlock`; applied as its own RCTL rule and read back whenever set, with or without `memory`. |
+| SR-05 RCTL coverage, optional limits | medium | Documentation now (what the limits do not cover, and that `container:write` can create an unlimited jail). Default limits or limits required per role: backlog. |
+| SR-06 failed guard plus failed removal | low | Fix now: a quarantined failed state with its own code and hint; never running, never `exec.stop`/`rc.shutdown`; start and stop refused; delete and the sweep retry removal without `exec.stop`. |
+| SR-07 duplicate-IP race | low | Backlog. |
+| SR-08 interface renamed by jail root | low | Backlog. |
+| SR-09 FIFO in the in-jail writer | low | Fix now: `O_NONBLOCK` plus the existing flags, `fstat`, refuse anything not a regular file before any read or write. |
+| SR-10 dist source archive checks | low | Backlog. |
+| SR-11 rollback needs only `container:snapshot` | low | Fix now: rollback needs `container:write` and `container:snapshot`, the same as clone. |
+| SR-I1 no per-container ownership; clone secrets | info | Backlog. |
+| SR-I2 console.log content is jail-controlled | info | Backlog (strip escapes in any future `skepctl` console-log command). |
+| SR-I3 `/dev/zfs` inside a jail | info | Hearst validation list. |
+| SR-I4 `/dev` guard is point-in-time | info | Backlog. |
+| SR-I5 kernel attack surface | info | Backlog. |
+| SR-I6 build jail route socket | info | Backlog. |

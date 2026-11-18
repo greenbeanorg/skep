@@ -1061,6 +1061,44 @@ Amendments made at acceptance, worked into the text:
   `checkBuildJail` compares them with the kernel after `jail -c`; a
   mismatch refuses the build and removes the build jail. The web UI's edit
   dialog asks for confirmation before a save that removes a limit.
+- **n. Triage of the M7b security review** (Andy, 2026-11-18, from
+  [security-review-m7b.md](../../tests/integration/jails/results/security-review-m7b.md);
+  dispositions per finding are in that file's Triage section).
+  - **Fixed now:**
+    - SR-03: a NIC MAC is accepted only if it is unicast (multicast bit
+      clear), locally administered (bit `0x02` set), and not all zeros; the
+      API refuses anything else with 422, in create, edit, and clone, and the
+      web UI checks the same rules. At start the agent also refuses a MAC
+      that is already present on the target bridge, on its member
+      interfaces, or on any other Skep container.
+    - SR-04: locked memory is never unbounded. With the `mlock` option on,
+      `limits.locked_memory` is required (422; the UI requires it).
+      Whenever `locked_memory` is set, it is applied as its own RCTL
+      `memorylocked` rule and read back like the others, whether or not
+      `memory` is set.
+    - SR-06: a jail whose `/dev` guard (or parameter check) refused it and
+      whose removal then failed is recorded in a failed, quarantined state
+      with its own error code and hint. It is never shown as running, Skep
+      never runs `exec.stop` or `/etc/rc.shutdown` in it, start and stop are
+      refused, and delete and the start-up sweep retry the removal without
+      `exec.stop`.
+    - SR-09 (the FIFO): the in-jail writer opens with `O_NONBLOCK` as well
+      as `O_RESOLVE_BENEATH`/`O_NOFOLLOW`, `fstat`s the descriptor, and
+      refuses anything that is not a regular file before any read or write.
+    - SR-11 (rollback permission): rollback needs `container:write` and
+      `container:snapshot`, the same as clone.
+    - SR-05, documentation only: the jail docs list what Skep's limits do
+      not cover (swap, threads, shared memory, ptys, disk I/O, kernel
+      memory) and that a `container:write` user can create a jail with no
+      limits. Default limits, or limits required per role, go to the
+      backlog.
+  - **SR-01** (console.log): probe and proposal only, not built in this
+    run; the fix is decided after the comparison of options.
+  - **SR-02** (layer-2/3 anti-spoofing): deferred until the spoofing tests
+    with Andy at OPNsense; no code.
+  - **Backlog:** SR-07, SR-08, SR-10, SR-I1, SR-I2, SR-I4, SR-I5, SR-I6.
+  - **Hearst validation list:** SR-I3 (jail root cannot use `/dev/zfs` to
+    list, set properties on, or snapshot datasets).
 
 ## Implementation notes
 
