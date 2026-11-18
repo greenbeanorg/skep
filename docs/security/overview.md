@@ -505,6 +505,13 @@ Skep fixes and nobody can change through the API
   through its console. `/etc/rc.shutdown` writes to `jail -r`'s output,
   capped in the agent's memory and not kept; past the cap it is cut, and
   never makes a removal fail.
+- **Locked memory has a host total (amendment o, SR-04).** `mlock` needs
+  `limits.locked_memory`, and the sum of `locked_memory` over the running
+  jails is bounded by `containers.max_locked_memory_bytes` (a quarter of
+  physical memory by default): a single value above it is refused at
+  create and update (422), and a start that would pass it is refused
+  (`container_locked_memory_exhausted`). Wired memory from jails shares
+  the kernel's `vm.max_user_wired` pool with bhyve VMs that wire theirs.
 - **The `/dev` guard (amendment i).** `jail -c` creates the jail with
   nothing running in it. The agent lists the jail's `/dev` from the host
   (opened without following links, required to be a devfs mounted at

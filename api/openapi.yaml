@@ -1591,7 +1591,10 @@ paths:
         template with sshd (`container_ssh_unavailable`); it is one
         OpenSSH public key line without options. `mlock` needs a
         locked-memory limit, `limits.locked_memory`, and RACCT
-        (`mlock_requires_memory_limit`).
+        (`mlock_requires_memory_limit`). `limits.locked_memory` is at most
+        the agent's `containers.max_locked_memory_bytes`, the total of all
+        running jails (`container_locked_memory_above_max`, 422; ADR 0010
+        amendment o).
 
         Limits (ADR 0010 decision 11, amendment j; see `ContainerLimits`):
         every limit but `disk_quota` is an RCTL rule and needs RACCT
@@ -1777,7 +1780,11 @@ paths:
         Skep VM, or is already present on the target bridge: the bridge's
         own address, a member interface's, or one in the bridge's address
         table; and with `container_mac_invalid` for a MAC recorded before
-        those rules existed (amendment n). A start that the checks refuse
+        those rules existed (amendment n). A start is refused with
+        `container_locked_memory_exhausted` when the jail's
+        `limits.locked_memory` plus that of the jails already running or
+        starting is more than the agent's
+        `containers.max_locked_memory_bytes` (amendment o). A start that the checks refuse
         before any of the jail's code runs, and whose removal then fails,
         fails with `container_quarantined` and leaves the container
         `failed`: start, stop, and restart are then refused with that code
@@ -2262,7 +2269,7 @@ components:
         `container_not_provisioned`, `container_started`,
         `container_start_failed`, `container_address_in_use`,
         `container_mac_in_use`, `container_quarantined`,
-        `epair_unavailable`, `rctl_unavailable`, `devfs_ruleset_conflict`.
+        `container_locked_memory_exhausted`, `epair_unavailable`, `rctl_unavailable`, `devfs_ruleset_conflict`.
       content:
         application/json:
           schema:
@@ -2276,7 +2283,7 @@ components:
         `release_unsupported` (no allowlist for the host's release), and
         for jails `container_ssh_unavailable`,
         `mlock_requires_memory_limit`, `clone_addressing_required`,
-        `container_mac_invalid`.
+        `container_mac_invalid`, `container_locked_memory_above_max`.
         A build task can also fail with `template_script_unknown`,
         `template_trigger_left`, `template_host_changed`,
         `template_build_failed`, `template_archive_mismatch`, or
@@ -2791,7 +2798,11 @@ components:
           description: |
             RCTL `memorylocked`, the memory the jail may lock with
             mlock(2). The `mlock` option needs it. Not more than `memory`
-            when both are set.
+            when both are set, and not more than the agent's
+            `containers.max_locked_memory_bytes` (by default a quarter of
+            physical memory), which is also the total of all running jails:
+            a start that would pass it is refused with
+            `container_locked_memory_exhausted` (ADR 0010 amendment o).
         cpu_percent:
           type: integer
           minimum: 0

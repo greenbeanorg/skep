@@ -213,7 +213,7 @@ What each limit does on FreeBSD 15.1, measured on the test host:
 | Field | Mechanism | Behaviour |
 |---|---|---|
 | `memory` | RCTL `memoryuse` (≥ 16 MiB) | **Soft.** An allocation past it is not refused: a jail held twice its limit at once. While it is over, the host moves its pages to the inactive queue a little at a time (after about 80 s, under 1 MiB/s on the test host), so they are the first memory reclaimed when the host runs short; nothing is swapped out while memory is free. A target and an accounting figure, not a cap. An address-space limit (`vmemoryuse`) is not offered in this release. |
-| `locked_memory` | RCTL `memorylocked` | The memory the jail may lock with mlock(2); `options.mlock` needs it. At most `memory` when both are set. |
+| `locked_memory` | RCTL `memorylocked` | The memory the jail may lock with mlock(2); `options.mlock` needs it. At most `memory` when both are set, and at most `containers.max_locked_memory_bytes`, which is also the total of all running jails (below). |
 | `cpu_percent` | RCTL `pcpu` | 100 is one CPU, up to 100 per host CPU. Throttles, approximately: RACCT samples and averages, so a busy jail swings around the limit (50 gave samples from 28 to 74; the loop ran at 61 % of its unthrottled speed). |
 | `max_processes` | RCTL `maxproc` | A fork past it fails ("Cannot fork"). |
 | `open_files` | RCTL `openfiles` (≥ 64) | Counts descriptor-table slots, not open files: see below. |
@@ -267,6 +267,28 @@ jail's limits with an update (the web UI asks first; the API does not).
 Skep has no default limits and no limits required per role in this
 release; that is in the backlog. Grant `container:write` only to users
 you trust with the host's shared resources.
+
+**Locked memory has a host total** (ADR 0010 amendment o, SR-04).
+Locked pages are wired: they cannot be paged out, so the host, the
+agent, other jails, and VMs lose them. The agent's
+`containers.max_locked_memory_bytes` bounds the sum of `locked_memory`
+over all running jails; by default (0 or unset) it is a quarter of
+physical memory (`hw.physmem`), read once when the agent starts, so a
+change of memory or of the setting needs an agent restart. A single
+`locked_memory` above the total is refused at create and update
+(`container_locked_memory_above_max`, 422). A start is refused when the
+jail's `locked_memory` plus that of the jails already running or
+starting is more than the total (`container_locked_memory_exhausted`,
+409); the message gives both figures. A jail without `locked_memory`
+always fits. Every `locked_memory` counts, with or without the `mlock`
+option, since the figure is what RCTL allows the jail. If the agent could
+not read physical memory and the setting is unset, no jail may have
+`locked_memory`. The total is Skep's own; the kernel's bound on wired
+user memory, `vm.max_user_wired`, is one system pool shared with
+everything else on the host, **bhyve VMs included**: a VM whose guest
+memory is wired (`bhyve -S`, `memory.wired`) draws from the same pool.
+Skep's VMs do not wire their memory in this release, but leave room for
+VMs and other wired memory when you raise the setting.
 
 **Usage.** `GET /api/v1/metrics` lists every jail with the space of its
 root (`disk_used_bytes`, snapshots included, and `disk_referenced_bytes`,
@@ -418,6 +440,11 @@ stopped.
 ```json
 "containers": {
   "stop_timeout_seconds": 10,
-  "start_timeout_seconds": 120
+  "start_timeout_seconds": 120,
+  "max_locked_memory_bytes": 0
 }
 ```
+
+`max_locked_memory_bytes` is the total `limits.locked_memory` of all
+running jails (see [Limits](#limits)); 0 means a quarter of physical
+memory, and a negative value is refused at load.
