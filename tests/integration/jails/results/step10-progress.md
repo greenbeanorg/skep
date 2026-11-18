@@ -186,3 +186,32 @@ Also asked: what API field the create dialog's "System V IPC" option maps
 to, where the ADR approves it, and exactly which jail parameters it sets
 (`new` or `inherit`); if anything could set `inherit`, stop and report.
 Backlog: the vite chunk-size warning (check whether it predates this run).
+
+### The System V IPC option (answer)
+
+- **API field:** `ContainerCreate.options.sysvipc` (also
+  `ContainerUpdate.options.sysvipc`), a boolean; the UI's "System V IPC"
+  checkbox sends `options: {sysvipc: true}`.
+- **Approved by:** ADR 0010 Decision 9 (accepted): "Opt-ins: `sysvipc`
+  (`sysvshm`, `sysvsem`, `sysvmsg` = `new`) and `mlock`"; Decision 9's
+  option C names the reason (PostgreSQL needs SysV IPC).
+- **What it sets** (`internal/hostops/jails.go`, `JailSpec.sysv()` and the
+  jail.conf generator): `sysvshm`, `sysvsem`, `sysvmsg` = **`new`** with
+  the option, **`disable`** without it. Those are the only two values the
+  function returns. `allow.sysvipc = 0` is always written (the legacy
+  parameter that means `inherit` for all three). After every start the
+  kernel's values are compared with the spec (`sysvshm/sem/msg` must equal
+  `new` or `disable` as asked), and a mismatch removes the jail; the unit
+  test `jails_test.go` "sysv" case refuses `sysvshm=inherit`.
+- **Can anything set `inherit`?** Not for a container: no code path writes
+  `inherit` for the sysv parameters, and the post-start check would refuse
+  it. **One adjacent finding, not a container path:** the template build
+  jail (step 6, `templates_jail.go`) sets `allow.sysvipc=0` but does not set
+  `sysvshm/sem/msg` explicitly, and `checkBuildJail` does not check them;
+  they are left to the kernel's default for a new jail, which with
+  `allow.sysvipc=0` I expect to be `disable`, **not verified** (it needs
+  FreeBSD source or a read-only `jls -n` during a build on hearst). The
+  build jail runs only Skep's fixed commands. I did not stop for it,
+  because nothing sets `inherit`; you may want the build jail to set
+  `disable` explicitly and check it (backend, not in this run).
+- **Backlog:** the vite chunk-size warning (checked in section 9).
