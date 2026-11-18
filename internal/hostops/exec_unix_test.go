@@ -343,14 +343,19 @@ func (s shutdownRunner) RunEnv(ctx context.Context, c EnvCommand) ([]byte, error
 	if s.onRun != nil {
 		s.onRun("jail " + strings.Join(c.Args, " "))
 	}
-	o := runOpts{timeout: time.Minute, limit: c.MaxOutput, over: overflowFail, env: testEnv}
+	o := runOpts{timeout: time.Minute, limit: c.MaxOutput, over: overflowFail, env: testEnv, stderrLast: c.StderrLastLine}
 	if o.limit <= 0 {
 		o.limit = maxOutput
 	}
 	if c.MarkOverflow {
 		o.over = overflowMark
 	}
-	return runCommand(ctx, o, testShell, "-c", s.sh)
+	out, err := runCommand(ctx, o, testShell, "-c", s.sh)
+	var ce *CommandError
+	if errors.As(err, &ce) {
+		ce.Name = filepath.Base(jailBinary) // the shell stands in for jail(8)
+	}
+	return out, err
 }
 
 // shutdownHost is a started jail whose jail -r runs sh for real, and the
@@ -513,6 +518,95 @@ func TestShutdownLogWriteFailureStillRemoves(t *testing.T) {
 			}
 			if !strings.Contains(logged.String(), "event=jail_shutdown_log_failed") {
 				t.Fatalf("not logged: %s", logged.String())
+			}
+		})
+	}
+}
+
+// In the last-line mode a failure reports the last line of stderr,
+// cleaned and capped, taken from the end of stderr even when it is
+// longer than what is kept of it; an empty stderr reports nothing
+// (amendment p).
+func TestRunCommandStderrLastLine(t *testing.T) {
+	o := runOpts{timeout: time.Minute, limit: 1000, over: overflowMark, env: testEnv, stderrLast: true}
+	long := strings.Repeat("x", 500)
+	for _, tc := range []struct{ name, sh, want string }{
+		{"last line", `echo 'rc.shutdown: first' >&2; echo 'jail: skep-x: failed' >&2; exit 1`, "jail: skep-x: failed"},
+		{"trailing blank lines", `printf 'rc: a\njail: b\n\n\n' >&2; exit 1`, "jail: b"},
+		{"control characters", `printf 'rc: a\n\033[2J\033[31mjail:\tred\r\007\n' >&2; exit 1`, "[2J[31mjail:red"},
+		{"over-long line", "printf 'rc: a\\n%s\\n' " + long + " >&2; exit 1", long[:200]},
+		{"past the kept tail", shLoop(2000) + " >&2; echo 'jail: the end' >&2; exit 1", "jail: the end"},
+		{"empty stderr", `echo 'only stdout'; exit 1`, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := runCommand(context.Background(), o, testShell, "-c", tc.sh)
+			var ce *CommandError
+			if !errors.As(err, &ce) || ce.ExitCode != 1 {
+				t.Fatalf("err = %#v", err)
+			}
+			if ce.Stderr != tc.want {
+				t.Fatalf("Stderr = %q, want %q", ce.Stderr, tc.want)
+			}
+		})
+	}
+	// The default is still the first line.
+	o.stderrLast = false
+	_, err := runCommand(context.Background(), o, testShell, "-c", `echo first >&2; echo last >&2; exit 1`)
+	var ce *CommandError
+	if !errors.As(err, &ce) || ce.Stderr != "first" {
+		t.Fatalf("err = %#v", err)
+	}
+}
+
+// A failed jail -r is reported with the last line of its stderr,
+// labelled as the jail's output in the error and in the log, the
+// error still a *CommandError with the exit code; nothing is appended to
+// the console log (amendment p).
+func TestRemoveJailFailureReportsLastStderrLine(t *testing.T) {
+	for _, tc := range []struct{ name, sh, wantErr, wantLog string }{
+		{"control characters",
+			`echo 'Stopping cron.'; echo 'rc.shutdown: jail: everything is fine' >&2; printf 'jail: skep-x: \033[31mfailed\r\n' >&2; exit 1`,
+			`jail: exit status 1: jail output, last line of stderr: "jail: skep-x: [31mfailed"`,
+			`jail_output="jail: skep-x: [31mfailed"`},
+		{"over-long line",
+			"printf '%s\\n' " + strings.Repeat("y", 400) + " >&2; exit 1",
+			`jail: exit status 1: jail output, last line of stderr: "` + strings.Repeat("y", 200) + `"`,
+			"jail_output=" + strings.Repeat("y", 200) + "\n"},
+		{"empty stderr",
+			`echo 'Stopping cron.'; exit 1`,
+			"jail: exit status 1: no jail output on stderr",
+			`jail_output=""`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h, run, conf, log := shutdownHost(t, tc.sh, "rc output\n")
+			var logged bytes.Buffer
+			h.log = slog.New(slog.NewTextHandler(&logged, nil))
+			err := h.removeJail(context.Background(), "skep-"+ctrA, conf, jailSpec(), true)
+			var ce *CommandError
+			if !errors.As(err, &ce) || ce.ExitCode != 1 {
+				t.Fatalf("err = %#v", err)
+			}
+			if err.Error() != tc.wantErr {
+				t.Fatalf("error:\n got %s\nwant %s", err, tc.wantErr)
+			}
+			l := logged.String()
+			if !strings.Contains(l, "event=jail_remove_failed") || !strings.Contains(l, tc.wantLog) {
+				t.Fatalf("log: %s", l)
+			}
+			if strings.ContainsAny(l, "\x1b\r") {
+				t.Fatalf("control characters in the log: %q", l)
+			}
+			var last bool
+			for _, c := range run.envCmds {
+				if c.Path == jailBinary && slices.Contains(c.Args, "-r") {
+					last = c.StderrLastLine
+				}
+			}
+			if !last {
+				t.Fatal("jail -r was not run in the last-line mode")
+			}
+			if got, _ := os.ReadFile(log); string(got) != "rc output\n" {
+				t.Fatalf("console.log = %q", got)
 			}
 		})
 	}

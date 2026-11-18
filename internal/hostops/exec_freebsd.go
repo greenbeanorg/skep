@@ -37,5 +37,5 @@ func (r execRunner) RunEnv(ctx context.Context, c EnvCommand) ([]byte, error) {
 	if c.MarkOverflow {
 		over = overflowMark
 	}
-	return runCommand(ctx, runOpts{timeout: timeout, limit: limit, over: over, env: c.Env}, c.Path, c.Args...)
+	return runCommand(ctx, runOpts{timeout: timeout, limit: limit, over: over, env: c.Env, stderrLast: c.StderrLastLine}, c.Path, c.Args...)
 }

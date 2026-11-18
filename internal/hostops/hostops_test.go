@@ -12,6 +12,7 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/greenbeanorg/skep/pkg/models"
 )
@@ -545,4 +546,54 @@ func firstCreate(calls []string) string {
 		}
 	}
 	return ""
+}
+
+// A failed jail -r's stderr line (amendment p): control characters and
+// bytes that are not UTF-8 removed, at most 200 bytes on a character
+// boundary.
+func TestCleanLine(t *testing.T) {
+	long := strings.Repeat("a", 300)
+	accents := strings.Repeat("é", 150) // 300 bytes
+	for _, tc := range []struct{ name, in, want string }{
+		{"plain", "jail: skep-x: failed", "jail: skep-x: failed"},
+		{"escape sequence", "\x1b[2J\x1b[31mjail: red\x1b[0m", "[2J[31mjail: red[0m"},
+		{"carriage return", "fake ok\rjail: real error", "fake okjail: real error"},
+		{"tab nul del bell", "a\tb\x00c\x7fd\x07e", "abcde"},
+		{"C1 as UTF-8", "a\u009b31mb\u0085c", "a31mbc"},
+		{"C1 as a raw byte", "a\x9b31mb\xffc", "a31mbc"},
+		{"surrounding spaces", "  \x1b jail: x \t", "jail: x"},
+		{"over-long", long, long[:200]},
+		{"over-long multibyte", accents, strings.Repeat("é", 100)},
+		{"cut before a split character", "a" + accents, "a" + strings.Repeat("é", 99)},
+		{"exactly 200", long[:200], long[:200]},
+		{"empty", "", ""},
+		{"only controls", "\x1b\r\x00", ""},
+		{"printable unicode kept", "jail: ünïcödé ✓", "jail: ünïcödé ✓"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := cleanLine(tc.in, maxStderrLine)
+			if got != tc.want {
+				t.Fatalf("cleanLine(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+			if len(got) > maxStderrLine || !utf8.ValidString(got) {
+				t.Fatalf("cleanLine(%q) = %d bytes, valid %v", tc.in, len(got), utf8.ValidString(got))
+			}
+		})
+	}
+}
+
+func TestLastLine(t *testing.T) {
+	for in, want := range map[string]string{
+		"":                      "",
+		"only":                  "only",
+		"first\nsecond\n":       "second",
+		"first\nsecond\n\n \n":  "second",
+		"first\r\nsecond\r\n":   "second",
+		"\n\n":                  "",
+		"rc: a\nrc: b\njail: x": "jail: x",
+	} {
+		if got := lastLine([]byte(in)); got != want {
+			t.Errorf("lastLine(%q) = %q, want %q", in, got, want)
+		}
+	}
 }

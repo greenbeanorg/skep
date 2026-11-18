@@ -781,9 +781,9 @@ func (h *host) removeJail(ctx context.Context, name, conf string, spec JailSpec,
 	// and p, SR-01).
 	out, err := er.RunEnv(ctx, EnvCommand{Path: jailBinary, Args: []string{"-f", conf, "-r", name},
 		Env: jailEnv, Timeout: spec.StartTimeout + spec.StopTimeout + jailCommandSlack,
-		MaxOutput: ShutdownLogPart, MarkOverflow: true})
+		MaxOutput: ShutdownLogPart, MarkOverflow: true, StderrLastLine: true})
 	if err != nil {
-		return err
+		return h.jailRemoveFailed(spec, err)
 	}
 	h.log.Debug("hostops: jail -r done", "container_id", spec.ContainerID, "output_bytes", len(out))
 	if withStop {
@@ -802,6 +802,27 @@ func (h *host) removeJail(ctx context.Context, name, conf string, spec JailSpec,
 			"container_id", spec.ContainerID, "error", err)
 	}
 	return nil
+}
+
+// jailRemoveFailed logs a failed jail -r and labels the stderr line in
+// its error as the jail's output: jail -r's stderr starts with what the
+// jail's /etc/rc.shutdown wrote, so its last line (jail(8)'s own error,
+// when there is one) may still be the jail's text (amendment p). Other
+// errors (a timeout) are returned as they are.
+func (h *host) jailRemoveFailed(spec JailSpec, err error) error {
+	var ce *CommandError
+	if !errors.As(err, &ce) {
+		return err
+	}
+	h.log.Warn("hostops: jail -r failed", "event", "jail_remove_failed", "container_id", spec.ContainerID,
+		"exit_code", ce.ExitCode, "jail_output", ce.Stderr)
+	labelled := *ce
+	if ce.Stderr == "" {
+		labelled.Stderr = "no jail output on stderr"
+	} else {
+		labelled.Stderr = "jail output, last line of stderr: " + strconv.Quote(ce.Stderr)
+	}
+	return &labelled
 }
 
 // ShutdownLogPart is how much of the head, and of the tail, of

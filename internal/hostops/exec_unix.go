@@ -49,7 +49,16 @@ type runOpts struct {
 	over  overflow
 	// env is the whole environment.
 	env []string
+	// stderrLast makes a failure report the last line of standard error,
+	// control characters stripped and at most maxStderrLine bytes,
+	// instead of the first; the last stderrTail bytes of standard error
+	// are kept for it, not the first (amendment p: a failed jail -r).
+	stderrLast bool
 }
+
+// stderrTail is how much of the end of standard error is kept when the
+// last line is reported.
+const stderrTail = 64 << 10
 
 // runCommand runs one command with an explicit argument list, the given
 // whole environment, no stdin, a timeout, and capped output.
@@ -69,9 +78,14 @@ func runCommand(ctx context.Context, o runOpts, path string, args ...string) ([]
 	headTail := newConsoleLog(&marked, o.limit, o.limit)
 	cmd := exec.CommandContext(ctx, path, args...)
 	cmd.Env = o.env
+	// The tail of standard error, for its last line.
+	errTail := newConsoleLog(io.Discard, 0, stderrTail)
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	if o.over == overflowMark {
 		cmd.Stdout = headTail
+	}
+	if o.stderrLast {
+		cmd.Stderr = errTail
 	}
 	cmd.WaitDelay = time.Second
 
@@ -88,8 +102,12 @@ func runCommand(ctx context.Context, o runOpts, path string, args ...string) ([]
 		if errors.As(err, &exit) {
 			ce.ExitCode = exit.ExitCode()
 		}
-		line, _, _ := strings.Cut(strings.TrimSpace(stderr.buf.String()), "\n")
-		ce.Stderr = strings.TrimSpace(line)
+		if o.stderrLast {
+			ce.Stderr = cleanLine(lastLine(errTail.tail), maxStderrLine)
+		} else {
+			line, _, _ := strings.Cut(strings.TrimSpace(stderr.buf.String()), "\n")
+			ce.Stderr = strings.TrimSpace(line)
+		}
 		return nil, ce
 	}
 	if o.over == overflowMark {

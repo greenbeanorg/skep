@@ -62,6 +62,11 @@ type EnvCommand struct {
 	// amendments o and p: jail -r, whose output is the jail's
 	// /etc/rc.shutdown's and must never fail a removal).
 	MarkOverflow bool
+	// StderrLastLine makes a failure's CommandError carry the last line
+	// of standard error, control characters stripped and at most 200
+	// bytes, instead of the first (amendment p: jail -r, whose stderr
+	// starts with the jail's /etc/rc.shutdown's and ends with jail(8)'s).
+	StderrLastLine bool
 	// ConsoleLog, when set, is an absolute path (created 0600, never
 	// through a link) that is truncated and receives standard output and
 	// standard error through a pipe the agent drains: the first
