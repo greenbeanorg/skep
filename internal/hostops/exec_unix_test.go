@@ -295,6 +295,11 @@ func TestRunCommandMarkOverflow(t *testing.T) {
 	if err != nil || string(out) != "short\n" {
 		t.Fatalf("short output = %q, %v", out, err)
 	}
+	// Run's mode is unchanged: cut silently, no marker.
+	out, err = runCommand(context.Background(), time.Minute, limit, overflowCut, testEnv, testShell, "-c", shLoop(100))
+	if err != nil || string(out) != all[:limit] {
+		t.Fatalf("overflowCut = %d bytes, %v", len(out), err)
+	}
 	// The strict mode is unchanged: the same output is an error there.
 	if _, err := runCommand(context.Background(), time.Minute, limit, overflowFail, testEnv, testShell, "-c", shLoop(100)); err == nil {
 		t.Fatal("overflowFail accepted output past the cap")
