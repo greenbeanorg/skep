@@ -11,7 +11,10 @@ networking, limits, snapshots, and clones), validated on FreeBSD 15.1
 (`hearst`, see
 [tests/integration/jails](../../tests/integration/jails/README.md)); what
 is pending FreeBSD validation is listed in the step 9 progress log. The
-web interface and `skepctl container` are step 10.
+web interface's Containers section is built in step 10 (see
+[The web interface](web-ui.md); tested with a fake API, pending
+validation against a real agent on `hearst`); `skepctl container` is
+still to come.
 
 ## The API
 

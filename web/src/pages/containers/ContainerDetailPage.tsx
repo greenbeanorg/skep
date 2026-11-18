@@ -24,6 +24,12 @@ import { LIMIT_HELP } from "./LimitsFields";
 import { TaskLine } from "./TaskLine";
 import { UsageCard } from "./UsageCard";
 
+/** A key line shortened to its type and comment: "ssh-ed25519 … andy@merrick". */
+export function sshKeySummary(line: string): string {
+  const [type = "", , ...comment] = line.trim().split(/\s+/);
+  return comment.length ? `${type} … ${comment.join(" ")}` : `${type} …`;
+}
+
 const ACTION_LABEL: Record<ContainerActionName, string> = { start: "Start", stop: "Stop", restart: "Restart" };
 
 /** The power actions a jail's state allows; the agent decides. */
@@ -183,7 +189,7 @@ export function ContainerDetailPage() {
               </Fact>
               <Fact label="SSH key">
                 {c.ssh_authorized_key ? (
-                  <span className="font-mono text-xs break-all">{c.ssh_authorized_key.split(/\s+/).slice(0, 1).join(" ")} …</span>
+                  <span className="font-mono text-xs break-all">{sshKeySummary(c.ssh_authorized_key)}</span>
                 ) : (
                   "none"
                 )}
