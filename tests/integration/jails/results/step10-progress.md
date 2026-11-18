@@ -215,3 +215,70 @@ Backlog: the vite chunk-size warning (check whether it predates this run).
   because nothing sets `inherit`; you may want the build jail to set
   `disable` explicitly and check it (backend, not in this run).
 - **Backlog:** the vite chunk-size warning (checked in section 9).
+
+## 9. Built after the answers (2026-11-17)
+
+1. **`has_sshd`** (`5ad2e3b`, the only backend change): `models.Template`
+   has `HasSSHD`; the template service fills it in `decorate` (list and
+   get) from `Jails.TemplateHasSSHD`, the same function `checkSSH` uses to
+   refuse a key with `container_ssh_unavailable`; false for a template that
+   is not built or whose root cannot be read (logged). The agent already
+   passes the full host ops (`Jails` included) to the template service.
+   `api/openapi.yaml` (required, documented) and `web/src/api/schema.d.ts`
+   regenerated. The create dialog shows the key field only when
+   `has_sshd` is true and never sends a key otherwise; the stopgap text is
+   gone. Go test `TestTemplateHasSSHD` (false, true, list, unbuilt).
+2. Bridges: unchanged (`System.bhyve.bridges`).
+3. **Edit** (`4925ce2`): an Edit button on the detail page (hidden without
+   `container:write`, disabled unless the jail is `stopped`) opens a dialog
+   over `PUT /containers/{id}`: hostname, options, and the full limits
+   (PUT replaces them; an emptied field removes that limit) at any time;
+   before the first start also NICs (add, remove, addressing),
+   nameservers, and the SSH key (only with `has_sshd`; empty removes it);
+   after the first start only each NIC's bridge, sent with the recorded
+   addressing unchanged (the agent's `sameAddressing` check would refuse
+   anything else with `container_started`), and the template is not
+   fetched. MAC addresses are kept (not editable in the UI, which PUT
+   allows; left out deliberately).
+4. **README** (`6a9bfae`): the jails row covers steps 8 and 9 and what is
+   pending on hearst; the Web interface and "Not yet" rows were stale for
+   the same reason and were corrected too.
+5. **Clone nameservers** (`a386e3a`): pre-filled with the source's, noted
+   "Inherited from source"; an empty field also keeps them (backlog item
+   recorded in amendment m).
+
+**Test flake found and fixed** (in `4925ce2`): the create and edit tests
+sometimes acted before `GET /system` had returned the bridges, or before
+the dialog was open (`user.clear` on an unfocusable element). They now
+wait for both. Before the fix, 1 run in 4 failed; after it, 6 of 6 and the
+final run passed. The unexplained `make web-check` exit 2 earlier in this
+run was most likely the same race (its output was not kept).
+
+**Vite chunk-size warning (backlog):** it predates this run. At
+`668a16c` the bundle was 806.7 kB (224.2 kB gzip); now 856.8 kB
+(238.1 kB gzip), so the Containers section adds about 50 kB. Code
+splitting by route (the xterm console is the obvious candidate) would
+fix it; not done.
+
+## 10. Stop report (2026-11-17)
+
+**Checks on merrick (final run):** `make web-check` 103 tests passed;
+`go test ./...` 40 packages ok, none failed; `make lint` passed. Nothing
+ran on hearst; no API calls, no logins.
+
+**Commits after the answers:** `7f08001` (answers, amendment m), the
+sysvipc record, `5ad2e3b` (has_sshd), `4925ce2` (edit), `a386e3a` (clone
+nameservers), `6a9bfae` (README), and this report. Pushed; no PR, nothing
+merged. ADR 0010 is already Accepted; amendment m records your answer.
+
+**Open for you:**
+- The template build jail leaves `sysvshm/sem/msg` to the kernel default
+  (section 8, "The System V IPC option"). Make it explicit `disable` and
+  check it? (backend, step 6 code.)
+- Route-level code splitting for the chunk warning (backlog).
+
+**Needs hearst validation** (in addition to section 7): `has_sshd` on
+`minimal-151` (true) and on a template without `FreeBSD-ssh` (false),
+against a create with a key; the edit dialog on a never-started jail
+(addressing, nameservers, key written) and on a started one (bridge only;
+limits from the next start; a quota below the referenced size refused).
