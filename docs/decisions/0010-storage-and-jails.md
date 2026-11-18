@@ -1055,6 +1055,12 @@ Amendments made at acceptance, worked into the text:
   field only for a template with `has_sshd` true. Bridges for jails stay in
   `GET /system`. Backlog: whether an empty `nameservers` list on a clone
   clears the source's (today an empty or omitted list keeps them).
+  Also (Andy, 2026-11-17, from the step 10 sysvipc answer): the template
+  build jail of step 6 sets `sysvshm`, `sysvsem`, and `sysvmsg` to
+  `disable` explicitly instead of leaving them to the kernel's default, and
+  `checkBuildJail` compares them with the kernel after `jail -c`; a
+  mismatch refuses the build and removes the build jail. The web UI's edit
+  dialog asks for confirmation before a save that removes a limit.
 
 ## Implementation notes
 

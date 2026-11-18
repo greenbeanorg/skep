@@ -282,3 +282,13 @@ merged. ADR 0010 is already Accepted; amendment m records your answer.
 against a create with a key; the edit dialog on a never-started jail
 (addressing, nameservers, key written) and on a started one (bridge only;
 limits from the next start; a quota below the referenced size refused).
+
+## 11. Andy's answers (2026-11-17), added to amendment m
+
+1. **Build jail sysv:** approved backend change. The step 6 build jail sets
+   `sysvshm`, `sysvsem`, `sysvmsg` = `disable` explicitly, and they are
+   checked against the kernel after `jail -c`, as for ordinary jails (a
+   mismatch refuses the build and removes the build jail). Unit test.
+   Added to the hearst list: verify the build jail's `sysv*` = `disable`.
+2. **Edit dialog:** a save that would remove a limit (an emptied field)
+   first asks for confirmation, listing the limits being removed.
