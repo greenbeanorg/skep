@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Container } from "@/api/types";
 
 import { ContainerDetailPage } from "./ContainerDetailPage";
-import { EditContainerDialog } from "./EditContainerDialog";
+import { EditContainerDialog, removedLimits } from "./EditContainerDialog";
 import { dhcpNIC, jail, staticNIC, template } from "./fixtures";
 import { fakeApi, renderAt, type Reply } from "./testing";
 
@@ -40,12 +40,38 @@ describe("EditContainerDialog", () => {
     await user.clear(screen.getByLabelText("File-table slots"));
     await user.type(screen.getByLabelText("Disk quota"), "2G");
     await user.click(screen.getByRole("button", { name: "Save" }));
+    // Emptying the file-table field removes that limit: confirmed first.
+    expect(await screen.findByTestId("removed-limits")).toHaveTextContent("File-table slots");
+    await user.click(screen.getByRole("button", { name: "Remove the limit and save" }));
     await waitFor(() => expect(onTask).toHaveBeenCalled());
     expect(calls.find((c) => c.key === PUT)?.body).toEqual({
       hostname: "web1.lab",
       options: { sysvipc: false, mlock: false },
       limits: { memory: 512 << 20, disk_quota: 2 * 2 ** 30 },
     });
+  });
+
+  it("lists every limit a save would remove, and sends nothing on Keep editing", async () => {
+    const { calls } = renderEdit(jail({ limits: { memory: 512 << 20, cpu_percent: 50, disk_quota: 1 << 30 } }));
+    await screen.findByRole("dialog");
+    const user = userEvent.setup();
+    await user.clear(await screen.findByLabelText("Memory (soft)"));
+    await user.clear(screen.getByLabelText("Disk quota"));
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    const list = await screen.findByTestId("removed-limits");
+    expect(list).toHaveTextContent("Memory (soft)");
+    expect(list).toHaveTextContent("Disk quota");
+    expect(list).not.toHaveTextContent("CPU");
+    expect(screen.getByText("Remove 2 limits?")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Keep editing" }));
+    expect(screen.queryByTestId("removed-limits")).not.toBeInTheDocument();
+    expect(calls.some((c) => c.key === PUT)).toBe(false);
+  });
+
+  it("finds removed limits", () => {
+    expect(removedLimits({ memory: 1 << 30, open_files: 128 }, { memory: 1 << 30 })).toEqual(["open_files"]);
+    expect(removedLimits({ memory: 1 << 30 }, { memory: 2 << 20 })).toEqual([]);
+    expect(removedLimits({}, { disk_quota: 1 << 30 })).toEqual([]);
   });
 
   it("before the first start, edits addressing, nameservers, and the key", async () => {

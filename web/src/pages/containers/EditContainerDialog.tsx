@@ -28,8 +28,14 @@ import {
   type NICForm,
 } from "./container";
 import { withHint } from "./CreateContainerDialog";
-import { LimitsFields } from "./LimitsFields";
+import { LIMIT_HELP, LimitsFields } from "./LimitsFields";
 import { NICFields } from "./NICFields";
+
+/** The limits the jail has that `next` leaves out: a save would remove them. */
+export function removedLimits(current: Container["limits"], next: Container["limits"]): (keyof LimitsForm)[] {
+  const keys = Object.keys(LIMIT_HELP) as (keyof LimitsForm)[];
+  return keys.filter((k) => Boolean(current[k]) && !next[k]);
+}
 
 function sameNICs(a: NICForm[], b: NICForm[]): boolean {
   return JSON.stringify(a) === JSON.stringify(b);
@@ -61,6 +67,7 @@ export function EditContainerDialog({ c, onClose, onTask }: { c: Container; onCl
   const [sshKey, setSshKey] = useState(c.ssh_authorized_key ?? "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<ApiError | undefined>();
+  const [confirmRemove, setConfirmRemove] = useState<(keyof LimitsForm)[] | undefined>();
 
   const { limits, problems: limitProblems } = parseLimits(limitsForm, caps);
   const nsAllowed = fresh && nameserversAllowed(nics);
@@ -75,9 +82,20 @@ export function EditContainerDialog({ c, onClose, onTask }: { c: Container; onCl
   };
   const ready = !Object.values(problems).some(Boolean) && !Object.values(limitProblems).some(Boolean);
 
-  const submit = async (e: FormEvent) => {
+  const submit = (e: FormEvent) => {
     e.preventDefault();
     if (!ready || busy) return;
+    // A save that removes a limit is confirmed first (amendment m).
+    const removed = removedLimits(c.limits, limits);
+    if (removed.length > 0) {
+      setConfirmRemove(removed);
+      return;
+    }
+    void send();
+  };
+
+  const send = async () => {
+    setConfirmRemove(undefined);
     const nicsChanged = !sameNICs(nics, initialNICs);
     const req: ContainerUpdate = {
       hostname: hostname.trim(),
@@ -228,6 +246,28 @@ export function EditContainerDialog({ c, onClose, onTask }: { c: Container; onCl
           </Button>
         </DialogActions>
       </form>
+      {confirmRemove ? (
+        <Dialog
+          open
+          onClose={() => setConfirmRemove(undefined)}
+          title={confirmRemove.length === 1 ? "Remove a limit?" : `Remove ${confirmRemove.length} limits?`}
+          description="These fields are empty, so saving removes the limits from the jail. The disk quota is removed at once, the others at the next start."
+        >
+          <ul className="list-disc space-y-1 pl-5 text-sm" data-testid="removed-limits">
+            {confirmRemove.map((k) => (
+              <li key={k}>{LIMIT_HELP[k].label}</li>
+            ))}
+          </ul>
+          <DialogActions>
+            <Button type="button" variant="outline" onClick={() => setConfirmRemove(undefined)}>
+              Keep editing
+            </Button>
+            <Button type="button" variant="destructive" onClick={() => void send()}>
+              {confirmRemove.length === 1 ? "Remove the limit and save" : "Remove the limits and save"}
+            </Button>
+          </DialogActions>
+        </Dialog>
+      ) : null}
     </Dialog>
   );
 }
