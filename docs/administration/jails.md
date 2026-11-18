@@ -74,6 +74,22 @@ descriptor with `O_RESOLVE_BENEATH | O_NOFOLLOW`, and files are replaced
 by a new file and a rename, so a symbolic link cannot lead a write
 outside the jail.
 
+**MAC addresses.** A NIC's MAC address, given in a create, an update,
+or a clone, must be unicast, locally administered (the `0x02` bit of the
+first byte set: the second hex digit is 2, 6, A, or E), and not all
+zeroes; anything else is refused with `container_mac_invalid` (422).
+Left out, Skep generates `02:` and five random bytes. At every start,
+before any epair is created, the agent also refuses
+(`container_mac_in_use`) a MAC address that a Skep VM holds, or that is
+already present on the NIC's bridge: the bridge's own address, a member
+interface's (`ether` or `hwaddr`), or one in the bridge's address table
+(`ifconfig <bridge> addr`). So an API user cannot give a jail the MAC of
+the LAN gateway, the host, or another machine the bridge has seen (ADR
+0010 amendment n, SR-03). A device the bridge has not yet seen is not
+caught; the locally-administered rule is what keeps burnt-in addresses
+out. A MAC recorded before these rules is refused at start with
+`container_mac_invalid`; give the NIC a new one with an update.
+
 **Start.** Skep marks the jail as started for good, writes
 `/var/run/skep/jails/<id>/jail.conf` (root only), and runs
 `jail -f <conf> -c skep-<id>`, which creates the jail, mounts its devfs,

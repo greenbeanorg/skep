@@ -69,6 +69,9 @@ type Fake struct {
 	// devfs ruleset 6001 holds someone else's rules.
 	NoEpair       bool
 	DevfsConflict bool
+	// PresentMACs simulates MAC addresses already present on a bridge (its
+	// own, a member's, or learnt), by bridge (amendment n, SR-03).
+	PresentMACs map[string][]string
 	// RacctDisabled simulates a host booted without kern.racct.enable;
 	// CPUs is hw.ncpu (4 when zero).
 	RacctDisabled bool

@@ -288,6 +288,10 @@ export function containerErrorHint(code: string): string | undefined {
       return "Skep writes into a jail's tree only before its first start.";
     case "container_address_in_use":
       return "A running jail on the same bridge holds this static address.";
+    case "container_mac_invalid":
+      return "A jail's MAC address must be unicast and locally administered (the second hex digit is 2, 6, A, or E, as in 02:…), and not all zeroes.";
+    case "container_mac_in_use":
+      return "The MAC address is already on the bridge (the host's, a member interface's, or a device the bridge has learnt) or used by another Skep guest. Give the interface another MAC address.";
     case "clone_addressing_required":
       return "Every interface with a static address needs new addressing for the clone.";
     case "epair_unavailable":

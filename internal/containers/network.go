@@ -48,9 +48,9 @@ func (s *Service) normalizeNICs(specs []models.ContainerNICSpec, nameservers []s
 		}
 		switch {
 		case spec.MACAddress != "":
-			mac, err := normalizeMAC(spec.MACAddress)
+			mac, err := normalizeMAC(field, spec.MACAddress)
 			if err != nil {
-				return nil, nil, models.Invalid(field + "." + err.Error())
+				return nil, nil, err
 			}
 			nic.MACAddress = mac
 		case slot < len(old):
@@ -153,19 +153,46 @@ func lastAddr(p netip.Prefix) netip.Addr {
 }
 
 // normalizeMAC checks a MAC address a request supplied: six bytes,
-// unicast, not zero. It returns the lower-case colon form.
-func normalizeMAC(s string) (string, error) {
+// unicast, locally administered, and not zero (amendment n, SR-03). It
+// returns the lower-case colon form. A malformed address is
+// invalid_request; one that breaks a rule is container_mac_invalid (422).
+func normalizeMAC(field, s string) (string, error) {
 	mac, err := net.ParseMAC(s)
 	if err != nil || len(mac) != 6 {
-		return "", fmt.Errorf("mac_address must be six bytes, such as 02:00:00:aa:bb:cc")
+		return "", models.Invalid(field + ".mac_address must be six bytes, such as 02:00:00:aa:bb:cc")
 	}
-	if mac[0]&1 != 0 {
-		return "", fmt.Errorf("mac_address must be a unicast address")
-	}
-	if mac.String() == "00:00:00:00:00:00" {
-		return "", fmt.Errorf("mac_address must not be all zeroes")
+	if p := hostops.JailMACProblem(mac); p != "" {
+		return "", &models.Error{Code: models.CodeContainerMACInvalid,
+			Message: field + ".mac_address " + p,
+			Details: map[string]any{"field": field + ".mac_address", "mac_address": mac.String()}}
 	}
 	return mac.String(), nil
+}
+
+// checkMACs refuses a start when a NIC's recorded MAC address breaks the
+// rules (one stored before amendment n) or another Skep jail or VM holds
+// it (amendment n, SR-03). The host side (the bridge, its members, and
+// its address table) is checked by StartJail.
+func (s *Service) checkMACs(ctx context.Context, c models.Container) error {
+	for _, n := range c.NICs {
+		field := fmt.Sprintf("nics[%d]", n.Slot)
+		if _, err := normalizeMAC(field, n.MACAddress); err != nil {
+			return err
+		}
+		holders, err := s.store.MACHolders(ctx, n.MACAddress, c.ID)
+		if err != nil {
+			return err
+		}
+		if len(holders) > 0 {
+			h := holders[0]
+			return &models.Error{Code: models.CodeContainerMACInUse,
+				Message: fmt.Sprintf("the MAC address %s of NIC slot %d is also held by the %s %s (slot %d); give the NIC another address",
+					n.MACAddress, n.Slot, h.Kind, h.Name, h.Slot),
+				Details: map[string]any{"container_id": c.ID, "slot": n.Slot, "mac_address": n.MACAddress,
+					"held_by_kind": h.Kind, "held_by_id": h.ID, "held_by_name": h.Name}}
+		}
+	}
+	return nil
 }
 
 // newMAC generates a locally administered unicast address: 02 and five

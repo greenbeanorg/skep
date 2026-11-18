@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/greenbeanorg/skep/internal/hostops/hostfake"
 	"github.com/greenbeanorg/skep/pkg/models"
 )
 
@@ -163,7 +164,10 @@ func TestNetworkRefusals(t *testing.T) {
 		{"loopback", models.ContainerCreate{NICs: []models.ContainerNICSpec{{Bridge: "bridge0", IPv4: static("127.0.0.2/8", "")}}}, models.CodeInvalidRequest},
 		{"bad mode", models.ContainerCreate{NICs: []models.ContainerNICSpec{{Bridge: "bridge0", IPv4: &models.ContainerIPv4{Mode: "slaac"}}}}, models.CodeInvalidRequest},
 		{"address with dhcp", models.ContainerCreate{NICs: []models.ContainerNICSpec{{Bridge: "bridge0", IPv4: &models.ContainerIPv4{Mode: "dhcp", Address: "192.0.2.10/24"}}}}, models.CodeInvalidRequest},
-		{"multicast MAC", models.ContainerCreate{NICs: []models.ContainerNICSpec{{Bridge: "bridge0", MACAddress: "01:00:5e:00:00:01"}}}, models.CodeInvalidRequest},
+		{"multicast MAC", models.ContainerCreate{NICs: []models.ContainerNICSpec{{Bridge: "bridge0", MACAddress: "01:00:5e:00:00:01"}}}, models.CodeContainerMACInvalid},
+		{"universal MAC", models.ContainerCreate{NICs: []models.ContainerNICSpec{{Bridge: "bridge0", MACAddress: "58:9c:fc:10:ff:d8"}}}, models.CodeContainerMACInvalid},
+		{"zero MAC", models.ContainerCreate{NICs: []models.ContainerNICSpec{{Bridge: "bridge0", MACAddress: "00:00:00:00:00:00"}}}, models.CodeContainerMACInvalid},
+		{"malformed MAC", models.ContainerCreate{NICs: []models.ContainerNICSpec{{Bridge: "bridge0", MACAddress: "02:00:00:00:00"}}}, models.CodeInvalidRequest},
 		{"same MAC twice", models.ContainerCreate{NICs: []models.ContainerNICSpec{
 			{Bridge: "bridge0", MACAddress: "02:00:00:00:00:09"}, {Bridge: "bridge0", MACAddress: "02:00:00:00:00:09"}}}, models.CodeInvalidRequest},
 		{"bad nameserver", models.ContainerCreate{NICs: []models.ContainerNICSpec{{Bridge: "bridge0", IPv4: static("192.0.2.10/24", "")}}, Nameservers: []string{"ns1"}}, models.CodeInvalidRequest},
@@ -235,3 +239,78 @@ func TestIdempotentCreateWithGeneratedMAC(t *testing.T) {
 }
 
 func asError(err error, target **models.Error) bool { return errors.As(err, target) }
+
+// TestMACRulesOnEditAndClone: the MAC rules of amendment n (SR-03) apply
+// to an edit and a clone as to a create.
+func TestMACRulesOnEditAndClone(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	c := f.create(models.ContainerCreate{Name: "m1", TemplateID: f.minimal, NICs: []models.ContainerNICSpec{{Bridge: "bridge0"}}})
+	for _, mac := range []string{"58:9c:fc:10:ff:d8", "01:00:5e:00:00:01", "00:00:00:00:00:00"} {
+		nics := []models.ContainerNICSpec{{Bridge: "bridge0", MACAddress: mac}}
+		_, err := f.svc.UpdateContainer(ctx, c.ID, models.ContainerUpdate{NICs: &nics}, f.sub)
+		wantCode(t, err, models.CodeContainerMACInvalid)
+		_, err = f.svc.CloneContainer(ctx, c.ID, models.ContainerClone{Name: "m2", NICs: nics}, f.sub)
+		wantCode(t, err, models.CodeContainerMACInvalid)
+	}
+	nics := []models.ContainerNICSpec{{Bridge: "bridge0", MACAddress: "06:00:00:00:00:01"}}
+	f.succeed(f.svc.UpdateContainer(ctx, c.ID, models.ContainerUpdate{NICs: &nics}, f.sub))
+	clone := f.clone(c.ID, models.ContainerClone{Name: "m3", NICs: []models.ContainerNICSpec{{MACAddress: "0a:00:00:00:00:02"}}})
+	if clone.NICs[0].MACAddress != "0a:00:00:00:00:02" {
+		t.Fatalf("clone MAC = %s", clone.NICs[0].MACAddress)
+	}
+}
+
+// TestMACStartRefusals: at start, a MAC already present on the bridge, one
+// another Skep jail holds, or one stored before the rules is refused
+// (amendment n, SR-03), and nothing is left behind.
+func TestMACStartRefusals(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	c := f.create(models.ContainerCreate{Name: "s1", TemplateID: f.minimal,
+		NICs: []models.ContainerNICSpec{{Bridge: "bridge0", MACAddress: "02:00:00:00:01:01"}}})
+
+	// On the bridge (the host's own address, a member's, or learnt).
+	f.fake.Set(func(fk *hostfake.Fake) { fk.PresentMACs = map[string][]string{"bridge0": {"02:00:00:00:01:01"}} })
+	task, err := f.svc.Action(ctx, c.ID, models.ContainerAction{Action: "start"}, f.sub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := f.wait(task.ID)
+	if done.Status != models.TaskFailed || done.ErrorCode != models.CodeContainerMACInUse {
+		t.Fatalf("start = %s %s %s", done.Status, done.ErrorCode, done.ErrorMessage)
+	}
+	if running, _ := f.svc.isRunning(ctx, c.ID); running || len(f.fake.Epairs()) != 0 {
+		t.Fatalf("running %v, epairs %v", running, f.fake.Epairs())
+	}
+	f.fake.Set(func(fk *hostfake.Fake) { fk.PresentMACs = nil })
+
+	// Held by a Skep VM: container_networks has its own UNIQUE index, but
+	// a VM's NIC is in another table, written past the create-time check.
+	if _, err := f.db.Exec(`INSERT INTO virtual_machines (id, node_id, name, engine, cpu_count, memory_bytes)
+		SELECT 'aaaaaaaa-0000-4000-8000-000000000001', id, 'vm1', 'bhyve', 1, 268435456 FROM nodes LIMIT 1`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.db.Exec(`INSERT INTO vm_networks (id, vm_id, slot, mac_address, bridge)
+		VALUES ('aaaaaaaa-0000-4000-8000-000000000002', 'aaaaaaaa-0000-4000-8000-000000000001', 0, '02:00:00:00:01:01', 'bridge0')`); err != nil {
+		t.Fatal(err)
+	}
+	_, err = f.svc.Action(ctx, c.ID, models.ContainerAction{Action: "start"}, f.sub)
+	wantCode(t, err, models.CodeContainerMACInUse)
+	if _, err := f.db.Exec(`DELETE FROM virtual_machines`); err != nil {
+		t.Fatal(err)
+	}
+
+	// A universal address stored before amendment n.
+	if _, err := f.db.Exec(`UPDATE container_networks SET mac_address = ? WHERE container_id = ?`, "58:9c:fc:00:00:01", c.ID); err != nil {
+		t.Fatal(err)
+	}
+	_, err = f.svc.Action(ctx, c.ID, models.ContainerAction{Action: "start"}, f.sub)
+	wantCode(t, err, models.CodeContainerMACInvalid)
+
+	// A good address starts.
+	if _, err := f.db.Exec(`UPDATE container_networks SET mac_address = ? WHERE container_id = ?`, "02:00:00:00:01:02", c.ID); err != nil {
+		t.Fatal(err)
+	}
+	f.succeed(f.svc.Action(ctx, c.ID, models.ContainerAction{Action: "start"}, f.sub))
+}

@@ -3,6 +3,7 @@ package hostops
 import (
 	"context"
 	"errors"
+	"net"
 	"slices"
 	"strings"
 	"testing"
@@ -351,5 +352,102 @@ func TestSkepInterfacesIgnoresReturnedGuestNames(t *testing.T) {
 		if strings.HasSuffix(c, " destroy") && c != "ifconfig epair0a destroy" {
 			t.Fatalf("destroyed %q", c)
 		}
+	}
+}
+
+// TestJailMACProblem: a jail NIC's MAC is unicast, locally administered,
+// and not all zeroes (amendment n, SR-03).
+func TestJailMACProblem(t *testing.T) {
+	for mac, want := range map[string]string{
+		"02:00:00:aa:bb:cc": "",
+		"06:12:34:56:78:9a": "",
+		"fe:ff:ff:ff:ff:fe": "",
+		"01:00:5e:00:00:01": "unicast",
+		"03:00:00:00:00:01": "unicast",
+		"ff:ff:ff:ff:ff:ff": "unicast",
+		"00:00:00:00:00:00": "all zeroes",
+		"58:9c:fc:10:ff:d8": "locally administered",
+		"00:0c:29:aa:bb:cc": "locally administered",
+	} {
+		hw, err := net.ParseMAC(mac)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := JailMACProblem(hw)
+		if (want == "") != (got == "") || !strings.Contains(got, want) {
+			t.Errorf("%s: %q, want %q", mac, got, want)
+		}
+	}
+	if JailMACProblem(net.HardwareAddr{2, 0, 0, 0, 0, 0, 0, 1}) == "" {
+		t.Error("an eight-byte address was accepted")
+	}
+}
+
+func TestCheckNICsRefusesUniversalMAC(t *testing.T) {
+	err := checkNICs([]JailNIC{{Slot: 0, Bridge: "bridge0", MAC: "58:9c:fc:10:ff:d8"}})
+	wantCode(t, err, models.CodeContainerMACInvalid)
+	if err := checkNICs([]JailNIC{{Slot: 0, Bridge: "bridge0", MAC: "02:9c:fc:10:ff:d8"}}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// bridgeWithMACs answers the reads of checkMACsFree: bridge0 with its own
+// address, the member vtnet1 and an epair, and two learnt addresses.
+func bridgeWithMACs(run *script) {
+	run.answers["ifconfig bridge0"] = "bridge0: flags=1008843<UP,BROADCAST,RUNNING,SIMPLEX,MULTICAST,LOWER_UP> metric 0 mtu 1500\n" +
+		"\tether 02:a1:b2:c3:d4:e5\n\tid 00:00:00:00:00:00 priority 32768 hellotime 2 fwddelay 15\n" +
+		"\tmember: epair7a flags=143<LEARNING,DISCOVER,AUTOEDGE,AUTOPTP>\n" +
+		"\tmember: vtnet1 flags=143<LEARNING,DISCOVER,AUTOEDGE,AUTOPTP>\n"
+	run.answers["ifconfig vtnet1"] = "vtnet1: flags=8963<UP,BROADCAST,RUNNING,PROMISC,SIMPLEX,MULTICAST> metric 0 mtu 1500\n" +
+		"\toptions=4c079b<RXCSUM,TXCSUM>\n\tether 02:11:22:33:44:55\n\thwaddr bc:24:11:00:00:01\n"
+	run.answers["ifconfig epair7a"] = "epair7a: flags=8863<UP> metric 0 mtu 1500\n\tether 58:9c:fc:00:00:07\n"
+	run.answers["ifconfig bridge0 addr"] = "06:00:00:00:00:99 Vlan1 vtnet1 1170 flags=0<>\n" +
+		"02:00:00:00:00:07 Vlan1 epair7a 1199 flags=0<>\n"
+}
+
+func TestCheckMACsFree(t *testing.T) {
+	for mac, where := range map[string]string{
+		"02:a1:b2:c3:d4:e5": "the bridge bridge0",
+		"02:11:22:33:44:55": "the member vtnet1",
+		"06:00:00:00:00:99": "address table (learnt on vtnet1)",
+		"02:00:00:00:00:07": "address table (learnt on epair7a)",
+	} {
+		h, run, _ := jailHost(t)
+		bridgeWithMACs(run)
+		spec := jailSpec()
+		spec.NICs = []JailNIC{{Slot: 0, Bridge: "bridge0", MAC: mac}}
+		err := h.checkMACsFree(context.Background(), spec)
+		wantCode(t, err, models.CodeContainerMACInUse)
+		if !strings.Contains(err.Error(), where) {
+			t.Errorf("%s: the refusal does not say where: %v", mac, err)
+		}
+	}
+	// A free address passes, and each interface is read once.
+	h, run, _ := jailHost(t)
+	bridgeWithMACs(run)
+	spec := jailSpec()
+	spec.NICs = []JailNIC{{Slot: 0, Bridge: "bridge0", MAC: "02:00:00:00:00:01"}, {Slot: 1, Bridge: "bridge0", MAC: "02:00:00:00:00:02"}}
+	if err := h.checkMACsFree(context.Background(), spec); err != nil {
+		t.Fatal(err)
+	}
+	if n := len(callsWith(run.calls, "ifconfig bridge0 addr")); n != 1 {
+		t.Errorf("the address table was read %d times", n)
+	}
+	// A member gone between the reads is skipped; a member with a strange
+	// name is refused, not passed to ifconfig.
+	h, run, _ = jailHost(t)
+	bridgeWithMACs(run)
+	run.answers["ifconfig epair7a"] = &CommandError{Name: "ifconfig", ExitCode: 1, Stderr: "ifconfig: interface epair7a does not exist", Err: errors.New("exit status 1")}
+	if err := h.checkMACsFree(context.Background(), spec); err != nil {
+		t.Fatal(err)
+	}
+	h, run, _ = jailHost(t)
+	bridgeWithMACs(run)
+	run.answers["ifconfig bridge0"] = "bridge0: flags=8843<UP> mtu 1500\n\tmember: -j flags=143<LEARNING>\n"
+	if err := h.checkMACsFree(context.Background(), spec); err == nil {
+		t.Fatal("a member named -j was accepted")
+	}
+	if len(callsWith(run.calls, "ifconfig -j")) != 0 {
+		t.Fatalf("calls: %q", run.calls)
 	}
 }

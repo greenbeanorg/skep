@@ -447,6 +447,9 @@ func (h *host) StartJail(ctx context.Context, spec JailSpec) (JailState, error) 
 		h.log.Warn("hostops: destroyed epairs an earlier run of the jail left", "event", "orphaned_interface_removed",
 			"container_id", spec.ContainerID, "interfaces", gone)
 	}
+	if err := h.checkMACsFree(ctx, spec); err != nil {
+		return JailState{}, err
+	}
 	conf, root, err := h.writeJailConf(ctx, spec, true)
 	if err != nil {
 		return JailState{}, err

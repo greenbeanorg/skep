@@ -86,6 +86,20 @@ const (
 	// CodeContainerAddressInUse: a running Skep jail on the same bridge
 	// holds the jail's static IPv4 address (amendment k).
 	CodeContainerAddressInUse = "container_address_in_use"
+	// CodeContainerMACInvalid: a NIC's MAC address is multicast, not
+	// locally administered, or all zeroes (amendment n, SR-03).
+	CodeContainerMACInvalid = "container_mac_invalid"
+	// CodeContainerMACInUse: at start, the NIC's MAC address is already
+	// present on the target bridge (its own address, a member's, or one it
+	// has learnt) or held by another Skep jail or VM (amendment n, SR-03).
+	CodeContainerMACInUse = "container_mac_in_use"
+	// CodeContainerQuarantined: a start refused the jail before any of its
+	// code ran (the /dev guard or a parameter check), and the removal that
+	// followed failed. The jail is recorded failed; start and stop are
+	// refused, Skep never runs its exec.stop or /etc/rc.shutdown, and
+	// delete or the agent's start-up sweep remove it without them
+	// (amendment n, SR-06).
+	CodeContainerQuarantined = "container_quarantined"
 )
 
 // IPv4 addressing modes of a jail NIC (decision 10).

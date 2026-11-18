@@ -4,6 +4,7 @@ import {
   EMPTY_LIMITS,
   RACCT_OFF_FIELD,
   cloneBlocked,
+  containerErrorHint,
   mlockProblem,
   nameserversAllowed,
   newNIC,
@@ -171,5 +172,12 @@ describe("edit helpers", () => {
       { bridge: "bridge1", ipv4: { mode: "static", address: "192.0.2.10/24", gateway: "192.0.2.1" } },
     ]);
     expect(nicToForm(c.nics[0]!)).toEqual({ bridge: "bridge0", mode: "static", address: "192.0.2.10/24", gateway: "192.0.2.1" });
+  });
+});
+
+describe("containerErrorHint for the security review codes", () => {
+  it("explains the MAC refusals of amendment n", () => {
+    expect(containerErrorHint("container_mac_invalid")).toMatch(/locally administered/);
+    expect(containerErrorHint("container_mac_in_use")).toMatch(/already on the bridge/);
   });
 });

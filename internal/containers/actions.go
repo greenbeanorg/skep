@@ -89,6 +89,9 @@ func (s *Service) checkAction(ctx context.Context, id, taskType string) error {
 				return err
 			}
 		}
+		if err := s.checkMACs(ctx, c); err != nil {
+			return err
+		}
 		if err := s.checkAddressFree(ctx, c); err != nil {
 			return err
 		}

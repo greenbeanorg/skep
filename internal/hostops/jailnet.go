@@ -138,6 +138,24 @@ func JailInterfacePrefix(containerID string) string {
 	return hex[:10]
 }
 
+// JailMACProblem says why a MAC address may not be a jail NIC's, or ""
+// when it may (amendment n, SR-03): it must be unicast, locally
+// administered, and not all zeroes, so it cannot be a LAN host's
+// burnt-in address, a gateway's, or the host's own.
+func JailMACProblem(mac net.HardwareAddr) string {
+	switch {
+	case len(mac) != 6:
+		return "must be six bytes, such as 02:00:00:aa:bb:cc"
+	case mac[0]&1 != 0:
+		return "must be a unicast address (the lowest bit of the first byte clear)"
+	case mac.String() == "00:00:00:00:00:00":
+		return "must not be all zeroes"
+	case mac[0]&2 == 0:
+		return "must be locally administered (the second-lowest bit of the first byte set, such as 02:xx:xx:xx:xx:xx)"
+	}
+	return ""
+}
+
 // checkNICs validates the NICs of a spec.
 func checkNICs(nics []JailNIC) error {
 	if len(nics) > models.MaxContainerNICs {
@@ -150,8 +168,13 @@ func checkNICs(nics []JailNIC) error {
 		}
 		seen[n.Slot] = true
 		mac, err := net.ParseMAC(n.MAC)
-		if err != nil || len(mac) != 6 || mac[0]&1 != 0 || mac.String() != n.MAC {
+		if err != nil || len(mac) != 6 || mac.String() != n.MAC {
 			return invalid("invalid MAC address for jail NIC slot %d", n.Slot)
+		}
+		if p := JailMACProblem(mac); p != "" {
+			return &models.Error{Code: models.CodeContainerMACInvalid,
+				Message: fmt.Sprintf("the MAC address %s of NIC slot %d %s; give the NIC another address", n.MAC, n.Slot, p),
+				Details: map[string]any{"slot": n.Slot, "mac_address": n.MAC}}
 		}
 		if !bridgeNameRE.MatchString(n.Bridge) {
 			return invalid("invalid bridge name")
@@ -241,6 +264,114 @@ func (h *host) epairs(ctx context.Context) ([]string, error) {
 func (h *host) interfaceExists(ctx context.Context, name string) (bool, error) {
 	_, exists, err := h.tapDescription(ctx, name)
 	return exists, err
+}
+
+// bridgeMACs lists the MAC addresses present on a bridge, each with where
+// it was seen: the bridge's own, each member's, and those the bridge has
+// learnt (ifconfig <bridge> addr). A member that disappears while it is
+// read is skipped.
+func (h *host) bridgeMACs(ctx context.Context, bridge string) (map[string]string, error) {
+	if !bridgeNameRE.MatchString(bridge) {
+		return nil, invalid("invalid bridge name")
+	}
+	seen := map[string]string{}
+	out, err := h.run.Run(ctx, ifconfigBinary, bridge)
+	if err != nil {
+		return nil, fmt.Errorf("hostops: read %s: %w", bridge, err)
+	}
+	for _, m := range interfaceMACs(out) {
+		seen[m] = "the bridge " + bridge
+	}
+	for _, member := range parseBridge(bridge, out).Members {
+		if !memberNameRE.MatchString(member) {
+			return nil, fmt.Errorf("hostops: %s has a member with an unexpected name %q", bridge, printable(member))
+		}
+		mout, err := h.run.Run(ctx, ifconfigBinary, member)
+		if err != nil {
+			if stderrContains(err, "does not exist") {
+				continue
+			}
+			return nil, fmt.Errorf("hostops: read %s, a member of %s: %w", member, bridge, err)
+		}
+		for _, m := range interfaceMACs(mout) {
+			if _, ok := seen[m]; !ok {
+				seen[m] = "the member " + member + " of " + bridge
+			}
+		}
+	}
+	aout, err := h.run.Run(ctx, ifconfigBinary, bridge, "addr")
+	if err != nil {
+		return nil, fmt.Errorf("hostops: read the addresses %s has learnt: %w", bridge, err)
+	}
+	for mac, port := range learntMACs(aout) {
+		if _, ok := seen[mac]; !ok {
+			seen[mac] = bridge + "'s address table (learnt on " + port + ")"
+		}
+	}
+	return seen, nil
+}
+
+// memberNameRE is the shape of a bridge member's name as ifconfig prints
+// it: Skep passes it back to ifconfig as one argument.
+var memberNameRE = regexp.MustCompile(`^[a-z][a-z0-9_.]{0,14}$`)
+
+// interfaceMACs reads the ether and hwaddr lines of ifconfig(8) output
+// for one interface, in canonical form.
+func interfaceMACs(out []byte) []string {
+	var macs []string
+	for _, line := range strings.Split(string(out), "\n") {
+		f := strings.Fields(line)
+		if len(f) < 2 || (f[0] != "ether" && f[0] != "hwaddr") {
+			continue
+		}
+		if mac, err := net.ParseMAC(f[1]); err == nil && len(mac) == 6 {
+			macs = append(macs, mac.String())
+		}
+	}
+	return macs
+}
+
+// learntMACs reads ifconfig <bridge> addr: one line per learnt address,
+// "58:9c:fc:10:ff:d8 Vlan1 vtnet1 1199 flags=0<>", by MAC and the member
+// it was learnt on.
+func learntMACs(out []byte) map[string]string {
+	macs := map[string]string{}
+	for _, line := range strings.Split(string(out), "\n") {
+		f := strings.Fields(line)
+		if len(f) < 3 {
+			continue
+		}
+		if mac, err := net.ParseMAC(f[0]); err == nil && len(mac) == 6 {
+			macs[mac.String()] = printable(f[2])
+		}
+	}
+	return macs
+}
+
+// checkMACsFree refuses a start when a NIC's MAC address is already
+// present on its bridge (amendment n, SR-03). It runs after the jail's own
+// leftover epairs are destroyed, so what remains belongs to something
+// else.
+func (h *host) checkMACsFree(ctx context.Context, spec JailSpec) error {
+	byBridge := map[string]map[string]string{}
+	for _, nic := range spec.NICs {
+		macs, ok := byBridge[nic.Bridge]
+		if !ok {
+			var err error
+			if macs, err = h.bridgeMACs(ctx, nic.Bridge); err != nil {
+				return err
+			}
+			byBridge[nic.Bridge] = macs
+		}
+		if where, taken := macs[nic.MAC]; taken {
+			return &models.Error{Code: models.CodeContainerMACInUse,
+				Message: fmt.Sprintf("the MAC address %s of NIC slot %d is already present on %s (%s); give the NIC another address",
+					nic.MAC, nic.Slot, nic.Bridge, where),
+				Details: map[string]any{"container_id": spec.ContainerID, "slot": nic.Slot, "mac_address": nic.MAC,
+					"bridge": nic.Bridge, "seen_on": where}}
+		}
+	}
+	return nil
 }
 
 // createJailEpair creates the epair of one NIC and returns its host end.

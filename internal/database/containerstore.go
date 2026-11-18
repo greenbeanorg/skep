@@ -255,6 +255,40 @@ func (s *ContainerStore) StaticNICs(ctx context.Context) ([]StaticNIC, error) {
 	return out, closeRows(rows)
 }
 
+// MACHolder is a Skep jail or VM NIC that holds a MAC address.
+type MACHolder struct {
+	// Kind is "container" or "vm".
+	Kind string
+	ID   string
+	Name string
+	Slot int
+}
+
+// MACHolders lists the jail and VM NICs, other than containerID's, that
+// hold a MAC address (amendment n, SR-03: checked again at every start).
+func (s *ContainerStore) MACHolders(ctx context.Context, mac, containerID string) ([]MACHolder, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT 'container', c.id, c.name, n.slot FROM container_networks n JOIN containers c ON c.id = n.container_id
+		WHERE n.mac_address = ? AND n.container_id <> ?
+		UNION ALL
+		SELECT 'vm', v.id, v.name, n.slot FROM vm_networks n JOIN virtual_machines v ON v.id = n.vm_id
+		WHERE n.mac_address = ?
+		ORDER BY 1, 3, 4`, mac, containerID, mac)
+	if err != nil {
+		return nil, fmt.Errorf("database: list MAC holders: %w", err)
+	}
+	var out []MACHolder
+	for rows.Next() {
+		var h MACHolder
+		if err := rows.Scan(&h.Kind, &h.ID, &h.Name, &h.Slot); err != nil {
+			rows.Close()
+			return nil, fmt.Errorf("database: list MAC holders: %w", err)
+		}
+		out = append(out, h)
+	}
+	return out, closeRows(rows)
+}
+
 // Get returns one container, or models.ErrNotFound.
 func (s *ContainerStore) Get(ctx context.Context, id string) (models.Container, error) {
 	c, err := scanContainer(s.db.QueryRowContext(ctx, `SELECT `+containerColumns+containerFrom+` WHERE c.id = ?`, id))

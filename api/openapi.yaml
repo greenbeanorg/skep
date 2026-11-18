@@ -1768,7 +1768,12 @@ paths:
         when a running Skep jail on the same bridge holds one of the
         jail's static IPv4 addresses (`container_address_in_use`,
         amendment k; the addresses compared are the ones Skep wrote). An
-        epair an earlier crash left is destroyed first. The first start marks the jail
+        epair an earlier crash left is destroyed first. A start is refused
+        with `container_mac_in_use` when a NIC's MAC address is held by a
+        Skep VM, or is already present on the target bridge: the bridge's
+        own address, a member interface's, or one in the bridge's address
+        table; and with `container_mac_invalid` for a MAC recorded before
+        those rules existed (amendment n). The first start marks the jail
         as started for good: Skep never writes into its tree again. `stop`
         runs `/etc/rc.shutdown`, then sends SIGTERM and, after `timeout`
         seconds (default `containers.stop_timeout_seconds`), SIGKILL; a
@@ -2239,6 +2244,7 @@ components:
         `container_not_stopped`, `container_not_running`,
         `container_not_provisioned`, `container_started`,
         `container_start_failed`, `container_address_in_use`,
+        `container_mac_in_use`,
         `epair_unavailable`, `rctl_unavailable`, `devfs_ruleset_conflict`.
       content:
         application/json:
@@ -2252,7 +2258,8 @@ components:
         `storage_feature_unsupported`, and for jail templates
         `release_unsupported` (no allowlist for the host's release), and
         for jails `container_ssh_unavailable`,
-        `mlock_requires_memory_limit`, `clone_addressing_required`.
+        `mlock_requires_memory_limit`, `clone_addressing_required`,
+        `container_mac_invalid`.
         A build task can also fail with `template_script_unknown`,
         `template_trigger_left`, `template_host_changed`,
         `template_build_failed`, `template_archive_mismatch`, or
@@ -2851,7 +2858,13 @@ components:
           description: An allow-listed bridge (network.bridges).
         mac_address:
           type: string
-          description: Generated (02:xx:xx:xx:xx:xx) when left out; on an update, the slot keeps its MAC.
+          description: >-
+            Generated (02:xx:xx:xx:xx:xx) when left out; on an update, the
+            slot keeps its MAC. A given address must be unicast, locally
+            administered (the 0x02 bit of the first byte set), and not all
+            zeroes (`container_mac_invalid`, 422, on create, update, and
+            clone; ADR 0010 amendment n). A malformed one is
+            `invalid_request`.
         ipv4:
           $ref: "#/components/schemas/ContainerIPv4"
     Container:

@@ -3,6 +3,7 @@ package hostfake
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -289,6 +290,13 @@ func (j fakeJails) StartJail(ctx context.Context, spec hostops.JailSpec) (hostop
 		}
 	}
 	f.destroyEpairsLocked(spec.ContainerID)
+	for _, nic := range spec.NICs {
+		if slices.Contains(f.PresentMACs[nic.Bridge], nic.MAC) {
+			return hostops.JailState{}, &models.Error{Code: models.CodeContainerMACInUse,
+				Message: fmt.Sprintf("the MAC address %s is already present on %s (simulated)", nic.MAC, nic.Bridge),
+				Details: map[string]any{"slot": nic.Slot, "mac_address": nic.MAC, "bridge": nic.Bridge}}
+		}
+	}
 	epairs := map[int]string{}
 	for _, nic := range spec.NICs {
 		host := fmt.Sprintf("epair%da", f.nextEpair)
