@@ -1938,3 +1938,19 @@ every provisioned jail that does not run. Each unmount is logged as
 a unit test with a fake table, and a native test on `hearst` that reads
 the real table with a root whose `dev` links to `/dev` and to `/`, with
 an unmount that fails the test if called.
+
+**Amendment o, built (2026-11-18, merrick only).** SR-01: `/etc/rc` gets
+a pipe (`EnvCommand.ConsoleLog`, `hostops.runToConsoleLog` in
+`exec_unix.go`); `console.log` is truncated when rc is about to run, the
+first 256 KiB are written as they arrive, the rest is counted with the
+last 64 KiB kept, and `skep: N bytes discarded` plus the tail are written
+when rc ends. The read end is read for at most 100 ms after jexec exits
+and then closed. The jail.conf has no `exec.consolelog`; `jail -r` runs
+with `EnvCommand.MarkOverflow` (4 MiB, a marker, never an error for its
+size), and its output is not kept. SR-04:
+`containers.max_locked_memory_bytes` (0 = `hw.physmem`/4, read at agent
+start); `container_locked_memory_above_max` (422) at create, update, and
+start; `container_locked_memory_exhausted` (409) at submission and in the
+start task, which reserves its share in memory until the jail runs or
+the start fails. Details and the hearst checks are in section 15 of
+[step10-progress.md](../../tests/integration/jails/results/step10-progress.md).

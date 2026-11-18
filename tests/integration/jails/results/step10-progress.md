@@ -651,3 +651,202 @@ anything.
    afterwards; each change recorded in this log.
 
 No code was written in this session; SR-01 and SR-04 are the next build.
+
+## 15. Amendment o built (2026-11-18, merrick only)
+
+SR-01 and SR-04 as decided in amendment o (section 14). Nothing ran on
+hearst; no API calls against it; no deploy; no PR. The code fitted the
+amendment; nothing was stopped on.
+
+### 15.1 Built
+
+1. **SR-01, the console log** (`543f769`, `8e4a41b`; docs `d63085e`).
+   - `hostops.runToConsoleLog` (new `exec_unix.go`, `//go:build unix`, so
+     the tests run on merrick and in the FreeBSD test binary): opens
+     `console.log` `O_TRUNC|O_CREATE|O_NOFOLLOW|O_CLOEXEC` 0600, gives
+     jexec the write end of an `os.Pipe` as `*os.File` (so `Wait` returns
+     when jexec exits, never at end-of-file), closes the agent's copy of
+     the write end right after `Start`, and drains the read end in a
+     goroutine. Layout (`consoleLog`): the first 256 KiB
+     (`ConsoleLogHead`) written as they arrive; beyond that, bytes are
+     counted and the last 64 KiB (`ConsoleLogTail`) kept in memory; at
+     the end, if anything was dropped, `\nskep: N bytes discarded\n`,
+     then the tail. Most the file can hold: 320 KiB plus the marker.
+   - When jexec exits (success, failure, or the start timeout's kill),
+     the read end gets a 100 ms deadline to collect what rc left in the
+     pipe buffer, and is then closed whatever still holds the write end.
+     A process rc left running that writes later gets `SIGPIPE`, or
+     `EPIPE` if it ignores it.
+   - A failed write to `console.log` stops the writing, never the
+     draining, and is returned after rc ends, so the start fails (as a
+     failed open already did).
+   - `exec.consolelog` is gone from the jail.conf. `removeJail` runs
+     `jail -r` with the new `EnvCommand.MarkOverflow`: stdout past 4 MiB is
+     cut with the same marker line, never an error; stderr was already
+     capped at 4 MiB without an error. The output is not kept (a debug
+     log line gives its size).
+   - `runCommand` takes an overflow mode: `overflowCut` (`Run`, as
+     before), `overflowFail` (the template builder's strict mode, as
+     before), `overflowMark` (new).
+   - `EnvCommand.Output` and `runToFile` are gone (the jail start was
+     their only user); `ConsoleLog` replaces `Output`.
+   - Docs: jails.md has a "The console log" section (layout, truncation,
+     SIGPIPE/EPIPE for late writers, how to redirect a background
+     command in `rc.local`, rc.shutdown's output not in the log); the
+     security overview and the console-log endpoint in the OpenAPI
+     document say the same. The UI's empty-log text no longer mentions
+     `rc.shutdown`.
+2. **SR-04, the locked-memory total** (`384c6b6`; docs `a634f61`).
+   - `containers.max_locked_memory_bytes` in the agent config (sample
+     updated; a negative value is refused at load). The agent reads
+     `hw.physmem` once at start (`VMM.Capabilities`) and logs the total;
+     `containers.MaxLockedMemory` returns the setting when it is above 0,
+     else physical memory / 4. If physical memory could not be read and
+     nothing is set, the total is 0 (no jail may lock memory) and a
+     warning is logged.
+   - `checkLimits` (create, update, and before every start) refuses a
+     `locked_memory` above the total with
+     `container_locked_memory_above_max` (422).
+   - The start check: `checkAction` (submission) and `start` (in the
+     task, also for a restart) refuse with
+     `container_locked_memory_exhausted` (409) when this jail's
+     `locked_memory` plus that of every jail the host reports running
+     (each counted with its stored value; limits change only while a jail
+     is stopped) and of the starts under way passes the total. The task
+     reserves its share in an in-memory map, under a mutex, from before
+     `MarkStarting` until `StartJail` returns. A jail without
+     `locked_memory` is never refused by this check.
+   - UI hints for both codes; OpenAPI and jails.md (Limits and
+     Configuration), the security overview. The docs say that
+     `vm.max_user_wired` is one pool shared with bhyve VMs that wire
+     their memory, and that Skep's VMs do not wire theirs in this release
+     (no `-S` or `memory.wired` in the bhyve config).
+
+### 15.2 Tests (merrick)
+
+- New, hostops (`exec_unix_test.go`, real `/bin/sh` processes): the
+  head/marker/tail layout (9 cases); a write failure that keeps
+  draining; a cap hit during a start (6000 lines, about 380 KiB: the file
+  is exactly head + marker with the right count + tail, mode 0600); a
+  truncated earlier log; a symbolic link at `console.log` refused and its
+  target untouched; the pipe closed after the start while a `sleep 30`
+  holds it (returns in about 0.1 s); a write after the start, killed by
+  `SIGPIPE` by default and `EPIPE` with `trap '' PIPE`, the log not
+  grown; a timeout (pipe closed, the output before it kept); a failure
+  (`CommandError` pointing at the console log); the three overflow modes
+  of `runCommand`; and `removeJail` with shutdown output past the cap
+  succeeding (a runner that really runs a shell past the cap in the mode
+  `removeJail` asks for). The jail.conf test now also refuses
+  `exec.consolelog`.
+- New, containers: the default calculation (7 cases, and the fixture's
+  16 GiB giving 4 GiB); the 422 at create (with and without `mlock`) and
+  update, a value at the total accepted and started, and a total of 0
+  when physical memory is unknown; the total at start (refused with both
+  figures in the details, exactly full accepted, a jail without locked
+  memory, restart, freed by a stop); a running jail not counted against
+  itself; the reservation blocking a second start until released.
+- New, config: a negative `max_locked_memory_bytes` refused.
+- Mutation checks run by hand: `jail -r` without `MarkOverflow` fails the
+  shutdown test; dropping the self-exclusion fails the start test (it did
+  not until I added the direct check of a running jail).
+- Results: `go test ./... -count=1` passed (40 packages with tests);
+  `make lint` passed (gofmt, go vet for Linux and FreeBSD, staticcheck;
+  the first push was refused by the hook for an unused `overflowCut` on
+  Linux, fixed in `8e4a41b` by a test of that mode);
+  `GOOS=freebsd GOARCH=amd64 go test -c ./internal/hostops/` compiled;
+  `make web-check` passed three times in a row (15 files, 112 tests each).
+
+### 15.3 Changes not in the request (for approval)
+
+1. The portable process code (`runCommand`, `capped`, the new console
+   log) moved from `exec_freebsd.go` to a new `exec_unix.go`, so its
+   tests run on merrick; `execRunner` stays FreeBSD-only.
+2. `EnvCommand.Output` renamed `ConsoleLog`, and `runToFile` removed.
+3. A second new code, `container_locked_memory_above_max` (422): the
+   amendment names a new `container_*` code for the start refusal only,
+   and the single-value 422 needed a code of its own (`invalid_request`
+   is 400).
+4. The single-value check also runs before every start (it is in
+   `checkLimits`), so a jail created before the setting was lowered is
+   refused at start with the 422 code.
+5. The in-memory reservation of starts under way, so two concurrent
+   starts cannot both take the last room.
+6. Every `locked_memory` counts toward the total, with or without the
+   `mlock` option (it is what RCTL allows the jail). A jail without
+   `locked_memory` always passes the start check, even when the running
+   jails are over the total after the setting was lowered.
+7. Unreadable physical memory with no setting gives a total of 0 (fail
+   closed), with a warning; an info line logs the total at agent start.
+8. A failed write to `console.log` (after a successful open) fails the
+   start, after rc ran, so the jail is removed with `exec.stop`.
+9. `console.log` is truncated when rc is about to run, not at the start
+   of `StartJail`: a start refused before rc (or `container_not_stopped`
+   for a running jail) leaves the previous log as it was.
+10. The UI's empty console-log text, and a debug log line with the size
+    of `jail -r`'s output.
+
+### 15.4 Open points (not built; for a decision)
+
+1. **`/etc/rc.shutdown`'s output is no longer kept anywhere.** It used to
+   go to `console.log` through `exec.consolelog`; now it is capped in
+   memory and dropped. Options: (a) keep as built; (b) append it to
+   `console.log` after rc's output, through the same head/tail layout
+   with its own smaller budget (for example 64 KiB), written by the
+   agent after `jail -r` returns. I recommend (b) if the shutdown output
+   is wanted for debugging; (a) otherwise.
+2. **A failed `jail -r` reports the first line of its stderr**, which now
+   includes the jail's `rc.shutdown` stderr, so the task error of a
+   failed stop can start with text the jail wrote. jail(8)'s own error
+   comes after. Options: use the last line of stderr for `jail -r`, or a
+   fixed message plus the exit status. I recommend the last line.
+3. **The total is not in `GET /system`**, so the UI cannot check a
+   `locked_memory` value before sending it; the 422 and its hint are what
+   the user sees. Adding `containers.max_locked_memory_bytes` to the
+   capabilities would let the form check it.
+
+### 15.5 Proposed hearst tests (to add to the validation list)
+
+**SR-01:**
+
+- Before deploying: on the current build, the review's baseline proof
+  (section 13.9, already approved) so the before/after can be compared.
+- The cross-compiled hostops test binary, as an unprivileged user (no
+  root needed): `-test.run
+  'ConsoleLog|MarkOverflow|ShutdownOutput' -test.v`, which checks the
+  pipe, SIGPIPE, and EPIPE behaviour on FreeBSD's own pipes and `/bin/sh`.
+- After the deploy, the rendered `jail.conf` of a test jail has no
+  `exec.consolelog`.
+- A test jail with `( dd if=/dev/zero bs=1m count=50 2>/dev/null; sleep
+  600 ) &` in `/etc/rc.local`: after the start task succeeds, `sudo ls -l
+  /var/run/skep/jails/<id>/console.log` stays at most about 320 KiB;
+  `sudo procstat -f` of the jail's processes shows no descriptor on
+  `console.log` (fd 1 is a pipe, or the writer has died of SIGPIPE);
+  `df /` unchanged. Stop the jail and remove the test lines.
+- A test jail whose `rc.local` prints about 1 MiB in the foreground: the
+  console log is head + `skep: N bytes discarded` + tail, and `GET
+  .../console-log` ends with rc's last line.
+- A minimal jail with sshd: after the start, and again after a minute,
+  `sshd`, `cron`, and `syslogd` still run (`sudo jexec skep-<id> ps ax`),
+  and SSH to the jail works.
+- A test jail whose `/etc/rc.shutdown.local` prints about 8 MiB: the stop
+  task succeeds and the jail is gone.
+- A second start of the same jail truncates its console log.
+
+**SR-04:**
+
+- The agent's start log line shows `max_locked_memory_bytes` equal to
+  `sysctl -n hw.physmem` / 4 (about 1.5 GiB on hearst).
+- A create with `limits.locked_memory` above that is 422
+  `container_locked_memory_above_max`.
+- Two jails with `mlock` and `locked_memory` 1 GiB and 768 MiB (no
+  `memory` limit): the first starts and `rctl jail:skep-<id>` shows
+  exactly the `memorylocked` rule; the second start is 409
+  `container_locked_memory_exhausted` and its jail is never created; after
+  a stop of the first, the second starts. Stop and delete both
+  afterwards.
+- Optional, bounded: `tests/integration/jails/mlocktest` in the first
+  jail locks up to its limit and fails past it, watching `sysctl
+  vm.stats.vm.v_wire_count` return to its baseline after the stop.
+
+None of these changes hearst's configuration: the SR-04 checks use the
+default total, so `agent.json` is not edited.
