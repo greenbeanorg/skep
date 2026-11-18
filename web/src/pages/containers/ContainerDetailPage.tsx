@@ -16,7 +16,7 @@ import { Notice } from "@/components/ui/notice";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { formatBytes, formatDateTime } from "@/lib/format";
 
-import { CONTAINER_CLONE_NOTE, RCTL_LIMITS, isActive } from "./container";
+import { CONTAINER_CLONE_NOTE, QUARANTINE_NOTE, RCTL_LIMITS, isActive } from "./container";
 import { ContainerSnapshotsCard } from "./ContainerSnapshotsCard";
 import { ContainerStateBadge } from "./ContainersPage";
 import { withHint } from "./CreateContainerDialog";
@@ -40,9 +40,10 @@ export function powerActions(c: Container): ContainerActionName[] {
     case "running":
       return ["stop", "restart"];
     case "stopped":
-    case "failed":
     case "unknown":
       return ["start"];
+    // "failed" is a quarantined jail (ADR 0010 amendment n): the agent
+    // refuses start and stop; only delete removes it.
     default:
       return [];
   }
@@ -164,6 +165,11 @@ export function ContainerDetailPage() {
         <Notice tone="warn" title="This jail cannot start while RACCT is off" className="mb-4">
           It has a memory, CPU, process, or file-table limit, which needs RACCT (kern.racct.enable). A start is refused with
           rctl_unavailable until RACCT is enabled, or the limits are removed.
+        </Notice>
+      ) : null}
+      {c.state === "failed" ? (
+        <Notice tone="bad" title="This jail is quarantined" className="mb-4" data-testid="quarantine-note">
+          {QUARANTINE_NOTE}
         </Notice>
       ) : null}
       {c.cloned_from_snapshot_id ? (

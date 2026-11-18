@@ -548,10 +548,14 @@ func (s *Service) DeleteContainer(ctx context.Context, id string, sub Submission
 	if err != nil {
 		return models.Task{}, s.refuse(ctx, refused, err)
 	}
-	if running, err := s.isRunning(ctx, id); err != nil {
-		return models.Task{}, err
-	} else if running {
-		return models.Task{}, s.refuse(ctx, refused, notStopped(c))
+	// A quarantined jail may still exist: the delete removes it without
+	// exec.stop (amendment n, SR-06).
+	if c.State != models.ContainerFailed {
+		if running, err := s.isRunning(ctx, id); err != nil {
+			return models.Task{}, err
+		} else if running {
+			return models.Task{}, s.refuse(ctx, refused, notStopped(c))
+		}
 	}
 	if err := s.checkDeletable(ctx, c); err != nil {
 		return models.Task{}, s.refuse(ctx, refused, err)
@@ -600,13 +604,23 @@ func (s *Service) runDelete(ctx context.Context, task tasks.Task, report tasks.R
 	if err != nil {
 		return nil, err
 	}
+	if err := s.checkDeletable(ctx, c); err != nil {
+		return nil, failure(err)
+	}
+	if c.State == models.ContainerFailed {
+		// Quarantined (amendment n, SR-06): remove the jail, if it is
+		// still there, without exec.stop, so none of its code runs.
+		report.Progress("removing the quarantined jail without running any of its code", nil)
+		if err := s.jails.DiscardJail(ctx, s.spec(c, 0)); err != nil {
+			return nil, failure(&models.Error{Code: models.CodeContainerQuarantined,
+				Message: "the quarantined jail could not be removed: " + err.Error() + "; it stays quarantined",
+				Details: map[string]any{"container_id": c.ID}})
+		}
+	}
 	if running, err := s.isRunning(ctx, c.ID); err != nil {
 		return nil, err
 	} else if running {
 		return nil, failure(notStopped(c))
-	}
-	if err := s.checkDeletable(ctx, c); err != nil {
-		return nil, failure(err)
 	}
 	// Epairs a crash left are the owner's to remove (decision 10).
 	ifaces, err := s.jails.DestroyJailInterfaces(ctx, c.ID)

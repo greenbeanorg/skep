@@ -308,6 +308,12 @@ func (j fakeJails) StartJail(ctx context.Context, spec hostops.JailSpec) (hostop
 	jid := f.nextJID
 	f.nextJID++
 	f.jails[spec.ContainerID] = jid
+	if f.QuarantineStart {
+		f.record("jail -c %s; /dev refused; jail -r %s (no exec.stop) failed", name, name)
+		return hostops.JailState{}, &models.Error{Code: models.CodeContainerQuarantined,
+			Message: "the /dev guard refused the jail and its removal failed (simulated)",
+			Details: map[string]any{"container_id": spec.ContainerID}}
+	}
 	rules, err := hostops.JailRctlRules(spec.ContainerID, spec.Limits)
 	if err != nil {
 		return hostops.JailState{}, err
@@ -331,6 +337,10 @@ func (j fakeJails) DiscardJail(_ context.Context, spec hostops.JailSpec) error {
 	f := j.f
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.FailDiscard != nil {
+		f.record("jail -r %s (no exec.stop) failed", name)
+		return f.FailDiscard
+	}
 	if _, ok := f.jails[spec.ContainerID]; ok {
 		delete(f.jails, spec.ContainerID)
 		f.record("jail -r %s (no exec.stop)", name)

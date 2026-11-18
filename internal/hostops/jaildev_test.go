@@ -331,3 +331,33 @@ func TestRemoveJailDestroysEpairsFirst(t *testing.T) {
 		t.Fatalf("destroy at %d, jail -r at %d: %q", destroy, remove, run.calls)
 	}
 }
+
+// TestFinishStartRefusalWithFailedRemovalIsQuarantined: when the guard
+// refuses the jail and its removal then fails, the start reports
+// container_quarantined, /etc/rc never ran, and the only removal tried
+// was one without exec.stop (amendment n, SR-06).
+func TestFinishStartRefusalWithFailedRemovalIsQuarantined(t *testing.T) {
+	h, run, root := startedJail(t)
+	h.listDev = func(string) ([]string, error) { return append(slices.Clone(devStep7), "mem"), nil }
+	name := "skep-" + ctrA
+	conf, err := h.writeJailConfAt(jailSpec(), root, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run.answers["jail -f "+conf+" -r "+name] = errors.New("hostops: jail -r timed out")
+	_, err = h.finishStart(context.Background(), jailSpec(), name, conf, root)
+	wantCode(t, err, models.CodeContainerQuarantined)
+	if !strings.Contains(err.Error(), "mem") || !strings.Contains(err.Error(), "timed out") {
+		t.Fatalf("the refusal does not give both causes: %v", err)
+	}
+	if rc := callsWith(run.calls, "jexec"); len(rc) != 0 {
+		t.Fatalf("/etc/rc ran in a quarantined jail: %q", rc)
+	}
+	data, err := os.ReadFile(conf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "exec.stop") {
+		t.Fatalf("the quarantined jail's removal had exec.stop:\n%s", data)
+	}
+}

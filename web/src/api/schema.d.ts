@@ -956,7 +956,11 @@ export interface paths {
          * @description Requires `container:delete`. Submits `container.delete`, which
          *     destroys the jail's dataset and snapshots and its runtime
          *     directory; the task result and the audit entry list every dataset
-         *     destroyed. The jail must be stopped (`container_not_stopped`).
+         *     destroyed. The jail must be stopped (`container_not_stopped`),
+         *     except a quarantined one (`state` `failed`), whose jail the task
+         *     first removes without running `/etc/rc.shutdown`; if that removal
+         *     fails again, the task fails with `container_quarantined` and the
+         *     jail stays quarantined.
          */
         delete: operations["deleteContainer"];
         options?: never;
@@ -992,7 +996,13 @@ export interface paths {
          *     Skep VM, or is already present on the target bridge: the bridge's
          *     own address, a member interface's, or one in the bridge's address
          *     table; and with `container_mac_invalid` for a MAC recorded before
-         *     those rules existed (amendment n). The first start marks the jail
+         *     those rules existed (amendment n). A start that the checks refuse
+         *     before any of the jail's code runs, and whose removal then fails,
+         *     fails with `container_quarantined` and leaves the container
+         *     `failed`: start, stop, and restart are then refused with that code
+         *     until a delete or the agent's next start removes the jail without
+         *     `/etc/rc.shutdown`. A stop or restart task that finds the container
+         *     still recorded `starting` is refused the same way. The first start marks the jail
          *     as started for good: Skep never writes into its tree again. `stop`
          *     runs `/etc/rc.shutdown`, then sends SIGTERM and, after `timeout`
          *     seconds (default `containers.stop_timeout_seconds`), SIGKILL; a
@@ -1620,7 +1630,10 @@ export interface components {
             cloned_from_snapshot_id?: string;
             /** @enum {string} */
             desired_state: "stopped" | "running";
-            /** @enum {string} */
+            /**
+             * @description `failed` is a quarantined jail (ADR 0010 amendment n): a start refused it before any of its code ran (the `/dev` guard or a parameter check) and removing it then failed. It stays `failed` whether or not the jail still exists; start, stop, and restart are refused with `container_quarantined`, and a delete or the agent's next start removes it without running `/etc/rc.shutdown`. `state_detail` gives both causes.
+             * @enum {string}
+             */
             state: "unknown" | "stopped" | "starting" | "running" | "stopping" | "failed";
             jid?: number;
             state_detail?: string;
@@ -2361,7 +2374,7 @@ export interface components {
          *     `container_not_stopped`, `container_not_running`,
          *     `container_not_provisioned`, `container_started`,
          *     `container_start_failed`, `container_address_in_use`,
-         *     `container_mac_in_use`,
+         *     `container_mac_in_use`, `container_quarantined`,
          *     `epair_unavailable`, `rctl_unavailable`, `devfs_ruleset_conflict`.
          */
         VMConflict: {

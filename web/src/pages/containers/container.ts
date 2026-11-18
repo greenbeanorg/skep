@@ -247,6 +247,10 @@ export function cloneBlocked(c: Container): string | undefined {
   return undefined;
 }
 
+/** What the page says about a quarantined jail (ADR 0010 amendment n, SR-06). */
+export const QUARANTINE_NOTE =
+  "A start refused this jail before any of its code ran (its /dev or its parameters were not what Skep allows), and removing it then failed. Skep will not start or stop it, since a stop would run the jail's own /etc/rc.shutdown. Deleting it, or restarting the agent, removes it without running any of its code.";
+
 export const STARTED_STATIC_CLONE =
   "This jail has a static address and has started, so it cannot be cloned. A clone would need new addressing, and Skep writes addressing only into a jail's tree before any of its code has run: after the first start the jail's own processes may have changed those files, so Skep no longer writes there. Clone it before its first start, or give it DHCP addressing.";
 
@@ -292,6 +296,8 @@ export function containerErrorHint(code: string): string | undefined {
       return "A jail's MAC address must be unicast and locally administered (the second hex digit is 2, 6, A, or E, as in 02:…), and not all zeroes.";
     case "container_mac_in_use":
       return "The MAC address is already on the bridge (the host's, a member interface's, or a device the bridge has learnt) or used by another Skep guest. Give the interface another MAC address.";
+    case "container_quarantined":
+      return "The jail is quarantined: it was refused before any of its code ran and could not be removed. Delete it, or restart the agent, to remove it without running its code.";
     case "clone_addressing_required":
       return "Every interface with a static address needs new addressing for the clone.";
     case "epair_unavailable":

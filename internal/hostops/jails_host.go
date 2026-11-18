@@ -480,7 +480,9 @@ func (h *host) StartJail(ctx context.Context, spec JailSpec) (JailState, error) 
 	// its devfs, and moves its interfaces in, and nothing runs in it.
 	if _, err := er.RunEnv(ctx, EnvCommand{Path: jailBinary, Args: []string{"-f", conf, "-c", name},
 		Env: jailEnv, Timeout: jailCommandSlack}); err != nil {
-		h.discardAfterFailedStart(spec, root)
+		if rerr := h.discardAfterFailedStart(spec, root); rerr != nil {
+			return JailState{}, quarantined(spec, "jail(8) could not create the jail: "+err.Error(), rerr)
+		}
 		return JailState{}, startFailed(spec, "jail(8) could not create the jail: ", err)
 	}
 	jid, err := h.finishStart(ctx, spec, name, conf, root)
@@ -528,7 +530,9 @@ func (h *host) finishStart(ctx context.Context, spec JailSpec, name, conf, root 
 		err = h.checkJailDevfs(spec, root)
 	}
 	if err != nil {
-		h.discardAfterFailedStart(spec, root)
+		if rerr := h.discardAfterFailedStart(spec, root); rerr != nil {
+			return 0, quarantined(spec, err.Error(), rerr)
+		}
 		return 0, startFailed(spec, "the jail was removed before any of its code ran: ", err)
 	}
 	logPath, err := h.conf.JailRunPath(spec.ContainerID, JailConsoleLog)
@@ -659,15 +663,33 @@ func (h *host) cleanJailNet(spec JailSpec) {
 
 // discardAfterFailedStart removes a jail none of whose code has run,
 // without exec.stop, and then its epairs, on its own short context so a
-// cancelled request still cleans up. A failure is logged.
-func (h *host) discardAfterFailedStart(spec JailSpec, root string) {
+// cancelled request still cleans up. It returns the error when the jail
+// could not be removed: the caller then reports the jail quarantined
+// (amendment n, SR-06). Epairs that could not be destroyed are logged;
+// they are orphans, removed by the next start, stop, or delete.
+func (h *host) discardAfterFailedStart(spec JailSpec, root string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), spec.StopTimeout+spec.StartTimeout+jailCommandSlack)
 	defer cancel()
 	if err := h.discardJail(ctx, spec, root); err != nil {
-		h.log.Error("hostops: a jail left by a failed start could not be removed", "container_id", spec.ContainerID, "error", err)
-		return
+		h.log.Error("hostops: a jail refused before any of its code ran could not be removed; it is quarantined",
+			"event", "jail_quarantined", "container_id", spec.ContainerID, "error", err)
+		return err
 	}
 	h.cleanJailNet(spec)
+	return nil
+}
+
+// quarantined is container_quarantined: a start refused the jail before
+// any of its code ran, and the removal without exec.stop then failed
+// (amendment n, SR-06). The jail may still exist with the /dev or the
+// parameters the check refused; nothing of it may run, its
+// /etc/rc.shutdown included.
+func quarantined(spec JailSpec, refusal string, removal error) error {
+	return &models.Error{Code: models.CodeContainerQuarantined,
+		Message: "the start refused the jail before any of its code ran (" + refusal + "), and removing it then failed (" +
+			removal.Error() + "); the jail is quarantined: Skep will not start or stop it or run its /etc/rc.shutdown, " +
+			"and a delete or the next agent start removes it without running any of its code",
+		Details: map[string]any{"container_id": spec.ContainerID}}
 }
 
 // discardJail removes a jail with a jail.conf without exec.stop, so none

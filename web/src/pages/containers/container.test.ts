@@ -180,4 +180,7 @@ describe("containerErrorHint for the security review codes", () => {
     expect(containerErrorHint("container_mac_invalid")).toMatch(/locally administered/);
     expect(containerErrorHint("container_mac_in_use")).toMatch(/already on the bridge/);
   });
+  it("explains a quarantined jail", () => {
+    expect(containerErrorHint("container_quarantined")).toMatch(/quarantined/);
+  });
 });

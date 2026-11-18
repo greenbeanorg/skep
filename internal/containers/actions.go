@@ -3,6 +3,7 @@ package containers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -76,6 +77,9 @@ func (s *Service) checkAction(ctx context.Context, id, taskType string) error {
 	if !c.Provisioned {
 		return notProvisioned(c)
 	}
+	if c.State == models.ContainerFailed {
+		return quarantinedRefusal(c)
+	}
 	running, err := s.isRunning(ctx, id)
 	if err != nil {
 		return err
@@ -100,6 +104,31 @@ func (s *Service) checkAction(ctx context.Context, id, taskType string) error {
 	if !running {
 		return &models.Error{Code: models.CodeContainerNotRunning, Message: "the jail is not running",
 			Details: map[string]any{"container_id": c.ID}}
+	}
+	return nil
+}
+
+// quarantinedRefusal refuses an action on a quarantined jail (amendment
+// n, SR-06): a start refused it before any of its code ran and its
+// removal failed, so nothing of it may run, /etc/rc.shutdown included.
+// Only a delete, or the agent's start-up sweep, removes it.
+func quarantinedRefusal(c models.Container) error {
+	return &models.Error{Code: models.CodeContainerQuarantined,
+		Message: "the jail is quarantined: a start refused it before any of its code ran, and removing it failed; " +
+			"Skep does not start or stop it (a stop would run its /etc/rc.shutdown). Delete it, or restart the agent, " +
+			"to remove it without running any of its code",
+		Details: map[string]any{"container_id": c.ID, "state_detail": c.StateDetail}}
+}
+
+// checkStopAtRunTime refuses, when a stop or restart task runs, a jail
+// still recorded starting. Tasks on one container run one at a time, so
+// no start is under way: the last one ended without recording its outcome
+// (a database failure), and the jail may be one the start refused. It is
+// handled like a quarantined jail; the agent's start-up sweep removes it
+// without exec.stop (amendment n, SR-06).
+func checkStopAtRunTime(c models.Container) error {
+	if c.State == models.ContainerStarting {
+		return quarantinedRefusal(c)
 	}
 	return nil
 }
@@ -138,8 +167,15 @@ func (s *Service) start(ctx context.Context, c models.Container, report tasks.Re
 	rctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	if err != nil {
-		if serr := s.store.SaveObserved(rctx, c.ID, models.ContainerStopped, nil, "the last start failed: "+err.Error(), at); serr != nil {
-			s.log.Warn("containers: could not record a failed start", "container_id", c.ID, "error", serr)
+		state := models.ContainerStopped
+		var me *models.Error
+		if errors.As(err, &me) && me.Code == models.CodeContainerQuarantined {
+			// The jail may still exist; it must never be observed running
+			// or stopped with exec.stop (amendment n, SR-06).
+			state = models.ContainerFailed
+		}
+		if serr := s.store.SaveObserved(rctx, c.ID, state, nil, "the last start failed: "+err.Error(), at); serr != nil {
+			s.log.Error("containers: could not record a failed start", "container_id", c.ID, "state", state, "error", serr)
 		}
 		if serr := s.store.SaveEpairs(rctx, c.ID, nil); serr != nil {
 			s.log.Warn("containers: could not clear the observed epairs", "container_id", c.ID, "error", serr)
@@ -165,6 +201,9 @@ func (s *Service) runStop(ctx context.Context, task tasks.Task, report tasks.Rep
 	c, err := s.store.Get(ctx, task.ResourceID)
 	if err != nil {
 		return nil, err
+	}
+	if err := checkStopAtRunTime(c); err != nil {
+		return nil, failure(err)
 	}
 	if err := s.stop(ctx, c, p.timeout(), report); err != nil {
 		return nil, err
@@ -208,6 +247,9 @@ func (s *Service) runRestart(ctx context.Context, task tasks.Task, report tasks.
 	c, err := s.store.Get(ctx, task.ResourceID)
 	if err != nil {
 		return nil, err
+	}
+	if err := checkStopAtRunTime(c); err != nil {
+		return nil, failure(err)
 	}
 	if err := s.stop(ctx, c, p.timeout(), report); err != nil {
 		return nil, err

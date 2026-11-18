@@ -114,7 +114,17 @@ it:
 
 A jail that fails a check is removed without running `/etc/rc.shutdown`
 (none of its code has run) and the start fails with
-`container_start_failed`, naming any extra device. Only then does Skep
+`container_start_failed`, naming any extra device. **If that removal
+fails too**, the jail is *quarantined* (ADR 0010 amendment n, SR-06): the
+start fails with `container_quarantined`, the container's `state` is
+`failed` with both causes in `state_detail`, and it stays `failed` whether
+or not the jail still exists. It is never shown as running, and start,
+stop, and restart are refused with `container_quarantined`, because a
+stop would run the refused jail's own `/etc/rc.shutdown`. A delete
+removes it without `exec.stop` and then deletes the container (if the
+removal fails again, the delete fails and the jail stays quarantined);
+the agent's next start also retries the removal without `exec.stop` and,
+if it works, records the container `stopped`. Only then does Skep
 run the jail's `/etc/rc` itself, as `jexec -l -U root skep-<id> /bin/sh
 /etc/rc`, bounded by `containers.start_timeout_seconds` (default 120). If
 `/etc/rc` fails or outlasts the timeout, the jail is stopped as below
@@ -132,7 +142,7 @@ jail and its devfs mount. A jail cannot refuse to stop, so there is no
 force stop. The timeout is `containers.stop_timeout_seconds` (default 10)
 or the request's `timeout` (1 to 300).
 
-**Delete.** The jail must be stopped. Skep unmounts a devfs a removal
+**Delete.** The jail must be stopped, or quarantined (above). Skep unmounts a devfs a removal
 outside Skep left on its `<root>/dev` (below), then destroys its dataset
 and snapshots and its runtime directory. A template with jails cloned from it
 cannot be deleted.
@@ -144,7 +154,11 @@ autostart), and `state_detail` says the jail should be running. A jail
 whose start the agent's death interrupted (between `jail -c` and the end
 of `/etc/rc`) is removed at the next agent start, without
 `/etc/rc.shutdown`, since Skep cannot tell whether its `/dev` was checked;
-`state_detail` says so.
+`state_detail` says so. If that removal fails, the jail is quarantined
+as above instead of being shown as running. A stop or restart task that
+finds a jail still recorded `starting` (a start that ended without
+recording its outcome) is refused with `container_quarantined` for the
+same reason; the next agent start removes it.
 
 ## Limits
 

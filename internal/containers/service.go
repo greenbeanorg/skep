@@ -218,6 +218,12 @@ func (s *Service) observe(ctx context.Context, c models.Container, running map[s
 	if !force && (c.State == models.ContainerStarting || c.State == models.ContainerStopping) {
 		return c
 	}
+	// A quarantined jail stays failed, running or not, until a delete or
+	// the start-up sweep removes it (amendment n, SR-06): observing it as
+	// running would offer a stop, which runs its /etc/rc.shutdown.
+	if c.State == models.ContainerFailed {
+		return c
+	}
 	state, detail := models.ContainerStopped, ""
 	var jid *int
 	if j, ok := running[c.ID]; ok {
@@ -292,19 +298,33 @@ func (s *Service) ObserveAll(ctx context.Context) error {
 			s.log.Warn("containers: could not read a container", "container_id", id, "error", err)
 			continue
 		}
+		if c.State == models.ContainerFailed {
+			if s.sweepQuarantined(ctx, c) {
+				swept++
+				delete(running, c.ID)
+				s.sweepLeftoverDevfs(ctx, c)
+			}
+			continue
+		}
 		if _, ok := running[c.ID]; ok && c.State == models.ContainerStarting {
 			if s.sweepHalfStarted(ctx, c) {
 				swept++
 				delete(running, c.ID)
 				continue
 			}
+			// Not removed: quarantined, never observed running, so
+			// nothing offers a stop that would run its /etc/rc.shutdown.
+			s.quarantine(ctx, c, "a start interrupted by an agent restart left the jail, and removing it failed; "+
+				"it is quarantined until a delete or the next agent start removes it")
+			delete(running, c.ID)
+			continue
 		}
 		c = s.observe(ctx, c, running, true)
 		if _, ok := running[c.ID]; !ok && c.Provisioned {
 			s.sweepLeftoverDevfs(ctx, c)
 		}
 	}
-	s.log.Info("containers: observed the jails", "containers", len(ids), "running", len(running), "half_started_removed", swept)
+	s.log.Info("containers: observed the jails", "containers", len(ids), "running", len(running), "removed_without_exec_stop", swept)
 	return nil
 }
 
@@ -342,6 +362,36 @@ func (s *Service) sweepHalfStarted(ctx context.Context, c models.Container) bool
 		s.log.Warn("containers: could not record the observed state", "container_id", c.ID, "error", err)
 	}
 	return true
+}
+
+// sweepQuarantined retries, at agent start, the removal of a quarantined
+// jail without exec.stop (amendment n, SR-06). Removed, the container is
+// recorded stopped; otherwise it stays quarantined and the failure is
+// logged. It reports whether the jail was removed.
+func (s *Service) sweepQuarantined(ctx context.Context, c models.Container) bool {
+	if err := s.jails.DiscardJail(ctx, s.spec(c, 0)); err != nil {
+		s.log.Error("containers: could not remove a quarantined jail", "event", "jail_quarantined",
+			"container_id", c.ID, "error", err)
+		return false
+	}
+	s.log.Warn("containers: removed a quarantined jail without running any of its code", "event", "jail_quarantine_removed",
+		"container_id", c.ID)
+	if err := s.store.SaveEpairs(ctx, c.ID, nil); err != nil {
+		s.log.Warn("containers: could not clear the observed epairs", "container_id", c.ID, "error", err)
+	}
+	detail := "a quarantined jail (refused before any of its code ran) was removed at agent start without running /etc/rc.shutdown"
+	if err := s.store.SaveObserved(ctx, c.ID, models.ContainerStopped, nil, detail, s.now().UTC()); err != nil {
+		s.log.Warn("containers: could not record the observed state", "container_id", c.ID, "error", err)
+	}
+	return true
+}
+
+// quarantine records a container failed (amendment n, SR-06).
+func (s *Service) quarantine(ctx context.Context, c models.Container, detail string) {
+	s.log.Error("containers: a jail is quarantined", "event", "jail_quarantined", "container_id", c.ID, "detail", detail)
+	if err := s.store.SaveObserved(ctx, c.ID, models.ContainerFailed, nil, detail, s.now().UTC()); err != nil {
+		s.log.Error("containers: could not record a quarantined jail", "container_id", c.ID, "error", err)
+	}
 }
 
 // ConsoleLog returns the end of a jail's console.log (decision 9).

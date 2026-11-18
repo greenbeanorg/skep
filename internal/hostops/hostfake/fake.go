@@ -69,6 +69,12 @@ type Fake struct {
 	// devfs ruleset 6001 holds someone else's rules.
 	NoEpair       bool
 	DevfsConflict bool
+	// QuarantineStart makes the next starts behave like a /dev guard
+	// refusal whose removal failed: the jail is left in place and the
+	// start fails with container_quarantined (amendment n, SR-06).
+	// FailDiscard makes DiscardJail fail, leaving the jail.
+	QuarantineStart bool
+	FailDiscard     error
 	// PresentMACs simulates MAC addresses already present on a bridge (its
 	// own, a member's, or learnt), by bridge (amendment n, SR-03).
 	PresentMACs map[string][]string

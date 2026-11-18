@@ -77,6 +77,23 @@ describe("powerActions", () => {
     expect(powerActions(jail({ state: "starting" }))).toEqual([]);
     expect(powerActions(jail({ provisioned: false }))).toEqual([]);
   });
+
+  it("offers nothing for a quarantined jail", () => {
+    expect(powerActions(jail({ state: "failed" }))).toEqual([]);
+  });
+});
+
+describe("ContainerDetailPage quarantine", () => {
+  it("explains a quarantined jail, offers no start or stop, and allows delete", async () => {
+    fakeApi(OPERATOR, replies(jail({ state: "failed", state_detail: "the last start failed: container_quarantined: ..." })));
+    renderPage();
+    expect(await screen.findByTestId("quarantine-note")).toHaveTextContent(/without running any of its code/);
+    for (const name of ["Start", "Stop", "Restart"]) {
+      expect(screen.queryByRole("button", { name })).not.toBeInTheDocument();
+    }
+    expect(screen.getByRole("button", { name: "Delete" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Edit" })).toBeDisabled();
+  });
 });
 
 describe("ContainerDetailPage permissions", () => {
