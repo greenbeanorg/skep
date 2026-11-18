@@ -867,3 +867,218 @@ default total, so `agent.json` is not edited.
 
 No code was written in this session; points 2 and 3 of this list are the
 next build.
+
+## 17. Amendment p built (2026-11-18, merrick only)
+
+Points 2 and 3 of section 16, as decided in amendment p. Nothing ran on
+hearst; no API calls against it; no deploy; no PR. The code fitted the
+amendment; nothing was stopped on.
+
+### 17.1 Built
+
+1. **rc.shutdown's output in the console log** (`57a7ae9`).
+   - `removeJail` runs `jail -r` with `MaxOutput` 32 KiB
+     (`hostops.ShutdownLogPart`) and `MarkOverflow`. The marking mode of
+     `runCommand` now keeps the first **and the last** `MaxOutput` bytes
+     of standard output in memory, with `skep: N bytes discarded` between
+     them: the console log's own `consoleLog` writer over a
+     `bytes.Buffer`, so the layout is the same and at most 64 KiB plus the
+     marker is held. (Before, it kept the first 4 MiB and no tail.)
+   - After `jail -r` succeeds, and only when the jail.conf had
+     `exec.stop` (a stop, a restart's stop, the removal after a failed
+     rc; not a discard of a refused or quarantined jail), the agent
+     appends `--- shutdown ---\n` and that output to `console.log`. The
+     marker starts on a line of its own (a newline is added first when
+     the log does not end with one) and is written even when the
+     shutdown printed nothing. The file is opened
+     `O_RDWR|O_APPEND|O_CREATE|O_NOFOLLOW|O_NONBLOCK|O_CLOEXEC`, 0600, and
+     anything but a regular file is refused. A failure is logged as
+     `jail_shutdown_log_failed` (container, size, error) and never fails
+     the removal.
+   - Only standard output is appended: on success the runner returns no
+     stderr (see 17.4).
+   - `runCommand` takes its options as a `runOpts` struct.
+2. **A failed `jail -r` reports the last line of its stderr**
+   (`944a3ec`).
+   - New `EnvCommand.StderrLastLine` (set only by `removeJail`): the
+     runner keeps the **last** 64 KiB of stderr instead of the first
+     4 MiB, and a failure's `CommandError.Stderr` is its last non-empty
+     line, cleaned by `cleanLine`: C0 controls, DEL, C1 controls, and
+     bytes that are not UTF-8 removed, spaces trimmed, cut to 200 bytes on
+     a character boundary.
+   - `removeJail` logs `jail_remove_failed` (warn) with `exit_code` and
+     `jail_output`, and returns the `CommandError` (type and exit code
+     kept) with the line as `jail output, last line of stderr: "..."`
+     (Go-quoted), or `no jail output on stderr`. The task error of a
+     failed stop therefore reads, for example, `jail: exit status 1: jail
+     output, last line of stderr: "jail: skep-x: ..."`. A timeout is
+     reported as before.
+3. **Docs** (`9bf4a0d`): jails.md (the console log section, the stop
+   section), the security overview, the OpenAPI console-log and actions
+   descriptions (web types regenerated), the `StopJail` interface comment,
+   the UI's empty console-log text, and an implementation note in ADR
+   0010.
+
+### 17.2 Tests (merrick)
+
+- New or changed, hostops (`exec_unix_test.go`, real `/bin/sh` processes
+  through `runCommand`):
+  - `TestRunCommandMarkOverflow`: over the budget, exactly head + marker
+    with the right count + tail; under the head; between head and head +
+    tail (all of it, no marker); `overflowCut` and `overflowFail`
+    unchanged; a failure still a failure.
+  - `TestStopJailShutdownOutputPastTheBudget`: a shutdown of about
+    124 KiB through `removeJail`; `jail -r` run with `MarkOverflow` and a
+    32 KiB cap; `console.log` is exactly rc's output + `--- shutdown ---`
+    + the first 32 KiB + `skep: N bytes discarded` + the last 32 KiB.
+  - `TestStopJailShutdownOutputUnderTheBudget`: the marker layout (rc's
+    output ending with and without a newline, an empty log, a silent
+    shutdown).
+  - `TestDiscardAppendsNoShutdownOutput`: no append without `exec.stop`.
+  - `TestShutdownLogWriteFailureStillRemoves`: `console.log` a symbolic
+    link (target untouched), a directory, a FIFO (no blocking, 10 s
+    guard), and a missing runtime directory: the removal succeeds, `jail
+    -r` ran once, `jail_shutdown_log_failed` is logged.
+  - `TestRunCommandStderrLastLine`: the last line; trailing blank lines;
+    control characters (`ESC`, tab, CR, BEL); a 500-byte line cut to 200;
+    the last line after about 124 KiB of stderr (past the 64 KiB kept);
+    empty stderr; the default mode still the first line.
+  - `TestRemoveJailFailureReportsLastStderrLine`: through `removeJail`,
+    with control characters, an over-long line, and empty stderr: the
+    exact error text with its label, the `jail_remove_failed` log line
+    with `jail_output`, no ESC or CR in the log, `StderrLastLine` set, and
+    nothing appended to the console log.
+- New, hostops (`hostops_test.go`): `TestCleanLine` (14 cases: escape
+  sequences, CR, tab/NUL/DEL/BEL, C1 as UTF-8 and as raw bytes, an
+  over-long ASCII line, an over-long multibyte line, a cut that would
+  split a character, exactly 200 bytes, empty, only controls, printable
+  Unicode kept) and `TestLastLine`.
+- Mutation checks run by hand (file restored from a scratch copy each
+  time): appending on a discard fails `TestDiscardAppendsNoShutdownOutput`;
+  dropping the newline before the marker fails the "no newline" case;
+  dropping `StderrLastLine` from `jail -r` fails all three cases of
+  `TestRemoveJailFailureReportsLastStderrLine`.
+- Results: `go test ./... -count=1` passed (40 packages with tests);
+  `make lint` passed (gofmt, go vet for Linux and FreeBSD, staticcheck for
+  both); `GOOS=freebsd GOARCH=amd64 go test -c ./internal/hostops/`
+  compiled; `make web-check` passed three times in a row (15 files, 112
+  tests each).
+
+### 17.3 Changes not in the request (for approval)
+
+1. `runCommand` takes a `runOpts` struct instead of positional
+   arguments.
+2. The marking mode keeps head **and** tail (32 KiB each for `jail -r`)
+   instead of amendment o's first 4 MiB; it is what makes the "last
+   32 KiB" the real end of the output. `MarkOverflow` has no other user.
+3. Nothing is appended for a removal without `exec.stop` (discard,
+   quarantine sweep, interrupted start), since no shutdown ran.
+4. The `--- shutdown ---` line is written even when the shutdown printed
+   nothing, and starts on a line of its own.
+5. The append creates a missing `console.log` (0600) and refuses a
+   non-regular file, opened with `O_NONBLOCK` so a FIFO cannot block it
+   (amendment o's open used `O_NOFOLLOW` only).
+6. In the last-line mode the runner keeps the last 64 KiB of stderr, not
+   the first 4 MiB, so a large `rc.shutdown` stderr cannot push jail(8)'s
+   own error out of the buffer.
+7. `cleanLine` also removes bytes that are not UTF-8 (a terminal may read
+   a raw `0x9b` as a C1 CSI) and C1 controls, and trims spaces.
+8. The label wording (`jail output, last line of stderr: "..."`, `no jail
+   output on stderr`), the Go quoting of the line, and the
+   `jail_remove_failed` log event name.
+9. The UI's empty console-log text now says rc.shutdown's output is added
+   at a stop; the `StopJail` interface comment says the same.
+
+### 17.4 Open points (not built; for a decision)
+
+1. **rc.shutdown's stderr is not in the console log.** The runner
+   returns only standard output on success; with `exec.consolelog`
+   (before amendment o) both streams went to the file. Options: (a) keep
+   as built (stdout only; documented); (b) also append the head/tail of
+   stderr after the stdout part (the interleaving of the two streams is
+   lost either way). I recommend (a) unless shutdown errors are wanted
+   for debugging, then (b).
+2. **A failed `jail -r` appends nothing**, since the runner returns no
+   output with a `CommandError`. Options: keep; or return the marked
+   stdout with the error in the marking mode and append it anyway. I
+   recommend keeping it until the hearst probe below shows whether a
+   failing `rc.shutdown` fails `jail -r` at all.
+3. **Unicode format characters are kept** (category Cf, such as U+202E,
+   the right-to-left override), since they are not control characters;
+   one can make the reported line display misleadingly in a log viewer
+   or the UI. Option: strip Cf as well. I recommend stripping them.
+
+### 17.5 Hearst tests for SR-01 and SR-04 (final list, for approval)
+
+Replaces 15.5. The SR-01 baseline of 13.9 (approved under amendment o's
+conditions) still comes first; the rest needs Andy's approval. None of
+these changes hearst's configuration; the SR-04 checks use the default
+total, so `agent.json` is not edited.
+
+**SR-01:**
+
+1. Before deploying: on the current build, the review's baseline proof
+   (13.9) so the before/after can be compared.
+2. The cross-compiled hostops test binary, as an unprivileged user:
+   `-test.run 'ConsoleLog|MarkOverflow|ShutdownOutput|ShutdownLog|DiscardAppends|StderrLastLine|LastStderrLine|CleanLine|LastLine' -test.v`,
+   which checks the pipe, SIGPIPE, EPIPE, the head/tail layouts, the
+   append (link, directory, FIFO), and the stderr line on FreeBSD's own
+   pipes and `/bin/sh`.
+3. After the deploy, the rendered `jail.conf` of a test jail has no
+   `exec.consolelog`.
+4. A test jail with `( dd if=/dev/zero bs=1m count=50 2>/dev/null; sleep
+   600 ) &` in `/etc/rc.local`: after the start task succeeds, `sudo ls
+   -l /var/run/skep/jails/<id>/console.log` stays at most about 320 KiB;
+   `sudo procstat -f` of the jail's processes shows no descriptor on
+   `console.log`; `df /` unchanged. Stop the jail: the log grows only by
+   the shutdown part (at most about 64 KiB plus markers). Remove the test
+   lines.
+5. A test jail whose `rc.local` prints about 1 MiB in the foreground: the
+   console log is head + `skep: N bytes discarded` + tail, and `GET
+   .../console-log` ends with rc's last line.
+6. A minimal jail with sshd: after the start, and again after a minute,
+   `sshd`, `cron`, and `syslogd` still run (`sudo jexec skep-<id> ps
+   ax`), and SSH to the jail works. After a stop, the console log ends
+   with `--- shutdown ---` and the base system's shutdown lines
+   (`Stopping sshd.` and so on).
+7. A test jail whose `/etc/rc.shutdown.local` prints about 8 MiB to
+   stdout: the stop task succeeds, the jail is gone, and the console log
+   is rc's output + `--- shutdown ---` + 32 KiB + `skep: N bytes
+   discarded` (N about 8 MiB less 64 KiB) + 32 KiB ending with the last
+   line printed.
+8. A test jail whose `/etc/rc.shutdown.local` writes one line to stdout
+   and one to stderr: after a stop the stdout line follows the marker and
+   the stderr line is absent (17.4 point 1, as built).
+9. A second start of the same jail truncates its console log (the
+   shutdown part is gone too).
+10. **Probe, a failing shutdown:** a test jail whose
+    `/etc/rc.shutdown.local` ends with `printf '\033[31mfake ok\n' >&2;
+    exit 1`. Record whether `jail -r` exits non-zero and whether the jail
+    is gone. If the stop fails: the task error ends with `jail output,
+    last line of stderr: "..."` with no ESC byte, and the agent log has
+    `jail_remove_failed` with `jail_output`. If it succeeds: the stop's
+    console-log part has the marker, and the stderr line is absent. Stop
+    (or delete) the jail and remove the test lines afterwards.
+
+**SR-04 (unchanged from 15.5):**
+
+1. The agent's start log line shows `max_locked_memory_bytes` equal to
+   `sysctl -n hw.physmem` / 4 (about 1.5 GiB on hearst).
+2. A create with `limits.locked_memory` above that is 422
+   `container_locked_memory_above_max`.
+3. Two jails with `mlock` and `locked_memory` 1 GiB and 768 MiB (no
+   `memory` limit): the first starts and `rctl jail:skep-<id>` shows
+   exactly the `memorylocked` rule; the second start is 409
+   `container_locked_memory_exhausted` and its jail is never created;
+   after a stop of the first, the second starts. Stop and delete both
+   afterwards.
+4. Optional, bounded: `tests/integration/jails/mlocktest` in the first
+   jail locks up to its limit and fails past it, watching `sysctl
+   vm.stats.vm.v_wire_count` return to its baseline after the stop.
+
+### 17.6 Commits
+
+`57a7ae9` feat(hostops): append rc.shutdown output to the jail's console
+log; `944a3ec` feat(hostops): report the last line of a failed jail -r's
+stderr; `9bf4a0d` docs(jails): document rc.shutdown output in the console
+log and the jail -r error line; and this section.
