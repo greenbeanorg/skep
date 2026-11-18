@@ -61,7 +61,7 @@ func TestParseDescription(t *testing.T) {
 func TestRenderJailConfNICs(t *testing.T) {
 	spec := jailSpec()
 	spec.NICs = []JailNIC{{Slot: 0, Bridge: "bridge0", MAC: "02:00:00:00:00:01"}, {Slot: 1, Bridge: "bridge0", MAC: "02:00:00:00:00:02"}}
-	conf, err := renderJailConf(spec, "/r", "/l")
+	conf, err := renderJailConf(spec, "/r")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,7 +70,7 @@ func TestRenderJailConfNICs(t *testing.T) {
 		t.Fatalf("static jail.conf:\n%s", s)
 	}
 	spec.NICs[1].DHCP = true
-	conf, _ = renderJailConf(spec, "/r", "/l")
+	conf, _ = renderJailConf(spec, "/r")
 	if !strings.Contains(string(conf), "\tdevfs_ruleset = 6001;\n") {
 		t.Fatalf("a DHCP jail does not get ruleset 6001:\n%s", conf)
 	}
@@ -82,7 +82,7 @@ func TestRenderJailConfNICs(t *testing.T) {
 		{{Slot: 0, Bridge: "bridge0\"; exec.prestart=\"x", MAC: "02:00:00:00:00:01"}},
 	} {
 		spec.NICs = bad
-		if _, err := renderJailConf(spec, "/r", "/l"); err == nil {
+		if _, err := renderJailConf(spec, "/r"); err == nil {
 			t.Errorf("NICs %+v accepted", bad)
 		}
 	}

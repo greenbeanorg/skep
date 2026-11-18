@@ -60,7 +60,7 @@ func TestValidHostname(t *testing.T) {
 }
 
 func TestRenderJailConf(t *testing.T) {
-	conf, err := renderJailConf(jailSpec(), "/skeptest/skep/jail/"+ctrA, "/var/run/skep/jails/"+ctrA+"/console.log")
+	conf, err := renderJailConf(jailSpec(), "/skeptest/skep/jail/"+ctrA)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,7 +76,6 @@ func TestRenderJailConf(t *testing.T) {
 		"\tallow.mount = 0;\n", "\tallow.mlock = 0;\n", "\tallow.chflags = 0;\n", "\tallow.sysvipc = 0;\n",
 		"\tsysvshm = disable;\n", "\tsysvsem = disable;\n", "\tsysvmsg = disable;\n",
 		"\texec.clean;\n", "\texec.stop = \"/bin/sh /etc/rc.shutdown jail\";\n",
-		"\texec.consolelog = \"/var/run/skep/jails/" + ctrA + "/console.log\";\n",
 		"\texec.timeout = 120;\n", "\tstop.timeout = 10;\n",
 	} {
 		if !strings.Contains(s, want) {
@@ -84,8 +83,9 @@ func TestRenderJailConf(t *testing.T) {
 		}
 	}
 	// Never a host-side command, and no exec.start: Skep runs /etc/rc
-	// itself after the /dev guard (amendment i).
-	for _, never := range []string{"exec.start", "exec.prestart", "exec.poststart", "exec.prestop", "exec.poststop", "exec.created",
+	// itself after the /dev guard (amendment i). No exec.consolelog: no
+	// jailed process may hold a host file (amendment o, SR-01).
+	for _, never := range []string{"exec.consolelog", "exec.start", "exec.prestart", "exec.poststart", "exec.prestop", "exec.poststop", "exec.created",
 		"mount.fstab", "ip4", "ip6", "allow.vmm", "command"} {
 		if strings.Contains(s, never) {
 			t.Errorf("jail.conf contains %q", never)
@@ -93,7 +93,7 @@ func TestRenderJailConf(t *testing.T) {
 	}
 	// The removal of a jail none of whose code may run has no exec.stop
 	// either, and is otherwise the same.
-	discard, err := renderJailConfMode(jailSpec(), "/skeptest/skep/jail/"+ctrA, "/var/run/skep/jails/"+ctrA+"/console.log", false)
+	discard, err := renderJailConfMode(jailSpec(), "/skeptest/skep/jail/"+ctrA, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,7 +109,7 @@ func TestRenderJailConf(t *testing.T) {
 
 	spec := jailSpec()
 	spec.SysVIPC, spec.Mlock = true, true
-	conf, _ = renderJailConf(spec, "/r", "/l")
+	conf, _ = renderJailConf(spec, "/r")
 	for _, want := range []string{"\tsysvshm = new;\n", "\tsysvsem = new;\n", "\tsysvmsg = new;\n", "\tallow.mlock = 1;\n", "\tallow.sysvipc = 0;\n"} {
 		if !strings.Contains(string(conf), want) {
 			t.Errorf("opt-in jail.conf lacks %q", want)
@@ -126,11 +126,11 @@ func TestRenderJailConf(t *testing.T) {
 	} {
 		s := jailSpec()
 		mutate(&s)
-		if _, err := renderJailConf(s, "/r", "/l"); err == nil {
+		if _, err := renderJailConf(s, "/r"); err == nil {
 			t.Errorf("%s: rendered", name)
 		}
 	}
-	if _, err := renderJailConf(jailSpec(), `/r";exec.prestart="/bin/sh`, "/l"); err == nil {
+	if _, err := renderJailConf(jailSpec(), `/r";exec.prestart="/bin/sh`); err == nil {
 		t.Error("a path with a quote was rendered")
 	}
 }

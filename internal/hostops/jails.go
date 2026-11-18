@@ -22,7 +22,8 @@ import (
 //	<pool>/<root>/jail/<id>     the jail root: a clone of a template's
 //	                            @skep-base, skep:container_id=<id>
 //	<JailRunDir>/<id>/jail.conf root-only, generated before every start
-//	<JailRunDir>/<id>/console.log  exec.consolelog
+//	<JailRunDir>/<id>/console.log  /etc/rc's output, drained from a
+//	                            pipe by the agent (amendment o)
 //
 // A jail is named skep-<id>. Its jail.conf is rendered from typed values
 // (JailSpec) and the fixed baseline below; nothing in it comes from a
@@ -78,7 +79,8 @@ type Jails interface {
 	// creates the jail with jail(8) with nothing running in it, checks its
 	// parameters as the kernel reports them and its /dev against the
 	// allow-list (amendment i), and only then runs /etc/rc in it with
-	// jexec, its output appended to console.log. A jail that fails a check
+	// jexec, its output drained from a pipe into console.log (amendment
+	// o). A jail that fails a check
 	// is removed without exec.stop, since none of its code has run; one
 	// whose /etc/rc fails or outlasts the start timeout is removed with
 	// jail -r (exec.stop runs). Either way the start fails with
@@ -306,13 +308,16 @@ func confValue(v string) (string, error) {
 
 // renderJailConf renders the jail.conf of a jail from its spec and the
 // paths hostops derived.
-func renderJailConf(spec JailSpec, root, consoleLog string) ([]byte, error) {
-	return renderJailConfMode(spec, root, consoleLog, true)
+func renderJailConf(spec JailSpec, root string) ([]byte, error) {
+	return renderJailConfMode(spec, root, true)
 }
 
 // renderJailConfMode renders a jail.conf; withStop false leaves out
 // exec.stop, for removing a jail whose code must not run (amendment i).
-func renderJailConfMode(spec JailSpec, root, consoleLog string, withStop bool) ([]byte, error) {
+// There is no exec.consolelog: /etc/rc.shutdown writes to jail(8)'s own
+// output, which the runner caps, so no jailed process holds a descriptor
+// on a host file (amendment o, SR-01).
+func renderJailConfMode(spec JailSpec, root string, withStop bool) ([]byte, error) {
 	name, err := JailName(spec.ContainerID)
 	if err != nil {
 		return nil, err
@@ -342,7 +347,7 @@ func renderJailConfMode(spec JailSpec, root, consoleLog string, withStop bool) (
 		ifaces = append(ifaces, q)
 	}
 	quoted := map[string]string{}
-	for k, v := range map[string]string{"path": root, "host.hostname": spec.Hostname, "exec.consolelog": consoleLog,
+	for k, v := range map[string]string{"path": root, "host.hostname": spec.Hostname,
 		"exec.stop": jailStopCommand} {
 		q, err := confValue(v)
 		if err != nil {
@@ -379,7 +384,6 @@ func renderJailConfMode(spec JailSpec, root, consoleLog string, withStop bool) (
 		lines = append(lines, "exec.stop = "+quoted["exec.stop"])
 	}
 	lines = append(lines,
-		"exec.consolelog = "+quoted["exec.consolelog"],
 		"exec.timeout = "+strconv.Itoa(int(spec.StartTimeout/time.Second)),
 		"stop.timeout = "+strconv.Itoa(int(spec.StopTimeout/time.Second)),
 	)
@@ -487,8 +491,8 @@ func checkJailDev(containerID string, entries []string, dhcp bool) error {
 
 // RenderJailConf renders a jail.conf the way StartJail does; the
 // development fake uses it so a simulated start checks the same things.
-func RenderJailConf(spec JailSpec, root, consoleLog string) ([]byte, error) {
-	return renderJailConf(spec, root, consoleLog)
+func RenderJailConf(spec JailSpec, root string) ([]byte, error) {
+	return renderJailConf(spec, root)
 }
 
 // Check validates JailFiles the way ConfigureJail does, without writing.

@@ -53,13 +53,22 @@ type EnvCommand struct {
 	Env     []string
 	Timeout time.Duration
 	// MaxOutput caps what is kept of standard output; 0 uses the
-	// Runner's default.
+	// Runner's default. Output past it is an error unless MarkOverflow is
+	// set.
 	MaxOutput int
-	// Output, when set, is an absolute path that standard output and
-	// standard error are appended to instead of kept (created 0600, never
-	// through a link); RunEnv then returns no output. A file, not a pipe:
-	// daemons the command starts may keep it open after it exits.
-	Output string
+	// MarkOverflow keeps the first MaxOutput bytes of standard output and
+	// appends a "skep: N bytes discarded" line instead of failing when
+	// the command writes more (ADR 0010 amendment o: jail -r, whose output
+	// is the jail's /etc/rc.shutdown's and must never fail a removal).
+	MarkOverflow bool
+	// ConsoleLog, when set, is an absolute path (created 0600, never
+	// through a link) that is truncated and receives standard output and
+	// standard error through a pipe the agent drains: the first
+	// ConsoleLogHead bytes, then, if there was more, a marker and the last
+	// ConsoleLogTail bytes. The pipe is closed when the command ends, so
+	// no process it leaves running holds a descriptor on the host file
+	// (amendment o, SR-01). RunEnv then returns no output.
+	ConsoleLog string
 }
 
 // EnvRunner runs an EnvCommand. The real Runner implements it; so must a

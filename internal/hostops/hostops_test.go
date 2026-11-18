@@ -27,9 +27,9 @@ type script struct {
 	answers map[string]any
 	calls   []string
 	// envs holds the environment of each RunEnv call, in order, and
-	// outputs its Output file.
+	// envCmds the whole command.
 	envs    [][]string
-	outputs []string
+	envCmds []EnvCommand
 	// onRun, when set, sees every call before it is answered.
 	onRun func(call string)
 }
@@ -38,7 +38,7 @@ type script struct {
 // Run, and its environment and output file are kept.
 func (s *script) RunEnv(ctx context.Context, c EnvCommand) ([]byte, error) {
 	s.envs = append(s.envs, c.Env)
-	s.outputs = append(s.outputs, c.Output)
+	s.envCmds = append(s.envCmds, c)
 	return s.Run(ctx, c.Path, c.Args...)
 }
 

@@ -140,8 +140,8 @@ func TestFinishStartRunsRCAfterTheGuard(t *testing.T) {
 		t.Fatalf("rc calls: %q", rc)
 	}
 	logPath, _ := h.conf.JailRunPath(ctrA, JailConsoleLog)
-	if run.outputs[len(run.outputs)-1] != logPath {
-		t.Fatalf("rc output went to %q, want %q", run.outputs[len(run.outputs)-1], logPath)
+	if got := run.envCmds[len(run.envCmds)-1].ConsoleLog; got != logPath {
+		t.Fatalf("rc output went to %q, want %q", got, logPath)
 	}
 	if r := callsWith(run.calls, "jail "); len(r) != 0 {
 		t.Fatalf("a good start removed the jail: %q", r)

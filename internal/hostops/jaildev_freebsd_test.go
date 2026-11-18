@@ -94,8 +94,8 @@ func TestNativeDevGuardRefusesLeakyRuleset(t *testing.T) {
 	if exists, err := h.interfaceExists(ctx, jif); err != nil || exists {
 		t.Fatalf("the jail end %s is still on the host (%v)", jif, err)
 	}
-	// /etc/rc never ran: Skep appends its output to console.log, and
-	// jail(8) writes exec.* output there; there was none.
+	// /etc/rc never ran: only Skep writes console.log, from rc's pipe
+	// (amendment o); there was none.
 	logPath, _ := conf.JailRunPath(cid, JailConsoleLog)
 	if b, err := os.ReadFile(logPath); err == nil && len(strings.TrimSpace(string(b))) > 0 {
 		t.Fatalf("console.log of the refused jail is not empty:\n%s", b)

@@ -243,11 +243,7 @@ func (j fakeJails) StartJail(ctx context.Context, spec hostops.JailSpec) (hostop
 	if err != nil {
 		return hostops.JailState{}, err
 	}
-	logPath, err := j.f.conf.JailRunPath(spec.ContainerID, hostops.JailConsoleLog)
-	if err != nil {
-		return hostops.JailState{}, err
-	}
-	if _, err := hostops.RenderJailConf(spec, root, logPath); err != nil {
+	if _, err := hostops.RenderJailConf(spec, root); err != nil {
 		return hostops.JailState{}, err
 	}
 	name, _ := hostops.JailName(spec.ContainerID)

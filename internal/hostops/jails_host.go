@@ -404,11 +404,7 @@ func (h *host) writeJailConfAt(spec JailSpec, root string, withStop bool) (strin
 	if err != nil {
 		return "", err
 	}
-	logPath, err := h.conf.JailRunPath(spec.ContainerID, JailConsoleLog)
-	if err != nil {
-		return "", err
-	}
-	data, err := renderJailConfMode(spec, root, logPath, withStop)
+	data, err := renderJailConfMode(spec, root, withStop)
 	if err != nil {
 		return "", err
 	}
@@ -508,9 +504,11 @@ func startFailed(spec JailSpec, prefix string, err error) error {
 // its interfaces moved in and renamed to skep<slot> (amendment k), and its
 // /dev against the allow-list. A failed
 // check removes the jail without exec.stop, since none of its code has
-// run. Then /etc/rc runs through jexec, its output appended to
-// console.log, bounded by the start timeout; if it fails or times out, the
-// jail is removed with jail -r, which runs exec.stop. It returns the JID.
+// run. Then /etc/rc runs through jexec, bounded by the start timeout, its
+// output on a pipe the agent drains into console.log (truncated first;
+// capped at ConsoleLogHead plus ConsoleLogTail) and closes when rc ends
+// (amendment o, SR-01); if it fails or times out, the jail is removed with
+// jail -r, which runs exec.stop. It returns the JID.
 func (h *host) finishStart(ctx context.Context, spec JailSpec, name, conf, root string) (int, error) {
 	err := h.applyJailRules(ctx, spec)
 	var params map[string]any
@@ -540,7 +538,7 @@ func (h *host) finishStart(ctx context.Context, spec JailSpec, name, conf, root 
 		var er EnvRunner
 		if er, err = h.envRunner(); err == nil {
 			_, err = er.RunEnv(ctx, EnvCommand{Path: jexecBinary, Args: jailRCArgs(name), Env: jailEnv,
-				Timeout: spec.StartTimeout, Output: logPath})
+				Timeout: spec.StartTimeout, ConsoleLog: logPath})
 		}
 	}
 	if err != nil {
@@ -774,10 +772,15 @@ func (h *host) removeJail(ctx context.Context, name, conf string, spec JailSpec)
 		h.log.Info("hostops: destroyed the jail's epairs before removing it", "event", "jail_interfaces_destroyed",
 			"container_id", spec.ContainerID, "interfaces", gone)
 	}
-	if _, err := er.RunEnv(ctx, EnvCommand{Path: jailBinary, Args: []string{"-f", conf, "-r", name},
-		Env: jailEnv, Timeout: spec.StartTimeout + spec.StopTimeout + jailCommandSlack}); err != nil {
+	// The jail.conf has no exec.consolelog, so /etc/rc.shutdown writes to
+	// jail(8)'s own output: capped, with a marker past the cap, and never
+	// a failure for its size (amendment o, SR-01). It is not kept.
+	out, err := er.RunEnv(ctx, EnvCommand{Path: jailBinary, Args: []string{"-f", conf, "-r", name},
+		Env: jailEnv, Timeout: spec.StartTimeout + spec.StopTimeout + jailCommandSlack, MarkOverflow: true})
+	if err != nil {
 		return err
 	}
+	h.log.Debug("hostops: jail -r done", "container_id", spec.ContainerID, "output_bytes", len(out))
 	if exists, err := h.jailExists(ctx, name); err != nil {
 		return err
 	} else if exists {
