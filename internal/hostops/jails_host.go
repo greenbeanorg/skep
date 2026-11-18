@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/greenbeanorg/skep/pkg/models"
@@ -705,7 +706,7 @@ func (h *host) discardJail(ctx context.Context, spec JailSpec, root string) erro
 	if err != nil {
 		return err
 	}
-	return h.removeJail(ctx, name, conf, spec)
+	return h.removeJail(ctx, name, conf, spec, false)
 }
 
 // DiscardJail implements Jails.
@@ -743,7 +744,7 @@ func (h *host) removeAfterFailedStart(name, conf string, spec JailSpec) {
 		return
 	}
 	if exists {
-		if err := h.removeJail(ctx, name, conf, spec); err != nil {
+		if err := h.removeJail(ctx, name, conf, spec, true); err != nil {
 			h.log.Error("hostops: a jail left by a failed start could not be removed", "jail", name, "error", err)
 			return
 		}
@@ -753,7 +754,9 @@ func (h *host) removeAfterFailedStart(name, conf string, spec JailSpec) {
 
 // removeJail destroys the jail's epairs, then runs jail -r with the
 // jail's own jail.conf (whose exec.stop, if any, runs) and confirms the
-// jail is gone.
+// jail is gone. withStop says the jail.conf has exec.stop: then the
+// output jail -r returned (/etc/rc.shutdown's) is appended to the console
+// log (amendment p).
 //
 // The epairs go first (amendment k, "or its epair destroyed"): destroying
 // a host end destroys its jail end inside the running jail, so no jail end
@@ -761,7 +764,7 @@ func (h *host) removeAfterFailedStart(name, conf string, spec JailSpec) {
 // would return named skep<slot> (or whatever the jail's root renamed it
 // to), and two of them can share a name on the host (the probe of
 // amendment k). The jail's shutdown therefore runs without its NICs.
-func (h *host) removeJail(ctx context.Context, name, conf string, spec JailSpec) error {
+func (h *host) removeJail(ctx context.Context, name, conf string, spec JailSpec, withStop bool) error {
 	er, err := h.envRunner()
 	if err != nil {
 		return err
@@ -773,14 +776,19 @@ func (h *host) removeJail(ctx context.Context, name, conf string, spec JailSpec)
 			"container_id", spec.ContainerID, "interfaces", gone)
 	}
 	// The jail.conf has no exec.consolelog, so /etc/rc.shutdown writes to
-	// jail(8)'s own output: capped, with a marker past the cap, and never
-	// a failure for its size (amendment o, SR-01). It is not kept.
+	// jail(8)'s own output: its head and tail kept in memory, with a
+	// marker between them, and never a failure for its size (amendments o
+	// and p, SR-01).
 	out, err := er.RunEnv(ctx, EnvCommand{Path: jailBinary, Args: []string{"-f", conf, "-r", name},
-		Env: jailEnv, Timeout: spec.StartTimeout + spec.StopTimeout + jailCommandSlack, MarkOverflow: true})
+		Env: jailEnv, Timeout: spec.StartTimeout + spec.StopTimeout + jailCommandSlack,
+		MaxOutput: ShutdownLogPart, MarkOverflow: true})
 	if err != nil {
 		return err
 	}
 	h.log.Debug("hostops: jail -r done", "container_id", spec.ContainerID, "output_bytes", len(out))
+	if withStop {
+		h.appendShutdownLog(spec.ContainerID, out)
+	}
 	if exists, err := h.jailExists(ctx, name); err != nil {
 		return err
 	} else if exists {
@@ -794,6 +802,63 @@ func (h *host) removeJail(ctx context.Context, name, conf string, spec JailSpec)
 			"container_id", spec.ContainerID, "error", err)
 	}
 	return nil
+}
+
+// ShutdownLogPart is how much of the head, and of the tail, of
+// /etc/rc.shutdown's output is appended to the console log (amendment p).
+const ShutdownLogPart = 32 << 10
+
+// shutdownMarker is the line written to the console log before
+// /etc/rc.shutdown's output.
+const shutdownMarker = "--- shutdown ---\n"
+
+// appendShutdownLog appends the shutdown marker and out to the jail's
+// console log. A failure is logged and never fails the removal
+// (amendment p).
+func (h *host) appendShutdownLog(containerID string, out []byte) {
+	path, err := h.conf.JailRunPath(containerID, JailConsoleLog)
+	if err == nil {
+		err = appendShutdownOutput(path, out)
+	}
+	if err != nil {
+		h.log.Warn("hostops: the jail's shutdown output could not be written to its console log", "event", "jail_shutdown_log_failed",
+			"container_id", containerID, "output_bytes", len(out), "error", err)
+	}
+}
+
+// appendShutdownOutput appends the shutdown marker line, then out, to the
+// file at path, created 0600 if missing. It never follows a symbolic
+// link, never blocks on a FIFO, and refuses anything but a regular file.
+// The marker starts on a line of its own.
+func appendShutdownOutput(path string, out []byte) error {
+	f, err := os.OpenFile(path, os.O_RDWR|os.O_APPEND|os.O_CREATE|syscall.O_NOFOLLOW|syscall.O_NONBLOCK|syscall.O_CLOEXEC, 0o600)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil {
+		return err
+	}
+	if !fi.Mode().IsRegular() {
+		return fmt.Errorf("hostops: %s is not a regular file", path)
+	}
+	data := make([]byte, 0, 1+len(shutdownMarker)+len(out))
+	if fi.Size() > 0 {
+		last := make([]byte, 1)
+		if _, err := f.ReadAt(last, fi.Size()-1); err != nil {
+			return err
+		}
+		if last[0] != '\n' {
+			data = append(data, '\n')
+		}
+	}
+	data = append(data, shutdownMarker...)
+	data = append(data, out...)
+	if _, err := f.Write(data); err != nil {
+		return err
+	}
+	return f.Close()
 }
 
 // StopJail implements Jails.
@@ -812,7 +877,7 @@ func (h *host) StopJail(ctx context.Context, spec JailSpec) error {
 		if err != nil {
 			return err
 		}
-		if err := h.removeJail(ctx, name, conf, spec); err != nil {
+		if err := h.removeJail(ctx, name, conf, spec, true); err != nil {
 			return err
 		}
 	}

@@ -15,8 +15,8 @@ type execRunner struct {
 }
 
 func (r execRunner) Run(ctx context.Context, path string, args ...string) ([]byte, error) {
-	return runCommand(ctx, r.timeout, maxOutput, overflowCut,
-		[]string{"LC_ALL=C", "PATH=/sbin:/bin:/usr/sbin:/usr/bin"}, path, args...)
+	return runCommand(ctx, runOpts{timeout: r.timeout, limit: maxOutput, over: overflowCut,
+		env: []string{"LC_ALL=C", "PATH=/sbin:/bin:/usr/sbin:/usr/bin"}}, path, args...)
 }
 
 // RunEnv implements EnvRunner: the same rules as Run, with the command's
@@ -37,5 +37,5 @@ func (r execRunner) RunEnv(ctx context.Context, c EnvCommand) ([]byte, error) {
 	if c.MarkOverflow {
 		over = overflowMark
 	}
-	return runCommand(ctx, timeout, limit, over, c.Env, c.Path, c.Args...)
+	return runCommand(ctx, runOpts{timeout: timeout, limit: limit, over: over, env: c.Env}, c.Path, c.Args...)
 }

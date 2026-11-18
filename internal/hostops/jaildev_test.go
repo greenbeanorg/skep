@@ -322,7 +322,7 @@ func TestRemoveJailDestroysEpairsFirst(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := h.removeJail(context.Background(), name, conf, jailSpec()); err != nil {
+	if err := h.removeJail(context.Background(), name, conf, jailSpec(), true); err != nil {
 		t.Fatal(err)
 	}
 	destroy := slices.Index(run.calls, "ifconfig epair0a destroy")

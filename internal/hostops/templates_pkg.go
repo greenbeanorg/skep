@@ -56,10 +56,11 @@ type EnvCommand struct {
 	// Runner's default. Output past it is an error unless MarkOverflow is
 	// set.
 	MaxOutput int
-	// MarkOverflow keeps the first MaxOutput bytes of standard output and
-	// appends a "skep: N bytes discarded" line instead of failing when
-	// the command writes more (ADR 0010 amendment o: jail -r, whose output
-	// is the jail's /etc/rc.shutdown's and must never fail a removal).
+	// MarkOverflow keeps the first and the last MaxOutput bytes of
+	// standard output, with a "skep: N bytes discarded" line between them,
+	// instead of failing when the command writes more (ADR 0010
+	// amendments o and p: jail -r, whose output is the jail's
+	// /etc/rc.shutdown's and must never fail a removal).
 	MarkOverflow bool
 	// ConsoleLog, when set, is an absolute path (created 0600, never
 	// through a link) that is truncated and receives standard output and

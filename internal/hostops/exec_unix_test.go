@@ -7,10 +7,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -278,34 +280,46 @@ func TestRunToConsoleLogFailure(t *testing.T) {
 	}
 }
 
-// jail -r's output past the cap (the jail's /etc/rc.shutdown) is cut with
-// a marker and never makes the command fail; a real failure still does.
+// jail -r's output past the cap (the jail's /etc/rc.shutdown) keeps its
+// head and its tail with a marker between them, and never makes the
+// command fail; a real failure still does (amendments o and p).
 func TestRunCommandMarkOverflow(t *testing.T) {
 	const limit = 1000
 	all := shLines(100)
-	out, err := runCommand(context.Background(), time.Minute, limit, overflowMark, testEnv, testShell, "-c", shLoop(100))
+	mark := runOpts{timeout: time.Minute, limit: limit, over: overflowMark, env: testEnv}
+	out, err := runCommand(context.Background(), mark, testShell, "-c", shLoop(100))
 	if err != nil {
 		t.Fatalf("output past the cap failed the command: %v", err)
 	}
-	if want := all[:limit] + discardedMarker(int64(len(all)-limit)); string(out) != want {
+	want := all[:limit] + discardedMarker(int64(len(all)-2*limit)) + all[len(all)-limit:]
+	if string(out) != want {
 		t.Fatalf("output:\n got %q\nwant %q", out, want)
 	}
 	// Under the cap: no marker.
-	out, err = runCommand(context.Background(), time.Minute, limit, overflowMark, testEnv, testShell, "-c", "echo short")
+	out, err = runCommand(context.Background(), mark, testShell, "-c", "echo short")
 	if err != nil || string(out) != "short\n" {
 		t.Fatalf("short output = %q, %v", out, err)
 	}
+	// Between the head and head plus tail: everything, no marker.
+	out, err = runCommand(context.Background(), mark, testShell, "-c", shLoop(25))
+	if err != nil || string(out) != shLines(25) {
+		t.Fatalf("output under head plus tail = %q, %v", out, err)
+	}
 	// Run's mode is unchanged: cut silently, no marker.
-	out, err = runCommand(context.Background(), time.Minute, limit, overflowCut, testEnv, testShell, "-c", shLoop(100))
+	cut := mark
+	cut.over = overflowCut
+	out, err = runCommand(context.Background(), cut, testShell, "-c", shLoop(100))
 	if err != nil || string(out) != all[:limit] {
 		t.Fatalf("overflowCut = %d bytes, %v", len(out), err)
 	}
 	// The strict mode is unchanged: the same output is an error there.
-	if _, err := runCommand(context.Background(), time.Minute, limit, overflowFail, testEnv, testShell, "-c", shLoop(100)); err == nil {
+	strict := mark
+	strict.over = overflowFail
+	if _, err := runCommand(context.Background(), strict, testShell, "-c", shLoop(100)); err == nil {
 		t.Fatal("overflowFail accepted output past the cap")
 	}
 	// A failing command is still a failure in the marking mode.
-	_, err = runCommand(context.Background(), time.Minute, limit, overflowMark, testEnv, testShell, "-c", shLoop(100)+"; echo 'jail: no such jail' >&2; exit 1")
+	_, err = runCommand(context.Background(), mark, testShell, "-c", shLoop(100)+"; echo 'jail: no such jail' >&2; exit 1")
 	var ce *CommandError
 	if !errors.As(err, &ce) || ce.ExitCode != 1 || ce.Stderr != "jail: no such jail" {
 		t.Fatalf("err = %#v", err)
@@ -313,11 +327,11 @@ func TestRunCommandMarkOverflow(t *testing.T) {
 }
 
 // shutdownRunner is the test script with one real command: jail -r
-// becomes a shell that writes more than the cap, run by runCommand with
-// the overflow mode the caller asked for, as the FreeBSD runner does.
+// becomes a shell running sh, run by runCommand with the cap and the
+// overflow mode the caller asked for, as the FreeBSD runner does.
 type shutdownRunner struct {
 	*script
-	limit int
+	sh string
 }
 
 func (s shutdownRunner) RunEnv(ctx context.Context, c EnvCommand) ([]byte, error) {
@@ -329,37 +343,178 @@ func (s shutdownRunner) RunEnv(ctx context.Context, c EnvCommand) ([]byte, error
 	if s.onRun != nil {
 		s.onRun("jail " + strings.Join(c.Args, " "))
 	}
-	over := overflowFail
-	if c.MarkOverflow {
-		over = overflowMark
+	o := runOpts{timeout: time.Minute, limit: c.MaxOutput, over: overflowFail, env: testEnv}
+	if o.limit <= 0 {
+		o.limit = maxOutput
 	}
-	return runCommand(ctx, time.Minute, s.limit, over, testEnv, testShell, "-c", shLoop(200))
+	if c.MarkOverflow {
+		o.over = overflowMark
+	}
+	return runCommand(ctx, o, testShell, "-c", s.sh)
 }
 
-// A stop whose /etc/rc.shutdown writes past the cap is a successful
-// removal: jail -r is run in the marking mode, never the strict one.
-func TestStopJailShutdownOutputPastTheCap(t *testing.T) {
+// shutdownHost is a started jail whose jail -r runs sh for real, and the
+// path of its console log, which holds rc's output.
+func shutdownHost(t *testing.T, sh, rcOutput string) (*host, *script, string, string) {
+	t.Helper()
 	h, run, root := startedJail(t)
-	h.run = shutdownRunner{script: run, limit: 1024}
-	name := "skep-" + ctrA
+	h.run = shutdownRunner{script: run, sh: sh}
 	conf, err := h.writeJailConfAt(jailSpec(), root, true)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := h.removeJail(context.Background(), name, conf, jailSpec()); err != nil {
-		t.Fatalf("output past the cap failed the removal: %v", err)
+	log, err := h.conf.JailRunPath(ctrA, JailConsoleLog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(log, []byte(rcOutput), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return h, run, conf, log
+}
+
+// A stop whose /etc/rc.shutdown writes past the budget is a successful
+// removal: jail -r is run in the marking mode with the shutdown budget,
+// never the strict one, and the console log gets rc's output, the
+// marker line, the first 32 KiB, a discarded marker, and the last 32 KiB
+// (amendment p).
+func TestStopJailShutdownOutputPastTheBudget(t *testing.T) {
+	const n = 2000 // about 124 KiB
+	h, run, conf, log := shutdownHost(t, shLoop(n), "rc output\n")
+	name := "skep-" + ctrA
+	if err := h.removeJail(context.Background(), name, conf, jailSpec(), true); err != nil {
+		t.Fatalf("output past the budget failed the removal: %v", err)
 	}
 	var marked bool
+	var limit int
 	for _, c := range run.envCmds {
 		if c.Path == jailBinary && slices.Contains(c.Args, "-r") {
-			marked = c.MarkOverflow
+			marked, limit = c.MarkOverflow, c.MaxOutput
 		}
 	}
-	if !marked {
-		t.Fatal("jail -r was not run in the marking mode")
+	if !marked || limit != ShutdownLogPart || ShutdownLogPart != 32<<10 {
+		t.Fatalf("jail -r: marking %v, cap %d", marked, limit)
 	}
 	if r := callsWith(run.calls, "jail "); !slices.Equal(r, []string{"jail -f " + conf + " -r " + name}) {
 		t.Fatalf("removal: %q", r)
+	}
+	all := shLines(n)
+	want := "rc output\n--- shutdown ---\n" + all[:ShutdownLogPart] +
+		discardedMarker(int64(len(all)-2*ShutdownLogPart)) + all[len(all)-ShutdownLogPart:]
+	got, err := os.ReadFile(log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != want {
+		t.Fatalf("console.log: %d bytes, want %d\nhead %q\ntail %q", len(got), len(want), got[:min(len(got), 80)], got[max(0, len(got)-80):])
+	}
+}
+
+// Under the budget the whole output is appended, with no discarded
+// marker; the marker line starts on a line of its own even when rc's
+// output did not end with a newline, and a shutdown that printed nothing
+// still leaves the marker line.
+func TestStopJailShutdownOutputUnderTheBudget(t *testing.T) {
+	for _, tc := range []struct {
+		name, rc, sh, want string
+	}{
+		{"newline", "rc done\n", "echo 'Stopping cron.'; echo 'Terminated'",
+			"rc done\n--- shutdown ---\nStopping cron.\nTerminated\n"},
+		{"no newline", "rc done", "printf 'Stopping cron.\\n'",
+			"rc done\n--- shutdown ---\nStopping cron.\n"},
+		{"empty log", "", "echo bye", "--- shutdown ---\nbye\n"},
+		{"silent", "rc done\n", "true", "rc done\n--- shutdown ---\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h, _, conf, log := shutdownHost(t, tc.sh, tc.rc)
+			if err := h.removeJail(context.Background(), "skep-"+ctrA, conf, jailSpec(), true); err != nil {
+				t.Fatal(err)
+			}
+			got, _ := os.ReadFile(log)
+			if string(got) != tc.want {
+				t.Fatalf("console.log = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// A removal without exec.stop (a discard: none of the jail's code ran)
+// appends nothing to the console log.
+func TestDiscardAppendsNoShutdownOutput(t *testing.T) {
+	h, _, conf, log := shutdownHost(t, "echo nothing", "rc output\n")
+	if err := h.removeJail(context.Background(), "skep-"+ctrA, conf, jailSpec(), false); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := os.ReadFile(log); string(got) != "rc output\n" {
+		t.Fatalf("console.log = %q", got)
+	}
+}
+
+// A console log that cannot be written (a symbolic link, a directory, a
+// FIFO, a missing runtime directory) never fails the removal: the jail
+// is removed, the link's target and the FIFO are untouched, and the
+// failure is logged.
+func TestShutdownLogWriteFailureStillRemoves(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		setup func(t *testing.T, log string)
+	}{
+		{"symlink", func(t *testing.T, log string) {
+			target := filepath.Join(t.TempDir(), "target")
+			if err := os.WriteFile(target, []byte("host file\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			os.Remove(log)
+			if err := os.Symlink(target, log); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				if b, _ := os.ReadFile(target); string(b) != "host file\n" {
+					t.Errorf("link target = %q", b)
+				}
+			})
+		}},
+		{"directory", func(t *testing.T, log string) {
+			os.Remove(log)
+			if err := os.Mkdir(log, 0o700); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{"fifo", func(t *testing.T, log string) {
+			os.Remove(log)
+			if err := mkfifo(log); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{"no runtime directory", func(t *testing.T, log string) {
+			if err := os.RemoveAll(filepath.Dir(log)); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h, run, conf, log := shutdownHost(t, "echo 'Stopping cron.'", "rc output\n")
+			tc.setup(t, log)
+			var logged bytes.Buffer
+			h.log = slog.New(slog.NewTextHandler(&logged, nil))
+			name := "skep-" + ctrA
+			done := make(chan error, 1)
+			go func() { done <- h.removeJail(context.Background(), name, conf, jailSpec(), true) }()
+			select {
+			case err := <-done:
+				if err != nil {
+					t.Fatalf("a failed console log write failed the removal: %v", err)
+				}
+			case <-time.After(10 * time.Second):
+				t.Fatal("the removal blocked on the console log")
+			}
+			if r := callsWith(run.calls, "jail "); !slices.Equal(r, []string{"jail -f " + conf + " -r " + name}) {
+				t.Fatalf("removal: %q", r)
+			}
+			if !strings.Contains(logged.String(), "event=jail_shutdown_log_failed") {
+				t.Fatalf("not logged: %s", logged.String())
+			}
+		})
 	}
 }
 
@@ -375,3 +530,5 @@ func killPIDFile(path string) {
 		}
 	}
 }
+
+func mkfifo(path string) error { return syscall.Mkfifo(path, 0o600) }

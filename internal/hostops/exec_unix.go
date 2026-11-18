@@ -33,25 +33,46 @@ const (
 	// overflowFail makes output past the limit an error (the template
 	// builder parses pkg's whole output).
 	overflowFail
-	// overflowMark keeps the first limit bytes and appends a marker that
-	// counts the bytes dropped; it is never an error (ADR 0010 amendment
-	// o: jail -r, whose output is the jail's /etc/rc.shutdown's).
+	// overflowMark keeps the first limit bytes and the last limit bytes,
+	// with a marker between them that counts the bytes dropped; it is
+	// never an error (ADR 0010 amendments o and p: jail -r, whose output
+	// is the jail's /etc/rc.shutdown's). At most 2*limit bytes are held.
 	overflowMark
 )
 
+// runOpts is how runCommand runs one command.
+type runOpts struct {
+	timeout time.Duration
+	// limit caps what is kept of standard output; over says what happens
+	// past it.
+	limit int
+	over  overflow
+	// env is the whole environment.
+	env []string
+}
+
 // runCommand runs one command with an explicit argument list, the given
 // whole environment, no stdin, a timeout, and capped output.
-func runCommand(ctx context.Context, timeout time.Duration, limit int, over overflow, env []string, path string, args ...string) ([]byte, error) {
+func runCommand(ctx context.Context, o runOpts, path string, args ...string) ([]byte, error) {
 	if !filepath.IsAbs(path) {
 		return nil, fmt.Errorf("hostops: refusing to run non-absolute command %q", path)
 	}
+	timeout := o.timeout
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	stdout, stderr := capped{limit: limit}, capped{limit: maxOutput}
+	stdout, stderr := capped{limit: o.limit}, capped{limit: maxOutput}
+	// The marking mode keeps the head and the tail of standard output in
+	// memory, laid out as the console log is: the head, then (if more
+	// came) the marker and the tail.
+	var marked bytes.Buffer
+	headTail := newConsoleLog(&marked, o.limit, o.limit)
 	cmd := exec.CommandContext(ctx, path, args...)
-	cmd.Env = env
+	cmd.Env = o.env
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	if o.over == overflowMark {
+		cmd.Stdout = headTail
+	}
 	cmd.WaitDelay = time.Second
 
 	if err := cmd.Run(); err != nil {
@@ -71,14 +92,13 @@ func runCommand(ctx context.Context, timeout time.Duration, limit int, over over
 		ce.Stderr = strings.TrimSpace(line)
 		return nil, ce
 	}
-	if stdout.over {
-		switch over {
-		case overflowFail:
-			return nil, fmt.Errorf("hostops: %s wrote more than %d bytes", filepath.Base(path), limit)
-		case overflowMark:
-			out := stdout.buf.Bytes()
-			return append(out, discardedMarker(stdout.total-int64(len(out)))...), nil
-		}
+	if o.over == overflowMark {
+		// Writes to a bytes.Buffer do not fail.
+		_ = headTail.finish()
+		return marked.Bytes(), nil
+	}
+	if stdout.over && o.over == overflowFail {
+		return nil, fmt.Errorf("hostops: %s wrote more than %d bytes", filepath.Base(path), o.limit)
 	}
 	return stdout.buf.Bytes(), nil
 }
