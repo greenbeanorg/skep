@@ -375,7 +375,7 @@ function ConsoleLogCard({ id, tick }: { id: string; tick: number }) {
         {log.error && !log.data ? <InlineError error={log.error} /> : null}
         {log.data ? (
           log.data.text === "" ? (
-            <p className="text-sm text-muted-foreground">Empty. /etc/rc writes here when the jail starts; the log is cleared at each start.</p>
+            <p className="text-sm text-muted-foreground">Empty. /etc/rc writes here when the jail starts, and /etc/rc.shutdown&apos;s output is added when it stops; the log is cleared at each start.</p>
           ) : (
             <pre className="max-h-80 overflow-auto rounded-md bg-muted p-3 font-mono text-xs whitespace-pre-wrap" data-testid="console-log">
               {log.data.text}

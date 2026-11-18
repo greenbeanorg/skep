@@ -160,10 +160,18 @@ command's output inside the jail (`foo >/var/log/foo.log 2>&1 &`). No
 process in a jail ever holds a descriptor on a host file.
 
 `/etc/rc.shutdown`'s output (at a stop, a restart, or the removal after a
-failed rc) is not in the console log: the jail.conf has no
-`exec.consolelog`, so it goes to `jail -r`'s own output, which the agent
-caps at 4 MiB, cuts with the same `skep: N bytes discarded` line, and
-does not keep; its size never makes a stop fail.
+failed rc) is appended to the console log after a line `--- shutdown ---`
+(amendment p). The jail.conf has no `exec.consolelog`, so it goes to
+`jail -r`'s own standard output, of which the agent keeps the first
+32 KiB and the last 32 KiB in memory, with a `skep: N bytes discarded`
+line between them when there was more, and writes it after `jail -r`
+returns. A console log therefore holds at most about 384 KiB. What
+`/etc/rc.shutdown` writes to standard error is not kept. Its size never
+makes a stop fail, and neither does a failure to write it (the agent logs
+`jail_shutdown_log_failed`). A removal that runs none of the jail's code
+(a refused or quarantined jail, or a start interrupted by the agent's
+restart) appends nothing. Since the next start truncates the log, after a
+restart it shows only the new start's rc output.
 
 **Stop.** Skep first destroys the jail's epairs (destroying a host end
 removes its jail end inside the jail), so no jail end comes back to the
@@ -171,7 +179,13 @@ host; the jail's `/etc/rc.shutdown` therefore runs without its NICs. Then
 `jail -r` runs `/etc/rc.shutdown`, sends SIGTERM to what is
 left, and after the stop timeout SIGKILL; the kernel then removes the
 jail and its devfs mount. A jail cannot refuse to stop, so there is no
-force stop. The timeout is `containers.stop_timeout_seconds` (default 10)
+force stop. If `jail -r` fails, the task's error gives its exit status and
+the last line of its standard error, labelled
+`jail output, last line of stderr: "..."` (or `no jail output on stderr`):
+that stream begins with what the jail's `/etc/rc.shutdown` wrote, so even
+its last line may be the jail's text. Control characters are removed and
+the line is cut to 200 bytes; the agent logs it as `jail_output` in a
+`jail_remove_failed` line (amendment p). The timeout is `containers.stop_timeout_seconds` (default 10)
 or the request's `timeout` (1 to 300).
 
 **Delete.** The jail must be stopped, or quarantined (above). Skep unmounts a devfs a removal

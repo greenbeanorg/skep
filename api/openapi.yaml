@@ -1796,7 +1796,12 @@ paths:
         seconds (default `containers.stop_timeout_seconds`), SIGKILL; a
         jail cannot refuse, so there is no force stop. A stop destroys the
         jail's epairs before the jail is removed, so the jail's
-        `/etc/rc.shutdown` runs without its NICs. `restart` is a stop and a start.
+        `/etc/rc.shutdown` runs without its NICs. Its output is appended to
+        the console log. If `jail -r` fails, the task error ends with the
+        last line of its stderr, labelled `jail output, last line of
+        stderr: "..."`, control characters removed and at most 200 bytes;
+        that text may come from the jail (amendment p). `restart` is a stop
+        and a start.
       parameters:
         - $ref: "#/components/parameters/IdempotencyKey"
       requestBody:
@@ -1843,7 +1848,10 @@ paths:
         the agent from a pipe that is closed when the start ends (ADR 0010
         amendment o). The file holds the first 256 KiB of rc's output
         and, if there was more, a `skep: N bytes discarded` line and the
-        last 64 KiB. `/etc/rc.shutdown`'s output is not in it. The
+        last 64 KiB. After a stop, a `--- shutdown ---` line follows, then
+        what `/etc/rc.shutdown` wrote to standard output: the first
+        32 KiB and, if there was more, the same marker and the last
+        32 KiB (amendment p). The
         content is written by the jail. The log is kept in the runtime
         directory and is gone after a host reboot.
       parameters:

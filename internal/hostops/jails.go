@@ -93,7 +93,8 @@ type Jails interface {
 	DiscardJail(ctx context.Context, spec JailSpec) error
 	// StopJail removes a jail with jail(8): exec.stop (/etc/rc.shutdown),
 	// then SIGTERM, then after the stop timeout SIGKILL. It confirms the
-	// jail is gone. A jail that is not running is not an error.
+	// jail is gone, and appends /etc/rc.shutdown's output to the console
+	// log (amendment p). A jail that is not running is not an error.
 	StopJail(ctx context.Context, spec JailSpec) error
 	// RemoveLeftoverDevfs unmounts a devfs that a removal outside Skep
 	// left on a jail's <root>/dev, and returns the fsids it unmounted

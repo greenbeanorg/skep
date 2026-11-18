@@ -503,8 +503,13 @@ Skep fixes and nobody can change through the API
   running that writes later gets `SIGPIPE` or `EPIPE`, so a jail cannot
   fill the host's `/var/run` (on a UFS-root host, its root file system)
   through its console. `/etc/rc.shutdown` writes to `jail -r`'s output,
-  capped in the agent's memory and not kept; past the cap it is cut, and
-  never makes a removal fail.
+  of which the agent keeps the first and last 32 KiB in memory and
+  appends them to `console.log` after a `--- shutdown ---` line
+  (amendment p); neither its size nor a failed write makes a removal
+  fail. When `jail -r` fails, the error and the log carry only the last
+  line of its stderr, with control characters removed, at most 200 bytes,
+  and labelled as jail output, since the jail writes the start of that
+  stream.
 - **Locked memory has a host total (amendment o, SR-04).** `mlock` needs
   `limits.locked_memory`, and the sum of `locked_memory` over the running
   jails is bounded by `containers.max_locked_memory_bytes` (a quarter of

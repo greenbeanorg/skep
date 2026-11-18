@@ -1971,3 +1971,22 @@ start; `container_locked_memory_exhausted` (409) at submission and in the
 start task, which reserves its share in memory until the jail runs or
 the start fails. Details and the hearst checks are in section 15 of
 [step10-progress.md](../../tests/integration/jails/results/step10-progress.md).
+
+**Amendment p, built (2026-11-18, merrick only).** `jail -r` runs with
+`MaxOutput` 32 KiB (`ShutdownLogPart`) and `MarkOverflow`, which now keeps
+the first and the last `MaxOutput` bytes of standard output in memory,
+with `skep: N bytes discarded` between them (the console log's layout,
+through the same `consoleLog` writer over a buffer). When the jail.conf
+had `exec.stop` (a stop, or the removal after a failed rc; not a discard),
+`removeJail` appends `--- shutdown ---` (on a line of its own) and that
+output to `console.log`: `O_APPEND|O_CREATE|O_NOFOLLOW|O_NONBLOCK`, 0600,
+regular files only; a failure is logged as `jail_shutdown_log_failed` and
+never fails the removal. Only standard output is appended: the runner
+returns no stderr on success. With the new `EnvCommand.StderrLastLine`,
+the runner keeps the last 64 KiB of stderr and a failure's `CommandError`
+carries its last non-empty line, with C0, DEL, and C1 controls and
+non-UTF-8 bytes removed, cut to 200 bytes on a character boundary;
+`removeJail` logs it as `jail_output` (`jail_remove_failed`) and returns
+the error with the line as `jail output, last line of stderr: "..."`, or
+`no jail output on stderr`. Details in section 17 of
+[step10-progress.md](../../tests/integration/jails/results/step10-progress.md).
