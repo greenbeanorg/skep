@@ -254,3 +254,27 @@ func TestJailUsageRefusals(t *testing.T) {
 		}
 	}
 }
+
+// TestLockedMemoryRuleWithoutMemory: locked_memory is its own memorylocked
+// rule, added and read back like the others, whether or not memory is
+// set (amendment n, SR-04).
+func TestLockedMemoryRuleWithoutMemory(t *testing.T) {
+	h, run := rctlHost(t, true)
+	spec := jailSpec()
+	spec.Limits = JailLimits{LockedMemoryBytes: 32 << 20}
+	j := "jail:skep-" + ctrA
+	run.answers["rctl "+j] = j + ":memorylocked:deny=33554432\n"
+	if err := h.applyJailRules(context.Background(), spec); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"rctl -a " + j + ":memorylocked:deny=33554432", "rctl " + j}
+	if strings.Join(run.calls, "|") != strings.Join(want, "|") {
+		t.Fatalf("calls = %q", run.calls)
+	}
+	// Read back missing: refused.
+	run.calls = nil
+	run.answers["rctl "+j] = ""
+	if err := h.applyJailRules(context.Background(), spec); err == nil {
+		t.Fatal("a missing memorylocked rule was accepted")
+	}
+}
