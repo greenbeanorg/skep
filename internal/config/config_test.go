@@ -485,6 +485,7 @@ func TestConfinementDefaultsAndValidation(t *testing.T) {
 		"dist dir relative":           `{"storage": {"dist_dir": "dist"}}`,
 		"jail stop timeout too long":  `{"containers": {"stop_timeout_seconds": 601}}`,
 		"jail start timeout negative": `{"containers": {"start_timeout_seconds": -1}}`,
+		"locked memory negative":      `{"containers": {"max_locked_memory_bytes": -1}}`,
 		"dist dir not clean":          `{"storage": {"dist_dir": "/srv/../etc"}}`,
 		"dist dir root":               `{"storage": {"dist_dir": "/"}}`,
 	} {

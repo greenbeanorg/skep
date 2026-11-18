@@ -37,7 +37,9 @@ type fixture struct {
 	withSSHD string
 }
 
-func newFixture(t *testing.T) *fixture {
+// newFixture builds the service on the fake host (16 GiB of physical
+// memory); each tweak may change its options first.
+func newFixture(t *testing.T, tweaks ...func(*Options)) *fixture {
 	t.Helper()
 	ctx := context.Background()
 	db, err := database.Open(ctx, filepath.Join(t.TempDir(), "agent", "agent.db"))
@@ -71,8 +73,13 @@ func newFixture(t *testing.T) *fixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	svc, err := New(Options{NodeID: nodeID, Store: database.NewContainerStore(db), Templates: database.NewTemplateStore(db),
-		Snapshots: database.NewSnapshotStore(db), MaxSnapshots: 4, Engine: engine, Host: fake.Ops(), Logger: quiet})
+	opts := Options{NodeID: nodeID, Store: database.NewContainerStore(db), Templates: database.NewTemplateStore(db),
+		Snapshots: database.NewSnapshotStore(db), MaxSnapshots: 4, Engine: engine, Host: fake.Ops(), Logger: quiet,
+		PhysicalMemory: 16 << 30}
+	for _, tweak := range tweaks {
+		tweak(&opts)
+	}
+	svc, err := New(opts)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -99,7 +99,10 @@ func (s *Service) checkAction(ctx context.Context, id, taskType string) error {
 		if err := s.checkAddressFree(ctx, c); err != nil {
 			return err
 		}
-		return s.checkLimits(ctx, c.Limits, c.Options)
+		if err := s.checkLimits(ctx, c.Limits, c.Options); err != nil {
+			return err
+		}
+		return s.checkLockedMemoryTotal(ctx, c)
 	}
 	if !running {
 		return &models.Error{Code: models.CodeContainerNotRunning, Message: "the jail is not running",
@@ -155,6 +158,13 @@ func (s *Service) runStart(ctx context.Context, task tasks.Task, report tasks.Re
 
 // start marks the container started for good, then starts the jail.
 func (s *Service) start(ctx context.Context, c models.Container, report tasks.Reporter) (any, error) {
+	// The host's total of locked memory, held for this start until the
+	// jail runs or the start has failed (amendment o, SR-04).
+	release, err := s.reserveLockedMemory(ctx, c)
+	if err != nil {
+		return nil, failure(err)
+	}
+	defer release()
 	// started_once is set before any code runs in the tree, so a crash
 	// after jail -c can never leave it 0 (decision 13).
 	if err := s.store.MarkStarting(ctx, c.ID, s.now().UTC()); err != nil {

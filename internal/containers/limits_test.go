@@ -128,3 +128,130 @@ func TestRacctDisabled(t *testing.T) {
 	f.succeed(f.svc.UpdateContainer(ctx, c.ID, models.ContainerUpdate{Limits: &models.ContainerLimits{DiskQuota: 1 << 30}}, f.sub))
 	f.succeed(f.svc.Action(ctx, c.ID, models.ContainerAction{Action: "start"}, f.sub))
 }
+
+// The host's total of locked memory (amendment o, SR-04): a quarter of
+// physical memory unless containers.max_locked_memory_bytes is set.
+func TestMaxLockedMemoryDefault(t *testing.T) {
+	for name, c := range map[string]struct{ configured, physical, want int64 }{
+		"a quarter of physical memory": {0, 16 << 30, 4 << 30},
+		"hearst's 6 GiB":               {0, 6 << 30, 1536 << 20},
+		"rounded down":                 {0, 1<<30 + 3, 1 << 28},
+		"configured wins":              {512 << 20, 16 << 30, 512 << 20},
+		"configured above physical":    {32 << 30, 16 << 30, 32 << 30},
+		"unreadable physical memory":   {0, 0, 0},
+		"negative physical memory":     {0, -1, 0},
+	} {
+		if got := MaxLockedMemory(c.configured, c.physical); got != c.want {
+			t.Errorf("%s: MaxLockedMemory(%d, %d) = %d, want %d", name, c.configured, c.physical, got, c.want)
+		}
+	}
+	// New takes the default from the physical memory it is given.
+	f := newFixture(t)
+	if f.svc.maxLocked != 4<<30 {
+		t.Fatalf("the fixture's total = %d, want a quarter of 16 GiB", f.svc.maxLocked)
+	}
+}
+
+// A single locked_memory above the total is refused with 422 at create
+// and update; a value at the total is accepted.
+func TestLockedMemoryAboveTheTotal(t *testing.T) {
+	f := newFixture(t, func(o *Options) { o.MaxLockedMemory = 64 << 20 })
+	ctx := context.Background()
+	mlock := &models.ContainerOptions{Mlock: true}
+	_, err := f.svc.CreateContainer(ctx, models.ContainerCreate{Name: "big", TemplateID: f.minimal,
+		Limits: &models.ContainerLimits{LockedMemory: 64<<20 + 1}, Options: mlock}, f.sub)
+	wantCode(t, err, models.CodeContainerLockedMemoryAboveMax)
+	var me *models.Error
+	errors.As(err, &me)
+	if me.Details["max_locked_memory_bytes"] != int64(64<<20) {
+		t.Fatalf("details = %v", me.Details)
+	}
+	// Without mlock too: the limit itself is bounded.
+	_, err = f.svc.CreateContainer(ctx, models.ContainerCreate{Name: "big", TemplateID: f.minimal,
+		Limits: &models.ContainerLimits{LockedMemory: 1 << 40}}, f.sub)
+	wantCode(t, err, models.CodeContainerLockedMemoryAboveMax)
+	c := f.create(models.ContainerCreate{Name: "at", TemplateID: f.minimal,
+		Limits: &models.ContainerLimits{LockedMemory: 64 << 20}, Options: mlock})
+	_, err = f.svc.UpdateContainer(ctx, c.ID, models.ContainerUpdate{Limits: &models.ContainerLimits{LockedMemory: 1 << 30}}, f.sub)
+	wantCode(t, err, models.CodeContainerLockedMemoryAboveMax)
+	f.succeed(f.svc.Action(ctx, c.ID, models.ContainerAction{Action: "start"}, f.sub))
+
+	// No physical memory read and nothing configured: no jail may lock.
+	g := newFixture(t, func(o *Options) { o.PhysicalMemory = 0 })
+	_, err = g.svc.CreateContainer(ctx, models.ContainerCreate{Name: "any", TemplateID: g.minimal,
+		Limits: &models.ContainerLimits{LockedMemory: 1 << 20}, Options: mlock}, g.sub)
+	wantCode(t, err, models.CodeContainerLockedMemoryAboveMax)
+	g.create(models.ContainerCreate{Name: "none", TemplateID: g.minimal, Limits: &models.ContainerLimits{CPUPercent: 50}})
+}
+
+// At start, this jail's locked_memory plus that of the running jails
+// must fit in the total; the jail itself is never counted twice, and a
+// jail without locked memory always fits.
+func TestLockedMemoryTotalAtStart(t *testing.T) {
+	f := newFixture(t, func(o *Options) { o.MaxLockedMemory = 100 << 20 })
+	ctx := context.Background()
+	mlock := &models.ContainerOptions{Mlock: true}
+	a := f.create(models.ContainerCreate{Name: "a", TemplateID: f.minimal, Limits: &models.ContainerLimits{LockedMemory: 60 << 20}, Options: mlock})
+	b := f.create(models.ContainerCreate{Name: "b", TemplateID: f.minimal, Limits: &models.ContainerLimits{LockedMemory: 50 << 20}})
+	c := f.create(models.ContainerCreate{Name: "c", TemplateID: f.minimal, Limits: &models.ContainerLimits{LockedMemory: 40 << 20}})
+	plain := f.create(models.ContainerCreate{Name: "plain", TemplateID: f.minimal})
+
+	f.succeed(f.svc.Action(ctx, a.ID, models.ContainerAction{Action: "start"}, f.sub))
+	// A jail the host reports running is not counted against itself.
+	if err := f.svc.checkLockedMemoryTotal(ctx, a); err != nil {
+		t.Fatalf("a running jail was counted against itself: %v", err)
+	}
+	_, err := f.svc.Action(ctx, b.ID, models.ContainerAction{Action: "start"}, f.sub)
+	wantCode(t, err, models.CodeContainerLockedMemoryExhausted)
+	var me *models.Error
+	errors.As(err, &me)
+	if me.Details["running_bytes"] != int64(60<<20) || me.Details["required_bytes"] != int64(50<<20) {
+		t.Fatalf("details = %v", me.Details)
+	}
+	if f.called("jail -c skep-" + b.ID) {
+		t.Fatal("a refused jail was created")
+	}
+	// 60 + 40 is exactly the total.
+	f.succeed(f.svc.Action(ctx, c.ID, models.ContainerAction{Action: "start"}, f.sub))
+	f.succeed(f.svc.Action(ctx, plain.ID, models.ContainerAction{Action: "start"}, f.sub))
+	// A restart (a stop, then a start with its own check) fits.
+	f.succeed(f.svc.Action(ctx, a.ID, models.ContainerAction{Action: "restart"}, f.sub))
+	// Stopping a frees its share.
+	f.succeed(f.svc.Action(ctx, a.ID, models.ContainerAction{Action: "stop"}, f.sub))
+	f.succeed(f.svc.Action(ctx, b.ID, models.ContainerAction{Action: "start"}, f.sub))
+	_, err = f.svc.Action(ctx, a.ID, models.ContainerAction{Action: "start"}, f.sub)
+	wantCode(t, err, models.CodeContainerLockedMemoryExhausted)
+}
+
+// A start under way holds its share: a second start checked while the
+// first is reserved is refused (the task-time check, which the
+// submission check cannot see), and the share returns on release.
+func TestLockedMemoryReservation(t *testing.T) {
+	f := newFixture(t, func(o *Options) { o.MaxLockedMemory = 100 << 20 })
+	ctx := context.Background()
+	a := f.create(models.ContainerCreate{Name: "a", TemplateID: f.minimal, Limits: &models.ContainerLimits{LockedMemory: 60 << 20}})
+	b := f.create(models.ContainerCreate{Name: "b", TemplateID: f.minimal, Limits: &models.ContainerLimits{LockedMemory: 60 << 20}})
+	release, err := f.svc.reserveLockedMemory(ctx, a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.svc.reserveLockedMemory(ctx, b); err == nil {
+		t.Fatal("a second start took the share of a start under way")
+	} else {
+		wantCode(t, err, models.CodeContainerLockedMemoryExhausted)
+	}
+	wantCode(t, f.svc.checkLockedMemoryTotal(ctx, b), models.CodeContainerLockedMemoryExhausted)
+	// The same jail is not counted against itself.
+	if err := f.svc.checkLockedMemoryTotal(ctx, a); err != nil {
+		t.Fatal(err)
+	}
+	release()
+	releaseB, err := f.svc.reserveLockedMemory(ctx, b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	releaseB()
+	if len(f.svc.lockedStarting) != 0 {
+		t.Fatalf("reservations left: %v", f.svc.lockedStarting)
+	}
+}

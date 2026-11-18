@@ -111,6 +111,11 @@ type ContainersConfig struct {
 	// after the /dev guard, and is exec.timeout, which bounds
 	// /etc/rc.shutdown. 0 means DefaultContainerStartTimeout.
 	StartTimeoutSeconds int `json:"start_timeout_seconds"`
+	// MaxLockedMemoryBytes is the total limits.locked_memory of all
+	// running jails, and so the most one jail may have (ADR 0010
+	// amendment o, SR-04). 0 means a quarter of physical memory
+	// (hw.physmem), read when the agent starts.
+	MaxLockedMemoryBytes int64 `json:"max_locked_memory_bytes"`
 }
 
 // Defaults and bounds of the jail timeouts, in seconds.
@@ -290,6 +295,9 @@ func (c Config) validateConfinement() []error {
 		if v < 1 || v > MaxContainerTimeout {
 			add("%s must be between 1 and %d", name, MaxContainerTimeout)
 		}
+	}
+	if c.Containers.MaxLockedMemoryBytes < 0 {
+		add("containers.max_locked_memory_bytes cannot be negative; 0 means a quarter of physical memory")
 	}
 	if d := c.Storage.DistDir; d != "" && (!filepath.IsAbs(d) || filepath.Clean(d) != d || d == "/") {
 		add("storage.dist_dir %q must be an absolute, clean path other than /", d)

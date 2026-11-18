@@ -54,6 +54,7 @@
   },
   "containers": {
     "stop_timeout_seconds": 10,
-    "start_timeout_seconds": 120
+    "start_timeout_seconds": 120,
+    "max_locked_memory_bytes": 0
   }
 }

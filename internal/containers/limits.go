@@ -2,6 +2,7 @@ package containers
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/greenbeanorg/skep/internal/hostops"
@@ -27,6 +28,11 @@ func (s *Service) checkLimits(ctx context.Context, l models.ContainerLimits, o m
 	}
 	if err := validLimits(l, info.CPUs); err != nil {
 		return err
+	}
+	if n := int64(l.LockedMemory); n > s.maxLocked {
+		return &models.Error{Code: models.CodeContainerLockedMemoryAboveMax,
+			Message: fmt.Sprintf("limits.locked_memory is at most %d bytes on this host: containers.max_locked_memory_bytes, the total locked memory of all running jails (by default a quarter of physical memory)", s.maxLocked),
+			Details: map[string]any{"locked_memory": n, "max_locked_memory_bytes": s.maxLocked}}
 	}
 	if l.RCTL() && !info.Enabled {
 		return &models.Error{Code: models.CodeRctlUnavailable,
@@ -59,6 +65,88 @@ func validLimits(l models.ContainerLimits, cpus int) error {
 		return models.Invalid("limits.locked_memory cannot be more than limits.memory")
 	case l.DiskQuota > 0 && l.DiskQuota < models.MinContainerDiskQuota:
 		return models.Invalid(fmt.Sprintf("limits.disk_quota must be at least %d MiB", models.MinContainerDiskQuota>>20))
+	}
+	return nil
+}
+
+// MaxLockedMemory is the total locked_memory of all running jails
+// (amendment o, SR-04): containers.max_locked_memory_bytes when it is
+// set, otherwise a quarter of physical memory. Physical memory the agent
+// could not read gives 0, so no jail may lock memory.
+func MaxLockedMemory(configured, physical int64) int64 {
+	if configured > 0 {
+		return configured
+	}
+	return max(physical, 0) / 4
+}
+
+// checkLockedMemoryTotal refuses a start whose locked_memory, added to
+// that of the jails already running and the starts under way, would pass
+// the host's total (amendment o, SR-04). It reserves nothing; the start
+// itself reserves with reserveLockedMemory.
+func (s *Service) checkLockedMemoryTotal(ctx context.Context, c models.Container) error {
+	if c.Limits.LockedMemory <= 0 {
+		return nil
+	}
+	s.locked.Lock()
+	defer s.locked.Unlock()
+	return s.lockedRoomLocked(ctx, c)
+}
+
+// reserveLockedMemory is checkLockedMemoryTotal for the start itself: on
+// success the jail's locked_memory counts as a start under way until
+// release is called, so two starts cannot both take the last room.
+func (s *Service) reserveLockedMemory(ctx context.Context, c models.Container) (release func(), err error) {
+	if c.Limits.LockedMemory <= 0 {
+		return func() {}, nil
+	}
+	s.locked.Lock()
+	defer s.locked.Unlock()
+	if err := s.lockedRoomLocked(ctx, c); err != nil {
+		return nil, err
+	}
+	s.lockedStarting[c.ID] = int64(c.Limits.LockedMemory)
+	return func() {
+		s.locked.Lock()
+		delete(s.lockedStarting, c.ID)
+		s.locked.Unlock()
+	}, nil
+}
+
+// lockedRoomLocked does the check; s.locked is held. The running jails
+// are what the host reports, each counted with its stored locked_memory
+// (limits change only while a jail is stopped, so the stored value is the
+// rule the kernel holds).
+func (s *Service) lockedRoomLocked(ctx context.Context, c models.Container) error {
+	running, err := s.jails.RunningJails(ctx)
+	if err != nil {
+		return err
+	}
+	var used int64
+	for id := range running {
+		if _, starting := s.lockedStarting[id]; id == c.ID || starting {
+			continue
+		}
+		other, err := s.store.Get(ctx, id)
+		if errors.Is(err, models.ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		used += int64(other.Limits.LockedMemory)
+	}
+	for id, n := range s.lockedStarting {
+		if id != c.ID {
+			used += n
+		}
+	}
+	want := int64(c.Limits.LockedMemory)
+	if used+want > s.maxLocked {
+		return &models.Error{Code: models.CodeContainerLockedMemoryExhausted,
+			Message: fmt.Sprintf("the running jails may lock %d bytes and this one %d; containers.max_locked_memory_bytes allows %d in total. Stop a jail with locked memory, or lower this jail's limits.locked_memory",
+				used, want, s.maxLocked),
+			Details: map[string]any{"container_id": c.ID, "running_bytes": used, "required_bytes": want, "max_locked_memory_bytes": s.maxLocked}}
 	}
 	return nil
 }

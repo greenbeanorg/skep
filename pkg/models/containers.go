@@ -100,6 +100,15 @@ const (
 	// delete or the agent's start-up sweep remove it without them
 	// (amendment n, SR-06).
 	CodeContainerQuarantined = "container_quarantined"
+	// CodeContainerLockedMemoryAboveMax: limits.locked_memory is more
+	// than containers.max_locked_memory_bytes, the host's total for all
+	// running jails (amendment o, SR-04).
+	CodeContainerLockedMemoryAboveMax = "container_locked_memory_above_max"
+	// CodeContainerLockedMemoryExhausted: at start, the jail's
+	// locked_memory plus that of the jails already running (or starting)
+	// is more than containers.max_locked_memory_bytes (amendment o,
+	// SR-04).
+	CodeContainerLockedMemoryExhausted = "container_locked_memory_exhausted"
 )
 
 // IPv4 addressing modes of a jail NIC (decision 10).

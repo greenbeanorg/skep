@@ -298,6 +298,10 @@ export function containerErrorHint(code: string): string | undefined {
       return "The MAC address is already on the bridge (the host's, a member interface's, or a device the bridge has learnt) or used by another Skep guest. Give the interface another MAC address.";
     case "container_quarantined":
       return "The jail is quarantined: it was refused before any of its code ran and could not be removed. Delete it, or restart the agent, to remove it without running its code.";
+    case "container_locked_memory_above_max":
+      return "The locked-memory limit is more than the host allows all running jails together (the agent's containers.max_locked_memory_bytes, by default a quarter of physical memory). Lower it.";
+    case "container_locked_memory_exhausted":
+      return "The jails already running hold the host's locked-memory total (containers.max_locked_memory_bytes). Stop a jail with locked memory, or lower this jail's limit.";
     case "clone_addressing_required":
       return "Every interface with a static address needs new addressing for the clone.";
     case "epair_unavailable":

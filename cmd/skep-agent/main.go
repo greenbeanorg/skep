@@ -235,18 +235,29 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		}
 	}
 	// Jails (ADR 0010 decisions 8, 9, and 13): clones of a template, run
-	// by jail(8) from a generated jail.conf.
+	// by jail(8) from a generated jail.conf. The host's total of locked
+	// memory defaults to a quarter of hw.physmem, read once here
+	// (amendment o, SR-04).
+	physMem := host.VMM.Capabilities(ctx).HostMemoryBytes
+	maxLocked := containers.MaxLockedMemory(cfg.Containers.MaxLockedMemoryBytes, physMem)
+	if maxLocked == 0 {
+		log.Warn("jails may lock no memory: physical memory could not be read and containers.max_locked_memory_bytes is not set")
+	}
+	log.Info("jail locked-memory total", "max_locked_memory_bytes", maxLocked, "physical_memory_bytes", physMem,
+		"configured", cfg.Containers.MaxLockedMemoryBytes > 0)
 	containerSvc, err := containers.New(containers.Options{
-		NodeID:       nodeID,
-		Store:        database.NewContainerStore(db),
-		Templates:    database.NewTemplateStore(db),
-		Snapshots:    database.NewSnapshotStore(db),
-		MaxSnapshots: cfg.Storage.MaxSnapshotsPerResource,
-		Engine:       engine,
-		Host:         host,
-		StopTimeout:  time.Duration(cfg.Containers.StopTimeoutSeconds) * time.Second,
-		StartTimeout: time.Duration(cfg.Containers.StartTimeoutSeconds) * time.Second,
-		Logger:       log,
+		NodeID:          nodeID,
+		Store:           database.NewContainerStore(db),
+		Templates:       database.NewTemplateStore(db),
+		Snapshots:       database.NewSnapshotStore(db),
+		MaxSnapshots:    cfg.Storage.MaxSnapshotsPerResource,
+		Engine:          engine,
+		Host:            host,
+		StopTimeout:     time.Duration(cfg.Containers.StopTimeoutSeconds) * time.Second,
+		StartTimeout:    time.Duration(cfg.Containers.StartTimeoutSeconds) * time.Second,
+		MaxLockedMemory: cfg.Containers.MaxLockedMemoryBytes,
+		PhysicalMemory:  physMem,
+		Logger:          log,
 	})
 	if err != nil {
 		return err

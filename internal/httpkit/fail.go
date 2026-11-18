@@ -81,6 +81,9 @@ var StatusForCode = map[string]int{
 	models.CodeContainerMACInvalid:      http.StatusUnprocessableEntity,
 	models.CodeContainerMACInUse:        http.StatusConflict,
 	models.CodeContainerQuarantined:     http.StatusConflict,
+
+	models.CodeContainerLockedMemoryAboveMax:  http.StatusUnprocessableEntity,
+	models.CodeContainerLockedMemoryExhausted: http.StatusConflict,
 }
 
 // Fail maps a service error to an error response. Internal error text is

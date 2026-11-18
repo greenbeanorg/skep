@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log/slog"
 	"regexp"
+	"sync"
 	"time"
 
 	"github.com/greenbeanorg/skep/internal/audit"
@@ -56,7 +57,12 @@ type Options struct {
 	// and containers.start_timeout_seconds.
 	StopTimeout  time.Duration
 	StartTimeout time.Duration
-	Logger       *slog.Logger
+	// MaxLockedMemory is containers.max_locked_memory_bytes, 0 for the
+	// default; PhysicalMemory is hw.physmem as the agent read it at
+	// start, which the default is a quarter of (amendment o, SR-04).
+	MaxLockedMemory int64
+	PhysicalMemory  int64
+	Logger          *slog.Logger
 	// Now defaults to time.Now.
 	Now func() time.Time
 }
@@ -75,8 +81,14 @@ type Service struct {
 	release      func(context.Context) (string, error)
 	stopTimeout  time.Duration
 	startTimeout time.Duration
-	log          *slog.Logger
-	now          func() time.Time
+	// maxLocked is the total locked_memory of all running jails; locked
+	// guards lockedStarting, the locked_memory of the starts under way
+	// (amendment o, SR-04).
+	maxLocked      int64
+	locked         sync.Mutex
+	lockedStarting map[string]int64
+	log            *slog.Logger
+	now            func() time.Time
 }
 
 // New returns a Service. Register its Definitions before the engine
@@ -106,6 +118,7 @@ func New(opts Options) (*Service, error) {
 		maxSnapshots: opts.MaxSnapshots, engine: opts.Engine,
 		conf: opts.Host.Conf, jails: opts.Host.Jails, zfs: opts.Host.ZFS, release: opts.Host.Templates.HostRelease,
 		stopTimeout: opts.StopTimeout, startTimeout: opts.StartTimeout, log: opts.Logger, now: opts.Now,
+		maxLocked: MaxLockedMemory(opts.MaxLockedMemory, opts.PhysicalMemory), lockedStarting: map[string]int64{},
 	}, nil
 }
 
