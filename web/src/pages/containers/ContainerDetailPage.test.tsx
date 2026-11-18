@@ -135,6 +135,8 @@ describe("ContainerDetailPage clone rules", () => {
     const dialog = await screen.findByRole("dialog");
     expect(within(dialog).getByTestId("clone-identity-note")).toHaveTextContent(/SSH host keys/);
     expect(within(dialog).getByTestId("clone-addressing")).toHaveTextContent(/skep0/);
+    // Not every NIC is static here, so the source's nameservers are dropped and not offered.
+    expect(within(dialog).queryByLabelText("Nameservers")).not.toBeInTheDocument();
     await user.type(within(dialog).getByLabelText("Name of the new jail"), "web2");
     expect(within(dialog).getByRole("button", { name: "Clone" })).toBeDisabled();
     await user.type(within(dialog).getByLabelText("Address"), "192.0.2.11/24");
@@ -144,6 +146,18 @@ describe("ContainerDetailPage clone rules", () => {
       name: "web2",
       nics: [{ bridge: "bridge0", ipv4: { mode: "static", address: "192.0.2.11/24" } }, { bridge: "bridge0" }],
     });
+  });
+});
+
+describe("ContainerDetailPage clone nameservers", () => {
+  it("pre-fills the source's nameservers, marked inherited", async () => {
+    fakeApi(OPERATOR, replies(jail({ nics: [staticNIC], nameservers: ["192.0.2.53", "192.0.2.54"] })));
+    renderPage();
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Clone" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByLabelText("Nameservers")).toHaveValue("192.0.2.53 192.0.2.54");
+    expect(within(dialog).getByTestId("clone-ns-note")).toHaveTextContent(/Inherited from source/);
   });
 });
 

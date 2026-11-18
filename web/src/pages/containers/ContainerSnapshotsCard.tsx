@@ -464,7 +464,10 @@ function CloneDialog({
           <div className="space-y-1">
             <Label htmlFor="clone-ns">Nameservers</Label>
             <Input id="clone-ns" value={nameservers} onChange={(e) => setNameservers(e.target.value)} />
-            <FieldText error={Boolean(problems.nameservers)}>{problems.nameservers ?? "The source's, unless changed here."}</FieldText>
+            <FieldText error={Boolean(problems.nameservers)} data-testid="clone-ns-note">
+              {problems.nameservers ??
+                "Inherited from source. Change them here for the clone; an empty field also keeps the source's."}
+            </FieldText>
           </div>
         ) : null}
         {error ? <InlineError error={error} /> : null}
