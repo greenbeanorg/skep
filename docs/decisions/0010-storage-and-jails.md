@@ -1099,6 +1099,46 @@ Amendments made at acceptance, worked into the text:
   - **Backlog:** SR-07, SR-08, SR-10, SR-I1, SR-I2, SR-I4, SR-I5, SR-I6.
   - **Hearst validation list:** SR-I3 (jail root cannot use `/dev/zfs` to
     list, set properties on, or snapshot datasets).
+- **o. Decisions on the security review fix run** (Andy, 2026-11-18, from
+  section 13 of
+  [step10-progress.md](../../tests/integration/jails/results/step10-progress.md)).
+  - **Approved as built:** the seven changes outside the request
+    (section 13.7: the learnt address table and `hwaddr` in the bridge
+    MAC check; Skep VMs in the start-time MAC check; a pre-amendment MAC
+    refused at start; the locally-administered rule in hostops as well;
+    the half-started sweep failure quarantined and a stop or restart of a
+    container still recorded `starting` refused; the delete check order;
+    the renamed summary log field). The web UI gets no MAC field.
+    `readSkepFile` does not refuse `nlink > 1`.
+  - **SR-01, console.log: option (a).** At each start the agent truncates
+    `console.log` and gives `/etc/rc` (through jexec) a pipe, which the
+    agent drains into the file: the first 256 KiB are written, the rest is
+    counted and discarded, and when the start ends a
+    `N bytes discarded` marker and the last 64 KiB of the output are
+    written. The agent closes its end of the pipe when the start ends,
+    whether it succeeded, failed, or timed out, and never waits for
+    end-of-file. A process rc leaves running that writes to its stdout or
+    stderr afterwards gets `SIGPIPE` (or `EPIPE` if it ignores the
+    signal); this is documented. `exec.consolelog` is dropped from the
+    jail.conf, so `jail -r` gets `/etc/rc.shutdown`'s output on its own
+    stdout and stderr, through the output-capped runner; output beyond
+    the cap is discarded with a marker and never turns a removal into an
+    error (the runner's strict mode is not used for this call, or a
+    capped mode is added).
+  - **SR-04, locked memory: a host total.** A new setting,
+    `containers.max_locked_memory_bytes`, is the total `locked_memory`
+    of all running jails, defaulting to 25 % of physical memory
+    (`hw.physmem`, read at agent start). The API refuses a single
+    `locked_memory` above the total (422). At start, the agent refuses
+    when this jail's `locked_memory` plus that of the jails already
+    running exceeds the total, with a new `container_*` code and a UI
+    hint. The docs say that bhyve VMs with wired memory draw from the
+    same system pool (`vm.max_user_wired`).
+  - **Hearst validation (section 13.9) approved**, on these conditions:
+    it runs after Andy's Proxmox snapshot; `skep-api` is stopped during
+    the `sqlite3` edit; the hand-made epair and all test data are removed
+    afterwards; every change made on hearst is recorded in the progress
+    log.
 
 ## Implementation notes
 

@@ -624,3 +624,30 @@ anything.
 - **SR-I3:** inside a test jail, `zfs list`, `zpool list`, and
   `zfs set skep:container_id=x <its dataset>` fail or show nothing.
 - **SR-01 baseline** (before any fix): the review's bounded `dd` proof.
+
+## 14. Andy's answers to section 13 (2026-11-18), recorded as amendment o
+
+1. **Approved:** all seven changes of 13.7; no MAC field in the UI; no
+   `nlink` refusal.
+2. **SR-01: build option (a).** The agent truncates console.log at each
+   start and drains a pipe into it: the first 256 KiB, then a
+   `N bytes discarded` marker, then the last 64 KiB; the pipe is closed
+   when the start ends (success, failure, or timeout). Document the
+   SIGPIPE behaviour for daemons that keep stdout. Drop `exec.consolelog`
+   from the jail.conf. `jail -r` output goes through the output-capped
+   runner; output past the cap is discarded with a marker and must never
+   turn a removal into an error (change the runner's strict mode for this
+   call, or give it a capped mode).
+3. **SR-04: `containers.max_locked_memory_bytes`**, a total across
+   running jails, default 25 % of physical memory (read at agent start).
+   The API refuses a single `locked_memory` above the total (422). At
+   start the agent refuses when this jail's `locked_memory` plus that of
+   the jails already running exceeds the total (a new `container_*` code
+   with a hint). Docs: bhyve VMs with wired memory draw from the same
+   system pool.
+4. **Hearst tests of 13.9 approved** for the validation run, on
+   conditions: after Andy's Proxmox snapshot; `skep-api` stopped during
+   the `sqlite3` edit; the hand-made epair and the test data removed
+   afterwards; each change recorded in this log.
+
+No code was written in this session; SR-01 and SR-04 are the next build.
