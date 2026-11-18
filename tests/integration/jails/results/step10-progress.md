@@ -318,3 +318,309 @@ for FreeBSD. Nothing on hearst.
 `sysvsem`, `sysvmsg` = `disable` (`jls -n` during a template build, or the
 check passing on a real build), and the edit dialog's removal confirmation
 against the real API.
+
+## 13. Security review fix run (2026-11-18, merrick only)
+
+Andy's triage of [security-review-m7b.md](security-review-m7b.md) is
+amendment n of ADR 0010 and the review's Triage section, committed and
+pushed before any code (`f7fe2fb`). Nothing ran on hearst; no API calls
+against it; no deploy; no PR.
+
+### 13.1 Built, per fix
+
+1. **SR-03, MAC addresses** (`4b05dcd`).
+   - `hostops.JailMACProblem`: unicast, locally administered (`0x02`),
+     not all zeroes. `normalizeMAC` (create, update, clone) refuses a
+     rule violation with the new `container_mac_invalid` (422); a
+     malformed address stays `invalid_request` (400). hostops `checkNICs`
+     applies the same rule.
+   - At start: `checkMACs` in `checkAction` (submission and task) refuses
+     a recorded MAC that breaks the rules (one stored before them) and one
+     a Skep VM holds (`container_mac_in_use`, 409). In `StartJail`, after
+     the jail's own leftover epairs are destroyed and before any epair is
+     created, `checkMACsFree` reads `ifconfig <bridge>` (its own `ether`),
+     each member's `ether`/`hwaddr`, and `ifconfig <bridge> addr` (the
+     learnt table), and refuses a MAC found there, saying where.
+   - UI: hints for both codes. OpenAPI and jails.md updated.
+   - Tests: the rule table; `checkNICs`; `checkMACsFree` (bridge, member,
+     learnt on a member, learnt on an epair, free, a vanished member, a
+     member named `-j` refused before it reaches ifconfig); create
+     (multicast, universal, zero, malformed), update and clone refusals;
+     start refusals (on the bridge, held by a VM, a legacy MAC), then a
+     good start.
+2. **SR-04, locked memory** (`9534d48`, test only). **Stopped; see 13.6.**
+   What the fix specified is already in the code: `mlock` without
+   `locked_memory` is refused with `mlock_requires_memory_limit` (422,
+   `limits.go:36`, tests `limits_test.go:74-76`), the UI requires it
+   (`mlockProblem`), and `memorylocked` is its own RCTL rule whenever
+   `locked_memory` is set, independent of `memory`
+   (`JailRctlRules`), read back with the others. `limits.go:58` only
+   checks `locked_memory <= memory` when `memory` is set, which is right.
+   I added one test (the rule added and read back with no memory limit,
+   and refused when the read-back lacks it). No docs or UI text changed.
+3. **SR-06, quarantine** (`63fc44b`).
+   - hostops: `discardAfterFailedStart` returns its error; when a refusal
+     (the `/dev` guard, parameters, interfaces, RCTL, or a failed
+     `jail -c`) is followed by a failed removal, `StartJail` returns the
+     new `container_quarantined` (409) with both causes.
+   - containers: `start` records such a container `failed` (the state
+     already existed in the schema's CHECK and the model; nothing set it
+     until now). `observe` leaves `failed` alone, so a GET or a list never
+     shows it running. `checkAction` refuses start, stop, and restart with
+     `container_quarantined`. Delete accepts it, removes the jail with
+     `DiscardJail` (no `exec.stop`) and fails with
+     `container_quarantined` if that fails again. `ObserveAll` retries the
+     removal for every `failed` container; removed, it is recorded
+     `stopped` with a detail saying so and can start again.
+   - Other paths checked (13.5): a half-started jail the sweep cannot
+     remove is now quarantined instead of observed running; a stop or
+     restart task that finds the container still recorded `starting` is
+     refused.
+   - UI: no power action for `failed`, a "quarantined" notice, Edit
+     disabled, Delete enabled; hint for the code. OpenAPI (state
+     description, delete, start) and jails.md updated.
+   - Tests: hostops (guard refusal plus failed `jail -r`: quarantined,
+     no `jexec`, no `exec.stop` in the conf); containers (never running
+     across GET and list, start/stop/restart refused, delete failing then
+     working without exec.stop, sweep failing then working, the
+     half-started sweep failure, the `starting` stop and restart refusal;
+     each asserts the fake recorded no removal with exec.stop); UI
+     (`powerActions`, the notice and buttons).
+4. **SR-09, FIFO** (`3673f7c`). `readSkepFile` opens with `O_NONBLOCK`
+   plus `O_RESOLVE_BENEATH|O_NOFOLLOW|O_CLOEXEC`, fstats, and refuses a
+   non-regular file before reading; `replaceSkepFile` and
+   `removeSkepFile` go through it. `replaceFile` creates its temporary
+   with `O_CREAT|O_EXCL`, so it cannot open a FIFO. FreeBSD tests:
+   `TestReadSkepFileRefusesNonRegular` (FIFO, directory, symlink, and a
+   character device node when `mknod` works; non-root apart from the
+   device, each with a 5-second hang guard) and
+   `TestWriteJailFilesRefusesFIFO` (root; rc.conf and resolv.conf). They
+   compile for FreeBSD; **pending FreeBSD validation**.
+5. **SR-11, rollback** (`44bd986`). The route requires `container:write`
+   and also `container:snapshot`, like clone. RBAC test with a role that
+   has only `container:snapshot` (403, `permission: container:write`,
+   audited) and one with only `container:write` (403, `container:snapshot`);
+   the operator row added to the role table. OpenAPI
+   (`x-skep-permission`/`x-skep-also-requires`), jails.md, ADR 0010's
+   permission table. UI hides Roll back without both; two UI tests.
+6. **SR-05, docs** (`3b92d13`). jails.md, Limits: "What the limits do not
+   cover" (swap, threads, shared memory, ptys, disk I/O, kernel memory)
+   and "Limits are optional". Backlog entry below.
+
+### 13.2 Tests (merrick)
+
+- `make web-check`: 3 runs, each 15 files, 111 tests passed.
+- `go test ./... -count=1`: 40 packages ok, none failed.
+- `make lint` (go vet, FreeBSD go vet, FreeBSD vet with the test-tasks
+  tag): passed. The pre-push hook ran it again on every push.
+- `GOOS=freebsd GOARCH=amd64 go test -c ./internal/hostops/`: compiles.
+  The FreeBSD-only tests (SR-09) have not run.
+
+### 13.3 SR-01: comparison and recommendation (probe only, nothing built)
+
+What the code does now: `runToFile` (`exec_freebsd.go:89-120`) opens
+`<JailRunDir>/<id>/console.log` `O_APPEND|O_CREATE` and hands the
+`*os.File` to `jexec ... /bin/sh /etc/rc` as fd 1 and 2. Go passes an
+`*os.File` straight to the child (no copy goroutine), so `cmd.Wait`
+returns when `jexec` exits, and every process rc leaves behind keeps a
+descriptor on the host file. The file is never truncated. **A second
+writer the review did not name:** the jail.conf sets `exec.consolelog`
+to the same file (`jails.go:345`, `:382`), so jail(8) itself appends
+`/etc/rc.shutdown`'s output there on every `jail -r` with `exec.stop`;
+processes rc.shutdown starts live until `jail -r` kills the jail, up to
+the stop timeout (at most 300 s). Any fix should cover both.
+
+**(a) A pipe the agent drains into console.log with a byte cap.**
+- Daemons that keep the descriptor: while the agent drains (also past the
+  cap, discarding), writes succeed and nobody blocks. Once the agent
+  closes the read end at the end of the start, a write gets `EPIPE` and
+  `SIGPIPE`, whose default action kills the writer; a process that
+  ignores SIGPIPE just gets `EPIPE`. A properly daemonized rc.d service
+  (stdio on `/dev/null`, `daemon(3)`/`daemon(8)`) is unaffected; a
+  `foo &` in rc.local that prints later dies at its first write. If the
+  agent stopped reading without closing, writers would block when the
+  pipe buffer fills, so it must always drain or close. Keeping the pipe
+  open for the jail's life avoids SIGPIPE but makes it depend on the
+  agent: an agent restart closes it anyway, so a daemon would die at a
+  random agent restart, which is worse than dying predictably.
+- Failed-start log in the UI: the console log is the head of rc's output
+  up to the cap. To keep rc's last lines (where the error usually is)
+  when the output is longer, keep the last 64 KiB in memory and write it
+  after a `skep: N bytes discarded` marker at close; the UI's 64 KiB tail
+  then shows the real end.
+- The 2-minute timeout: `exec.Cmd` must get the pipe's write end as an
+  `*os.File` (not an `io.Writer`, or `Wait` waits for EOF, which daemons
+  never send); the agent closes its copy of the write end after starting
+  jexec, drains in its own goroutine, and stops when rc exits or the
+  timeout fires, without waiting for EOF. On timeout the existing
+  `jail -r` then kills every writer.
+- The sweep: nothing on disk keeps growing, so nothing to sweep; the
+  file is truncated (`O_TRUNC`) at each start, which also bounds the
+  files existing jails already have.
+- Testing: the drain, cap, marker, tail, close-without-EOF and the
+  SIGPIPE behaviour are POSIX pipe semantics, unit-testable on merrick
+  with `/bin/sh` and a background writer; jexec and real rc.d services
+  need hearst.
+
+**(b) Capture only during the start window, then `/dev/null`.** The agent
+cannot change another process's descriptors: a file or pipe a daemon
+already holds stays what it is. Without running code in the jail (which
+the jail controls), "reopen as `/dev/null`" is not available from the
+host. In practice (b) is (a) with the read end closed at the end of the
+start: the same SIGPIPE/EPIPE for daemons that keep writing, the same
+failed-start log, the same timeout handling and tests. It adds nothing
+over (a) except a name.
+
+**(c) Keep a file, cap and rotate.** Rotation (rename) does not stop
+writers: they keep the old inode, which keeps using space until they
+close it. Periodic `ftruncate` bounds the file to roughly one period of
+writing at disk speed, not to a size, and jail root can `ftruncate` and
+`fchmod` it too. `RLIMIT_FSIZE` on jexec would apply to every file the
+jail's processes write (breaking the jail) and jail root can raise it. A
+real cap needs a size-limited file system for the run directory (a
+`tmpfs` with `size=`, or a ZFS dataset with a quota per jail), which is a
+host change, differs between ZFS and UFS roots, and if shared lets one
+jail fill it for all (and `jail.conf` lives in the same directory).
+Daemons get `ENOSPC` (no kill), and the failed-start log keeps everything
+up to the cap. No timeout interaction; the sweep would have to rotate old
+files. Hard to test without a FreeBSD file system.
+
+**Recommendation: (a).** Pipe drained by the agent; console.log
+truncated at each start; the first **256 KiB** written, the rest
+discarded and counted, then a `skep: N bytes of output discarded`
+marker and the last 64 KiB (`ConsoleLogMax`) appended at close; the read
+end closed when the start ends (rc exited, or the timeout's removal is
+done). A minimal jail's rc writes a few KiB, so 256 KiB is two orders of
+magnitude of room, and the file can never exceed about 320 KiB per jail.
+For the second writer, drop `exec.consolelog` from the jail.conf so
+jail(8) gives `exec.stop` its own stdout and stderr, which `jail -r`
+already runs through the capped runner (4 MiB in memory, `WaitDelay`
+1 s; jail -r kills every jailed process before it returns); log or keep
+that output if wanted. Document that a process rc starts that writes to
+stdout or stderr after the start gets SIGPIPE. The template builder's
+use of `Output` (`templates_pkg.go:58-62`) is lower risk (fixed
+commands, no scripts) and could move to the same mechanism. Proposed
+hearst checks before and after: the review's `dd` proof (baseline, then
+the file stays at the cap and `procstat -f` shows a pipe), and sshd,
+cron, and syslogd still running in a minimal jail after the read end
+closes.
+
+### 13.4 nlink
+
+Refusing `nlink > 1` in `readSkepFile` is **not worth adding**. The writer
+never writes through an existing file: `replaceFile` writes a new file
+(`O_CREAT|O_EXCL`) and renames it over the name, so a hard link is
+replaced, not followed; `removeSkepFile` unlinks only the name, so the
+other link survives untouched. The read is 25 bytes compared with
+Skep's header and never returned to anyone. A hard link cannot cross
+file systems, and each jail root is its own ZFS dataset, so the other
+name can only be inside the jail's own tree. Only a template can plant
+one (writes happen before the first start), and a template's own hard
+links are ordinary. A refusal would add a failure mode without closing
+anything.
+
+### 13.5 Paths checked for rc.shutdown in a jail that never completed a start
+
+- Refusal before rc, removal failed: was SR-06; now quarantined.
+- `jail -c` failed and its removal failed: quarantined (same path).
+- Agent died mid-start, the sweep's removal failed: was observed running
+  (stop would run rc.shutdown); now quarantined.
+- A container left recorded `starting` with no task (start ended but its
+  outcome was not recorded): a stop or restart task now refuses it; the
+  next agent start sweeps it without exec.stop.
+- `/etc/rc` failed or timed out: removed with exec.stop, by design
+  (decision 8, amendment i): the guard passed and rc ran. If that removal
+  fails, the jail is later observed running and can be stopped with
+  rc.shutdown; unchanged. Noted, not a quarantine case.
+- Restart, delete (non-quarantined), clone, rollback, snapshot, edit:
+  none runs exec.stop on a jail whose start did not complete. Edit,
+  snapshot, rollback, and clone of a quarantined container are refused
+  with `container_not_stopped` while its jail exists; if the jail has
+  vanished they proceed (they run nothing in a jail).
+
+### 13.6 Stopped on (not built)
+
+1. **SR-04's upper bound.** The fix as specified exists; the review's
+   actual gap is that `locked_memory` itself has no maximum (1 TiB is
+   accepted, and the bound is whatever the user asks). Options:
+   (i) require `memory` with `mlock` (the review's direction; weak,
+   because `memoryuse` is soft and does not bound wiring);
+   (ii) cap `locked_memory` at a host figure, for example a new
+   `containers.max_locked_memory_bytes` defaulting to 25 % of
+   `hw.physmem`, also checked at every start; (iii) (ii) plus a check
+   that running jails' `locked_memory` sum stays under
+   `vm.max_user_wired`. I recommend (ii); (iii) refuses starts on load
+   rather than on configuration, which is harder to explain.
+2. **UI MAC validation.** The web UI has no MAC field: create, edit, and
+   clone never send one (the server generates `02:` addresses, and an
+   edit keeps the slot's). There is nothing to validate; adding a MAC
+   input is a new feature. Only the hints were added.
+
+### 13.7 Changes not in the request (for approval)
+
+1. "Present on the target bridge" includes the bridge's learnt address
+   table (`ifconfig <bridge> addr`) and members' `hwaddr` as well as
+   their `ether`. A device the bridge has not seen is not caught.
+2. The start-time DB check covers Skep VMs too. Jail-to-jail duplicates
+   cannot be stored (`container_networks.mac_address` is UNIQUE), so for
+   "another Skep container" the start check adds nothing beyond the
+   index.
+3. A MAC recorded before amendment n is refused at start
+   (`container_mac_invalid`); an update with a new MAC is needed.
+4. hostops `checkNICs` enforces the locally-administered rule as well
+   (defence in depth).
+5. The half-started sweep failure is quarantined, and a stop or restart
+   task of a container still recorded `starting` is refused (13.5).
+6. `runDelete` checks `checkDeletable` before the running check (the
+   order changed so a quarantined jail is removed first).
+7. The `ObserveAll` summary log field `half_started_removed` is now
+   `removed_without_exec_stop` (it counts quarantine removals too).
+
+### 13.8 Backlog (from the triage)
+
+- SR-05: default limits for new jails, or limits required per role.
+- SR-07: the duplicate-IP check can race between two starts, and covers
+  only the same bridge and static addresses.
+- SR-08: an interface renamed and re-described by jail root returns to
+  the host under that name after a removal outside Skep.
+- SR-10: the dist source checks the directory, not `base.txz` and
+  `MANIFEST`; hash and extract by one descriptor.
+- SR-I1: no per-container ownership; a clone duplicates the source's
+  secrets (SSH host keys, authorized key).
+- SR-I2: console.log content is the jail's; strip terminal escapes in any
+  future `skepctl` console-log command.
+- SR-I4: the `/dev` guard is a point-in-time, top-level check.
+- SR-I5: the kernel attack surface of a default jail (`/dev/zfs`,
+  `/dev/fuse`, `/dev/pf`, raw sockets, BPF for DHCP).
+- SR-I6: the build jail can read the host routing table.
+- SR-02 is deferred to the OPNsense spoofing tests, not backlog.
+
+### 13.9 Hearst validation list, added (each needs Andy's approval)
+
+- **SR-03:** a create with a universal MAC (`58:9c:fc:...`) and with
+  `01:...` is 422 `container_mac_invalid`; start a DHCP jail and read
+  `ifconfig <bridge> addr` to confirm the learnt-table format the parser
+  expects; then, on the test bridge, an epair made by hand with a
+  locally administered MAC as a member (a network change, approval
+  first), and a start of a jail given that MAC is refused with
+  `container_mac_in_use` naming the member. Also confirm the bridge's own
+  address format in `ifconfig bridgeX`.
+- **SR-04:** a jail with `locked_memory` and no `memory`: `rctl
+  jail:skep-<id>` shows exactly the `memorylocked` rule.
+- **SR-06:** a quarantine cannot be provoked on hearst without a host
+  devfs change, so: start a test jail whose `/etc/rc.shutdown.local`
+  writes a marker file, set its `observed_state` to `failed` with
+  `sqlite3` (a DB edit, approval first), and check that the UI shows the
+  quarantine notice and no Start/Stop, that the API refuses start and
+  stop with 409 `container_quarantined`, and that an agent restart
+  removes the jail with no marker written and records it `stopped`;
+  repeat with a delete.
+- **SR-09:** run the cross-compiled hostops test binary as root:
+  `-test.run 'ReadSkepFileRefusesNonRegular|WriteJailFilesRefusesFIFO'
+  -test.v`, and record whether the device-node case ran or was skipped.
+- **SR-11:** with the `s7*` users (rotated first): the operator can roll
+  back; a test role with only `container:read` and `container:snapshot`
+  gets 403 `permission: container:write` and sees no Roll back.
+- **SR-I3:** inside a test jail, `zfs list`, `zpool list`, and
+  `zfs set skep:container_id=x <its dataset>` fail or show nothing.
+- **SR-01 baseline** (before any fix): the review's bounded `dd` proof.
