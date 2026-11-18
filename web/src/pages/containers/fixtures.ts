@@ -44,6 +44,7 @@ export function template(extra: Partial<Template> = {}): Template {
     provisioned: true,
     release: "15.1-RELEASE-p6",
     patch_differs: false,
+    has_sshd: true,
     used_bytes: 78 << 20,
     created_at: "2026-11-16T00:00:00Z",
     ...extra,

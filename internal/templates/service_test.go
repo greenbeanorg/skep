@@ -261,3 +261,37 @@ type sweepHost struct {
 }
 
 func (h sweepHost) BuildJails(context.Context) ([]string, error) { return h.ids, nil }
+
+// TestTemplateHasSSHD checks has_sshd comes from Jails.TemplateHasSSHD,
+// the check that refuses an SSH key on create (ADR 0010 amendment m), and
+// is false for a template that is not built.
+func TestTemplateHasSSHD(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	created, err := f.svc.CreateTemplate(ctx, models.TemplateCreate{Name: "minimal", Pool: "devpool", Source: "pkgbase"}, f.sub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if task := f.wait(created.Task.ID); task.Status != models.TaskSucceeded {
+		t.Fatalf("build: %s %s", task.Status, task.ErrorMessage)
+	}
+	id := created.Template.ID
+	f.fake.SetTemplateSSHD(id, false)
+	if tpl, err := f.svc.Template(ctx, id); err != nil || tpl.HasSSHD {
+		t.Fatalf("without sshd: %+v, %v", tpl, err)
+	}
+	f.fake.SetTemplateSSHD(id, true)
+	tpl, err := f.svc.Template(ctx, id)
+	if err != nil || !tpl.HasSSHD {
+		t.Fatalf("with sshd: %+v, %v", tpl, err)
+	}
+	list, err := f.svc.Templates(ctx, models.TemplateListOptions{})
+	if err != nil || len(list.Items) != 1 || !list.Items[0].HasSSHD {
+		t.Fatalf("list = %+v, %v", list, err)
+	}
+	// Not built: false, whatever the tree holds.
+	tpl.Provisioned = false
+	if f.svc.hasSSHD(ctx, tpl) {
+		t.Fatal("an unbuilt template reports sshd")
+	}
+}

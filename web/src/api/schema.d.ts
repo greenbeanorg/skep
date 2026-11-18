@@ -1466,6 +1466,13 @@ export interface components {
             host_release?: string;
             /** @description Same major.minor as the host, different patch level. */
             patch_differs: boolean;
+            /**
+             * @description Whether the built template has sshd (a regular file
+             *     usr/sbin/sshd), by the same check that refuses an SSH key on a
+             *     jail create with `container_ssh_unavailable` (ADR 0010
+             *     amendment m). False while the template is not built.
+             */
+            has_sshd: boolean;
             /** Format: int64 */
             used_bytes: number;
             /** Format: date-time */

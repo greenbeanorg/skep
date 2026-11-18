@@ -120,6 +120,28 @@ describe("CreateContainerDialog", () => {
     expect(await screen.findByText(/Choose a template built with FreeBSD-ssh/)).toBeInTheDocument();
   });
 
+  it("shows the SSH key field only for a template with sshd", async () => {
+    const calls = fakeApi(ALL, {
+      "GET /api/v1/storage/templates?limit=200": {
+        status: 200,
+        body: { items: [template(), template({ id: "t3", name: "nossh", has_sshd: false, packages: ["FreeBSD-runtime"] })] },
+      },
+      "POST /api/v1/containers": { status: 202, body: { container: jail(), task: { id: "t9", type: "container.create", status: "pending" } } },
+    });
+    renderDialog();
+    const user = userEvent.setup();
+    await screen.findByText(/Packages:/);
+    await user.type(screen.getByLabelText("SSH key for root (optional)"), "ssh-ed25519 AAAA x");
+    await user.selectOptions(screen.getByLabelText("Template"), "t3");
+    expect(screen.queryByLabelText("SSH key for root (optional)")).not.toBeInTheDocument();
+    expect(screen.getByTestId("no-sshd")).toBeInTheDocument();
+    await user.type(screen.getByLabelText("Name"), "web1");
+    await user.click(screen.getByRole("button", { name: "Create" }));
+    await waitFor(() => expect(calls.some((c) => c.key === "POST /api/v1/containers")).toBe(true));
+    // A key typed for another template is not sent.
+    expect(calls.find((c) => c.key === "POST /api/v1/containers")?.body).toEqual({ name: "web1", template_id: "t3" });
+  });
+
   it("says so when the role cannot list templates", async () => {
     fakeApi(["container:write", "system:read"], {});
     renderDialog();

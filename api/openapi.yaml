@@ -2668,7 +2668,7 @@ components:
           $ref: "#/components/schemas/TemplateSourceState"
     Template:
       type: object
-      required: [id, name, pool, source, packages, provisioned, patch_differs, used_bytes, created_at]
+      required: [id, name, pool, source, packages, provisioned, patch_differs, has_sshd, used_bytes, created_at]
       properties:
         id: { type: string, format: uuid }
         name: { type: string }
@@ -2692,6 +2692,13 @@ components:
         patch_differs:
           type: boolean
           description: Same major.minor as the host, different patch level.
+        has_sshd:
+          type: boolean
+          description: |
+            Whether the built template has sshd (a regular file
+            usr/sbin/sshd), by the same check that refuses an SSH key on a
+            jail create with `container_ssh_unavailable` (ADR 0010
+            amendment m). False while the template is not built.
         used_bytes: { type: integer, format: int64 }
         created_at: { type: string, format: date-time }
     TemplateList:

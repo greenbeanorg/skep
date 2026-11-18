@@ -52,7 +52,7 @@ POST /api/v1/containers
   and RACCT (`mlock_requires_memory_limit`).
 - `limits`: see [Limits](#limits).
 - `ssh_authorized_key` is one OpenSSH public key line without options. It
-  needs a template with sshd: otherwise `container_ssh_unavailable` (422).
+  needs a template with sshd: otherwise `container_ssh_unavailable` (422). A template's `has_sshd` (in `GET /storage/templates`) answers that with the same check (amendment m); the web UI offers the key field only when it is true.
   Templates built with the default `storage.template_packages` include
   `FreeBSD-ssh`; one built from `FreeBSD-set-minimal` alone does not.
 

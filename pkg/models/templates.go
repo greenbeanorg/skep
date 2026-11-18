@@ -75,10 +75,14 @@ type Template struct {
 	// HostRelease is the host kernel's release when the template was
 	// read. PatchDiffers is set when the two have the same major.minor
 	// but a different patch level, in either direction.
-	HostRelease  string    `json:"host_release,omitempty"`
-	PatchDiffers bool      `json:"patch_differs"`
-	UsedBytes    int64     `json:"used_bytes"`
-	CreatedAt    time.Time `json:"created_at"`
+	HostRelease  string `json:"host_release,omitempty"`
+	PatchDiffers bool   `json:"patch_differs"`
+	// HasSSHD reports whether the built template has sshd, by the same
+	// check that refuses an SSH key with container_ssh_unavailable
+	// (ADR 0010 amendment m). False while the template is not built.
+	HasSSHD   bool      `json:"has_sshd"`
+	UsedBytes int64     `json:"used_bytes"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 // TemplateList is a page of templates, by name.

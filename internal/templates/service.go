@@ -62,6 +62,7 @@ type Service struct {
 	engine   Engine
 	conf     hostops.Confinement
 	host     hostops.Templates
+	jails    hostops.Jails
 	packages []string
 	builder  *Builder
 	log      *slog.Logger
@@ -82,7 +83,7 @@ func New(opts Options) (*Service, error) {
 	}
 	return &Service{
 		nodeID: opts.NodeID, store: opts.Store, engine: opts.Engine, conf: opts.Host.Conf,
-		host: opts.Host.Templates, packages: append([]string(nil), opts.Packages...),
+		host: opts.Host.Templates, jails: opts.Host.Jails, packages: append([]string(nil), opts.Packages...),
 		builder: &Builder{Host: opts.Host.Templates, Log: opts.Logger}, log: opts.Logger, now: opts.Now,
 	}, nil
 }
@@ -168,8 +169,14 @@ func (s *Service) pkgbaseState(hostRelease string) models.TemplateSourceState {
 	return models.TemplateSourceState{Available: true}
 }
 
-// decorate adds what a template is compared against now.
+// decorate adds what a template is compared against now, and whether it
+// has sshd. The sshd answer comes from Jails.TemplateHasSSHD, the check
+// that refuses an SSH key on create (ADR 0010 amendment m); a template
+// that is not built, or whose root cannot be read, reports false.
 func (s *Service) decorate(ctx context.Context, list []models.Template) {
+	for i := range list {
+		list[i].HasSSHD = s.hasSSHD(ctx, list[i])
+	}
 	rel, err := s.host.HostRelease(ctx)
 	if err != nil {
 		return
@@ -178,6 +185,18 @@ func (s *Service) decorate(ctx context.Context, list []models.Template) {
 		list[i].HostRelease = rel
 		list[i].PatchDiffers = list[i].Release != "" && PatchDiffers(list[i].Release, rel)
 	}
+}
+
+func (s *Service) hasSSHD(ctx context.Context, t models.Template) bool {
+	if s.jails == nil || !t.Provisioned {
+		return false
+	}
+	has, err := s.jails.TemplateHasSSHD(ctx, t.Pool, t.ID)
+	if err != nil {
+		s.log.Warn("templates: cannot tell whether the template has sshd", "template", t.ID, "error", err)
+		return false
+	}
+	return has
 }
 
 // Templates lists the templates by name.

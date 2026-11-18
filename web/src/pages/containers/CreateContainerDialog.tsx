@@ -65,13 +65,15 @@ export function CreateContainerDialog({ onClose, onCreated }: { onClose: () => v
   const chosen = usable.find((t) => t.id === templateId) ?? usable[0];
   const { limits, problems: limitProblems } = parseLimits(limitsForm, caps);
   const nsAllowed = nameserversAllowed(nics);
+  // The key is sent only for a template with sshd (amendment m).
+  const withSSH = chosen?.has_sshd === true;
   const ns = parseNameservers(nameservers);
   const problems = {
     name: name === "" || CONTAINER_NAME_RE.test(name) ? undefined : NAME_HELP,
     hostname: hostname.length > 253 ? "At most 253 characters." : undefined,
     nics: nicsProblem(nics) ?? (nics.some((n) => nicProblem(n)) ? "Fix the network interfaces above." : undefined),
     nameservers: nsAllowed ? ns.problem : undefined,
-    sshKey: sshKeyProblem(sshKey),
+    sshKey: withSSH ? sshKeyProblem(sshKey) : undefined,
     mlock: mlockProblem(Boolean(options.mlock), limits, caps),
   };
   const ready =
@@ -86,7 +88,7 @@ export function CreateContainerDialog({ onClose, onCreated }: { onClose: () => v
       ...(hostname.trim() ? { hostname: hostname.trim() } : {}),
       ...(options.sysvipc || options.mlock ? { options } : {}),
       ...(Object.keys(limits).length ? { limits } : {}),
-      ...(sshKey.trim() ? { ssh_authorized_key: sshKey.trim() } : {}),
+      ...(withSSH && sshKey.trim() ? { ssh_authorized_key: sshKey.trim() } : {}),
       ...(nics.length ? { nics: nics.map(toNICSpec) } : {}),
       ...(nsAllowed && ns.list.length ? { nameservers: ns.list } : {}),
     };
@@ -191,22 +193,25 @@ export function CreateContainerDialog({ onClose, onCreated }: { onClose: () => v
           <FieldText>With a DHCP interface, dhclient writes the jail's resolv.conf, so no nameservers are given here.</FieldText>
         ) : null}
 
-        <div className="space-y-1.5">
-          <Label htmlFor="ct-ssh">SSH key for root (optional)</Label>
-          <textarea
-            id="ct-ssh"
-            rows={2}
-            className="w-full rounded-md border bg-background px-3 py-2 font-mono text-xs"
-            value={sshKey}
-            placeholder="ssh-ed25519 AAAA… you@host"
-            onChange={(e) => setSshKey(e.target.value)}
-            disabled={busy}
-          />
-          <FieldText error={Boolean(problems.sshKey)} data-testid="ssh-help">
-            {problems.sshKey ??
-              "One OpenSSH public key line. Skep turns sshd on with root login by key only. It needs a template with sshd (built with FreeBSD-ssh); the API refuses a key for a template without it."}
-          </FieldText>
-        </div>
+        {chosen?.has_sshd ? (
+          <div className="space-y-1.5">
+            <Label htmlFor="ct-ssh">SSH key for root (optional)</Label>
+            <textarea
+              id="ct-ssh"
+              rows={2}
+              className="w-full rounded-md border bg-background px-3 py-2 font-mono text-xs"
+              value={sshKey}
+              placeholder="ssh-ed25519 AAAA… you@host"
+              onChange={(e) => setSshKey(e.target.value)}
+              disabled={busy}
+            />
+            <FieldText error={Boolean(problems.sshKey)}>
+              {problems.sshKey ?? "One OpenSSH public key line. Skep turns sshd on, with root login by key only."}
+            </FieldText>
+          </div>
+        ) : chosen ? (
+          <FieldText data-testid="no-sshd">This template has no sshd, so no SSH key can be set. A template built with FreeBSD-ssh has one.</FieldText>
+        ) : null}
 
         <fieldset className="space-y-2">
           <legend className="text-sm font-medium">Options</legend>
