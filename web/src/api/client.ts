@@ -48,6 +48,8 @@ import type {
   ContainerCreate,
   ContainerCreated,
   ContainerList,
+  ContainerUpdate,
+  Template,
   TemplateList,
 } from "./types";
 
@@ -333,9 +335,11 @@ export const api = {
   // Jails and the templates they are made from (ADR 0010 decisions 7 to
   // 13). Every write answers with the task that carries it out.
   templates: (o: ReadOptions = {}) => request<TemplateList>("/storage/templates?limit=200", o),
+  template: (id: string, o: ReadOptions = {}) => request<Template>(`/storage/templates/${enc(id)}`, o),
   containers: (o: ReadOptions = {}) => request<ContainerList>("/containers?limit=200", o),
   container: (id: string, o: ReadOptions = {}) => request<Container>(`/containers/${enc(id)}`, o),
   createContainer: (req: ContainerCreate) => request<ContainerCreated>("/containers", { method: "POST", body: req }),
+  updateContainer: (id: string, req: ContainerUpdate) => request<Task>(`/containers/${enc(id)}`, { method: "PUT", body: req }),
   deleteContainer: (id: string) => request<Task>(`/containers/${enc(id)}`, { method: "DELETE" }),
   containerAction: (id: string, action: ContainerActionName) =>
     request<Task>(`/containers/${enc(id)}/actions`, { method: "POST", body: { action } }),

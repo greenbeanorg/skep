@@ -15,6 +15,10 @@ import {
   sshKeyProblem,
   staticSlots,
   toNICSpec,
+  sizeText,
+  limitsToForm,
+  nicToForm,
+  startedNICSpecs,
 } from "./container";
 import { jail, staticNIC } from "./fixtures";
 
@@ -142,5 +146,30 @@ describe("clone rules", () => {
     const dhcp = { ...staticNIC, ipv4: { mode: "dhcp" as const } };
     expect(cloneBlocked(jail({ nics: [dhcp], started_once: true }))).toBeUndefined();
     expect(cloneBlocked(jail({ provisioned: false }))).toMatch(/not provisioned/);
+  });
+});
+
+describe("edit helpers", () => {
+  it("shows sizes and counts as the form takes them", () => {
+    expect(sizeText(2 * 2 ** 30)).toBe("2G");
+    expect(sizeText(512 << 20)).toBe("512M");
+    expect(sizeText(1000)).toBe("1000");
+    expect(limitsToForm({ memory: 512 << 20, open_files: 1024, disk_quota: 1 << 30 })).toEqual({
+      ...EMPTY_LIMITS,
+      memory: "512M",
+      open_files: "1024",
+      disk_quota: "1G",
+    });
+    // What the form shows parses back to the same limits.
+    const l = { memory: 512 << 20, locked_memory: 64 << 20, cpu_percent: 50, max_processes: 40, open_files: 1024, disk_quota: 1 << 30 };
+    expect(parseLimits(limitsToForm(l), caps).limits).toEqual(l);
+  });
+
+  it("keeps a started jail's addressing and changes only the bridge", () => {
+    const c = jail({ started_once: true, nics: [{ ...staticNIC, ipv4: { mode: "static", address: "192.0.2.10/24", gateway: "192.0.2.1" } }] });
+    expect(startedNICSpecs(c, ["bridge1"])).toEqual([
+      { bridge: "bridge1", ipv4: { mode: "static", address: "192.0.2.10/24", gateway: "192.0.2.1" } },
+    ]);
+    expect(nicToForm(c.nics[0]!)).toEqual({ bridge: "bridge0", mode: "static", address: "192.0.2.10/24", gateway: "192.0.2.1" });
   });
 });

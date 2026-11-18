@@ -305,3 +305,40 @@ export function containerErrorHint(code: string): string | undefined {
   }
   return undefined;
 }
+
+// Editing (PUT /containers/{id}).
+
+/** A size as the form shows it: 2G, 512M, or bytes. */
+export function sizeText(bytes: number): string {
+  if (bytes > 0 && bytes % 2 ** 30 === 0) return `${bytes / 2 ** 30}G`;
+  if (bytes > 0 && bytes % MIB === 0) return `${bytes / MIB}M`;
+  return String(bytes);
+}
+
+/** A jail's current limits as the limit fields. */
+export function limitsToForm(l: ContainerLimits): LimitsForm {
+  const size = (v: ContainerLimits["memory"]) => (typeof v === "number" && v > 0 ? sizeText(v) : typeof v === "string" ? v : "");
+  const count = (v: number | undefined) => (v ? String(v) : "");
+  return {
+    memory: size(l.memory),
+    locked_memory: size(l.locked_memory),
+    cpu_percent: count(l.cpu_percent),
+    max_processes: count(l.max_processes),
+    open_files: count(l.open_files),
+    disk_quota: size(l.disk_quota),
+  };
+}
+
+/** A jail's NIC as the NIC fields. */
+export function nicToForm(n: Container["nics"][number]): NICForm {
+  return { bridge: n.bridge, mode: n.ipv4.mode, address: n.ipv4.address ?? "", gateway: n.ipv4.gateway ?? "" };
+}
+
+/**
+ * The NICs of an update to a jail that has started: only the bridge of an
+ * existing slot may change, so each keeps its addressing exactly as
+ * recorded, and its MAC (left out, the slot keeps it).
+ */
+export function startedNICSpecs(c: Container, bridges: string[]): ContainerNICSpec[] {
+  return c.nics.map((n, i) => ({ bridge: bridges[i] ?? n.bridge, ipv4: { ...n.ipv4 } }));
+}

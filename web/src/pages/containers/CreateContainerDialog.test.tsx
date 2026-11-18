@@ -38,7 +38,7 @@ describe("CreateContainerDialog", () => {
     const user = userEvent.setup();
     await screen.findByText(/Packages:/);
     await user.type(screen.getByLabelText("Name"), "web1");
-    await user.click(screen.getByRole("button", { name: "Add network interface" }));
+    await user.click(await screen.findByRole("button", { name: "Add network interface" }));
     await user.selectOptions(screen.getByLabelText("IPv4"), "static");
     await user.type(screen.getByLabelText("Address"), "192.0.2.10/24");
     await user.type(screen.getByLabelText("Gateway (optional)"), "192.0.2.1");
@@ -76,7 +76,7 @@ describe("CreateContainerDialog", () => {
     renderDialog();
     const user = userEvent.setup();
     await screen.findByText(/Packages:/);
-    await user.click(screen.getByRole("button", { name: "Add network interface" }));
+    await user.click(await screen.findByRole("button", { name: "Add network interface" }));
     expect(screen.queryByLabelText("Nameservers")).not.toBeInTheDocument();
     expect(screen.getByText(/dhclient writes the jail's resolv.conf/)).toBeInTheDocument();
   });

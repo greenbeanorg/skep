@@ -84,6 +84,7 @@ export type ContainerState = Container["state"];
 export type ContainerList = Schemas["ContainerList"];
 export type ContainerCreate = Schemas["ContainerCreate"];
 export type ContainerCreated = Schemas["ContainerCreated"];
+export type ContainerUpdate = Schemas["ContainerUpdate"];
 export type ContainerLimits = Schemas["ContainerLimits"];
 export type ContainerOptions = Schemas["ContainerOptions"];
 export type ContainerNIC = Schemas["ContainerNIC"];

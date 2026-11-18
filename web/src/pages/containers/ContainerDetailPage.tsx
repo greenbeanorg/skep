@@ -20,6 +20,7 @@ import { CONTAINER_CLONE_NOTE, RCTL_LIMITS, isActive } from "./container";
 import { ContainerSnapshotsCard } from "./ContainerSnapshotsCard";
 import { ContainerStateBadge } from "./ContainersPage";
 import { withHint } from "./CreateContainerDialog";
+import { EditContainerDialog } from "./EditContainerDialog";
 import { LIMIT_HELP } from "./LimitsFields";
 import { TaskLine } from "./TaskLine";
 import { UsageCard } from "./UsageCard";
@@ -58,6 +59,7 @@ export function ContainerDetailPage() {
   const [error, setError] = useState<ApiError | undefined>();
   const [busy, setBusy] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [editing, setEditing] = useState(false);
   const [logTick, setLogTick] = useState(0);
   const reload = ct.reload;
   const onTaskDone = useCallback(() => {
@@ -123,6 +125,17 @@ export function ContainerDetailPage() {
               </Button>
             ))
           : null}
+        {can(PERMISSIONS.containerWrite) && c.provisioned ? (
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={busy || c.state !== "stopped"}
+            title={c.state !== "stopped" ? "Stop the jail to edit it." : undefined}
+            onClick={() => setEditing(true)}
+          >
+            Edit
+          </Button>
+        ) : null}
         {can(PERMISSIONS.containerDelete) ? (
           <Button
             size="sm"
@@ -256,6 +269,16 @@ export function ContainerDetailPage() {
         {c.provisioned ? <ContainerSnapshotsCard c={c} onTask={setTask} /> : null}
       </div>
 
+      {editing ? (
+        <EditContainerDialog
+          c={c}
+          onClose={() => setEditing(false)}
+          onTask={(t) => {
+            setTask(t);
+            ct.reload();
+          }}
+        />
+      ) : null}
       <Dialog
         open={confirmDelete}
         onClose={() => setConfirmDelete(false)}
