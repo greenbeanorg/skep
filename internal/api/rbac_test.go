@@ -201,9 +201,11 @@ func TestPermissionMatrix(t *testing.T) {
 		{auth.RoleViewer, http.MethodDelete, ctr, false},
 		{auth.RoleViewer, http.MethodPost, ctr + "/actions", false},
 		// Snapshots: container:snapshot; a clone container:write and
-		// container:snapshot (amendment j).
+		// container:snapshot (amendment j), and a rollback the same
+		// (amendment n).
 		{auth.RoleOperator, http.MethodPost, ctr + "/snapshots", true},
 		{auth.RoleOperator, http.MethodPost, ctr + "/clone", true},
+		{auth.RoleOperator, http.MethodPost, ctr + "/snapshots/" + e.ids[auth.RoleViewer] + "/rollback", true},
 		{auth.RoleViewer, http.MethodGet, ctr + "/snapshots", true},
 		{auth.RoleViewer, http.MethodGet, ctr + "/snapshots/" + e.ids[auth.RoleViewer], true},
 		{auth.RoleViewer, http.MethodPost, ctr + "/snapshots", false},
@@ -529,6 +531,44 @@ func TestContainerCloneNeedsBothPermissions(t *testing.T) {
 	}
 	if n := e.auditCount(t, `action = 'authz.deny' AND actor_id = ? AND details LIKE '%"permission":"container:snapshot"%'`, u.ID); n != 1 {
 		t.Errorf("%d denials audited", n)
+	}
+}
+
+// TestContainerRollbackNeedsBothPermissions: a jail rollback needs
+// container:write and container:snapshot, the same as a clone (ADR 0010
+// amendment n, SR-11). A role with only container:snapshot is refused
+// with the missing container:write; one with only container:write with
+// the missing container:snapshot.
+func TestContainerRollbackNeedsBothPermissions(t *testing.T) {
+	e := freshEnv(t)
+	ctx := t.Context()
+	for i, rc := range []struct{ role, perms, missing string }{
+		{"ctrsnap", `["container:read","container:snapshot"]`, auth.PermContainerWrite},
+		{"ctrwrite", `["container:read","container:write"]`, auth.PermContainerSnapshot},
+	} {
+		if _, err := e.db.Exec(`INSERT INTO roles (id, name, permissions) VALUES (?, ?, ?)`, rc.role, rc.role, rc.perms); err != nil {
+			t.Fatal(err)
+		}
+		u, err := e.users.Create(ctx, auth.Actor{Name: "local:0"}, auth.NewUser{Username: rc.role + "1", Password: testPassword, RoleID: rc.role})
+		if err != nil {
+			t.Fatal(err)
+		}
+		res, err := e.authn.Login(ctx, auth.LoginRequest{Username: u.Username, Password: testPassword, Kind: auth.BearerSession,
+			SourceIP: fmt.Sprintf("192.0.2.%d", 210+i)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		e.tokens[rc.role] = res.Token
+		h := e.handler(newBackend(), nil)
+		path := Prefix + "/containers/" + e.ids[auth.RoleViewer] + "/snapshots/" + e.ids[auth.RoleViewer] + "/rollback"
+		rec := e.serve(h, request{method: http.MethodPost, path: path, role: rc.role, body: `{}`})
+		body := wantError(t, rec, http.StatusForbidden, auth.CodeForbidden)
+		if body.Details["permission"] != rc.missing {
+			t.Errorf("%s: details = %v, want %s", rc.role, body.Details, rc.missing)
+		}
+		if n := e.auditCount(t, `action = 'authz.deny' AND actor_id = ? AND details LIKE '%"permission":"`+rc.missing+`"%'`, u.ID); n != 1 {
+			t.Errorf("%s: %d denials audited", rc.role, n)
+		}
 	}
 }
 

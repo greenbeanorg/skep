@@ -52,8 +52,10 @@ export function ContainerSnapshotsCard({ c, onTask }: { c: Container; onTask: (t
 
   const list = snaps.data?.items ?? [];
   const canSnapshot = can(PERMISSIONS.containerSnapshot) && c.provisioned;
-  // A clone needs both (amendment j).
+  // A clone needs both (amendment j), and so does a rollback, which
+  // destroys the jail's current data (amendment n).
   const mayClone = canSnapshot && can(PERMISSIONS.containerWrite);
+  const mayRollback = canSnapshot && can(PERMISSIONS.containerWrite);
   const blocked = cloneBlocked(c);
   const stopped = !isActive(c);
 
@@ -143,7 +145,7 @@ export function ContainerSnapshotsCard({ c, onTask }: { c: Container; onTask: (t
                   </TableCell>
                   <TableCell className="text-xs">{s.clones.length ? s.clones.map((x) => x.name).join(", ") : "—"}</TableCell>
                   <TableCell className="text-right whitespace-nowrap">
-                    {canSnapshot && s.provisioned ? (
+                    {mayRollback && s.provisioned ? (
                       <Button
                         size="sm"
                         variant="ghost"

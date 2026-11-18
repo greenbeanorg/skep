@@ -595,7 +595,7 @@ resolves on the host). Rules:
 | `container:write` | Create (from a template), update, clone | yes | no |
 | `container:delete` | Delete a jail and its dataset | yes | no |
 | `container:power` | Start, stop, restart | yes | no |
-| `container:snapshot` | Create, roll back, delete jail snapshots | yes | no |
+| `container:snapshot` | Create, roll back, delete jail snapshots (a rollback also needs `container:write`, amendment n) | yes | no |
 | `storage:write` | Create and delete templates; remove unowned datasets flagged in the inventory | no (`admin` only) | no |
 
 Removing a VM disk needs `vm:delete` (Decision 4). `storage:write` is

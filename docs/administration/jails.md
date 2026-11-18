@@ -28,7 +28,7 @@ still to come.
 | `DELETE /api/v1/containers/{id}` | `container:delete` | Destroy a stopped jail and its dataset (`container.delete`) |
 | `GET .../containers/{id}/snapshots`, `GET .../snapshots/{sid}` | `container:read` | List or read a jail's snapshots |
 | `POST .../containers/{id}/snapshots` | `container:snapshot` | Take a snapshot (`container.snapshot.create`) |
-| `POST .../snapshots/{sid}/rollback` | `container:snapshot` | Roll a stopped jail back (`container.snapshot.rollback`) |
+| `POST .../snapshots/{sid}/rollback` | `container:write` and `container:snapshot` | Roll a stopped jail back (`container.snapshot.rollback`); it destroys the current data, so it needs the same as a clone (ADR 0010 amendment n) |
 | `DELETE .../snapshots/{sid}` | `container:snapshot` | Delete a snapshot (`container.snapshot.delete`) |
 | `POST .../containers/{id}/clone` | `container:write` and `container:snapshot` | Make a linked clone (`container.clone`) |
 

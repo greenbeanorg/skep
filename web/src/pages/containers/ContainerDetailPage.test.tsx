@@ -122,6 +122,22 @@ describe("ContainerDetailPage permissions", () => {
     expect(screen.queryByRole("button", { name: "Clone" })).not.toBeInTheDocument();
   });
 
+  it("needs both container:write and container:snapshot to roll back", async () => {
+    const snaps = { [`GET ${BASE}/snapshots`]: { status: 200, body: { items: [snap("s1", "first")] } } };
+    fakeApi([...VIEWER, "container:snapshot"], replies(jail(), snaps));
+    renderPage();
+    expect(await screen.findByText("first")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Take snapshot" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Roll back" })).not.toBeInTheDocument();
+  });
+
+  it("offers roll back with container:write and container:snapshot", async () => {
+    const snaps = { [`GET ${BASE}/snapshots`]: { status: 200, body: { items: [snap("s1", "first")] } } };
+    fakeApi([...VIEWER, "container:write", "container:snapshot"], replies(jail(), snaps));
+    renderPage();
+    expect(await screen.findByRole("button", { name: "Roll back" })).toBeEnabled();
+  });
+
   it("disables delete while the jail runs", async () => {
     fakeApi(OPERATOR, replies(jail({ state: "running", jid: 7 })));
     renderPage();

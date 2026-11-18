@@ -1121,7 +1121,9 @@ export interface paths {
         put?: never;
         /**
          * Roll a jail back to a snapshot
-         * @description Requires `container:snapshot`. Submits
+         * @description Requires `container:write` and `container:snapshot`, the same as a
+         *     clone (ADR 0010 amendment n): a rollback destroys the jail's
+         *     current data. Submits
          *     `container.snapshot.rollback`, which rolls the jail's root back.
          *     Only while the jail is stopped (`container_not_stopped`). A
          *     rollback to a snapshot that is not the latest destroys every newer

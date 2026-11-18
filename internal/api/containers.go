@@ -49,7 +49,10 @@ func (h *handler) containerRoutes() []route {
 		{http.MethodPost, "/containers/{id}/snapshots", auth.PermContainerSnapshot, nil, h.createContainerSnapshot},
 		{http.MethodGet, "/containers/{id}/snapshots/{sid}", auth.PermContainerRead, nil, h.getContainerSnapshot},
 		{http.MethodDelete, "/containers/{id}/snapshots/{sid}", auth.PermContainerSnapshot, nil, h.deleteContainerSnapshot},
-		{http.MethodPost, "/containers/{id}/snapshots/{sid}/rollback", auth.PermContainerSnapshot, nil, h.rollbackContainerSnapshot},
+		// A rollback destroys the jail's current data (and, with
+		// destroy_newer, newer snapshots): container:write as well as
+		// container:snapshot, the same as a clone (amendment n, SR-11).
+		{http.MethodPost, "/containers/{id}/snapshots/{sid}/rollback", auth.PermContainerWrite, []string{auth.PermContainerSnapshot}, h.rollbackContainerSnapshot},
 		{http.MethodPost, "/containers/{id}/clone", auth.PermContainerWrite, []string{auth.PermContainerSnapshot}, h.cloneContainer},
 	}
 }
