@@ -1831,10 +1831,14 @@ paths:
       summary: The end of a jail's console log
       x-skep-permission: container:read
       description: |
-        Requires `container:read`. At most the last 64 KiB of what
-        `/etc/rc` and `/etc/rc.shutdown` wrote (`exec.consolelog`). The
-        log is kept in the runtime directory and is gone after a host
-        reboot.
+        Requires `container:read`. At most the last 64 KiB of the console
+        log of the jail's last start: what `/etc/rc` wrote, drained by
+        the agent from a pipe that is closed when the start ends (ADR 0010
+        amendment o). The file holds the first 256 KiB of rc's output
+        and, if there was more, a `skep: N bytes discarded` line and the
+        last 64 KiB. `/etc/rc.shutdown`'s output is not in it. The
+        content is written by the jail. The log is kept in the runtime
+        directory and is gone after a host reboot.
       parameters:
         - $ref: "#/components/parameters/Background"
       responses:

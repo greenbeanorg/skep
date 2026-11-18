@@ -21,7 +21,7 @@ still to come.
 | Request | Permission | What it does |
 |---|---|---|
 | `GET /api/v1/containers`, `GET /api/v1/containers/{id}` | `container:read` | List or read jails; the state is what `jls` reports at the time |
-| `GET /api/v1/containers/{id}/console-log` | `container:read` | The last 64 KiB of what `/etc/rc` and `/etc/rc.shutdown` wrote |
+| `GET /api/v1/containers/{id}/console-log` | `container:read` | The last 64 KiB of what `/etc/rc` wrote at the last start (see [The console log](#the-console-log)) |
 | `POST /api/v1/containers` | `container:write` | Create a jail from a template (`container.create`) |
 | `PUT /api/v1/containers/{id}` | `container:write` | Change a stopped jail (`container.update`) |
 | `POST /api/v1/containers/{id}/actions` | `container:power` | `start`, `stop` (optional `timeout`), `restart` |
@@ -133,8 +133,37 @@ run the jail's `/etc/rc` itself, as `jexec -l -U root skep-<id> /bin/sh
 `/etc/rc` fails or outlasts the timeout, the jail is stopped as below
 (`/etc/rc.shutdown` runs) and removed, and the start fails with
 `container_start_failed`. rc's output goes to
-`/var/run/skep/jails/<id>/console.log`, which `GET .../console-log`
-serves; it is gone after a host reboot.
+`/var/run/skep/jails/<id>/console.log` (below), which `GET
+.../console-log` serves; it is gone after a host reboot.
+
+### The console log
+
+rc gets a pipe as its standard output and error, not a file (ADR 0010
+amendment o, SR-01). The agent truncates `console.log` at each start
+(when rc is about to run) and drains the pipe into it: the first 256 KiB
+are written as they arrive; anything more is counted and dropped, and
+when the start ends a line `skep: N bytes discarded` and the last 64 KiB
+of rc's output are written after it. A console log is therefore never
+larger than about 320 KiB, and the 64 KiB `GET .../console-log` returns
+ends with rc's real last lines. Its content is the jail's (a jail can
+write anything there, including lines that look like Skep's).
+
+The agent closes its end of the pipe as soon as the start ends, whether
+rc succeeded, failed, or timed out, and never waits for every writer to
+close it. **A process rc leaves running that later writes to its
+standard output or error gets `SIGPIPE`, which kills it by default, or
+`EPIPE` if it ignores the signal.** Properly daemonized services (stdio
+on `/dev/null`, `daemon(8)`, the base system's rc.d scripts) are not
+affected; a command started in the background from `/etc/rc.local`, such
+as `foo &`, that prints later dies at its first write. Redirect such a
+command's output inside the jail (`foo >/var/log/foo.log 2>&1 &`). No
+process in a jail ever holds a descriptor on a host file.
+
+`/etc/rc.shutdown`'s output (at a stop, a restart, or the removal after a
+failed rc) is not in the console log: the jail.conf has no
+`exec.consolelog`, so it goes to `jail -r`'s own output, which the agent
+caps at 4 MiB, cuts with the same `skep: N bytes discarded` line, and
+does not keep; its size never makes a stop fail.
 
 **Stop.** Skep first destroys the jail's epairs (destroying a host end
 removes its jail end inside the jail), so no jail end comes back to the
@@ -270,7 +299,8 @@ Every jail gets the same parameters; none can be changed through the API:
 - `exec.clean`, `exec.stop="/bin/sh /etc/rc.shutdown jail"`,
   `exec.timeout` from `containers.start_timeout_seconds` (default 120),
   and nothing else: no `exec.start` (Skep runs `/etc/rc` after the `/dev`
-  guard) and never a host-side command.
+  guard), no `exec.consolelog` (amendment o), and never a host-side
+  command.
 
 What that means inside a jail: mounting, loading kernel modules, writing
 sysctls, changing the hostname, lowering the securelevel, and clearing

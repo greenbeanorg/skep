@@ -495,7 +495,16 @@ Skep fixes and nobody can change through the API
   and the only command is `exec.stop="/bin/sh /etc/rc.shutdown jail"`,
   which runs inside the jail. There is never an `exec.start`,
   `exec.prestart`, `exec.poststart`, or any other command on the host,
-  and no `mount.fstab`.
+  no `mount.fstab`, and no `exec.consolelog`.
+- **No jailed process holds a host file (amendment o, SR-01).** `/etc/rc`
+  writes to a pipe the agent drains into the jail's `console.log`
+  (truncated at each start, at most the first 256 KiB plus a marker and
+  the last 64 KiB) and closes when the start ends; a process rc leaves
+  running that writes later gets `SIGPIPE` or `EPIPE`, so a jail cannot
+  fill the host's `/var/run` (on a UFS-root host, its root file system)
+  through its console. `/etc/rc.shutdown` writes to `jail -r`'s output,
+  capped in the agent's memory and not kept; past the cap it is cut, and
+  never makes a removal fail.
 - **The `/dev` guard (amendment i).** `jail -c` creates the jail with
   nothing running in it. The agent lists the jail's `/dev` from the host
   (opened without following links, required to be a devfs mounted at
