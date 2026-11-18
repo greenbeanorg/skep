@@ -1082,3 +1082,21 @@ total, so `agent.json` is not edited.
 log; `944a3ec` feat(hostops): report the last line of a failed jail -r's
 stderr; `9bf4a0d` docs(jails): document rc.shutdown output in the console
 log and the jail -r error line; and this section.
+
+## 18. Andy's answers to section 17 (2026-11-18), recorded as amendment q
+
+1. **Approved:** all nine changes of 17.3, and the final hearst list of
+   17.5.
+2. **17.4 point 1, rc.shutdown's stderr:** append it after the stdout
+   section, under its own `--- shutdown stderr ---` marker line, with a
+   32 KiB tail (and the `N bytes discarded` marker when cut). Same
+   failure rules: a failed write never fails the removal.
+3. **17.4 point 2, a failed `jail -r`:** keep as built (nothing
+   appended) until hearst test 10.
+4. **17.4 point 3, Unicode format characters:** strip category Cf,
+   including the bidi overrides U+202A–U+202E and U+2066–U+2069,
+   wherever Skep reports or logs jail output, alongside the existing
+   control-character cleanup.
+
+No code was written in this session; points 2 and 4 of this list are the
+next build.

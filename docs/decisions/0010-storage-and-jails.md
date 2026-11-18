@@ -1156,6 +1156,23 @@ Amendments made at acceptance, worked into the text:
   - **The locked-memory total stays out of `GET /system` in 7b** (15.4
     point 3). Backlog: expose it in `GET /system` so the UI can check a
     `locked_memory` value before sending it.
+- **q. Decisions on the amendment p build** (Andy, 2026-11-18, from
+  section 17 of
+  [step10-progress.md](../../tests/integration/jails/results/step10-progress.md)).
+  - **Approved as built:** the nine changes outside the request (section
+    17.3), and the final hearst list for SR-01 and SR-04 (section 17.5).
+  - **rc.shutdown's stderr is kept too** (17.4 point 1). After the stdout
+    section, the agent appends a `--- shutdown stderr ---` marker line and
+    the last 32 KiB of what `jail -r` wrote to stderr, preceded by the
+    `N bytes discarded` marker when it was cut. The same failure rules
+    apply: a failure to write it never fails the removal.
+  - **A failed `jail -r` still appends nothing** (17.4 point 2): kept as
+    built until hearst test 10 (section 17.5) shows whether a failing
+    `rc.shutdown` fails `jail -r`.
+  - **Unicode format characters are stripped** (17.4 point 3): category
+    Cf, including the bidi overrides U+202A–U+202E and U+2066–U+2069, is
+    removed wherever Skep reports or logs jail output, alongside the
+    existing control-character cleanup.
 
 ## Implementation notes
 
