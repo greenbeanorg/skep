@@ -1044,6 +1044,17 @@ Amendments made at acceptance, worked into the text:
     interface names after an abnormal removal (two `skep0`); a jail's root
     can rename its interface to a host-like name (`vtnet0`), which returns
     to the host under that name after a removal outside Skep.
+- **m. Templates report whether they have sshd** (Decision 12, amendment
+  g; Andy, 2026-11-17, from the step 10 UI stop, Q1 in
+  [step10-progress.md](../../tests/integration/jails/results/step10-progress.md)).
+  Template responses (`GET /storage/templates`, `GET
+  /storage/templates/{id}`, and the template in a create response) carry
+  `has_sshd`, computed by the same check the agent uses to refuse a key
+  with `container_ssh_unavailable` (a regular file `usr/sbin/sshd` in the
+  template), so there is one source of truth. The web UI shows the SSH key
+  field only for a template with `has_sshd` true. Bridges for jails stay in
+  `GET /system`. Backlog: whether an empty `nameservers` list on a clone
+  clears the source's (today an empty or omitted list keeps them).
 
 ## Implementation notes
 

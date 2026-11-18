@@ -164,3 +164,25 @@ deployed API and a browser (or Playwright):
   API refuses what the UI hides;
 - that the error hints match the real messages;
 - RACCT off (needs a reboot; stays unit-tested only, like Q3 of step 9).
+
+## 8. Andy's answers (2026-11-17)
+
+1. **`has_sshd`** (Q1): approved backend change. Template responses get
+   `has_sshd`, computed by the same check the agent uses for
+   `container_ssh_unavailable` (one source of truth). OpenAPI and the web
+   types are regenerated; the UI shows the SSH key field only when it is
+   true. The stopgap (field for every template) is removed. Recorded in
+   ADR 0010 as amendment m.
+2. **Bridges** (Q2): stay in `GET /system` (`System.bhyve.bridges`).
+3. **Container edit** (Q3): yes, in the UI, limited to what
+   `PUT /containers/{id}` already supports, with the same permission
+   handling (`container:write`; hidden without it).
+4. **README jails row** (Q4): approved, update it for steps 8 and 9.
+5. **Clone nameservers** (Q5): fine for 7b. The clone dialog pre-fills the
+   source's nameservers with an "inherited from source" note. Backlog: API
+   clear semantics (empty list vs omitted).
+
+Also asked: what API field the create dialog's "System V IPC" option maps
+to, where the ADR approves it, and exactly which jail parameters it sets
+(`new` or `inherit`); if anything could set `inherit`, stop and report.
+Backlog: the vite chunk-size warning (check whether it predates this run).
