@@ -86,7 +86,8 @@ use, and why not:
 6. Checks the template's release, read from `bin/freebsd-version` without
    running it (`release_unsupported`).
 7. Starts a build jail `skep-build-<id>` on the template: no network, no
-   devfs, every `allow.*` off (including `allow.suser`), securelevel 2, no
+   devfs, every `allow.*` off (including `allow.suser`), securelevel 2, no System V IPC
+   (`sysvshm`, `sysvsem`, `sysvmsg` = `disable`, set explicitly), no
    child jails. It checks those parameters as the kernel reports them. Then
    it runs the known commands of the allowed scripts and triggers inside
    it, one by one, with `jexec -l`:

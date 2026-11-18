@@ -53,6 +53,7 @@ func TestBuildJailArgs(t *testing.T) {
 		" -c ", " persist ", " ip4=disable ", " ip6=disable ", " enforce_statfs=2 ", " children.max=0 ",
 		" securelevel=2 ", " exec.clean ", " allow.suser=0 ", " allow.reserved_ports=0 ",
 		" allow.unprivileged_proc_debug=0 ", " allow.mount=0 ", " allow.raw_sockets=0 ",
+		" sysvshm=disable ", " sysvsem=disable ", " sysvmsg=disable ", " allow.sysvipc=0 ",
 	} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("jail -c arguments lack %q", strings.TrimSpace(want))
@@ -95,6 +96,7 @@ func TestCheckBuildJail(t *testing.T) {
 	for k, v := range map[string]any{
 		"allow.reserved_ports": true, "allow.suser": true, "allow.vmm": true, "securelevel": "1",
 		"ip4": "inherit", "vnet": "new", "children.max": "1", "enforce_statfs": "1",
+		"sysvshm": "inherit", "sysvsem": "new", "sysvmsg": "inherit",
 	} {
 		bad := map[string]any{}
 		for kk, vv := range params {
@@ -104,6 +106,14 @@ func TestCheckBuildJail(t *testing.T) {
 		if err := checkBuildJail(bad, name, root); err == nil || !strings.Contains(err.Error(), k) {
 			t.Errorf("%s=%v was accepted (err %v)", k, v, err)
 		}
+	}
+	noSysv := map[string]any{}
+	for k, v := range params {
+		noSysv[k] = v
+	}
+	delete(noSysv, "sysvshm")
+	if err := checkBuildJail(noSysv, name, root); err == nil || !strings.Contains(err.Error(), "sysvshm") {
+		t.Errorf("a report without sysvshm was accepted (err %v)", err)
 	}
 	if err := checkBuildJail(params, name, "/elsewhere"); err == nil {
 		t.Error("a jail on another path was accepted")

@@ -101,6 +101,11 @@ func buildJailArgs(name, root string) []string {
 		"enforce_statfs=2",
 		"children.max=0",
 		"securelevel=2",
+		// No System V IPC, set rather than left to the kernel's default
+		// (ADR 0010 amendment m), and checked by checkBuildJail.
+		"sysvshm=disable",
+		"sysvsem=disable",
+		"sysvmsg=disable",
 		"exec.clean",
 	}
 	for _, a := range buildJailAllow {
@@ -155,11 +160,12 @@ func (h *host) jailParams(ctx context.Context, name string) (map[string]any, err
 
 // checkBuildJail confirms the build jail's parameters as the kernel
 // reports them: the name and path, no network, no child jails, the
-// statfs and securelevel limits, and every allow.* off.
+// statfs and securelevel limits, no System V IPC, and every allow.* off.
 func checkBuildJail(params map[string]any, name, root string) error {
 	want := map[string]string{
 		"name": name, "path": root, "ip4": "disable", "ip6": "disable",
 		"enforce_statfs": "2", "children.max": "0", "securelevel": "2", "vnet": "inherit",
+		"sysvshm": "disable", "sysvsem": "disable", "sysvmsg": "disable",
 	}
 	var bad []string
 	for k, v := range want {
