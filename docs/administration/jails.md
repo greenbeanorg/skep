@@ -212,6 +212,33 @@ that keeps about 100 files open needs about (40 + 40 + 200) x 1.5, so
 open files" (`EMFILE`), and `rctl -u jail:skep-<id>` on the host shows
 the jail's current figure.
 
+**What the limits do not cover** (ADR 0010 amendment n, SR-05). Even a
+jail with every limit set can use these host-wide resources without a
+Skep limit, so a jail's root (or a buggy service in it) can still
+degrade the host and its other jails and VMs:
+
+- **swap:** `memory` is soft (above), so a jail past it is paged out,
+  not stopped; it can fill the host's swap. Skep sets no `swapuse` or
+  `vmemoryuse` rule;
+- **threads:** no `nthr` rule, so `max_processes` times
+  `kern.threads.max_threads_per_proc` can reach the host-wide thread
+  limit;
+- **shared memory:** POSIX `shm_open` objects, and System V shared memory
+  with the `sysvipc` option, have no `shmsize` rule;
+- **pseudo-terminals:** no `pseudoterminals` rule;
+- **disk I/O:** no `readbps`, `writebps`, `readiops`, or `writeiops`
+  rule, so a jail can starve others of I/O on the shared pool
+  (`disk_quota` limits space, not bandwidth);
+- **kernel memory** that RACCT does not count: mbufs and socket buffers,
+  sockets, and pf states in the jail's own pf (`/dev/pf` is visible).
+
+**Limits are optional.** Every limit may be left out, and a user with
+`container:write` can create a jail with no limits at all, or remove a
+jail's limits with an update (the web UI asks first; the API does not).
+Skep has no default limits and no limits required per role in this
+release; that is in the backlog. Grant `container:write` only to users
+you trust with the host's shared resources.
+
 **Usage.** `GET /api/v1/metrics` lists every jail with the space of its
 root (`disk_used_bytes`, snapshots included, and `disk_referenced_bytes`,
 what `disk_quota` applies to) and, while it runs on a host with RACCT,
