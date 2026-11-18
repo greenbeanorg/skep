@@ -9,6 +9,7 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 
 	"golang.org/x/sys/unix"
 )
@@ -264,4 +265,103 @@ func TestWriteJailResolvConfNative(t *testing.T) {
 		t.Fatal("wrote through a planted resolv.conf link")
 	}
 	outsideUntouched(t, outside)
+}
+
+// readWithin runs readSkepFile on etc/<name> under dir, failing the test
+// if it does not return within five seconds (a blocked open).
+func readWithin(t *testing.T, dir, name string) (missing bool, err error) {
+	t.Helper()
+	dfd, err := unix.Open(dir, unix.O_RDONLY|unix.O_DIRECTORY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unix.Close(dfd)
+	type result struct {
+		missing bool
+		err     error
+	}
+	done := make(chan result, 1)
+	go func() {
+		_, m, e := readSkepFile(dfd, name)
+		done <- result{m, e}
+	}()
+	select {
+	case r := <-done:
+		return r.missing, r.err
+	case <-time.After(5 * time.Second):
+		t.Fatalf("readSkepFile(%s) blocked", name)
+		return false, nil
+	}
+}
+
+// TestReadSkepFileRefusesNonRegular: a FIFO, a device node, a directory,
+// or a symbolic link where rc.conf or resolv.conf should be is refused
+// without blocking and before anything is read (amendment n, SR-09). It
+// needs no root, except for the device node.
+func TestReadSkepFileRefusesNonRegular(t *testing.T) {
+	dir := t.TempDir()
+	if err := unix.Mkfifo(filepath.Join(dir, "fifo"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(dir, "dir"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "regular"), []byte(RCConfHeader+"x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("regular", filepath.Join(dir, "link")); err != nil {
+		t.Fatal(err)
+	}
+	names := []string{"fifo", "dir", "link"}
+	// A character device node outside devfs: root only, and FreeBSD may
+	// refuse to make one at all; then there is nothing to test.
+	if err := unix.Mknod(filepath.Join(dir, "dev"), unix.S_IFCHR|0o600, unix.Mkdev(0, 0)); err == nil {
+		names = append(names, "dev")
+	} else {
+		t.Logf("no device node (%v); that case is not tested here", err)
+	}
+	for _, name := range names {
+		missing, err := readWithin(t, dir, name)
+		if err == nil || missing {
+			t.Errorf("%s: missing=%v err=%v, want a refusal", name, missing, err)
+			continue
+		}
+		t.Logf("%s: %v", name, err)
+	}
+	if missing, err := readWithin(t, dir, "regular"); err != nil || missing {
+		t.Fatalf("a regular file: missing=%v err=%v", missing, err)
+	}
+	if missing, err := readWithin(t, dir, "absent"); err != nil || !missing {
+		t.Fatalf("an absent file: missing=%v err=%v", missing, err)
+	}
+}
+
+// TestWriteJailFilesRefusesFIFO: through the writer, a FIFO rc.conf or
+// resolv.conf fails the write without blocking and is left in place.
+func TestWriteJailFilesRefusesFIFO(t *testing.T) {
+	for _, name := range []string{"rc.conf", "resolv.conf"} {
+		root, outside := jailTree(t)
+		p := filepath.Join(root, "etc", name)
+		if err := unix.Mkfifo(p, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		c, err := JailFiles{RCConf: []string{`ifconfig_skep0="inet 192.0.2.10/24"`}, Nameservers: []string{"192.0.2.53"}}.render()
+		if err != nil {
+			t.Fatal(err)
+		}
+		done := make(chan error, 1)
+		go func() { done <- writeJailFiles(root, c) }()
+		select {
+		case err := <-done:
+			if err == nil || !strings.Contains(err.Error(), "not a regular file") {
+				t.Fatalf("%s: %v", name, err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("%s: the writer blocked on a FIFO", name)
+		}
+		if fi, err := os.Lstat(p); err != nil || fi.Mode()&os.ModeNamedPipe == 0 {
+			t.Fatalf("%s: the FIFO was replaced: %v %v", name, fi, err)
+		}
+		outsideUntouched(t, outside)
+	}
 }

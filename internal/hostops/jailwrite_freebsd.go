@@ -126,10 +126,13 @@ func ensureDirBeneath(dirfd int, name string, mode uint32) (int, error) {
 	return fd, nil
 }
 
-// readSkepFile reads an existing file below dirfd. missing is true when
-// there is none.
+// readSkepFile reads the start of an existing file below dirfd. missing
+// is true when there is none. The open has O_NONBLOCK, so a FIFO (or a
+// device) a template planted cannot block it, and the descriptor must be
+// a regular file before anything is read (amendment n, SR-09); a
+// symbolic link fails the open (O_NOFOLLOW).
 func readSkepFile(dirfd int, name string) (data []byte, missing bool, err error) {
-	fd, err := unix.Openat(dirfd, name, unix.O_RDONLY|beneath, 0)
+	fd, err := unix.Openat(dirfd, name, unix.O_RDONLY|unix.O_NONBLOCK|beneath, 0)
 	if errors.Is(err, unix.ENOENT) {
 		return nil, true, nil
 	}

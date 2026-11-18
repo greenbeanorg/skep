@@ -72,7 +72,10 @@ and, with an SSH key, writes into the new tree, which has never run:
 Every one of these writes is made relative to the jail root's directory
 descriptor with `O_RESOLVE_BENEATH | O_NOFOLLOW`, and files are replaced
 by a new file and a rename, so a symbolic link cannot lead a write
-outside the jail.
+outside the jail. An existing `rc.conf` or `resolv.conf` is opened with
+`O_NONBLOCK` as well and must be a regular file before anything is read
+or replaced: a FIFO, device node, directory, or link that a template put
+there fails the task instead of blocking it (ADR 0010 amendment n, SR-09).
 
 **MAC addresses.** A NIC's MAC address, given in a create, an update,
 or a clone, must be unicast, locally administered (the `0x02` bit of the
