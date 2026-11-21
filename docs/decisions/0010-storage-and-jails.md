@@ -2261,3 +2261,18 @@ Playwright's Node-side `request` client, which has `ignoreHTTPSErrors`
 and no CA or pin option, so the pin cannot replace it in the
 configuration alone; the options are in section 27.4 of
 [step10-progress.md](../../tests/integration/jails/results/step10-progress.md).
+
+**Amendment x, built (2026-11-21, merrick only).** A create whose
+`limits.disk_quota` is below the template dataset's `referenced` (from
+`zfs.Inventory`; the template is read-only after its build) is refused at
+submission with `container_disk_quota_below_usage` (422; details
+`template_id`, `disk_quota`, `referenced_bytes`). Point 9 uses option
+(c): Node, and Playwright's `request` client, accept skep-api's
+self-signed certificate through `NODE_EXTRA_CA_CERTS` (probed), so
+`scripts/web-e2e.sh` hands them the certificate that carries the pinned
+key (fetched and compared by `scripts/e2e-trust.mjs` against a running
+server, or made by `skep-api tls regenerate` for the local stack),
+Chromium is pinned with `--ignore-certificate-errors-spki-list`, and no
+`ignoreHTTPSErrors` is left. Details in section 28 of
+[step10-progress.md](../../tests/integration/jails/results/step10-progress.md).
+

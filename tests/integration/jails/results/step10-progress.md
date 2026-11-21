@@ -2480,6 +2480,22 @@ Recommendation: **(c)**. It is the only option with no
   5. UI (Playwright pinned as in run 3): edit dialog, quota 64M, Save:
      the message with R and the hint are shown, the dialog stays open.
   6. Delete `r4-q`, check no dataset is left.
+  7. **Create check (amendment x, added in section 28):** T = `zfs get
+     -Hp referenced` of minimal-151's template dataset (the one whose
+     `skep:template_id` is its ID; expect about 78 MiB, the same as R).
+     `POST /containers` `{"name":"r4-q2","template_id":<minimal-151>,
+     "limits":{"disk_quota":"64M"}}`: expect 422
+     `container_disk_quota_below_usage`, `details.referenced_bytes` = T,
+     `details.disk_quota` = 67108864, `details.template_id` = minimal-151's
+     ID; no new `container.create` task in `GET /tasks`, no container
+     `r4-q2` in `GET /containers`, no new dataset under `<pool>/skep/jail`,
+     and a `denied` audit entry. Then `"disk_quota": T` (bytes): 202, the
+     create task succeeds, and `refquota` of the new root = T. Delete
+     `r4-q2`.
+  8. **UI create (amendment x):** in the create dialog (Playwright pinned
+     as in run 3), minimal-151, disk quota 64M, Create: the message with T
+     and the hint ("for a new jail, the template's size") are shown, and
+     nothing is created.
 
   The race (the root grows between the request and the task) is not
   practical on hearst. It stays covered by the unit tests.
@@ -2504,3 +2520,99 @@ note.
 
 Only the answers were recorded in this commit; the build follows in
 section 28.
+
+## 28. Amendment x built (2026-11-21, merrick only)
+
+Amendment x (27.8) was recorded (`14a348f`) and both points were built
+in the same session (CLAUDE.md workflow: context under ~120k). No hearst
+access, no deploy, no PR.
+
+### 28.1 Built
+
+- **Create check.** `normalizeCreate` reads the template dataset's
+  `referenced` from `zfs.Inventory` (matched by name and
+  `skep:template_id`). The template is read-only after its build, so that
+  is what the new root references from the start. A non-zero
+  `limits.disk_quota` below it is refused before anything is stored, with
+  422 `container_disk_quota_below_usage`. Details: `template_id`,
+  `disk_quota`, `referenced_bytes` (`models.DiskQuotaBelowTemplate`, the
+  same code as the update check). Equal is accepted. The refusal is
+  audited `denied`. OpenAPI (create description, `disk_quota`),
+  regenerated web types, jails.md's `disk_quota` row. The UI hint now
+  fits both: "The quota is below what the jail's root holds: for a new
+  jail, the template's size (the message gives the amount; snapshots do
+  not count). Give a larger quota, or remove data inside the jail
+  first."
+- **Point 9, option (c).** The probe came first. Against an HTTPS server
+  with a certificate made by `skep-api tls regenerate`, Node's `https`
+  and Playwright 1.65's `request` client both refused it without
+  `NODE_EXTRA_CA_CERTS` (`DEPTH_ZERO_SELF_SIGNED_CERT`, "self-signed
+  certificate") and accepted it with the file (200, 200). **Node accepts
+  skep-api's self-signed leaf as an anchor, so there was no fallback to
+  (b).** Built:
+  - `scripts/web-e2e.sh`: local mode makes the stack's key first (`tls
+    regenerate -dev`), takes the pin from `tls fingerprint`, checks the
+    certificate file against it, and passes the directory to
+    `e2e-stack.sh` (new `SKEP_E2E_DIR`; the script removes only a
+    directory it made). External mode (`SKEP_E2E_EXTERNAL=1`) needs
+    `SKEP_E2E_LISTEN` and `SKEP_E2E_PIN`, fetches the served certificate,
+    and refuses it unless its key matches. Both modes start Playwright
+    with `SKEP_E2E_PIN` and `NODE_EXTRA_CA_CERTS`.
+  - `scripts/e2e-trust.mjs`: `check` (a file against the pin) and `fetch`
+    (reads the peer certificate, sends nothing, compares the SPKI SHA-256
+    with the pin, writes the PEM with mode 0600 only on a match).
+  - `web/playwright.config.ts`: no `ignoreHTTPSErrors` anywhere; Chromium
+    launched with `--ignore-certificate-errors-spki-list=<base64 of the
+    pin>`; the config throws unless `SKEP_E2E_PIN` (`sha256:<hex>`) and
+    `NODE_EXTRA_CA_CERTS` are set. The `webServer` health check is
+    verified by Node with the same certificate.
+  - `web/e2e/ui.spec.ts`: the two `browser.newContext({
+    ignoreHTTPSErrors: true })` are plain `newContext()`.
+  - New `web/e2e/tls-pin.spec.ts`: Chromium launched without the pin,
+    and with another key's pin (32 zero bytes), fails with `ERR_CERT_*`;
+    the pinned page and the `request` client get 200.
+  - `make web-e2e` and CI's browser-test step run `scripts/web-e2e.sh`;
+    web/README.md describes the trust and the external mode.
+
+### 28.2 Tests (merrick)
+
+| Check | Result | Log (`~/skep-test-logs/`) |
+|---|---|---|
+| `TestCreateQuotaBelowTemplate` (new): 64 MiB and template − 1 refused with the code and details; no container, no create task, no `zfs clone`, 2 `denied` entries; exactly the template's size accepted | Pass | `20261121T183637Z-go-test-create-quota.log` |
+| **Broken on purpose:** the create comparison changed to `quota < 0 && …` | **failed** (`err = <nil>, want container_disk_quota_below_usage`); reverted | `20261121T183638Z-go-test-create-quota-broken.log` |
+| Web: create-dialog test (422 shows the message with the bytes and the hint); hint regex updated in the two amendment w tests | Pass | in the web-check logs |
+| `make web-e2e` (first run) | **1 failed**: `ui.spec.ts` still expected Containers to say "Not built yet" (stale since step 10, not TLS); the TLS test passed | `20261121T183908Z-make-web-e2e.log` |
+| `make web-e2e` after switching that check to Networking | Pass: 8 passed, 1 skipped (`clone-note.spec.ts`, needs `SKEP_E2E_CLONE_*`), including `tls-pin.spec.ts`; the temp directory was removed | `20261121T184011Z-make-web-e2e.log` |
+| Trust controls: `check` right/wrong pin (0/1); `fetch` right pin (0, same certificate, mode 600) / wrong pin (1, no file) / malformed pin (1); external wrapper with a wrong pin refused before Playwright; `playwright test` without the wrapper refuses to start | All as expected | `20261121T184109Z-e2e-trust-controls.log` |
+| `go test ./... -count=1` | Pass, 41 packages | `20261121T184138Z-go-test-all.log` |
+| `make lint` | Pass | `20261121T184155Z-make-lint.log` |
+| hostops tests compile for FreeBSD | Pass | `20261121T184209Z-hostops-freebsd-test-compile.log` |
+| `make web-check` ×3 | Pass ×3, 115 tests each | `20261121T184209Z-…-run1.log`, `20261121T184219Z-…-run2.log`, `20261121T184229Z-…-run3.log` |
+
+Not run: the CI workflow itself (it runs at the PR); the external mode
+against hearst (no hearst access in this session). Pending FreeBSD
+validation: the create check against real ZFS (27.6 steps 7 and 8).
+
+### 28.3 Self-approved (CLAUDE.md, "Unrequested changes")
+
+1. `ui.spec.ts`'s planned-section check moved from Containers to
+   Networking (a stale test that failed `make web-e2e`).
+2. `e2e-stack.sh` accepts `SKEP_E2E_DIR`; `make web-e2e` and CI's
+   browser-test step call the wrapper (test tooling).
+3. The new trust-control test `tls-pin.spec.ts` and the helper
+   `e2e-trust.mjs`.
+4. The UI hint's text, changed to fit create as well as update.
+5. Docs: web/README.md's browser-test section,
+   jails.md's `disk_quota` row, ADR 0010's implementation note.
+
+Nothing needs approval: the create refusal's code, status, and details
+are as amendment x decided (`template_id` in the details is in addition
+to the two named, as the update's carry `container_id`).
+
+### 28.4 Commits
+
+`14a348f` docs(decisions): record amendment x; `48e4f87`
+fix(containers): refuse a create whose disk quota is below the
+template's size; `9059cf9` test(web): trust skep-api by its key pin in
+the browser tests; `dedcc2d` docs(jails): name the create-time disk quota
+refusal; and the commit with this section.
