@@ -16,7 +16,9 @@
 //	rawl2 -if skep0 -mode dhcp -eth-src MAC
 //	rawl2 -if skep0 -mode ipv6 -eth-src MAC
 //
-// Every mode takes -count N (one frame per second).
+// Every mode takes -count N (one frame per second) and -vlan VID[,VID...],
+// which inserts 802.1Q tags (TPID 0x8100, outermost first) after the
+// source MAC; two VIDs make a stacked (Q-in-Q style) frame.
 package main
 
 import (
@@ -154,6 +156,24 @@ func ipv6Echo(src, dst netip.Addr, id, seq uint16) ([]byte, error) {
 	copy(b[24:40], d[:])
 	copy(b[40:], ic)
 	return b, nil
+}
+
+// tagVLAN returns frame with one 802.1Q tag (TPID 0x8100, PCP 0) per VID
+// inserted after the source MAC, outermost first. A VID must be 1 to 4094.
+func tagVLAN(frame []byte, vids []uint16) ([]byte, error) {
+	if len(frame) < 14 {
+		return nil, fmt.Errorf("rawl2: frame too short to tag (%d bytes)", len(frame))
+	}
+	out := make([]byte, 0, len(frame)+4*len(vids))
+	out = append(out, frame[:12]...)
+	for _, v := range vids {
+		if v < 1 || v > 4094 {
+			return nil, fmt.Errorf("rawl2: VLAN ID %d out of range 1-4094", v)
+		}
+		out = binary.BigEndian.AppendUint16(out, 0x8100)
+		out = binary.BigEndian.AppendUint16(out, v)
+	}
+	return append(out, frame[12:]...), nil
 }
 
 // checksum is the Internet checksum (RFC 1071).

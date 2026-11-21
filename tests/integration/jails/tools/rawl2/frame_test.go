@@ -89,3 +89,27 @@ func TestIPv6EchoChecksum(t *testing.T) {
 		t.Fatal("ICMPv6 checksum does not verify")
 	}
 }
+
+func TestTagVLAN(t *testing.T) {
+	f, err := ethernet(broadcast, mustMAC(t, "02:5e:00:0a:00:10"), etherIPv4, []byte{0x45})
+	if err != nil {
+		t.Fatal(err)
+	}
+	g, err := tagVLAN(f, []uint16{5, 7})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(g) != len(f)+8 {
+		t.Fatalf("len %d, want %d", len(g), len(f)+8)
+	}
+	want := []byte{0x81, 0x00, 0x00, 0x05, 0x81, 0x00, 0x00, 0x07, 0x08, 0x00, 0x45}
+	if !bytes.Equal(g[12:23], want) {
+		t.Fatalf("tags % x, want % x", g[12:23], want)
+	}
+	if !bytes.Equal(g[:12], f[:12]) {
+		t.Fatal("MACs changed")
+	}
+	if _, err := tagVLAN(f, []uint16{4095}); err == nil {
+		t.Fatal("VID 4095 accepted")
+	}
+}

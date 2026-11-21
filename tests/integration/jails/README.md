@@ -88,3 +88,17 @@ Same build tag and rules as `rawping`:
 GOOS=freebsd GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -tags skep_testtasks \
     -o rawl2 ./tests/integration/jails/tools/rawl2
 ```
+
+`-vlan VID[,VID]` adds 802.1Q tags (outermost first) to any rawl2 frame.
+
+`tools/ngbpfgen` prints the ngctl(8) script that puts an ng_bpf(4)
+anti-spoofing filter between the ng_ether(4) `lower` and `upper` hooks of a
+guest port's host end, from (interface, MAC, IPv4, `static`|`dhcp`). It runs
+on the dev machine; the script is piped to `ngctl -f -` on the host. It is
+the method for the netgraph half of the probe
+([results/m7c-probe-netgraph.md](results/m7c-probe-netgraph.md)):
+
+```sh
+go run -tags skep_testtasks ./tests/integration/jails/tools/ngbpfgen \
+    -if epair0a -mac 02:5e:00:0a:00:10 -ip 192.0.2.10 [-mode dhcp] [-format asm]
+```

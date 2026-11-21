@@ -8,6 +8,8 @@ import (
 	"net"
 	"net/netip"
 	"os"
+	"strconv"
+	"strings"
 	"syscall"
 	"time"
 	"unsafe"
@@ -26,11 +28,25 @@ func main() {
 	src := flag.String("src", "", "IPv4 source (icmp)")
 	dst := flag.String("dst", "", "IPv4 destination (icmp)")
 	count := flag.Int("count", 1, "frames to send, one per second")
+	vlan := flag.String("vlan", "", "802.1Q VLAN IDs to insert, outermost first (e.g. 5 or 5,7)")
 	flag.Parse()
 
 	frame, err := build(*mode, *ethSrc, *ethDst, *op, *sha, *spa, *tha, *tpa, *src, *dst)
 	if err != nil {
 		fail(err)
+	}
+	if *vlan != "" {
+		var vids []uint16
+		for _, f := range strings.Split(*vlan, ",") {
+			v, err := strconv.ParseUint(f, 10, 16)
+			if err != nil {
+				fail(fmt.Errorf("-vlan: %w", err))
+			}
+			vids = append(vids, uint16(v))
+		}
+		if frame, err = tagVLAN(frame, vids); err != nil {
+			fail(err)
+		}
 	}
 	fd, err := openBPF(*ifName)
 	if err != nil {
