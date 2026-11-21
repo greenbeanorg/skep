@@ -1882,3 +1882,229 @@ The commit with this section and the record.
    tests.
 
 Only the answers were recorded in this session; no code was written.
+
+## 25. Amendment u built (2026-11-21, merrick only)
+
+Points 2–4 of amendment u. No hearst access, no deploy, no PR. Branch
+`feat/m7b-templates`.
+
+### 25.1 Probes before the build
+
+- **Does `exec.stop` have a timeout today (3d)? Yes.** The rendered
+  jail.conf has `exec.timeout = <start timeout>` (`renderJailConfMode`,
+  `containers.start_timeout_seconds`, default 120 s, the same 2 minutes as
+  the start), which jail(8) applies to `exec.stop`, and the runner kills
+  `jail -r` itself after start + stop + 30 s (`removeJail`). rc.shutdown
+  cannot hang indefinitely, so no timeout was added; the runner's own
+  timeout is now treated as a failure under 3a. What jail(8) does when
+  `exec.timeout` expires during `exec.stop` (that the removal then fails)
+  is from the manual, not observed: run 3, test u3.
+- **How task errors reach the API.** `tasks.Engine.outcome` keeps the
+  code only of a `*tasks.Failure`; anything else becomes `task_failed`
+  "see the agent log" (`internal/tasks/engine.go`). The containers
+  service's `failure()` turns a `*models.Error` into a `Failure`, so a
+  hostops `*models.Error` with a new code reaches `GET /tasks/{id}`. The
+  stop path already called `failure(err)`; the old `jail -r` error was a
+  `*CommandError`, hence `task_failed`.
+- **Warnings in the task model (3b): none.** A task has a result or an
+  error; `tasks.Reporter` has only `Progress`, always level `info`. So a
+  forced stop is in the agent log (`container_stop_forced`) and the
+  console log only, as 3b allows.
+- **The MAC check (4).** `insertNICs` (create via the submission
+  companion, update via `UpdateConfig` in the task) refused a VM's or
+  another jail's MAC with `invalid_request`. Clone also goes through
+  `normalizeNICs` with request MACs.
+
+### 25.2 Built
+
+- **Runner** (`exec_unix.go`, `templates_pkg.go`, `command.go`): new
+  `EnvCommand.OutputOnFailure`. On a failure or a timeout the run still
+  returns the marked stdout head/tail and writes the stderr tail to
+  `StderrTail` (amendment q's layout). A timeout is now a `*TimeoutError`
+  with the same message as before and, with `StderrLastLine`, the cleaned
+  last stderr line. A caller's cancellation still returns only
+  `ctx.Err()`.
+- **`removeJail`** (`jails_host.go`) takes the jail's root. When `jail -r`
+  fails (`*CommandError`), times out (`*TimeoutError`), or exits 0 but the
+  jail is still there, it logs `jail_remove_failed`, and for a removal
+  with `exec.stop` appends, in one write, `--- shutdown ---` + stdout,
+  `--- shutdown stderr ---` + stderr, then
+  `--- jail -r failed: <line> ---`. `<line>` is the cleaned last stderr
+  line (control and Cf characters removed, at most 200 bytes), `no jail
+  output on stderr`, `timed out after <d>, last line of stderr: <line>`
+  (or `, no jail output on stderr`), or `the jail was still there after
+  jail -r exited 0`. Then `forceRemove`: `jail -R skep-<id>` (env
+  `jailEnv`, 30 s, own context detached from the caller's cancellation so
+  a task that spent its time in `jail -r` still removes the jail), a
+  `jls` check that it is gone, the devfs on `<root>/dev` unmounted by fsid
+  (`removeLeftoverDevfs`), epairs destroyed, RCTL rules removed, and
+  `container_stop_forced` at WARN with `jail_output`. Cleanup failures
+  after a successful `jail -R` are logged, not failures. The console log
+  and the run directory stay.
+- **`container_remove_failed`** (`pkg/models`, 409 in `httpkit`): when
+  `jail -R` fails or leaves the jail, the message is `the jail could not
+  be removed: jail -r failed (jail output: "<line>"), and jail -R then
+  failed (exit status N, last line of stderr: "<line>"); it may still be
+  running`, both lines cleaned; logged as `container_remove_failed` at
+  ERROR. Stop and restart return it through `failure()`. The delete of a
+  quarantined jail keeps the code and adds `; the jail stays
+  quarantined`; other discard failures stay `container_quarantined`.
+- **Finding 2** (`containers/network.go`, `tasks.go`, `snapshots.go`,
+  `database/containerstore.go`): `checkMACsFree` after `normalizeNICs` in
+  create, update, and clone, sharing `macHeld` with the start's
+  `checkMACs`: 409 `container_mac_in_use`, details `slot`,
+  `mac_address`, `held_by_kind`, `held_by_id`, `held_by_name` (and
+  `container_id` on update). The refusal goes through `s.refuse`, so it
+  is audited like the other submission refusals. `insertNICs` returns the
+  same code with `held_by_kind` from its in-transaction check.
+- **jails.md login-class note** (point 2), following 24.4: `/etc/rc`,
+  `rc.local`, and `jexec -U root` get `root` (unlimited); rc.subr gives
+  services `daemon` (128 MiB), raised per service with `<name>_limits` or
+  `<name>_login_class`; `default` (64 KiB) elsewhere; RCTL
+  `memorylocked` stays the jail-wide bound.
+- **Docs**: jails.md (stop, forced removal, delete, MAC addresses, the
+  memlock note), security overview, architecture overview, OpenAPI (stop
+  and delete descriptions, `ContainerNICSpec.mac_address`, the
+  `VMConflict` code list), `web/src/api/schema.d.ts` regenerated, ADR 0010
+  implementation note.
+
+### 25.3 Tests (merrick)
+
+New or rewritten tests:
+
+| Test | What it checks |
+|---|---|
+| `hostops` `TestRemoveJailFailureForcesRemoval` (4 cases, real `/bin/sh` standing in for jail(8)) | jail -r fails: stop succeeds; console.log = rc output + both sections + failure line with the cleaned line (ESC/CR, 400-byte line, U+202E/U+202C, empty stderr); order jail -r → jail -R → devfs unmount (only the jail's FSID) → `rctl -r`; jail -R's env/timeout; `jail_remove_failed` and `container_stop_forced` logged without control characters. Replaces `TestRemoveJailFailureReportsLastStderrLine` |
+| `TestRemoveJailForcedRemovalFails` | jail -r and jail -R both fail: `container_remove_failed` with both cleaned lines (probe b's jail(8) line); no `container_stop_forced`; no unmount or rctl; console log still has the sections and the failure line. Also a jail -R that exits 0 but leaves the jail |
+| `TestRemoveJailTimeoutForcesRemoval` | a hanging rc.shutdown (300 ms runner timeout): what it wrote is appended, the line says `timed out after 300ms, last line of stderr: ...`, jail -R runs |
+| `TestRemoveJailCancelledIsNotForced` | a cancelled removal: no jail -R, nothing appended |
+| `TestDiscardFailureForcesRemovalWithoutLog` | a removal without exec.stop is forced too and appends nothing |
+| `TestRemoveJailLeftJailForcesRemoval` | jail -r exits 0, jail still there: sections + failure line, jail -R |
+| `TestFinishStartRefusalWithFailedRemovalIsQuarantined` (changed) | quarantine now needs jail -r (a `*TimeoutError`) and jail -R to fail |
+| `containers` `TestStopRemoveFailedIsCoded` | stop and restart tasks fail with `container_remove_failed` and the lines, not `task_failed`; container still running; a later stop works (hostfake `FailStop`) |
+| `TestDeleteRemoveFailedIsCoded` | delete of a quarantined jail: `container_remove_failed`, "stays quarantined", still `failed` |
+| `TestMACHeldRefusedAtCreateUpdateClone` | VM-held MAC (upper-case in the request) at create, update, clone: `container_mac_in_use`, `held_by_kind vm`, `held_by_name vm1`, API reply 409 with the details; jail-held MAC at create: `held_by_kind container`; nothing created or changed; the jail's own MAC is fine |
+| `database` `TestContainerStoreMACHeld` | the store's check: coded on insert and on `UpdateConfig`, for a VM and a jail |
+
+**Each change broken on purpose** (patched, tests run, file restored;
+script in the scratchpad):
+
+| Break | Failed |
+|---|---|
+| runner returns nothing on failure | FailureForcesRemoval, ForcedRemovalFails, TimeoutForcesRemoval |
+| no jail -R fallback (return the jail -r error) | FailureForcesRemoval, ForcedRemovalFails, TimeoutForcesRemoval, DiscardFailureForcesRemovalWithoutLog |
+| no failure line | FailureForcesRemoval, ForcedRemovalFails, TimeoutForcesRemoval, LeftJailForcesRemoval |
+| timeout as an untyped error | TimeoutForcesRemoval |
+| jail -R failure with another code | ForcedRemovalFails |
+| jail -R failure ignored | ForcedRemovalFails, FinishStartRefusalWithFailedRemovalIsQuarantined |
+| cancellation forced | CancelledIsNotForced |
+| no devfs unmount after jail -R | FailureForcesRemoval |
+| no RCTL cleanup after jail -R | FailureForcesRemoval |
+| delete wraps `container_remove_failed` as quarantined | DeleteRemoveFailedIsCoded |
+| stop returns the error without `failure()` | StopRemoveFailedIsCoded |
+| no submission MAC check | MACHeldRefusedAtCreateUpdateClone |
+| store check back to `invalid_request` | ContainerStoreMACHeld |
+| hostfake ignores `FailStop` | StopRemoveFailedIsCoded |
+
+**Checks:** `make web-check` 3 runs, each exit 0 (typecheck, `check-types`
+against the regenerated schema, 15 files / 112 tests). `go test ./...`
+exit 0 (40 packages ok). `make lint` exit 0 (gofmt, vet for Linux and
+FreeBSD, staticcheck for both; also run by the pre-push hook on
+`d4066c1`). `GOOS=freebsd GOARCH=amd64 go test -c ./internal/hostops/`
+built an ELF FreeBSD binary (compiled only). `make test` (race): **one
+run failed and I did not keep its output** (only the last three lines,
+`FAIL`, were shown); the next `make test` and three full
+`go test -race -count=1 ./...` runs passed, and the new and touched
+tests passed 15 times in a row under `-race`. The failing package is
+unknown.
+
+### 25.4 Changes not in the request (for approval)
+
+1. **The fallback covers every removal**, not only a stop: the removal
+   after a failed `/etc/rc`, and the discards without `exec.stop`
+   (refused, quarantined, half-started jails; these append nothing). So a
+   jail is now quarantined only when `jail -R` fails too, and a
+   quarantined jail's delete and the start-up sweep use `jail -R` when
+   `jail -r` fails. `jail -R` runs none of the jail's code, so
+   amendment n's guarantee holds.
+2. **`jail -r` exiting 0 but leaving the jail** (previously an uncoded
+   error) is forced the same way, with its own failure-line text.
+3. **A jail-held MAC** at create, update, and clone also gets 409
+   `container_mac_in_use` (`held_by_kind container`), not only a VM-held
+   one; and **clone** gets the check as well as create and update.
+4. **The store's MAC check** returns `container_mac_in_use` instead of
+   `invalid_request` (same transaction, race backstop).
+5. **The runner's timeout is a typed `*TimeoutError`** for every command
+   (same message); nothing matched on its type before.
+6. **`container_remove_failed` → 409** in `httpkit` (when a request is
+   refused with it; in practice it ends tasks).
+7. **A web UI hint** for `container_remove_failed` (`container.ts`, with
+   a test).
+8. **hostfake `FailStop`**, a test knob.
+9. **Delete of a quarantined jail** reports `container_remove_failed`
+   (with "the jail stays quarantined") rather than `container_quarantined`
+   when both commands failed, as 3c says for delete.
+
+### 25.5 Open points (not built; for a decision)
+
+1. **"run directory" in 3a.** Normal stop cleanup does not remove the
+   run directory (it holds `console.log`, which a stop must keep and
+   which now has the failure line); only delete removes it. The forced
+   path therefore keeps it too. If 3a meant removing it, the failure line
+   would be lost.
+2. **The timeout's failure line** reads `timed out after 2m40s, last line
+   of stderr: <line>`; 3a's format names only the stderr line.
+3. **A VM create with a jail-held MAC** is not refused: `vmstore.go`
+   counts only `vm_networks`. Out of scope here; a small change if wanted.
+4. **24.3 nit 3** (`learntMACs` comment says `Vlan1`): not touched.
+
+### 25.6 Hearst tests for run 3 (proposed, for approval)
+
+On `d4066c1` or later, deployed with `scripts/deploy-test.sh`; test jails
+only.
+
+- **u1 (failing rc.shutdown, probe b again):** in a test jail make
+  `/etc/rc.shutdown` end with `echo r3 exiting 1 >&2; exit 1`. Stop:
+  task **succeeds**; `jls -j` no jail; state `stopped`; console.log has
+  `--- shutdown ---`, `--- shutdown stderr ---` with `r3 exiting 1` and
+  jail(8)'s line, then `--- jail -r failed: jail: skep-…: /bin/sh
+  /etc/rc.shutdown jail: failed ---`; agent log `jail_remove_failed`
+  then `container_stop_forced` (WARN); no devfs on `<root>/dev`
+  (`mount -p`), no epair, no RCTL rules (`rctl jail:skep-<id>` empty);
+  `orphaned_devfs_removed` logged by the forced cleanup. Then start the
+  jail again (state `running`) and delete it after a normal stop.
+- **u2 (forced removal with control characters):** as u1 but
+  rc.shutdown writes `printf 'x\033[31m\342\200\256y\n' >&2` last: on
+  disk the stderr section keeps ESC and U+202E (`od`), the failure line
+  does not; the API's console-log has neither.
+- **u3 (hanging rc.shutdown, exec.timeout):** `containers.start_timeout_seconds`
+  is 120, so use a test jail whose rc.shutdown runs `sleep 600`: record
+  what jail(8) does at `exec.timeout` (120 s): whether `jail -r` fails
+  (then forced, failure line from jail(8)) or kills it and succeeds; the
+  stop finishes within about 2 minutes either way, the jail is gone, and
+  the line says which. Needs ~3 minutes.
+- **u4 (`container_remove_failed`):** not reachable on hearst without
+  making `jail -R` fail (it needs a jail the kernel cannot remove); left
+  to the merrick tests unless Andy has a method.
+- **u5 (delete of a quarantined jail still works):** as SR-06's delete
+  (run 2), to confirm the discard path with the new fallback.
+- **u6 (MAC held by a VM at create and update):** create with `fbsd1`'s
+  MAC: **409 `container_mac_in_use`**, `held_by_kind vm`,
+  `held_by_name fbsd1`, nothing created; update of a test jail's NIC to
+  that MAC: same 409, the NIC unchanged; clone with it: same 409. Another
+  jail's MAC at create: 409 with `held_by_kind container`.
+- **u7 (memlock note, documentation check):** in a running test jail,
+  `jexec -U root <jail> sh -c 'ulimit -l'` unlimited, `procstat -l` of
+  `cron` 131072 KB, and with `cron_limits="-l 300m"` and a cron restart,
+  300 MiB: confirms the jails.md text (24.4 already showed it; repeat only
+  if wanted).
+- **Unchanged:** the hostops test binary on hearst as an unprivileged
+  user should include `-test.run 'RemoveJail|DiscardFailure|Quarantined'`
+  (these use `/bin/sh`, no root).
+
+### 25.7 Commits
+
+`14ca73c` fix(jails): remove a jail with jail -R when jail -r fails;
+`e01f3ea` fix(containers): refuse a held MAC at create, update, and clone
+with 409; `d4066c1` docs(jails): forced removal, MAC 409, memlock login
+classes; and the commit with this section.
