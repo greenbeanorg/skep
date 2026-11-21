@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"unicode"
@@ -158,4 +160,63 @@ func TestBuildJailExecCleansStderr(t *testing.T) {
 		t.Fatalf("BuildJailExec = %v, %v", ran, err)
 	}
 	assertNoUnsafe(t, "the build command error", err.Error())
+}
+
+// Amendment s: the build's host-side pkg install, pkg info --raw, and
+// tar -x report their first stderr line cleaned.
+
+func dirtyFailure(name string) *CommandError {
+	return &CommandError{Name: name, ExitCode: 1, Stderr: dirtyStderr, Err: errors.New("exit status 1")}
+}
+
+func wantCleanedFailure(t *testing.T, what string, err error) {
+	t.Helper()
+	var ce *CommandError
+	if !errors.As(err, &ce) || ce.Stderr != "pkg: [31mfake ok2J done" || ce.ExitCode != 1 {
+		t.Fatalf("%s = %v", what, err)
+	}
+	assertNoUnsafe(t, what+" error", err.Error())
+}
+
+func TestPkgInstallCleansStderr(t *testing.T) {
+	h, run, mp := templateHost(t)
+	root := filepath.Join(mp, tplA)
+	work := filepath.Join(mp, ".work-"+tplA)
+	call := "pkg --rootdir " + root + " -o PKG_CACHEDIR=" + work + "/cache -o PKG_DBDIR=" + root +
+		"/var/db/pkg -o RUN_SCRIPTS=false -o PKG_TRIGGERS_ENABLE=false install -y FreeBSD-set-minimal"
+	run.answers[call] = dirtyFailure("pkg")
+	err := h.PkgInstall(context.Background(), "skeptest", tplA, []string{"FreeBSD-set-minimal"})
+	wantCleanedFailure(t, "PkgInstall", err)
+	if got := run.calls[len(run.calls)-1]; got != call {
+		t.Fatalf("pkg ran as %q", got)
+	}
+}
+
+func TestPkgScriptsCleansStderr(t *testing.T) {
+	h, run, mp := templateHost(t)
+	root := filepath.Join(mp, tplA)
+	call := "pkg --rootdir " + root + " -o PKG_DBDIR=" + root + "/var/db/pkg info --raw --raw-format json-compact -a"
+	run.answers[call] = dirtyFailure("pkg")
+	got, err := h.PkgScripts(context.Background(), "skeptest", tplA)
+	if got != nil {
+		t.Fatalf("PkgScripts returned %+v with an error", got)
+	}
+	wantCleanedFailure(t, "PkgScripts", err)
+}
+
+func TestExtractArchiveCleansStderr(t *testing.T) {
+	run := &script{answers: map[string]any{}}
+	call := "tar -x -p -f /dist/base.txz -C /skeptest/skep/templates/" + tplA
+	run.answers[call] = dirtyFailure("tar")
+	err := extractArchive(context.Background(), run, "/dist/base.txz", "/skeptest/skep/templates/"+tplA)
+	wantCleanedFailure(t, "extractArchive", err)
+	c := run.envCmds[0]
+	if run.calls[0] != call || c.Path != tarBinary || c.Timeout != tarTimeout ||
+		!slices.Equal(c.Env, []string{"PATH=/sbin:/bin:/usr/sbin:/usr/bin", "LC_ALL=C"}) {
+		t.Fatalf("tar ran as %q, %+v", run.calls[0], c)
+	}
+	run.answers[call] = ""
+	if err := extractArchive(context.Background(), run, "/dist/base.txz", "/skeptest/skep/templates/"+tplA); err != nil {
+		t.Fatalf("a successful tar -x: %v", err)
+	}
 }

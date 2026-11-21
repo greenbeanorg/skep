@@ -34,9 +34,9 @@ type CommandError struct {
 	ExitCode int
 	// Stderr is the first line of what the command wrote to stderr, or
 	// the last, cleaned by cleanLine, for a command run with
-	// EnvCommand.StderrLastLine. The first line of jail -c and of a
-	// command in a template build jail is cleaned too (cleanStderr,
-	// amendment r).
+	// EnvCommand.StderrLastLine. The first line of jail -c, of a command
+	// in a template build jail, and of the build's pkg install, pkg info
+	// --raw, and tar -x is cleaned too (cleanStderr, amendments r and s).
 	Stderr string
 	Err    error
 }
@@ -107,9 +107,11 @@ func unsafeRune(r rune) bool {
 }
 
 // cleanStderr runs the stderr line of a failed command through cleanLine
-// (amendment r): for commands whose stderr the jail's side can write, a
-// command in a template build jail, or jail(8) creating a jail, reported
-// in a task error. Any other error is returned as it is.
+// (amendments r and s): for commands whose stderr the jail's side or a
+// downloaded package or archive can write, reported in a task error: a
+// command in a template build jail, jail(8) creating a jail, and the
+// build's pkg install, pkg info --raw, and tar -x. Any other error is
+// returned as it is.
 func cleanStderr(err error) error {
 	var ce *CommandError
 	if errors.As(err, &ce) {

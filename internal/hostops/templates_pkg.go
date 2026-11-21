@@ -187,7 +187,9 @@ func (h *host) PkgInstall(ctx context.Context, pool, templateID string, packages
 	}
 	_, err = er.RunEnv(ctx, EnvCommand{Path: pkgBootstrap, Args: append(args, packages...),
 		Env: pkgEnv(p), Timeout: pkgInstallTimeout})
-	return err
+	// The first stderr line reaches the build's task error: cleaned
+	// (amendment s).
+	return cleanStderr(err)
 }
 
 // rawPackage is the part of pkg info --raw that the allowlist reads.
@@ -213,7 +215,8 @@ func (h *host) PkgScripts(ctx context.Context, pool, templateID string) ([]Packa
 			"info", "--raw", "--raw-format", "json-compact", "-a"},
 		Env: pkgEnv(p), Timeout: pkgInfoTimeout, MaxOutput: pkgInfoMaxOutput})
 	if err != nil {
-		return nil, err
+		// Cleaned for the build's task error (amendment s).
+		return nil, cleanStderr(err)
 	}
 	return parsePkgRaw(out)
 }
@@ -326,15 +329,21 @@ func (h *host) ExtractDist(ctx context.Context, pool, templateID string) (string
 	if err != nil {
 		return "", err
 	}
-	// bsdtar refuses absolute names and ".." and does not follow symbolic
-	// links it extracted (its secure defaults, without -P); -p keeps the
-	// owners, modes, and file flags of the base system.
-	_, err = er.RunEnv(ctx, EnvCommand{Path: tarBinary, Args: []string{"-x", "-p", "-f", archive, "-C", p.Root},
-		Env: []string{"PATH=/sbin:/bin:/usr/sbin:/usr/bin", "LC_ALL=C"}, Timeout: tarTimeout})
-	if err != nil {
+	if err := extractArchive(ctx, er, archive, p.Root); err != nil {
 		return "", err
 	}
 	return got, nil
+}
+
+// extractArchive runs tar -x of a checked archive into a template's root.
+// bsdtar refuses absolute names and ".." and does not follow symbolic
+// links it extracted (its secure defaults, without -P); -p keeps the
+// owners, modes, and file flags of the base system. A failure's first
+// stderr line is cleaned for the build's task error (amendment s).
+func extractArchive(ctx context.Context, er EnvRunner, archive, root string) error {
+	_, err := er.RunEnv(ctx, EnvCommand{Path: tarBinary, Args: []string{"-x", "-p", "-f", archive, "-C", root},
+		Env: []string{"PATH=/sbin:/bin:/usr/sbin:/usr/bin", "LC_ALL=C"}, Timeout: tarTimeout})
+	return cleanStderr(err)
 }
 
 // checkRootOwnedDir refuses a dist directory an unprivileged user could
