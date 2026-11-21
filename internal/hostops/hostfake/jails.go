@@ -473,6 +473,10 @@ func (j fakeJails) StopJail(_ context.Context, spec hostops.JailSpec) error {
 	f := j.f
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if _, ok := f.jails[spec.ContainerID]; ok && f.FailStop != nil {
+		f.record("jail -r %s failed", name)
+		return f.FailStop
+	}
 	if _, ok := f.jails[spec.ContainerID]; ok {
 		delete(f.jails, spec.ContainerID)
 		f.record("jail -r %s", name)

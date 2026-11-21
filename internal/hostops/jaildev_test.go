@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/greenbeanorg/skep/pkg/models"
 )
@@ -80,10 +81,13 @@ func TestCheckJailDev(t *testing.T) {
 
 // startedJail scripts what a jail just created by jail -c looks like: jls
 // reports good parameters, and nothing is moved in (no NICs).
+// testJailRoot is the root of the started jail of the tests.
+const testJailRoot = "/skeptest/skep/jail/" + ctrA
+
 func startedJail(t *testing.T) (*host, *script, string) {
 	t.Helper()
 	h, run, _ := jailHost(t)
-	root := "/skeptest/skep/jail/" + ctrA
+	root := testJailRoot
 	raw, err := json.Marshal(map[string]any{"jail-information": map[string]any{"jail": []any{goodParams(root)}}})
 	if err != nil {
 		t.Fatal(err)
@@ -322,7 +326,7 @@ func TestRemoveJailDestroysEpairsFirst(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := h.removeJail(context.Background(), name, conf, jailSpec(), true); err != nil {
+	if err := h.removeJail(context.Background(), name, conf, testJailRoot, jailSpec(), true); err != nil {
 		t.Fatal(err)
 	}
 	destroy := slices.Index(run.calls, "ifconfig epair0a destroy")
@@ -344,9 +348,15 @@ func TestFinishStartRefusalWithFailedRemovalIsQuarantined(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	run.answers["jail -f "+conf+" -r "+name] = errors.New("hostops: jail -r timed out")
+	// jail -r times out and the forced removal, jail -R, fails too
+	// (amendment u): only then is the jail quarantined.
+	run.answers["jail -f "+conf+" -r "+name] = &TimeoutError{Name: "jail", After: 160 * time.Second}
+	run.answers["jail -R "+name] = &CommandError{Name: "jail", ExitCode: 1, Stderr: "jail: busy", Err: errors.New("exit status 1")}
 	_, err = h.finishStart(context.Background(), jailSpec(), name, conf, root)
 	wantCode(t, err, models.CodeContainerQuarantined)
+	if !slices.Contains(run.calls, "jail -R "+name) {
+		t.Fatalf("no forced removal: %q", run.calls)
+	}
 	if !strings.Contains(err.Error(), "mem") || !strings.Contains(err.Error(), "timed out") {
 		t.Fatalf("the refusal does not give both causes: %v", err)
 	}

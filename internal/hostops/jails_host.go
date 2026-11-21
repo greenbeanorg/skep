@@ -553,7 +553,7 @@ func (h *host) finishStart(ctx context.Context, spec JailSpec, name, conf, root 
 	if err != nil {
 		h.log.Warn("hostops: /etc/rc failed in a jail; removing it", "event", "jail_rc_failed",
 			"container_id", spec.ContainerID, "error", err)
-		h.removeAfterFailedStart(name, conf, spec)
+		h.removeAfterFailedStart(name, conf, root, spec)
 		return 0, startFailed(spec, "the jail's /etc/rc failed or outlasted the start timeout, so the jail was stopped and removed (its output is in the console log): ", err)
 	}
 	jid, _ := strconv.Atoi(fmt.Sprint(params["jid"]))
@@ -714,7 +714,7 @@ func (h *host) discardJail(ctx context.Context, spec JailSpec, root string) erro
 	if err != nil {
 		return err
 	}
-	return h.removeJail(ctx, name, conf, spec, false)
+	return h.removeJail(ctx, name, conf, root, spec, false)
 }
 
 // DiscardJail implements Jails.
@@ -744,7 +744,7 @@ func (h *host) DiscardJail(ctx context.Context, spec JailSpec) error {
 // exec.stop, and then its epairs, on its own short context so a cancelled
 // request still cleans up. A failure is logged; the jail then shows as
 // running and can be stopped.
-func (h *host) removeAfterFailedStart(name, conf string, spec JailSpec) {
+func (h *host) removeAfterFailedStart(name, conf, root string, spec JailSpec) {
 	ctx, cancel := context.WithTimeout(context.Background(), spec.StopTimeout+spec.StartTimeout+jailCommandSlack)
 	defer cancel()
 	exists, err := h.jailExists(ctx, name)
@@ -752,7 +752,7 @@ func (h *host) removeAfterFailedStart(name, conf string, spec JailSpec) {
 		return
 	}
 	if exists {
-		if err := h.removeJail(ctx, name, conf, spec, true); err != nil {
+		if err := h.removeJail(ctx, name, conf, root, spec, true); err != nil {
 			h.log.Error("hostops: a jail left by a failed start could not be removed", "jail", name, "error", err)
 			return
 		}
@@ -764,7 +764,8 @@ func (h *host) removeAfterFailedStart(name, conf string, spec JailSpec) {
 // jail's own jail.conf (whose exec.stop, if any, runs) and confirms the
 // jail is gone. withStop says the jail.conf has exec.stop: then the
 // output jail -r returned (/etc/rc.shutdown's) is appended to the console
-// log (amendment p).
+// log (amendment p). root is the jail's root, for the leftover devfs a
+// forced removal leaves.
 //
 // The epairs go first (amendment k, "or its epair destroyed"): destroying
 // a host end destroys its jail end inside the running jail, so no jail end
@@ -772,7 +773,13 @@ func (h *host) removeAfterFailedStart(name, conf string, spec JailSpec) {
 // would return named skep<slot> (or whatever the jail's root renamed it
 // to), and two of them can share a name on the host (the probe of
 // amendment k). The jail's shutdown therefore runs without its NICs.
-func (h *host) removeJail(ctx context.Context, name, conf string, spec JailSpec, withStop bool) error {
+//
+// Skep must always be able to remove its jails (amendment u): when jail
+// -r fails, times out, or leaves the jail, the shutdown sections are
+// appended as for a successful stop, followed by a "--- jail -r failed:
+// ... ---" line, and the jail is removed with jail -R (forceRemove). A
+// caller's cancellation is returned as it is.
+func (h *host) removeJail(ctx context.Context, name, conf, root string, spec JailSpec, withStop bool) error {
 	er, err := h.envRunner()
 	if err != nil {
 		return err
@@ -787,52 +794,139 @@ func (h *host) removeJail(ctx context.Context, name, conf string, spec JailSpec,
 	// jail(8)'s own output: the head and tail of its standard output, and
 	// the tail of its standard error, kept in memory with markers where
 	// bytes were dropped, and never a failure for their size (amendments
-	// o, p, and q, SR-01).
+	// o, p, and q, SR-01); kept on a failure too (amendment u).
 	var stderr bytes.Buffer
-	out, err := er.RunEnv(ctx, EnvCommand{Path: jailBinary, Args: []string{"-f", conf, "-r", name},
+	out, runErr := er.RunEnv(ctx, EnvCommand{Path: jailBinary, Args: []string{"-f", conf, "-r", name},
 		Env: jailEnv, Timeout: spec.StartTimeout + spec.StopTimeout + jailCommandSlack,
-		MaxOutput: ShutdownLogPart, MarkOverflow: true, StderrLastLine: true, StderrTail: &stderr})
-	if err != nil {
-		return h.jailRemoveFailed(spec, err)
+		MaxOutput: ShutdownLogPart, MarkOverflow: true, StderrLastLine: true, StderrTail: &stderr, OutputOnFailure: true})
+	var failed string
+	if runErr == nil {
+		h.log.Debug("hostops: jail -r done", "container_id", spec.ContainerID, "output_bytes", len(out), "stderr_bytes", stderr.Len())
+		exists, err := h.jailExists(ctx, name)
+		if err != nil {
+			return err
+		}
+		if exists {
+			failed = "the jail was still there after jail -r exited 0"
+			runErr = fmt.Errorf("hostops: the jail %s is still there after jail -r", name)
+			h.log.Warn("hostops: jail -r left the jail", "event", "jail_remove_failed", "container_id", spec.ContainerID)
+		}
+	} else {
+		failed = h.jailRemoveFailed(spec, runErr)
+		if failed == "" {
+			return runErr
+		}
 	}
-	h.log.Debug("hostops: jail -r done", "container_id", spec.ContainerID, "output_bytes", len(out), "stderr_bytes", stderr.Len())
 	if withStop {
-		h.appendShutdownLog(spec.ContainerID, out, stderr.Bytes())
+		h.appendShutdownLog(spec.ContainerID, out, stderr.Bytes(), failed)
 	}
-	if exists, err := h.jailExists(ctx, name); err != nil {
-		return err
-	} else if exists {
-		return fmt.Errorf("hostops: the jail %s is still there after jail -r", name)
+	if runErr != nil {
+		return h.forceRemove(ctx, name, root, spec, withStop, failed)
 	}
 	// RCTL keeps rules on the name after the jail is gone. Rules left
 	// here are removed by the next start; the removal is not failed for
 	// them.
+	h.clearRulesAfterRemoval(ctx, spec)
+	return nil
+}
+
+// clearRulesAfterRemoval removes a removed jail's RCTL rules; a failure
+// is logged (the next start removes them) and never fails the removal.
+func (h *host) clearRulesAfterRemoval(ctx context.Context, spec JailSpec) {
 	if err := h.clearJailRules(ctx, spec.ContainerID); err != nil {
 		h.log.Error("hostops: the RCTL rules of a removed jail could not be removed", "event", "jail_rctl_left",
 			"container_id", spec.ContainerID, "error", err)
 	}
-	return nil
 }
 
-// jailRemoveFailed logs a failed jail -r and labels the stderr line in
-// its error as the jail's output: jail -r's stderr starts with what the
-// jail's /etc/rc.shutdown wrote, so its last line (jail(8)'s own error,
-// when there is one) may still be the jail's text (amendment p). Other
-// errors (a timeout) are returned as they are.
-func (h *host) jailRemoveFailed(spec JailSpec, err error) error {
+// jailRemoveFailed logs a jail -r that failed or timed out and returns
+// the text of its "--- jail -r failed: ... ---" line: the last line of
+// its stderr (cleaned: control and format characters removed, at most 200
+// bytes), which may be the jail's own output, since jail -r's stderr
+// starts with what /etc/rc.shutdown wrote (amendments p and u). It
+// returns "" for any other error (a caller's cancellation, a runner that
+// could not start jail(8)), which is not forced.
+func (h *host) jailRemoveFailed(spec JailSpec, err error) string {
 	var ce *CommandError
-	if !errors.As(err, &ce) {
+	var te *TimeoutError
+	switch {
+	case errors.As(err, &ce):
+		h.log.Warn("hostops: jail -r failed", "event", "jail_remove_failed", "container_id", spec.ContainerID,
+			"exit_code", ce.ExitCode, "jail_output", ce.Stderr)
+		if ce.Stderr == "" {
+			return "no jail output on stderr"
+		}
+		return ce.Stderr
+	case errors.As(err, &te):
+		h.log.Warn("hostops: jail -r timed out", "event", "jail_remove_failed", "container_id", spec.ContainerID,
+			"timeout", te.After.String(), "jail_output", te.Stderr)
+		if te.Stderr == "" {
+			return "timed out after " + te.After.String() + ", no jail output on stderr"
+		}
+		return "timed out after " + te.After.String() + ", last line of stderr: " + te.Stderr
+	}
+	return ""
+}
+
+// forceRemove removes a jail whose jail -r failed with jail -R, which
+// runs none of the jail's code and no exec.* command, then does the
+// cleanup jail -r would have done or that follows it: the devfs left on
+// <root>/dev (by fsid, amendment l), the epairs, and the RCTL rules. The
+// console log and the run directory stay. It runs on its own short
+// context, so a task that spent its time in jail -r still removes the
+// jail. If jail -R fails too, or leaves the jail, it returns
+// container_remove_failed with both commands' cleaned stderr lines
+// (amendment u).
+func (h *host) forceRemove(ctx context.Context, name, root string, spec JailSpec, withStop bool, failed string) error {
+	er, err := h.envRunner()
+	if err != nil {
 		return err
 	}
-	h.log.Warn("hostops: jail -r failed", "event", "jail_remove_failed", "container_id", spec.ContainerID,
-		"exit_code", ce.ExitCode, "jail_output", ce.Stderr)
-	labelled := *ce
-	if ce.Stderr == "" {
-		labelled.Stderr = "no jail output on stderr"
-	} else {
-		labelled.Stderr = "jail output, last line of stderr: " + strconv.Quote(ce.Stderr)
+	fctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), jailCommandSlack)
+	defer cancel()
+	_, err = er.RunEnv(fctx, EnvCommand{Path: jailBinary, Args: []string{"-R", name}, Env: jailEnv,
+		Timeout: jailCommandSlack, StderrLastLine: true})
+	if err == nil {
+		var exists bool
+		if exists, err = h.jailExists(fctx, name); err == nil && exists {
+			err = fmt.Errorf("hostops: the jail %s is still there after jail -R", name)
+		}
 	}
-	return &labelled
+	if err != nil {
+		var ce *CommandError
+		detail := err.Error()
+		output := ""
+		if errors.As(err, &ce) {
+			output = ce.Stderr
+			if ce.Stderr == "" {
+				detail = fmt.Sprintf("exit status %d, no output on stderr", ce.ExitCode)
+			} else {
+				detail = fmt.Sprintf("exit status %d, last line of stderr: %s", ce.ExitCode, strconv.Quote(ce.Stderr))
+			}
+		}
+		h.log.Error("hostops: jail -R failed after jail -r failed; the jail could not be removed", "event", "container_remove_failed",
+			"container_id", spec.ContainerID, "jail_output", failed, "jail_R_output", output, "error", err)
+		return &models.Error{Code: models.CodeContainerRemoveFailed,
+			Message: "the jail could not be removed: jail -r failed (jail output: " + strconv.Quote(failed) +
+				"), and jail -R then failed (" + detail + "); it may still be running",
+			Details: map[string]any{"container_id": spec.ContainerID}}
+	}
+	if root != "" {
+		if _, err := h.removeLeftoverDevfs(spec.ContainerID, root); err != nil {
+			h.log.Error("hostops: the devfs of a jail removed with jail -R could not be unmounted; the next start or delete tries again",
+				"event", "jail_devfs_left", "container_id", spec.ContainerID, "error", err)
+		}
+	}
+	if gone, err := h.DestroyJailInterfaces(fctx, spec.ContainerID); err != nil {
+		h.log.Error("hostops: the epairs of a jail removed with jail -R could not be destroyed", "container_id", spec.ContainerID, "error", err)
+	} else if len(gone) > 0 {
+		h.log.Info("hostops: destroyed the epairs of a jail removed with jail -R", "event", "jail_interfaces_destroyed",
+			"container_id", spec.ContainerID, "interfaces", gone)
+	}
+	h.clearRulesAfterRemoval(fctx, spec)
+	h.log.Warn("hostops: jail -r failed, so the jail was removed with jail -R", "event", "container_stop_forced",
+		"container_id", spec.ContainerID, "exec_stop", withStop, "jail_output", failed)
+	return nil
 }
 
 // ShutdownLogPart is how much of the head, and of the tail, of
@@ -847,13 +941,21 @@ const (
 	shutdownStderrMarker = "--- shutdown stderr ---\n"
 )
 
+// jailRemoveFailedLine is the line written after the shutdown sections
+// when jail -r failed (amendment u). failed is already cleaned, so it is
+// one line.
+func jailRemoveFailedLine(failed string) string {
+	return "--- jail -r failed: " + failed + " ---\n"
+}
+
 // appendShutdownLog appends the shutdown markers, out, and errOut to the
-// jail's console log. A failure is logged and never fails the removal
-// (amendments p and q).
-func (h *host) appendShutdownLog(containerID string, out, errOut []byte) {
+// jail's console log, and, when failed is not empty, the line
+// "--- jail -r failed: <failed> ---" (amendment u). A failure is logged
+// and never fails the removal (amendments p and q).
+func (h *host) appendShutdownLog(containerID string, out, errOut []byte, failed string) {
 	path, err := h.conf.JailRunPath(containerID, JailConsoleLog)
 	if err == nil {
-		err = appendShutdownOutput(path, out, errOut)
+		err = appendShutdownOutput(path, out, errOut, failed)
 	}
 	if err != nil {
 		h.log.Warn("hostops: the jail's shutdown output could not be written to its console log", "event", "jail_shutdown_log_failed",
@@ -863,10 +965,11 @@ func (h *host) appendShutdownLog(containerID string, out, errOut []byte) {
 
 // appendShutdownOutput appends to the file at path, created 0600 if
 // missing, the shutdown marker line, out, the stderr marker line, and
-// errOut, in one write. It never follows a symbolic link, never blocks on
-// a FIFO, and refuses anything but a regular file. Each marker starts on
-// a line of its own; both are written even when their part is empty.
-func appendShutdownOutput(path string, out, errOut []byte) error {
+// errOut, then, when failed is not empty, the failure line, in one
+// write. It never follows a symbolic link, never blocks on a FIFO, and
+// refuses anything but a regular file. Each marker starts on a line of
+// its own; both are written even when their part is empty.
+func appendShutdownOutput(path string, out, errOut []byte, failed string) error {
 	f, err := os.OpenFile(path, os.O_RDWR|os.O_APPEND|os.O_CREATE|syscall.O_NOFOLLOW|syscall.O_NONBLOCK|syscall.O_CLOEXEC, 0o600)
 	if err != nil {
 		return err
@@ -896,6 +999,12 @@ func appendShutdownOutput(path string, out, errOut []byte) error {
 	}
 	data = append(data, shutdownStderrMarker...)
 	data = append(data, errOut...)
+	if failed != "" {
+		if len(errOut) > 0 && errOut[len(errOut)-1] != '\n' {
+			data = append(data, '\n')
+		}
+		data = append(data, jailRemoveFailedLine(failed)...)
+	}
 	if _, err := f.Write(data); err != nil {
 		return err
 	}
@@ -914,11 +1023,11 @@ func (h *host) StopJail(ctx context.Context, spec JailSpec) error {
 	}
 	if exists {
 		// The jail.conf is written again with this stop's timeout.
-		conf, _, err := h.writeJailConf(ctx, spec, true)
+		conf, root, err := h.writeJailConf(ctx, spec, true)
 		if err != nil {
 			return err
 		}
-		if err := h.removeJail(ctx, name, conf, spec, true); err != nil {
+		if err := h.removeJail(ctx, name, conf, root, spec, true); err != nil {
 			return err
 		}
 	}

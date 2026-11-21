@@ -73,6 +73,13 @@ type EnvCommand struct {
 	// the command fails. A failed write to it is not an error (amendment q: jail -r, whose stderr is the jail's
 	// /etc/rc.shutdown's). It is not used with ConsoleLog.
 	StderrTail io.Writer
+	// OutputOnFailure makes a failed or timed-out run still return what
+	// it kept of standard output (the marked head and tail with
+	// MarkOverflow) alongside the error, and still write the stderr tail
+	// to StderrTail (amendment u: a failed jail -r appends rc.shutdown's
+	// output as a successful one does). A timeout is then a
+	// *TimeoutError. A run cancelled by its caller returns nothing.
+	OutputOnFailure bool
 	// ConsoleLog, when set, is an absolute path (created 0600, never
 	// through a link) that is truncated and receives standard output and
 	// standard error through a pipe the agent drains: the first

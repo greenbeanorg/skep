@@ -182,6 +182,7 @@ describe("containerErrorHint for the security review codes", () => {
   });
   it("explains a quarantined jail", () => {
     expect(containerErrorHint("container_quarantined")).toMatch(/quarantined/);
+    expect(containerErrorHint("container_remove_failed")).toMatch(/jail -R/);
   });
   it("explains the locked-memory total of amendment o", () => {
     expect(containerErrorHint("container_locked_memory_above_max")).toMatch(/max_locked_memory_bytes/);

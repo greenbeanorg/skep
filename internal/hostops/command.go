@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 	"unicode"
 	"unicode/utf8"
 )
@@ -49,6 +50,22 @@ func (e *CommandError) Error() string {
 }
 
 func (e *CommandError) Unwrap() error { return e.Err }
+
+// TimeoutError is a command the runner killed when its timeout, or its
+// caller's deadline, expired.
+type TimeoutError struct {
+	// Name is the base name of the binary.
+	Name  string
+	After time.Duration
+	// Stderr is the last line of standard error, cleaned by cleanLine,
+	// for a command run with EnvCommand.StderrLastLine (amendment u: a
+	// jail -r that timed out); empty otherwise.
+	Stderr string
+}
+
+func (e *TimeoutError) Error() string {
+	return fmt.Sprintf("hostops: %s timed out after %s", e.Name, e.After)
+}
 
 // stderrContains reports whether err is a failed command whose message
 // contains text.

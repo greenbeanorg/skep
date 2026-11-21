@@ -60,6 +60,10 @@ type runOpts struct {
 	// the jail's /etc/rc.shutdown's). Nothing is written to it when the
 	// command fails, and a failed write to it is not an error.
 	stderrTo io.Writer
+	// keepOnFail returns what was kept of standard output, and writes
+	// the stderr tail to stderrTo, on a failure or a timeout too
+	// (amendment u: a failed jail -r).
+	keepOnFail bool
 }
 
 // envRunOpts is how RunEnv runs an EnvCommand that has no ConsoleLog.
@@ -73,7 +77,7 @@ func envRunOpts(timeout time.Duration, c EnvCommand) runOpts {
 		over = overflowMark
 	}
 	return runOpts{timeout: timeout, limit: limit, over: over, env: c.Env,
-		stderrLast: c.StderrLastLine, stderrTo: c.StderrTail}
+		stderrLast: c.StderrLastLine, stderrTo: c.StderrTail, keepOnFail: c.OutputOnFailure}
 }
 
 // stderrTail is how much of the end of standard error is kept when the
@@ -116,11 +120,31 @@ func runCommand(ctx context.Context, o runOpts, path string, args ...string) ([]
 
 	if err := cmd.Run(); err != nil {
 		name := filepath.Base(path)
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			return nil, fmt.Errorf("hostops: %s timed out after %s", name, timeout)
-		}
-		if ctx.Err() != nil {
+		if ctx.Err() != nil && !errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			// Cancelled by the caller: nothing is kept.
 			return nil, ctx.Err()
+		}
+		// What was kept, for a caller that wants it on a failure too
+		// (amendment u). Writes to a bytes.Buffer do not fail, and a
+		// failed write to the caller's stderr writer is not an error.
+		var partial []byte
+		if o.keepOnFail {
+			if o.stderrTo != nil {
+				_ = keptErr.finish()
+			}
+			if o.over == overflowMark {
+				_ = headTail.finish()
+				partial = marked.Bytes()
+			} else {
+				partial = stdout.buf.Bytes()
+			}
+		}
+		var last string
+		if o.stderrLast {
+			last = cleanLine(lastLine(errTail.tail), maxStderrLine)
+		}
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return partial, &TimeoutError{Name: name, After: timeout, Stderr: last}
 		}
 		ce := &CommandError{Name: name, ExitCode: -1, Err: err}
 		var exit *exec.ExitError
@@ -128,12 +152,12 @@ func runCommand(ctx context.Context, o runOpts, path string, args ...string) ([]
 			ce.ExitCode = exit.ExitCode()
 		}
 		if o.stderrLast {
-			ce.Stderr = cleanLine(lastLine(errTail.tail), maxStderrLine)
+			ce.Stderr = last
 		} else {
 			line, _, _ := strings.Cut(strings.TrimSpace(stderr.buf.String()), "\n")
 			ce.Stderr = strings.TrimSpace(line)
 		}
-		return nil, ce
+		return partial, ce
 	}
 	if o.stderrTo != nil {
 		// The command succeeded: a failed write to the caller's writer

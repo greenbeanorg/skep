@@ -612,6 +612,12 @@ func (s *Service) runDelete(ctx context.Context, task tasks.Task, report tasks.R
 		// still there, without exec.stop, so none of its code runs.
 		report.Progress("removing the quarantined jail without running any of its code", nil)
 		if err := s.jails.DiscardJail(ctx, s.spec(c, 0)); err != nil {
+			var me *models.Error
+			if errors.As(err, &me) && me.Code == models.CodeContainerRemoveFailed {
+				// jail -r and jail -R both failed (amendment u).
+				return nil, failure(&models.Error{Code: me.Code, Message: me.Message + "; the jail stays quarantined",
+					Details: map[string]any{"container_id": c.ID}})
+			}
 			return nil, failure(&models.Error{Code: models.CodeContainerQuarantined,
 				Message: "the quarantined jail could not be removed: " + err.Error() + "; it stays quarantined",
 				Details: map[string]any{"container_id": c.ID}})

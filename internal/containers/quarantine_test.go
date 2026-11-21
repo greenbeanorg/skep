@@ -205,3 +205,61 @@ func TestStopOfJailStillRecordedStartingIsRefused(t *testing.T) {
 		t.Fatalf("a removal with exec.stop ran: %q", got)
 	}
 }
+
+// removeFailed is what hostops returns when jail -r and then jail -R
+// both failed (amendment u).
+func removeFailed(id string) error {
+	return &models.Error{Code: models.CodeContainerRemoveFailed,
+		Message: `the jail could not be removed: jail -r failed (jail output: "jail: skep-x: /bin/sh /etc/rc.shutdown jail: failed"), and jail -R then failed (exit status 1, last line of stderr: "jail: busy"); it may still be running`,
+		Details: map[string]any{"container_id": id}}
+}
+
+// A stop whose jail -r and jail -R both fail is a task failure with
+// container_remove_failed and the cleaned stderr lines in its message,
+// not the engine's generic task_failed (amendment u).
+func TestStopRemoveFailedIsCoded(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	c := f.create(models.ContainerCreate{Name: "rf1", TemplateID: f.minimal})
+	f.succeed(f.svc.Action(ctx, c.ID, models.ContainerAction{Action: "start"}, f.sub))
+	f.fake.Set(func(fk *hostfake.Fake) { fk.FailStop = removeFailed(c.ID) })
+	for _, act := range []string{"stop", "restart"} {
+		task, err := f.svc.Action(ctx, c.ID, models.ContainerAction{Action: act}, f.sub)
+		if err != nil {
+			t.Fatal(err)
+		}
+		done := f.wait(task.ID)
+		if done.Status != models.TaskFailed || done.ErrorCode != models.CodeContainerRemoveFailed ||
+			!strings.Contains(done.ErrorMessage, "jail: busy") || !strings.Contains(done.ErrorMessage, "/etc/rc.shutdown jail: failed") {
+			t.Fatalf("%s = %s %s %s", act, done.Status, done.ErrorCode, done.ErrorMessage)
+		}
+	}
+	// The jail is still there: the container is observed running.
+	if got, _ := f.svc.Container(ctx, c.ID); got.State != models.ContainerRunning {
+		t.Fatalf("after a failed stop: %s %q", got.State, got.StateDetail)
+	}
+	f.fake.Set(func(fk *hostfake.Fake) { fk.FailStop = nil })
+	f.succeed(f.svc.Action(ctx, c.ID, models.ContainerAction{Action: "stop"}, f.sub))
+}
+
+// A delete of a quarantined jail whose removal fails with
+// container_remove_failed keeps that code, says the jail stays
+// quarantined, and leaves the container failed (amendment u).
+func TestDeleteRemoveFailedIsCoded(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	c := f.quarantined("rf2")
+	f.fake.Set(func(fk *hostfake.Fake) { fk.FailDiscard = removeFailed(c.ID) })
+	task, err := f.svc.DeleteContainer(ctx, c.ID, f.sub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := f.wait(task.ID)
+	if done.Status != models.TaskFailed || done.ErrorCode != models.CodeContainerRemoveFailed ||
+		!strings.Contains(done.ErrorMessage, "jail: busy") || !strings.Contains(done.ErrorMessage, "stays quarantined") {
+		t.Fatalf("delete = %s %s %s", done.Status, done.ErrorCode, done.ErrorMessage)
+	}
+	if got, err := f.svc.Container(ctx, c.ID); err != nil || got.State != models.ContainerFailed {
+		t.Fatalf("after a failed delete: %+v %v", got, err)
+	}
+}

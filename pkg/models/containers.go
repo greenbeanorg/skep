@@ -100,6 +100,12 @@ const (
 	// delete or the agent's start-up sweep remove it without them
 	// (amendment n, SR-06).
 	CodeContainerQuarantined = "container_quarantined"
+	// CodeContainerRemoveFailed: a stop or delete could not remove the
+	// jail. jail -r failed (or timed out, or left the jail), and the
+	// removal without any of the jail's code that followed, jail -R,
+	// failed too. The message has the cleaned last stderr line of both
+	// (ADR 0010 amendment u).
+	CodeContainerRemoveFailed = "container_remove_failed"
 	// CodeContainerLockedMemoryAboveMax: limits.locked_memory is more
 	// than containers.max_locked_memory_bytes, the host's total for all
 	// running jails (amendment o, SR-04).

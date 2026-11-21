@@ -11,10 +11,13 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/greenbeanorg/skep/pkg/models"
 )
 
 // The console log of a jail start and the capped jail -r output (ADR 0010
@@ -332,6 +335,8 @@ func TestRunCommandMarkOverflow(t *testing.T) {
 type shutdownRunner struct {
 	*script
 	sh string
+	// timeout is jail -r's; 0 is a minute.
+	timeout time.Duration
 }
 
 func (s shutdownRunner) RunEnv(ctx context.Context, c EnvCommand) ([]byte, error) {
@@ -344,7 +349,11 @@ func (s shutdownRunner) RunEnv(ctx context.Context, c EnvCommand) ([]byte, error
 		s.onRun("jail " + strings.Join(c.Args, " "))
 	}
 	c.Env = testEnv
-	o := envRunOpts(time.Minute, c)
+	timeout := s.timeout
+	if timeout == 0 {
+		timeout = time.Minute
+	}
+	o := envRunOpts(timeout, c)
 	out, err := runCommand(ctx, o, testShell, "-c", s.sh)
 	var ce *CommandError
 	if errors.As(err, &ce) {
@@ -382,7 +391,7 @@ func TestStopJailShutdownOutputPastTheBudget(t *testing.T) {
 	const n = 2000 // about 124 KiB
 	h, run, conf, log := shutdownHost(t, shLoop(n), "rc output\n")
 	name := "skep-" + ctrA
-	if err := h.removeJail(context.Background(), name, conf, jailSpec(), true); err != nil {
+	if err := h.removeJail(context.Background(), name, conf, testJailRoot, jailSpec(), true); err != nil {
 		t.Fatalf("output past the budget failed the removal: %v", err)
 	}
 	var marked bool
@@ -417,7 +426,7 @@ func TestStopJailShutdownOutputPastTheBudget(t *testing.T) {
 func TestStopJailShutdownStderrPastTheBudget(t *testing.T) {
 	const n = 2000 // about 124 KiB on each stream
 	h, run, conf, log := shutdownHost(t, shLoop(n)+"; ( "+shLoop(n)+" ) >&2", "rc output\n")
-	if err := h.removeJail(context.Background(), "skep-"+ctrA, conf, jailSpec(), true); err != nil {
+	if err := h.removeJail(context.Background(), "skep-"+ctrA, conf, testJailRoot, jailSpec(), true); err != nil {
 		t.Fatalf("stderr past the budget failed the removal: %v", err)
 	}
 	var tail bool
@@ -468,7 +477,7 @@ func TestStopJailShutdownOutputUnderTheBudget(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			h, _, conf, log := shutdownHost(t, tc.sh, tc.rc)
-			if err := h.removeJail(context.Background(), "skep-"+ctrA, conf, jailSpec(), true); err != nil {
+			if err := h.removeJail(context.Background(), "skep-"+ctrA, conf, testJailRoot, jailSpec(), true); err != nil {
 				t.Fatal(err)
 			}
 			got, _ := os.ReadFile(log)
@@ -483,7 +492,7 @@ func TestStopJailShutdownOutputUnderTheBudget(t *testing.T) {
 // appends nothing to the console log.
 func TestDiscardAppendsNoShutdownOutput(t *testing.T) {
 	h, _, conf, log := shutdownHost(t, "echo nothing", "rc output\n")
-	if err := h.removeJail(context.Background(), "skep-"+ctrA, conf, jailSpec(), false); err != nil {
+	if err := h.removeJail(context.Background(), "skep-"+ctrA, conf, testJailRoot, jailSpec(), false); err != nil {
 		t.Fatal(err)
 	}
 	if got, _ := os.ReadFile(log); string(got) != "rc output\n" {
@@ -540,7 +549,7 @@ func TestShutdownLogWriteFailureStillRemoves(t *testing.T) {
 			h.log = slog.New(slog.NewTextHandler(&logged, nil))
 			name := "skep-" + ctrA
 			done := make(chan error, 1)
-			go func() { done <- h.removeJail(context.Background(), name, conf, jailSpec(), true) }()
+			go func() { done <- h.removeJail(context.Background(), name, conf, testJailRoot, jailSpec(), true) }()
 			select {
 			case err := <-done:
 				if err != nil {
@@ -654,61 +663,233 @@ func TestRunCommandStderrLastLine(t *testing.T) {
 	}
 }
 
-// A failed jail -r is reported with the last line of its stderr,
-// labelled as the jail's output in the error and in the log, the
-// error still a *CommandError with the exit code; nothing is appended to
-// the console log (amendment p).
-func TestRemoveJailFailureReportsLastStderrLine(t *testing.T) {
-	for _, tc := range []struct{ name, sh, wantErr, wantLog string }{
+// forcedHost is shutdownHost whose jail -R is answered by jailR (nil
+// for success) and makes the jail gone when it succeeds, with a devfs
+// left on the jail's root/dev for the forced removal to unmount.
+func forcedHost(t *testing.T, sh string, jailR error) (*host, *script, *fakeMounts, string, string) {
+	t.Helper()
+	h, run, conf, log := shutdownHost(t, sh, "rc output\n")
+	name := "skep-" + ctrA
+	if jailR != nil {
+		run.answers["jail -R "+name] = jailR
+	}
+	m := &fakeMounts{run: run, table: []fsMount{
+		{On: "/dev", FSType: "devfs", FSID: [2]int32{1, 1}},
+		{On: testJailRoot + "/dev", FSType: "devfs", FSID: [2]int32{7, 9}},
+	}}
+	h.mounts = m
+	// RACCT on, with one rule on the jail until rctl -r removes it.
+	sys := h.sys.(fakeSystem)
+	sys.oids[sysctlRacct], sys.oids[sysctlNCPU] = 1, 4
+	run.answers["rctl jail:"+name] = []any{"jail:" + name + ":maxproc:deny=100\n", ""}
+	// jail -r fails, so the jail stays until jail -R succeeds.
+	present := "12\n"
+	gone := &CommandError{Name: "jls", ExitCode: 1, Stderr: "jls: jail \"" + name + "\" not found", Err: errors.New("exit status 1")}
+	run.answers["jls -j "+name+" jid"] = present
+	run.onRun = func(call string) {
+		if call == "jail -R "+name && jailR == nil {
+			run.answers["jls -j "+name+" jid"] = gone
+		}
+	}
+	return h, run, m, conf, log
+}
+
+// A failed jail -r is no longer the end of a stop (amendment u): the
+// console log gets rc.shutdown's stdout and stderr sections as for a
+// successful stop, then "--- jail -r failed: <line> ---" with the last
+// stderr line cleaned (control and format characters removed, at most
+// 200 bytes); the jail is removed with jail -R, after jail -r; the
+// leftover devfs is unmounted by fsid and the RCTL rules are removed; the
+// stop succeeds, and the log has jail_remove_failed and
+// container_stop_forced with the cleaned line and no control characters.
+func TestRemoveJailFailureForcesRemoval(t *testing.T) {
+	for _, tc := range []struct{ name, sh, wantLine, wantSections string }{
 		{"control characters",
 			`echo 'Stopping cron.'; echo 'rc.shutdown: jail: everything is fine' >&2; printf 'jail: skep-x: \033[31mfailed\r\n' >&2; exit 1`,
-			`jail: exit status 1: jail output, last line of stderr: "jail: skep-x: [31mfailed"`,
-			`jail_output="jail: skep-x: [31mfailed"`},
+			"jail: skep-x: [31mfailed",
+			"--- shutdown ---\nStopping cron.\n--- shutdown stderr ---\nrc.shutdown: jail: everything is fine\njail: skep-x: \x1b[31mfailed\r\n"},
 		{"over-long line",
 			"printf '%s\\n' " + strings.Repeat("y", 400) + " >&2; exit 1",
-			`jail: exit status 1: jail output, last line of stderr: "` + strings.Repeat("y", 200) + `"`,
-			"jail_output=" + strings.Repeat("y", 200) + "\n"},
+			strings.Repeat("y", 200),
+			"--- shutdown ---\n--- shutdown stderr ---\n" + strings.Repeat("y", 400) + "\n"},
 		{"bidi override",
-			`printf 'jail: skep-x: \342\200\256deliaf\342\200\254 ok\n' >&2; exit 1`,
-			`jail: exit status 1: jail output, last line of stderr: "jail: skep-x: deliaf ok"`,
-			`jail_output="jail: skep-x: deliaf ok"`},
+			`printf 'jail: skep-x: \342\200\256deliaf\342\200\254 ok' >&2; exit 1`,
+			"jail: skep-x: deliaf ok",
+			"--- shutdown ---\n--- shutdown stderr ---\njail: skep-x: \u202edeliaf\u202c ok\n"},
 		{"empty stderr",
 			`echo 'Stopping cron.'; exit 1`,
-			"jail: exit status 1: no jail output on stderr",
-			`jail_output=""`},
+			"no jail output on stderr",
+			"--- shutdown ---\nStopping cron.\n--- shutdown stderr ---\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			h, run, conf, log := shutdownHost(t, tc.sh, "rc output\n")
+			h, run, m, conf, log := forcedHost(t, tc.sh, nil)
 			var logged bytes.Buffer
 			h.log = slog.New(slog.NewTextHandler(&logged, nil))
-			err := h.removeJail(context.Background(), "skep-"+ctrA, conf, jailSpec(), true)
-			var ce *CommandError
-			if !errors.As(err, &ce) || ce.ExitCode != 1 {
-				t.Fatalf("err = %#v", err)
+			name := "skep-" + ctrA
+			if err := h.removeJail(context.Background(), name, conf, testJailRoot, jailSpec(), true); err != nil {
+				t.Fatalf("a failed jail -r failed the removal: %v", err)
 			}
-			if err.Error() != tc.wantErr {
-				t.Fatalf("error:\n got %s\nwant %s", err, tc.wantErr)
+			want := "rc output\n" + tc.wantSections + "--- jail -r failed: " + tc.wantLine + " ---\n"
+			if got, _ := os.ReadFile(log); string(got) != want {
+				t.Fatalf("console.log:\n got %q\nwant %q", got, want)
 			}
-			l := logged.String()
-			if !strings.Contains(l, "event=jail_remove_failed") || !strings.Contains(l, tc.wantLog) {
-				t.Fatalf("log: %s", l)
+			r := slices.Index(run.calls, "jail -f "+conf+" -r "+name)
+			force := slices.Index(run.calls, "jail -R "+name)
+			unmount := slices.Index(run.calls, "unmount FSID:7:9")
+			rctl := slices.Index(run.calls, "rctl -r jail:"+name)
+			if r < 0 || force < r || unmount < force || rctl < force {
+				t.Fatalf("jail -r at %d, jail -R at %d, unmount at %d, rctl at %d: %q", r, force, unmount, rctl, run.calls)
 			}
-			if strings.ContainsAny(l, "\x1b\r\u202e\u202c") || strings.ContainsAny(err.Error(), "\x1b\r\u202e\u202c") {
-				t.Fatalf("control characters in the log: %q", l)
+			if !slices.Equal(m.unmounted, [][2]int32{{7, 9}}) {
+				t.Fatalf("unmounted %v, want only the jail's devfs", m.unmounted)
 			}
-			var last, tail bool
 			for _, c := range run.envCmds {
-				if c.Path == jailBinary && slices.Contains(c.Args, "-r") {
-					last, tail = c.StderrLastLine, c.StderrTail != nil
+				if c.Path == jailBinary && slices.Contains(c.Args, "-R") {
+					if !slices.Equal(c.Env, jailEnv) || c.Timeout != jailCommandSlack || !c.StderrLastLine {
+						t.Fatalf("jail -R: %+v", c)
+					}
+				}
+				if c.Path == jailBinary && slices.Contains(c.Args, "-r") && !c.OutputOnFailure {
+					t.Fatal("jail -r was not run with OutputOnFailure")
 				}
 			}
-			if !last || !tail {
-				t.Fatalf("jail -r: last-line mode %v, stderr tail %v", last, tail)
+			l := logged.String()
+			if !strings.Contains(l, "event=jail_remove_failed") || !strings.Contains(l, "event=container_stop_forced") {
+				t.Fatalf("log: %s", l)
 			}
-			if got, _ := os.ReadFile(log); string(got) != "rc output\n" {
-				t.Fatalf("console.log = %q", got)
+			if !strings.Contains(l, "jail_output="+strconv.Quote(tc.wantLine)) && !strings.Contains(l, "jail_output="+tc.wantLine+"\n") &&
+				!strings.Contains(l, "jail_output="+tc.wantLine+" ") {
+				t.Fatalf("log has not the cleaned line %q: %s", tc.wantLine, l)
+			}
+			if strings.ContainsAny(l, "\x1b\r\u202e\u202c") {
+				t.Fatalf("control characters in the log: %q", l)
 			}
 		})
+	}
+}
+
+// When jail -R fails too, the removal fails with container_remove_failed,
+// whose message has both cleaned stderr lines; the console log still has
+// the sections and the failure line, and nothing is unmounted (amendment
+// u).
+func TestRemoveJailForcedRemovalFails(t *testing.T) {
+	jailR := &CommandError{Name: "jail", ExitCode: 1, Stderr: "jail: skep-x: \u202ebusy", Err: errors.New("exit status 1")}
+	// The runner cleans the line; the fake gives it raw, so it is cleaned
+	// as the runner would.
+	jailR.Stderr = cleanLine(jailR.Stderr, maxStderrLine)
+	h, run, m, conf, log := forcedHost(t, `echo 'r2pb rc.shutdown exiting 1' >&2; printf 'jail: skep-x: /bin/sh /etc/rc.shutdown jail: \033failed\n' >&2; exit 1`, jailR)
+	var logged bytes.Buffer
+	h.log = slog.New(slog.NewTextHandler(&logged, nil))
+	name := "skep-" + ctrA
+	err := h.removeJail(context.Background(), name, conf, testJailRoot, jailSpec(), true)
+	wantCode(t, err, models.CodeContainerRemoveFailed)
+	msg := err.Error()
+	for _, want := range []string{`jail: skep-x: /bin/sh /etc/rc.shutdown jail: failed`, `jail: skep-x: busy`, "jail -R"} {
+		if !strings.Contains(msg, want) {
+			t.Fatalf("message %q lacks %q", msg, want)
+		}
+	}
+	if strings.ContainsAny(msg, "\x1b\u202e") || strings.ContainsAny(logged.String(), "\x1b\u202e") {
+		t.Fatalf("control characters: %q", msg)
+	}
+	if !strings.Contains(logged.String(), "event=container_remove_failed") || strings.Contains(logged.String(), "container_stop_forced") {
+		t.Fatalf("log: %s", logged.String())
+	}
+	if len(m.unmounted) != 0 || slices.Contains(run.calls, "rctl -r jail:"+name) {
+		t.Fatalf("cleanup ran after a failed jail -R: %v %q", m.unmounted, run.calls)
+	}
+	want := "rc output\n--- shutdown ---\n--- shutdown stderr ---\nr2pb rc.shutdown exiting 1\njail: skep-x: /bin/sh /etc/rc.shutdown jail: \x1bfailed\n" +
+		"--- jail -r failed: jail: skep-x: /bin/sh /etc/rc.shutdown jail: failed ---\n"
+	if got, _ := os.ReadFile(log); string(got) != want {
+		t.Fatalf("console.log:\n got %q\nwant %q", got, want)
+	}
+	// A jail -R that exits 0 but leaves the jail is the same failure.
+	h, _, _, conf, _ = forcedHost(t, "exit 1", nil)
+	h.run.(shutdownRunner).onRun = nil
+	err = h.removeJail(context.Background(), name, conf, testJailRoot, jailSpec(), true)
+	wantCode(t, err, models.CodeContainerRemoveFailed)
+	if !strings.Contains(err.Error(), "still there after jail -R") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+// A jail -r that outlasts its timeout (rc.shutdown hanging) is a failure
+// under amendment u: what it wrote before is appended, the failure line
+// says it timed out and gives its last stderr line, and jail -R removes
+// the jail.
+func TestRemoveJailTimeoutForcesRemoval(t *testing.T) {
+	h, run, _, conf, log := forcedHost(t, `echo 'Stopping sshd.'; echo 'sshd: waiting' >&2; exec sleep 30`, nil)
+	sr := h.run.(shutdownRunner)
+	sr.timeout = 300 * time.Millisecond
+	h.run = sr
+	name := "skep-" + ctrA
+	start := time.Now()
+	if err := h.removeJail(context.Background(), name, conf, testJailRoot, jailSpec(), true); err != nil {
+		t.Fatalf("a timed-out jail -r failed the removal: %v", err)
+	}
+	if d := time.Since(start); d > 10*time.Second {
+		t.Fatalf("took %s", d)
+	}
+	want := "rc output\n--- shutdown ---\nStopping sshd.\n--- shutdown stderr ---\nsshd: waiting\n" +
+		"--- jail -r failed: timed out after 300ms, last line of stderr: sshd: waiting ---\n"
+	if got, _ := os.ReadFile(log); string(got) != want {
+		t.Fatalf("console.log:\n got %q\nwant %q", got, want)
+	}
+	if !slices.Contains(run.calls, "jail -R "+name) {
+		t.Fatalf("no jail -R: %q", run.calls)
+	}
+}
+
+// A removal the caller cancels is not forced: no jail -R, nothing
+// appended.
+func TestRemoveJailCancelledIsNotForced(t *testing.T) {
+	h, run, _, conf, log := forcedHost(t, `exec sleep 30`, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	run.onRun = func(call string) {
+		if strings.Contains(call, " -r ") {
+			go func() { time.Sleep(100 * time.Millisecond); cancel() }()
+		}
+	}
+	err := h.removeJail(ctx, "skep-"+ctrA, conf, testJailRoot, jailSpec(), true)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v", err)
+	}
+	if slices.ContainsFunc(run.calls, func(c string) bool { return strings.HasPrefix(c, "jail -R") }) {
+		t.Fatalf("a cancelled removal was forced: %q", run.calls)
+	}
+	if got, _ := os.ReadFile(log); string(got) != "rc output\n" {
+		t.Fatalf("console.log = %q", got)
+	}
+}
+
+// A discard (no exec.stop: none of the jail's code may run) whose jail -r
+// fails is forced the same way, and appends nothing to the console log.
+func TestDiscardFailureForcesRemovalWithoutLog(t *testing.T) {
+	h, run, _, conf, log := forcedHost(t, `echo 'jail: failed' >&2; exit 1`, nil)
+	if err := h.removeJail(context.Background(), "skep-"+ctrA, conf, testJailRoot, jailSpec(), false); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(run.calls, "jail -R skep-"+ctrA) {
+		t.Fatalf("no jail -R: %q", run.calls)
+	}
+	if got, _ := os.ReadFile(log); string(got) != "rc output\n" {
+		t.Fatalf("console.log = %q", got)
+	}
+}
+
+// jail -r exits 0 but the jail is still there: the sections and a failure
+// line are appended, and jail -R removes it.
+func TestRemoveJailLeftJailForcesRemoval(t *testing.T) {
+	h, run, _, conf, log := forcedHost(t, `echo bye`, nil)
+	if err := h.removeJail(context.Background(), "skep-"+ctrA, conf, testJailRoot, jailSpec(), true); err != nil {
+		t.Fatal(err)
+	}
+	want := "rc output\n--- shutdown ---\nbye\n--- shutdown stderr ---\n--- jail -r failed: the jail was still there after jail -r exited 0 ---\n"
+	if got, _ := os.ReadFile(log); string(got) != want {
+		t.Fatalf("console.log = %q", got)
+	}
+	if !slices.Contains(run.calls, "jail -R skep-"+ctrA) {
+		t.Fatalf("no jail -R: %q", run.calls)
 	}
 }
 

@@ -75,6 +75,9 @@ type Fake struct {
 	// FailDiscard makes DiscardJail fail, leaving the jail.
 	QuarantineStart bool
 	FailDiscard     error
+	// FailStop makes StopJail fail with it, leaving the jail running (as
+	// hostops does when jail -r and jail -R both fail: amendment u).
+	FailStop error
 	// PresentMACs simulates MAC addresses already present on a bridge (its
 	// own, a member's, or learnt), by bridge (amendment n, SR-03).
 	PresentMACs map[string][]string
