@@ -129,6 +129,21 @@ describe("EditContainerDialog", () => {
     await user.click(await screen.findByRole("button", { name: "Save" }));
     expect(await screen.findByText(/Stop the jail first/)).toBeInTheDocument();
   });
+
+  it("shows a disk quota below usage with its message and hint (amendment w)", async () => {
+    const message = "limits.disk_quota (104857600 bytes) is below what the jail's root already references (138412032 bytes)";
+    renderEdit(jail(), {
+      [PUT]: {
+        status: 422,
+        body: { error: { code: "container_disk_quota_below_usage", message, details: { disk_quota: 104857600, referenced_bytes: 138412032 } } },
+      },
+    });
+    await screen.findByRole("dialog");
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Save" }));
+    expect(await screen.findByText(/already holds more than this quota/)).toBeInTheDocument();
+    expect(screen.getByText(/138412032 bytes/)).toBeInTheDocument();
+  });
 });
 
 describe("the Edit button", () => {

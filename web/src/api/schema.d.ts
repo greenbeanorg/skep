@@ -949,8 +949,13 @@ export interface paths {
          *     start; afterwards a change is `container_started` (ADR 0010
          *     decision 13). An empty `ssh_authorized_key` removes the key.
          *     `limits` replaces every limit (absent ones are removed); the disk
-         *     quota changes at once, the RCTL limits at the next start. A quota
-         *     below what the jail already references is refused.
+         *     quota changes at once, the RCTL limits at the next start. A new
+         *     quota below what the jail's root already references is refused
+         *     before any task is submitted, with
+         *     `container_disk_quota_below_usage` (422; details `disk_quota` and
+         *     `referenced_bytes`); if the root grows past it between the
+         *     request and the task, the task fails with the same code (ADR 0010
+         *     amendment w).
          */
         put: operations["updateContainer"];
         post?: never;
@@ -1606,7 +1611,9 @@ export interface components {
              *     without RACCT, and snapshots do not count against it. It
              *     includes the data the root shares with its template (about
              *     78 MiB for a minimal template), so the room left for the
-             *     jail's own data is the quota less that.
+             *     jail's own data is the quota less that. An update to a quota
+             *     below what the root already references is refused with
+             *     `container_disk_quota_below_usage`.
              */
             disk_quota?: components["schemas"]["ByteSize"];
         };
@@ -2436,7 +2443,8 @@ export interface components {
          *     `release_unsupported` (no allowlist for the host's release), and
          *     for jails `container_ssh_unavailable`,
          *     `mlock_requires_memory_limit`, `clone_addressing_required`,
-         *     `container_mac_invalid`, `container_locked_memory_above_max`.
+         *     `container_mac_invalid`, `container_locked_memory_above_max`,
+         *     `container_disk_quota_below_usage`.
          *     A build task can also fail with `template_script_unknown`,
          *     `template_trigger_left`, `template_host_changed`,
          *     `template_build_failed`, `template_archive_mismatch`, or

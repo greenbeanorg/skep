@@ -255,3 +255,54 @@ func TestLockedMemoryReservation(t *testing.T) {
 		t.Fatalf("reservations left: %v", f.svc.lockedStarting)
 	}
 }
+
+// A disk quota below what the jail's root already references is refused
+// at submission with container_disk_quota_below_usage, before any task
+// exists (amendment w); one at or above it is accepted and set. The fake
+// template, and so a new jail's root, references 132 MiB.
+func TestUpdateQuotaBelowUsage(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	c := f.create(models.ContainerCreate{Name: "q", TemplateID: f.minimal, Limits: &models.ContainerLimits{DiskQuota: 1 << 30}})
+	const referenced = int64(132 << 20)
+	tasksBefore := f.count(`SELECT COUNT(*) FROM tasks WHERE type = ?`, models.TaskContainerUpdate)
+
+	// Above the 64 MiB minimum, below what the root references.
+	_, err := f.svc.UpdateContainer(ctx, c.ID, models.ContainerUpdate{Limits: &models.ContainerLimits{DiskQuota: 100 << 20}}, f.sub)
+	wantCode(t, err, models.CodeContainerDiskQuotaBelowUsage)
+	var me *models.Error
+	errors.As(err, &me)
+	if me.Details["referenced_bytes"] != referenced || me.Details["disk_quota"] != int64(100<<20) || me.Details["container_id"] != c.ID {
+		t.Fatalf("details = %v", me.Details)
+	}
+	// One byte short is refused too, with other changes in the request.
+	host := "renamed"
+	_, err = f.svc.UpdateContainer(ctx, c.ID, models.ContainerUpdate{Hostname: &host,
+		Limits: &models.ContainerLimits{DiskQuota: models.ByteSize(referenced - 1)}}, f.sub)
+	wantCode(t, err, models.CodeContainerDiskQuotaBelowUsage)
+	// No task was submitted; each refusal is audited as denied; nothing
+	// changed.
+	if n := f.count(`SELECT COUNT(*) FROM tasks WHERE type = ?`, models.TaskContainerUpdate); n != tasksBefore {
+		t.Fatalf("%d update tasks, want %d", n, tasksBefore)
+	}
+	if n := f.count(`SELECT COUNT(*) FROM audit_log WHERE outcome = 'denied' AND resource_id = ? AND details LIKE '%' || ? || '%'`,
+		c.ID, models.CodeContainerDiskQuotaBelowUsage); n != 2 {
+		t.Fatalf("%d denied audit entries, want 2", n)
+	}
+	for _, call := range f.fake.Calls() {
+		if strings.HasPrefix(call, "zfs set refquota=") && !strings.HasPrefix(call, "zfs set refquota=1073741824 ") {
+			t.Fatalf("a refused quota reached the host: %s", call)
+		}
+	}
+	if got, err := f.svc.Container(ctx, c.ID); err != nil || got.Limits.DiskQuota != 1<<30 || got.Hostname != "q" {
+		t.Fatalf("after the refusals: %+v %v", got, err)
+	}
+
+	// Exactly what the root references is accepted and set.
+	f.succeed(f.svc.UpdateContainer(ctx, c.ID, models.ContainerUpdate{Limits: &models.ContainerLimits{DiskQuota: models.ByteSize(referenced)}}, f.sub))
+	if got, _ := f.svc.Container(ctx, c.ID); got.Limits.DiskQuota != models.ByteSize(referenced) {
+		t.Fatalf("quota = %d, want %d", got.Limits.DiskQuota, referenced)
+	}
+	// Removing the quota needs no check.
+	f.succeed(f.svc.UpdateContainer(ctx, c.ID, models.ContainerUpdate{Limits: &models.ContainerLimits{}}, f.sub))
+}

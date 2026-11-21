@@ -491,6 +491,13 @@ func (s *Service) normalizeUpdate(ctx context.Context, id string, req models.Con
 	} else if running {
 		return p, notStopped(c)
 	}
+	// A new quota below what the root references would fail in the task
+	// (amendment w); a quota that is removed or unchanged needs no look.
+	if q := int64(p.Limits.DiskQuota); q > 0 && p.Limits.DiskQuota != c.Limits.DiskQuota {
+		if err := s.checkQuotaUsage(ctx, c, q); err != nil {
+			return p, err
+		}
+	}
 	return p, nil
 }
 

@@ -153,7 +153,9 @@ func TestSetJailQuota(t *testing.T) {
 	}
 	run.answers["zfs set refquota=67108864 "+ds] = &CommandError{Name: "zfs", ExitCode: 1,
 		Stderr: "cannot set property for '" + ds + "': size is less than current used or reserved space", Err: errors.New("exit status 1")}
-	wantCode(t, h.SetJailQuota(ctx, "skeptest", ctrA, 64<<20), models.CodeInvalidRequest)
+	// ZFS's refusal (the root grew after the request was accepted) has
+	// the same code as the refusal at submission (amendment w).
+	wantCode(t, h.SetJailQuota(ctx, "skeptest", ctrA, 64<<20), models.CodeContainerDiskQuotaBelowUsage)
 	// A dataset naming another owner is not touched.
 	f[17] = vmA
 	run.answers["zfs list -H -p -t filesystem,volume -o "+datasetColumns+" -r "+ds] = strings.Join(f, "\t") + "\n"

@@ -230,7 +230,7 @@ func (h *host) SetJailQuota(ctx context.Context, pool, containerID string, bytes
 	}
 	if _, err := h.run.Run(ctx, zfsBinary, "set", "refquota="+value, ds); err != nil {
 		if stderrContains(err, "less than current used") || stderrContains(err, "size is less than") {
-			return models.Invalid(fmt.Sprintf("the disk quota is below what the jail's root already uses (%d bytes)", d.ReferencedBytes))
+			return models.DiskQuotaBelowUsage(containerID, bytes, d.ReferencedBytes)
 		}
 		return err
 	}

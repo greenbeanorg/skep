@@ -63,7 +63,10 @@ func (j fakeJails) CreateJailRoot(_ context.Context, pool, templateID, container
 		return hostops.Dataset{}, fmt.Errorf("hostfake: the jail dataset %s already exists", ds)
 	}
 	f.txg++
-	d := hostops.Dataset{Name: ds, Type: "filesystem", ContainerID: containerID, Origin: origin, CreateTxg: f.txg}
+	// A clone references its origin's data, as in ZFS (the disk quota
+	// check of amendment w reads it).
+	d := hostops.Dataset{Name: ds, Type: "filesystem", ContainerID: containerID, Origin: origin,
+		ReferencedBytes: snap.ReferencedBytes, CreateTxg: f.txg}
 	f.datasets[ds] = d
 	snap.Clones = append(snap.Clones, ds)
 	f.snaps[origin] = snap
@@ -589,7 +592,7 @@ func (j fakeJails) SetJailQuota(_ context.Context, pool, containerID string, byt
 		return fmt.Errorf("the jail dataset %s: %w", ds, models.ErrNotFound)
 	}
 	if bytes > 0 && bytes < d.ReferencedBytes {
-		return models.Invalid("the disk quota is below what the jail's root already uses")
+		return models.DiskQuotaBelowUsage(containerID, bytes, d.ReferencedBytes)
 	}
 	d.RefQuotaBytes = bytes
 	f.datasets[ds] = d

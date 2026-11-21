@@ -137,7 +137,8 @@ type Jails interface {
 	JailUsage(ctx context.Context, containerID string) (JailUsage, error)
 	// SetJailQuota sets refquota on a jail's root (0 removes it), after
 	// checking that the dataset carries the container's ID. A quota
-	// below what the root already references is invalid_request.
+	// below what the root already references is
+	// container_disk_quota_below_usage (amendment w).
 	SetJailQuota(ctx context.Context, pool, containerID string, bytes int64) error
 }
 

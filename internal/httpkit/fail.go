@@ -85,6 +85,7 @@ var StatusForCode = map[string]int{
 
 	models.CodeContainerLockedMemoryAboveMax:  http.StatusUnprocessableEntity,
 	models.CodeContainerLockedMemoryExhausted: http.StatusConflict,
+	models.CodeContainerDiskQuotaBelowUsage:   http.StatusUnprocessableEntity,
 }
 
 // Fail maps a service error to an error response. Internal error text is

@@ -1,6 +1,9 @@
 package models
 
-import "time"
+import (
+	"fmt"
+	"time"
+)
 
 // Jails (ADR 0010 decisions 8, 9, 12, and 13). A container is a FreeBSD
 // jail on a ZFS clone of a template's @skep-base, named skep-<id>, with its
@@ -115,7 +118,23 @@ const (
 	// is more than containers.max_locked_memory_bytes (amendment o,
 	// SR-04).
 	CodeContainerLockedMemoryExhausted = "container_locked_memory_exhausted"
+	// CodeContainerDiskQuotaBelowUsage: an update's limits.disk_quota is
+	// below what the jail's root already references, so ZFS would refuse
+	// the refquota (amendment w). Refused at submission; a task that
+	// meets it (the root grew after the request was accepted) fails with
+	// it too.
+	CodeContainerDiskQuotaBelowUsage = "container_disk_quota_below_usage"
 )
+
+// DiskQuotaBelowUsage is the container_disk_quota_below_usage refusal of
+// a disk quota below what the jail's root already references (ADR 0010
+// amendment w). referenced is ZFS's referenced value of the root; the
+// quota (refquota) does not count snapshots.
+func DiskQuotaBelowUsage(containerID string, quota, referenced int64) *Error {
+	return &Error{Code: CodeContainerDiskQuotaBelowUsage,
+		Message: fmt.Sprintf("limits.disk_quota (%d bytes) is below what the jail's root already references (%d bytes); give at least that much, or remove data inside the jail first", quota, referenced),
+		Details: map[string]any{"container_id": containerID, "disk_quota": quota, "referenced_bytes": referenced}}
+}
 
 // IPv4 addressing modes of a jail NIC (decision 10).
 const (

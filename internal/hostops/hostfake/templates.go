@@ -118,7 +118,7 @@ func (t fakeTemplates) FinishTemplate(_ context.Context, pool, id string) (hosto
 	f.datasets[p.Dataset] = d
 	f.txg++
 	snap := p.Dataset + "@" + hostops.BaseSnapshot
-	f.snaps[snap] = hostops.Dataset{Name: snap, Type: "snapshot", TemplateID: id, CreateTxg: f.txg}
+	f.snaps[snap] = hostops.Dataset{Name: snap, Type: "snapshot", TemplateID: id, ReferencedBytes: d.ReferencedBytes, CreateTxg: f.txg}
 	f.record("zfs snapshot %s", snap)
 	return d, nil
 }

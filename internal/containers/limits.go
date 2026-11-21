@@ -69,6 +69,32 @@ func validLimits(l models.ContainerLimits, cpus int) error {
 	return nil
 }
 
+// checkQuotaUsage refuses a disk quota below what the jail's root already
+// references with container_disk_quota_below_usage (422), before the
+// update task is accepted (amendment w): ZFS refuses such a refquota, so
+// the task could only fail. It reads the pool inventory, as monitoring
+// does. A root missing from the inventory is left to the task, whose
+// SetJailQuota reports it.
+func (s *Service) checkQuotaUsage(ctx context.Context, c models.Container, quota int64) error {
+	root, err := s.conf.OwnerDataset(c.Pool, jailOwner(c.ID))
+	if err != nil {
+		return err
+	}
+	list, err := s.zfs.Inventory(ctx, c.Pool)
+	if err != nil {
+		return err
+	}
+	for _, d := range list {
+		if d.Name == root && !d.IsSnapshot() && d.ContainerID == c.ID {
+			if quota < d.ReferencedBytes {
+				return models.DiskQuotaBelowUsage(c.ID, quota, d.ReferencedBytes)
+			}
+			return nil
+		}
+	}
+	return nil
+}
+
 // MaxLockedMemory is the total locked_memory of all running jails
 // (amendment o, SR-04): containers.max_locked_memory_bytes when it is
 // set, otherwise a quarter of physical memory. Physical memory the agent
