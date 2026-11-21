@@ -512,9 +512,10 @@ Skep fixes and nobody can change through the API
   removes Unicode format characters and C0 and C1 control characters
   except newline and tab from what it returns (amendment r), so neither
   the web UI's `<pre>` nor a terminal can be made to reorder the text or
-  move the cursor. The first stderr line of a failed `jail -c` and of a
-  failed command in a template build jail, which reach task errors, are
-  cleaned the same way as `jail -r`'s line below. When `jail -r` fails, the error and the log carry
+  move the cursor. The first stderr line of a failed `jail -c`, of a
+  failed command in a template build jail, and of the build's failed
+  `pkg install`, `pkg info --raw`, and `tar -x` (amendment s), which
+  reach task errors, are cleaned the same way as `jail -r`'s line below. When `jail -r` fails, the error and the log carry
   only the last line of its stderr, with control characters and Unicode
   format characters (category Cf, including the bidirectional overrides
   U+202A–U+202E and U+2066–U+2069) removed, at most 200 bytes,

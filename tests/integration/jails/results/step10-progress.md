@@ -1429,3 +1429,82 @@ output; and the docs commit with this section.
 
 No code was written in this session; point 2 of this list is the next
 build.
+
+## 21. Amendment s built (2026-11-21, merrick only)
+
+Point 2 of section 20.7, as decided in amendment s. Nothing ran on
+hearst; no API calls against it; no deploy; no PR. The code fitted the
+amendment; nothing was stopped on.
+
+### 21.1 Built
+
+1. **The build's host-side stderr lines are cleaned** (`b97480b`).
+   `PkgInstall` (`pkg install`), `PkgScripts` (`pkg info --raw`), and
+   `ExtractDist` (`tar -x`) in `hostops/templates_pkg.go` return a failure
+   through `cleanStderr`, so the first stderr line that `templates`'
+   `stepFailed` puts into the `template_build_failed` message and its
+   `stderr` detail has no control or format characters, no non-UTF-8
+   bytes, and is at most 200 bytes. `tar -x` moved into a new
+   `extractArchive` (same arguments, environment, and timeout).
+2. **Docs** (this commit): jail-templates.md (the `template_build_failed`
+   row), the security overview, and an implementation note in ADR 0010.
+   The OpenAPI description does not describe these errors; unchanged.
+
+### 21.2 Tests (merrick)
+
+- New, hostops (`clean_test.go`): `TestPkgInstallCleansStderr` (the pkg
+  command line unchanged), `TestPkgScriptsCleansStderr` (no packages
+  returned with the error), `TestExtractArchiveCleansStderr` (the tar
+  command line, path, environment, and timeout unchanged; a success
+  returns nil). Each feeds the dirty line of amendment r's tests (ESC,
+  U+202E, U+202C, a C1 CSI, U+200B, CR) and checks the cleaned line and an
+  error with no control or format character.
+- Mutation checks run by hand (the file restored from a scratch copy each
+  time): dropping `cleanStderr` from `PkgInstall`, `PkgScripts`, or
+  `extractArchive` fails exactly the matching test.
+- Results: `go test ./... -count=1` passed (40 packages with tests);
+  `make lint` passed (gofmt, go vet for Linux and FreeBSD, staticcheck
+  for both); `GOOS=freebsd GOARCH=amd64 go test -c ./internal/hostops/`
+  compiled; `make web-check` passed three times in a row (15 files, 112
+  tests each).
+
+### 21.3 Changes not in the request (for approval)
+
+1. `tar -x` moved into `extractArchive`, so the cleanup is testable as an
+   unprivileged user: `ExtractDist` refuses a dist directory not owned by
+   root before `tar` runs (the same pattern as 20.3 point 1).
+
+### 21.4 The hearst list for run 1 (current)
+
+Section 17.5 with every change of 19.5, 20.5, and amendment s applied.
+Amendment s changes nothing on it: the three new tests match `Clean` in
+test 2's filter (`...CleansStderr`).
+
+**SR-01:**
+
+1. Before the deploy, on the current build: the review's baseline proof (13.9), for the before/after comparison.
+2. The cross-compiled hostops test binary as an unprivileged user: `-test.run 'ConsoleLog|MarkOverflow|ShutdownOutput|ShutdownLog|ShutdownStderr|DiscardAppends|StderrLastLine|StderrTail|LastStderrLine|Clean|LastLine|BuildJailExec' -test.v`.
+3. After the deploy, a test jail's rendered `jail.conf` has no `exec.consolelog`.
+4. `( dd if=/dev/zero bs=1m count=50 2>/dev/null; sleep 600 ) &` in `/etc/rc.local`: after the start `console.log` stays at most about 320 KiB, `sudo procstat -f` shows no descriptor on it, `df /` is unchanged; at the stop it grows by at most about 96 KiB plus markers; remove the test lines.
+5. `rc.local` prints about 1 MiB in the foreground: the console log is head + `skep: N bytes discarded` + tail, and `GET .../console-log` ends with rc's last line.
+6. A minimal jail with sshd: `sshd`, `cron`, and `syslogd` still run after the start and a minute later, and SSH works; after a stop the log has `--- shutdown ---`, the base shutdown lines, then `--- shutdown stderr ---` (and anything rc.shutdown wrote to stderr).
+7. `/etc/rc.shutdown.local` prints about 8 MiB to stdout: the stop succeeds, the jail is gone, and the log is rc's output + `--- shutdown ---` + 32 KiB + `skep: N bytes discarded` (N about 8 MiB less 64 KiB) + 32 KiB ending with the last line + `--- shutdown stderr ---`.
+8. `/etc/rc.shutdown.local` writes one line to stdout and one to stderr: after a stop the stdout line follows `--- shutdown ---` and the stderr line follows `--- shutdown stderr ---`.
+9. A second start of the same jail truncates its console log (the shutdown sections are gone).
+10. Probe: `/etc/rc.shutdown.local` ends with `printf '\033[31mfake \342\200\256ok\n' >&2; exit 1`; record whether `jail -r` exits non-zero and the jail is gone. If the stop fails: the task error ends with `jail output, last line of stderr: "..."` with no ESC or U+202E, and the agent log has `jail_remove_failed` with `jail_output`. If it succeeds: `sudo cat -v` of `console.log` shows the `fake ok` line after `--- shutdown stderr ---` with its ESC and U+202E bytes, and `GET .../console-log` shows it with no ESC and no U+202E. Clean up afterwards.
+11. `/etc/rc.shutdown.local` writes about 1 MiB to stderr: the stop succeeds, and the stderr section is `skep: N bytes discarded` (N about 1 MiB less 32 KiB) + the last 32 KiB, ending with the last line written.
+12. A test jail whose rc writes U+202E and a C1 character to its output: `console.log` on disk keeps them, and the API's console-log response has them stripped.
+
+**SR-04 (unchanged):**
+
+- S1. The agent's start log shows `max_locked_memory_bytes` equal to `sysctl -n hw.physmem` / 4 (about 1.5 GiB).
+- S2. A create with `limits.locked_memory` above that is 422 `container_locked_memory_above_max`.
+- S3. Two `mlock` jails with 1 GiB and 768 MiB: the first starts with exactly the `memorylocked` rule in `rctl`; the second start is 409 `container_locked_memory_exhausted` and never creates its jail; after the first stops, the second starts; stop and delete both.
+- S4. Optional: `mlocktest` in the first jail locks up to its limit and fails past it; `vm.stats.vm.v_wire_count` returns to its baseline after the stop.
+
+Conditions (amendment o): after Andy's Proxmox snapshot; `skep-api` stopped during the `sqlite3` edit; the epair and all test data removed afterwards; every change on hearst recorded in the progress log.
+
+### 21.5 Commits
+
+`b97480b` feat(hostops): clean the stderr line of the build's pkg and tar
+failures; and the docs commit with this section.

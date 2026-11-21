@@ -2076,3 +2076,12 @@ into `createJail`) and a template build jail's (moved into
 `clean` removes category Cf; control characters still become spaces.
 Details in section 20 of
 [step10-progress.md](../../tests/integration/jails/results/step10-progress.md).
+
+**Amendment s, built (2026-11-21, merrick only).** `PkgInstall`,
+`PkgScripts` (`pkg info --raw`), and `ExtractDist` (`tar -x`, moved into
+`extractArchive` so it can be tested without the root-owned dist
+directory) return their failure through `cleanStderr`, so the first
+stderr line that `templates` puts into `template_build_failed` has no
+control or format characters and is at most 200 bytes. Other host
+commands' stderr lines are unchanged. Details in section 21 of
+[step10-progress.md](../../tests/integration/jails/results/step10-progress.md).
