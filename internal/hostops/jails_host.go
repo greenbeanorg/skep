@@ -1,6 +1,7 @@
 package hostops
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -776,18 +777,20 @@ func (h *host) removeJail(ctx context.Context, name, conf string, spec JailSpec,
 			"container_id", spec.ContainerID, "interfaces", gone)
 	}
 	// The jail.conf has no exec.consolelog, so /etc/rc.shutdown writes to
-	// jail(8)'s own output: its head and tail kept in memory, with a
-	// marker between them, and never a failure for its size (amendments o
-	// and p, SR-01).
+	// jail(8)'s own output: the head and tail of its standard output, and
+	// the tail of its standard error, kept in memory with markers where
+	// bytes were dropped, and never a failure for their size (amendments
+	// o, p, and q, SR-01).
+	var stderr bytes.Buffer
 	out, err := er.RunEnv(ctx, EnvCommand{Path: jailBinary, Args: []string{"-f", conf, "-r", name},
 		Env: jailEnv, Timeout: spec.StartTimeout + spec.StopTimeout + jailCommandSlack,
-		MaxOutput: ShutdownLogPart, MarkOverflow: true, StderrLastLine: true})
+		MaxOutput: ShutdownLogPart, MarkOverflow: true, StderrLastLine: true, StderrTail: &stderr})
 	if err != nil {
 		return h.jailRemoveFailed(spec, err)
 	}
-	h.log.Debug("hostops: jail -r done", "container_id", spec.ContainerID, "output_bytes", len(out))
+	h.log.Debug("hostops: jail -r done", "container_id", spec.ContainerID, "output_bytes", len(out), "stderr_bytes", stderr.Len())
 	if withStop {
-		h.appendShutdownLog(spec.ContainerID, out)
+		h.appendShutdownLog(spec.ContainerID, out, stderr.Bytes())
 	}
 	if exists, err := h.jailExists(ctx, name); err != nil {
 		return err
@@ -826,32 +829,37 @@ func (h *host) jailRemoveFailed(spec JailSpec, err error) error {
 }
 
 // ShutdownLogPart is how much of the head, and of the tail, of
-// /etc/rc.shutdown's output is appended to the console log (amendment p).
+// /etc/rc.shutdown's standard output, and how much of the tail of its
+// standard error, is appended to the console log (amendments p and q).
 const ShutdownLogPart = 32 << 10
 
-// shutdownMarker is the line written to the console log before
-// /etc/rc.shutdown's output.
-const shutdownMarker = "--- shutdown ---\n"
+// The lines written to the console log before /etc/rc.shutdown's
+// standard output and before its standard error.
+const (
+	shutdownMarker       = "--- shutdown ---\n"
+	shutdownStderrMarker = "--- shutdown stderr ---\n"
+)
 
-// appendShutdownLog appends the shutdown marker and out to the jail's
-// console log. A failure is logged and never fails the removal
-// (amendment p).
-func (h *host) appendShutdownLog(containerID string, out []byte) {
+// appendShutdownLog appends the shutdown markers, out, and errOut to the
+// jail's console log. A failure is logged and never fails the removal
+// (amendments p and q).
+func (h *host) appendShutdownLog(containerID string, out, errOut []byte) {
 	path, err := h.conf.JailRunPath(containerID, JailConsoleLog)
 	if err == nil {
-		err = appendShutdownOutput(path, out)
+		err = appendShutdownOutput(path, out, errOut)
 	}
 	if err != nil {
 		h.log.Warn("hostops: the jail's shutdown output could not be written to its console log", "event", "jail_shutdown_log_failed",
-			"container_id", containerID, "output_bytes", len(out), "error", err)
+			"container_id", containerID, "output_bytes", len(out), "stderr_bytes", len(errOut), "error", err)
 	}
 }
 
-// appendShutdownOutput appends the shutdown marker line, then out, to the
-// file at path, created 0600 if missing. It never follows a symbolic
-// link, never blocks on a FIFO, and refuses anything but a regular file.
-// The marker starts on a line of its own.
-func appendShutdownOutput(path string, out []byte) error {
+// appendShutdownOutput appends to the file at path, created 0600 if
+// missing, the shutdown marker line, out, the stderr marker line, and
+// errOut, in one write. It never follows a symbolic link, never blocks on
+// a FIFO, and refuses anything but a regular file. Each marker starts on
+// a line of its own; both are written even when their part is empty.
+func appendShutdownOutput(path string, out, errOut []byte) error {
 	f, err := os.OpenFile(path, os.O_RDWR|os.O_APPEND|os.O_CREATE|syscall.O_NOFOLLOW|syscall.O_NONBLOCK|syscall.O_CLOEXEC, 0o600)
 	if err != nil {
 		return err
@@ -864,7 +872,7 @@ func appendShutdownOutput(path string, out []byte) error {
 	if !fi.Mode().IsRegular() {
 		return fmt.Errorf("hostops: %s is not a regular file", path)
 	}
-	data := make([]byte, 0, 1+len(shutdownMarker)+len(out))
+	data := make([]byte, 0, 2+len(shutdownMarker)+len(out)+len(shutdownStderrMarker)+len(errOut))
 	if fi.Size() > 0 {
 		last := make([]byte, 1)
 		if _, err := f.ReadAt(last, fi.Size()-1); err != nil {
@@ -876,6 +884,11 @@ func appendShutdownOutput(path string, out []byte) error {
 	}
 	data = append(data, shutdownMarker...)
 	data = append(data, out...)
+	if len(out) > 0 && out[len(out)-1] != '\n' {
+		data = append(data, '\n')
+	}
+	data = append(data, shutdownStderrMarker...)
+	data = append(data, errOut...)
 	if _, err := f.Write(data); err != nil {
 		return err
 	}

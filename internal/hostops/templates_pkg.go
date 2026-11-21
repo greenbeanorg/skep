@@ -63,10 +63,16 @@ type EnvCommand struct {
 	// /etc/rc.shutdown's and must never fail a removal).
 	MarkOverflow bool
 	// StderrLastLine makes a failure's CommandError carry the last line
-	// of standard error, control characters stripped and at most 200
-	// bytes, instead of the first (amendment p: jail -r, whose stderr
+	// of standard error, control and format characters stripped and at
+	// most 200 bytes, instead of the first (amendment p: jail -r, whose stderr
 	// starts with the jail's /etc/rc.shutdown's and ends with jail(8)'s).
 	StderrLastLine bool
+	// StderrTail, when set, receives after a successful run the last
+	// MaxOutput bytes of standard error, preceded by a
+	// "skep: N bytes discarded" line when more was written; nothing when
+	// the command fails. A failed write to it is not an error (amendment q: jail -r, whose stderr is the jail's
+	// /etc/rc.shutdown's). It is not used with ConsoleLog.
+	StderrTail io.Writer
 	// ConsoleLog, when set, is an absolute path (created 0600, never
 	// through a link) that is truncated and receives standard output and
 	// standard error through a pipe the agent drains: the first

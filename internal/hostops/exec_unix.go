@@ -50,10 +50,30 @@ type runOpts struct {
 	// env is the whole environment.
 	env []string
 	// stderrLast makes a failure report the last line of standard error,
-	// control characters stripped and at most maxStderrLine bytes,
+	// cleaned by cleanLine and at most maxStderrLine bytes,
 	// instead of the first; the last stderrTail bytes of standard error
 	// are kept for it, not the first (amendment p: a failed jail -r).
 	stderrLast bool
+	// stderrTo, when set, receives after a successful run the last limit
+	// bytes of standard error, preceded by a "skep: N bytes discarded"
+	// line when more was written (amendment q: jail -r, whose stderr is
+	// the jail's /etc/rc.shutdown's). Nothing is written to it when the
+	// command fails, and a failed write to it is not an error.
+	stderrTo io.Writer
+}
+
+// envRunOpts is how RunEnv runs an EnvCommand that has no ConsoleLog.
+func envRunOpts(timeout time.Duration, c EnvCommand) runOpts {
+	limit := c.MaxOutput
+	if limit <= 0 {
+		limit = maxOutput
+	}
+	over := overflowFail
+	if c.MarkOverflow {
+		over = overflowMark
+	}
+	return runOpts{timeout: timeout, limit: limit, over: over, env: c.Env,
+		stderrLast: c.StderrLastLine, stderrTo: c.StderrTail}
 }
 
 // stderrTail is how much of the end of standard error is kept when the
@@ -87,6 +107,11 @@ func runCommand(ctx context.Context, o runOpts, path string, args ...string) ([]
 	if o.stderrLast {
 		cmd.Stderr = errTail
 	}
+	// The tail of standard error a successful run hands back.
+	keptErr := newConsoleLog(o.stderrTo, 0, o.limit)
+	if o.stderrTo != nil {
+		cmd.Stderr = io.MultiWriter(cmd.Stderr, keptErr)
+	}
 	cmd.WaitDelay = time.Second
 
 	if err := cmd.Run(); err != nil {
@@ -109,6 +134,11 @@ func runCommand(ctx context.Context, o runOpts, path string, args ...string) ([]
 			ce.Stderr = strings.TrimSpace(line)
 		}
 		return nil, ce
+	}
+	if o.stderrTo != nil {
+		// The command succeeded: a failed write to the caller's writer
+		// does not change that (amendment q: it never fails a removal).
+		_ = keptErr.finish()
 	}
 	if o.over == overflowMark {
 		// Writes to a bytes.Buffer do not fail.
@@ -295,13 +325,19 @@ func (l *consoleLog) Write(p []byte) (int, error) {
 }
 
 // finish writes the marker and the tail, if output went past the head,
-// and returns the first write error.
+// and returns the first write error. With a head of 0 the marker has no
+// leading empty line.
 func (l *consoleLog) finish() error {
 	if l.over == 0 || l.err != nil {
 		return l.err
 	}
 	if dropped := l.over - int64(len(l.tail)); dropped > 0 {
-		if _, l.err = io.WriteString(l.w, discardedMarker(dropped)); l.err != nil {
+		marker := discardedMarker(dropped)
+		if l.written == 0 {
+			// No head: the marker is the first line.
+			marker = marker[1:]
+		}
+		if _, l.err = io.WriteString(l.w, marker); l.err != nil {
 			return l.err
 		}
 	}

@@ -29,13 +29,5 @@ func (r execRunner) RunEnv(ctx context.Context, c EnvCommand) ([]byte, error) {
 	if c.ConsoleLog != "" {
 		return nil, runToConsoleLog(ctx, timeout, c)
 	}
-	limit := c.MaxOutput
-	if limit <= 0 {
-		limit = maxOutput
-	}
-	over := overflowFail
-	if c.MarkOverflow {
-		over = overflowMark
-	}
-	return runCommand(ctx, runOpts{timeout: timeout, limit: limit, over: over, env: c.Env, stderrLast: c.StderrLastLine}, c.Path, c.Args...)
+	return runCommand(ctx, envRunOpts(timeout, c), c.Path, c.Args...)
 }

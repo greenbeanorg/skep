@@ -343,13 +343,8 @@ func (s shutdownRunner) RunEnv(ctx context.Context, c EnvCommand) ([]byte, error
 	if s.onRun != nil {
 		s.onRun("jail " + strings.Join(c.Args, " "))
 	}
-	o := runOpts{timeout: time.Minute, limit: c.MaxOutput, over: overflowFail, env: testEnv, stderrLast: c.StderrLastLine}
-	if o.limit <= 0 {
-		o.limit = maxOutput
-	}
-	if c.MarkOverflow {
-		o.over = overflowMark
-	}
+	c.Env = testEnv
+	o := envRunOpts(time.Minute, c)
 	out, err := runCommand(ctx, o, testShell, "-c", s.sh)
 	var ce *CommandError
 	if errors.As(err, &ce) {
@@ -405,13 +400,46 @@ func TestStopJailShutdownOutputPastTheBudget(t *testing.T) {
 	}
 	all := shLines(n)
 	want := "rc output\n--- shutdown ---\n" + all[:ShutdownLogPart] +
-		discardedMarker(int64(len(all)-2*ShutdownLogPart)) + all[len(all)-ShutdownLogPart:]
+		discardedMarker(int64(len(all)-2*ShutdownLogPart)) + all[len(all)-ShutdownLogPart:] +
+		"--- shutdown stderr ---\n"
 	got, err := os.ReadFile(log)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if string(got) != want {
 		t.Fatalf("console.log: %d bytes, want %d\nhead %q\ntail %q", len(got), len(want), got[:min(len(got), 80)], got[max(0, len(got)-80):])
+	}
+}
+
+// rc.shutdown's stderr past the budget: its section is a discarded
+// marker counting what was dropped and exactly the last 32 KiB, after
+// the stdout section, itself cut to head and tail (amendment q).
+func TestStopJailShutdownStderrPastTheBudget(t *testing.T) {
+	const n = 2000 // about 124 KiB on each stream
+	h, run, conf, log := shutdownHost(t, shLoop(n)+"; ( "+shLoop(n)+" ) >&2", "rc output\n")
+	if err := h.removeJail(context.Background(), "skep-"+ctrA, conf, jailSpec(), true); err != nil {
+		t.Fatalf("stderr past the budget failed the removal: %v", err)
+	}
+	var tail bool
+	for _, c := range run.envCmds {
+		if c.Path == jailBinary && slices.Contains(c.Args, "-r") {
+			tail = c.StderrTail != nil && c.MaxOutput == ShutdownLogPart
+		}
+	}
+	if !tail {
+		t.Fatal("jail -r was not run with a stderr tail of ShutdownLogPart")
+	}
+	all := shLines(n)
+	want := "rc output\n--- shutdown ---\n" + all[:ShutdownLogPart] +
+		discardedMarker(int64(len(all)-2*ShutdownLogPart)) + all[len(all)-ShutdownLogPart:] +
+		"--- shutdown stderr ---\n" +
+		fmt.Sprintf("skep: %d bytes discarded\n", len(all)-ShutdownLogPart) + all[len(all)-ShutdownLogPart:]
+	got, err := os.ReadFile(log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != want {
+		t.Fatalf("console.log: %d bytes, want %d\ntail %q", len(got), len(want), got[max(0, len(got)-200):])
 	}
 }
 
@@ -424,11 +452,19 @@ func TestStopJailShutdownOutputUnderTheBudget(t *testing.T) {
 		name, rc, sh, want string
 	}{
 		{"newline", "rc done\n", "echo 'Stopping cron.'; echo 'Terminated'",
-			"rc done\n--- shutdown ---\nStopping cron.\nTerminated\n"},
+			"rc done\n--- shutdown ---\nStopping cron.\nTerminated\n--- shutdown stderr ---\n"},
 		{"no newline", "rc done", "printf 'Stopping cron.\\n'",
-			"rc done\n--- shutdown ---\nStopping cron.\n"},
-		{"empty log", "", "echo bye", "--- shutdown ---\nbye\n"},
-		{"silent", "rc done\n", "true", "rc done\n--- shutdown ---\n"},
+			"rc done\n--- shutdown ---\nStopping cron.\n--- shutdown stderr ---\n"},
+		{"empty log", "", "echo bye", "--- shutdown ---\nbye\n--- shutdown stderr ---\n"},
+		{"silent", "rc done\n", "true", "rc done\n--- shutdown ---\n--- shutdown stderr ---\n"},
+		{"stderr", "rc done\n", "echo 'Stopping cron.'; echo 'cron: not running' >&2",
+			"rc done\n--- shutdown ---\nStopping cron.\n--- shutdown stderr ---\ncron: not running\n"},
+		{"stdout without newline", "rc done\n", "printf 'Stopping'; printf 'oops' >&2",
+			"rc done\n--- shutdown ---\nStopping\n--- shutdown stderr ---\noops"},
+		{"only stderr", "rc done\n", "echo 'sshd: not running' >&2",
+			"rc done\n--- shutdown ---\n--- shutdown stderr ---\nsshd: not running\n"},
+		{"stderr kept raw", "rc done\n", `printf 'a\033[31m\342\200\256b\n' >&2`,
+			"rc done\n--- shutdown ---\n--- shutdown stderr ---\na\x1b[31m\u202eb\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			h, _, conf, log := shutdownHost(t, tc.sh, tc.rc)
@@ -498,7 +534,7 @@ func TestShutdownLogWriteFailureStillRemoves(t *testing.T) {
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			h, run, conf, log := shutdownHost(t, "echo 'Stopping cron.'", "rc output\n")
+			h, run, conf, log := shutdownHost(t, "echo 'Stopping cron.'; echo 'cron: not running' >&2", "rc output\n")
 			tc.setup(t, log)
 			var logged bytes.Buffer
 			h.log = slog.New(slog.NewTextHandler(&logged, nil))
@@ -523,6 +559,65 @@ func TestShutdownLogWriteFailureStillRemoves(t *testing.T) {
 	}
 }
 
+// With stderrTo set, a successful run hands back the tail of stderr:
+// all of it under the limit; past it, a discarded marker as the first
+// line and exactly the last limit bytes. A failure writes nothing to it
+// and still reports its stderr line; standard output is unchanged
+// (amendment q).
+func TestRunCommandStderrTail(t *testing.T) {
+	const limit = 1000
+	all := shLines(100)
+	run := func(sh string, last bool) (string, string, error) {
+		var errOut bytes.Buffer
+		o := runOpts{timeout: time.Minute, limit: limit, over: overflowMark, env: testEnv, stderrLast: last, stderrTo: &errOut}
+		out, err := runCommand(context.Background(), o, testShell, "-c", sh)
+		return string(out), errOut.String(), err
+	}
+	for _, last := range []bool{false, true} {
+		out, errOut, err := run("echo out; echo 'err 1' >&2; echo 'err 2' >&2", last)
+		if err != nil || out != "out\n" || errOut != "err 1\nerr 2\n" {
+			t.Fatalf("last %v, short: %q, %q, %v", last, out, errOut, err)
+		}
+		out, errOut, err = run("echo out; ( "+shLoop(100)+" ) >&2", last)
+		want := fmt.Sprintf("skep: %d bytes discarded\n", len(all)-limit) + all[len(all)-limit:]
+		if err != nil || out != "out\n" || errOut != want {
+			t.Fatalf("last %v, long: %q, %d bytes, %v\nhead %q", last, out, len(errOut), err, errOut[:min(80, len(errOut))])
+		}
+		out, errOut, err = run("( "+shLoop(10)+" ) >&2", last)
+		if err != nil || out != "" || errOut != shLines(10) {
+			t.Fatalf("last %v, exactly under: %q, %v", last, errOut, err)
+		}
+		_, errOut, err = run("echo 'rc: a' >&2; echo 'jail: failed' >&2; exit 1", last)
+		var ce *CommandError
+		if !errors.As(err, &ce) || ce.ExitCode != 1 || errOut != "" {
+			t.Fatalf("last %v, failure: %#v, stderr tail %q", last, err, errOut)
+		}
+		wantLine := "rc: a"
+		if last {
+			wantLine = "jail: failed"
+		}
+		if ce.Stderr != wantLine {
+			t.Fatalf("last %v, failure line %q, want %q", last, ce.Stderr, wantLine)
+		}
+	}
+	// Exactly the limit: no marker.
+	exact := strings.Repeat("e", limit)
+	_, errOut, err := run("printf '%s' "+exact+" >&2", false)
+	if err != nil || errOut != exact {
+		t.Fatalf("exactly the limit: %d bytes, %v", len(errOut), err)
+	}
+	// One more byte: the marker counts it.
+	_, errOut, err = run("printf 'x%s' "+exact+" >&2", false)
+	if err != nil || errOut != "skep: 1 bytes discarded\n"+exact {
+		t.Fatalf("one byte over: %q, %v", errOut[:min(40, len(errOut))], err)
+	}
+	// A failing writer does not fail the command.
+	o := runOpts{timeout: time.Minute, limit: limit, over: overflowMark, env: testEnv, stderrTo: &failingWriter{}}
+	if out, err := runCommand(context.Background(), o, testShell, "-c", "echo out; echo err >&2"); err != nil || string(out) != "out\n" {
+		t.Fatalf("failing stderr writer: %q, %v", out, err)
+	}
+}
+
 // In the last-line mode a failure reports the last line of stderr,
 // cleaned and capped, taken from the end of stderr even when it is
 // longer than what is kept of it; an empty stderr reports nothing
@@ -535,6 +630,7 @@ func TestRunCommandStderrLastLine(t *testing.T) {
 		{"trailing blank lines", `printf 'rc: a\njail: b\n\n\n' >&2; exit 1`, "jail: b"},
 		{"control characters", `printf 'rc: a\n\033[2J\033[31mjail:\tred\r\007\n' >&2; exit 1`, "[2J[31mjail:red"},
 		{"over-long line", "printf 'rc: a\\n%s\\n' " + long + " >&2; exit 1", long[:200]},
+		{"bidi override", `printf 'rc: a\n\342\200\256jail: \342\201\246x\342\201\251 ko\n' >&2; exit 1`, "jail: x ko"},
 		{"past the kept tail", shLoop(2000) + " >&2; echo 'jail: the end' >&2; exit 1", "jail: the end"},
 		{"empty stderr", `echo 'only stdout'; exit 1`, ""},
 	} {
@@ -572,6 +668,10 @@ func TestRemoveJailFailureReportsLastStderrLine(t *testing.T) {
 			"printf '%s\\n' " + strings.Repeat("y", 400) + " >&2; exit 1",
 			`jail: exit status 1: jail output, last line of stderr: "` + strings.Repeat("y", 200) + `"`,
 			"jail_output=" + strings.Repeat("y", 200) + "\n"},
+		{"bidi override",
+			`printf 'jail: skep-x: \342\200\256deliaf\342\200\254 ok\n' >&2; exit 1`,
+			`jail: exit status 1: jail output, last line of stderr: "jail: skep-x: deliaf ok"`,
+			`jail_output="jail: skep-x: deliaf ok"`},
 		{"empty stderr",
 			`echo 'Stopping cron.'; exit 1`,
 			"jail: exit status 1: no jail output on stderr",
@@ -593,17 +693,17 @@ func TestRemoveJailFailureReportsLastStderrLine(t *testing.T) {
 			if !strings.Contains(l, "event=jail_remove_failed") || !strings.Contains(l, tc.wantLog) {
 				t.Fatalf("log: %s", l)
 			}
-			if strings.ContainsAny(l, "\x1b\r") {
+			if strings.ContainsAny(l, "\x1b\r\u202e\u202c") || strings.ContainsAny(err.Error(), "\x1b\r\u202e\u202c") {
 				t.Fatalf("control characters in the log: %q", l)
 			}
-			var last bool
+			var last, tail bool
 			for _, c := range run.envCmds {
 				if c.Path == jailBinary && slices.Contains(c.Args, "-r") {
-					last = c.StderrLastLine
+					last, tail = c.StderrLastLine, c.StderrTail != nil
 				}
 			}
-			if !last {
-				t.Fatal("jail -r was not run in the last-line mode")
+			if !last || !tail {
+				t.Fatalf("jail -r: last-line mode %v, stderr tail %v", last, tail)
 			}
 			if got, _ := os.ReadFile(log); string(got) != "rc output\n" {
 				t.Fatalf("console.log = %q", got)
