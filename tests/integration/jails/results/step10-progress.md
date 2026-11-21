@@ -1634,3 +1634,29 @@ when it starts `/etc/rc`, or leave it.
 
 `8c81e35` (section 22, deployed) and the commit with this section and the
 record.
+
+### 23.6 Andy's answers (2026-11-21), recorded as amendment t
+
+1. **The three process deviations** of run 1 are approved: tests 4 and 5
+   on one jail and tests 7 to 11 on another; S4's test process raising its
+   own `ulimit -l` inside the test jail; test 7's 62-byte lines.
+2. **S4 finding (23.3): no code change in M7b yet.** Document in jails.md
+   that a jail process's RLIMIT_MEMLOCK comes from the jail's login
+   classes (`default` 64 KiB; rc.d services started through rc.subr get
+   `daemon`, 128 MiB) and applies before the RCTL `memorylocked` rule, so
+   one process can lock at most its class limit even when
+   `limits.locked_memory` is higher. Backlog: a memlock limit provided by
+   the agent, its design pending run 2's probe.
+3. **Run 2 adds two probes** (test jails only, no code):
+   - **(a) memlock:** find out why step 9 recorded the limit as
+     unlimited, and whether an RLIMIT_MEMLOCK set on the `/etc/rc`
+     process (as started through `jexec -l`) survives into an rc.d
+     service started by rc.subr; report what an agent-provided limit
+     would actually need to reach a service.
+   - **(b) test 10's failing branch:** in a test jail, make
+     `/etc/rc.shutdown` itself exit 1 after doing its normal work, and
+     record whether `jail -r` fails; if it does, check the task error and
+     `jail_remove_failed` as in test 10.
+
+Only the answers were recorded in this session; the jails.md text of
+point 2 has not been written yet.

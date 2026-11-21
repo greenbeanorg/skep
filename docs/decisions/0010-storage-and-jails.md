@@ -1208,6 +1208,30 @@ Amendments made at acceptance, worked into the text:
     -v`, the ESC byte kept) and the API's console-log response (no ESC,
     no U+202E).
 
+- **t. Decisions on hearst validation run 1** (Andy, 2026-11-21, from
+  section 23 of
+  [step10-progress.md](../../tests/integration/jails/results/step10-progress.md)).
+  - **Approved:** the three process deviations of run 1 (tests 4 and 5 on
+    one jail and tests 7 to 11 on another; S4's test process raising its
+    own `ulimit -l` inside the test jail; test 7's 62-byte lines).
+  - **RLIMIT_MEMLOCK (S4 finding, 23.3): no code change in M7b yet.**
+    jails.md documents that a jail process's RLIMIT_MEMLOCK comes from the
+    jail's login classes (`default` 64 KiB; rc.d services started through
+    rc.subr get `daemon`, 128 MiB) and applies before the RCTL
+    `memorylocked` rule, so one process can lock at most its class limit
+    even when `limits.locked_memory` is higher. Backlog: a memlock limit
+    provided by the agent, its design pending run 2's probe.
+  - **Run 2 adds two probes** (test jails only, no code):
+    - **(a) memlock:** find out why step 9 recorded the limit as
+      unlimited, and whether an RLIMIT_MEMLOCK set on the `/etc/rc`
+      process (as started through `jexec -l`) survives into an rc.d
+      service started by rc.subr; report what an agent-provided limit
+      would actually need to reach a service.
+    - **(b) test 10's failing branch:** in a test jail, make
+      `/etc/rc.shutdown` itself exit 1 after doing its normal work, and
+      record whether `jail -r` fails; if it does, check the task error and
+      `jail_remove_failed` as in test 10.
+
 ## Implementation notes
 
 Recorded during the build of 7a (from 2026-11-14). The decisions above
