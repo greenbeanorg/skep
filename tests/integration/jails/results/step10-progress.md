@@ -1660,3 +1660,175 @@ record.
 
 Only the answers were recorded in this session; the jails.md text of
 point 2 has not been written yet.
+
+## 24. Run 2 results (hearst, 2026-11-21)
+
+Hearst validation run 2 of 3: SR-03, SR-06, SR-09, SR-11, SR-I3, and the
+two probes of amendment t. No deploy; hearst ran `8c81e35` throughout (the
+branch head `e1743a6` has the same code). API calls from merrick, curl
+pinned to hearst's key (`779cc5ec…`, equal to `skep-api tls fingerprint`),
+no `-k`; one login per user for the run. Record (commands and output):
+[step10-hearst-run2.txt](step10-hearst-run2.txt).
+
+### 24.1 Pre-check, approvals during the run, and host changes
+
+- Pre-check as expected: `8c81e35` (agent, API, skepctl), `/health` ok,
+  `virtual_interrupt_delivery` 0, `if_epair` loaded, no jails, epairs,
+  RCTL rules, or jail devfs, `/var/run/skep/jails` empty, `/` 17 %,
+  `freebsd-version -kru` 15.1-RELEASE-p7 ×3, uptime 1 day 22:40 (no reboot
+  since 2026-11-19).
+- **Approved by Andy during the run, before any of it was done:**
+  1. SR-06's state is in the agent's database
+     (`/var/db/skep/agent/agent.db`, table `containers`), not `api.db`. The
+     agent's start-up sweep removes every `failed` jail, so the test ran in
+     two windows: **window 1**, `skep_api` stopped and the agent running,
+     one-row `UPDATE` of the live `agent.db` (sqlite3 `.timeout 5000`; the
+     agent reads the row on every request); **window 2**, both services
+     stopped, then started (the sweep). Both databases were backed up with
+     `.backup` first.
+  2. "SR-13" in the request is SR-I3 of 13.9.
+  3. SR-11 with temporary roles `s7snaprole` (`container:read`,
+     `container:snapshot`) and `s7writerole` (`container:read`,
+     `container:write`) and users `s7snap` and `s7write`, random passwords
+     never printed or stored. Roles cannot be created through the API, so
+     they were inserted into and deleted from `api.db` with sqlite3 (run as
+     `skep`) while `skep_api` was stopped, in windows 1 and 2.
+  4. One extra `agent.db` row in window 2: test container `r2-vmrow` given
+     the VM `fbsd1`'s MAC (see 24.3, finding 2). `fbsd1` itself was not
+     touched.
+- **Changes on hearst, all reverted:** the hand-made `epair0` (its a end
+  given `02:52:32:00:00:03` and added to `bridge0`, then removed and
+  destroyed); `skep_api` stopped/started twice and `skep_agent` once;
+  the `agent.db` rows above (on test containers, all deleted afterwards);
+  the two roles and two users (deleted); `agent.db.pre-run2` and
+  `api.db.pre-run2` (removed after the checks); `/tmp/r2-hostops.test`
+  and `/tmp/r2-epair` (removed); test containers `r2-mac`, `r2-vmmac`
+  (refused, never made), `r2-pa`, `r2-pb`, `r2-q1`, `r2-q2`, `r2-s`,
+  `r2-vmrow`, and the snapshot `r2-s11` (all deleted). Inside test jails:
+  `rc.local`, `rc.shutdown.local`, `/etc/rc.shutdown` (r2-pb), and cron
+  restarts (r2-pa). No `jail -r` on the host except the approved one for
+  r2-pb.
+
+### 24.2 Results
+
+| Test | Result | Notes |
+|---|---|---|
+| Pre-check | Done | See 24.1 |
+| SR-03 422/400 on create | Pass | `58:9c:fc:00:00:01` (universal), `01:00:5e:00:00:01` and `03:00:00:00:00:01` (multicast), `00:00:00:00:00:00`: 422 `container_mac_invalid` with the rule's message; `02:00:00:00:00` (5 bytes): 400 `invalid_request`; nothing created |
+| SR-03 update and clone | Pass | Universal MAC on update and on clone: 422 `container_mac_invalid`; the NIC kept `02:52:32:00:00:03` |
+| SR-03 MAC on the bridge (hand-made epair) | Pass | `epair0a` with `ether 02:52:32:00:00:03` as a member of `bridge0`: the start task failed `container_mac_in_use`, "already present on bridge0 (the member epair0a of bridge0)"; no jail and no Skep epair made. Epair removed |
+| SR-03 bridge formats | Pass | `ifconfig bridge0`: `ether 58:9c:fc:10:9f:32`, `member:` lines. `ifconfig bridge0 addr` with the jail running: `02:52:32:00:00:03 Vlan0 epair0a 1191 flags=0<>` (the parser reads fields 1 and 3; 15.1 prints `Vlan0`, the code comment says `Vlan1`). The bridge's own address is universal, so the rule refuses it before the bridge check (not testable) |
+| SR-03 MAC held by a Skep VM | Pass (at start, with a planted row) | Create with `fbsd1`'s `02:1e:08:e9:9d:7c`: **400 `invalid_request`** "already used by another network interface" (store-level check, finding 2). With the row planted in window 2, start: 409 `container_mac_in_use`, `held_by_kind: vm`, `held_by_name: fbsd1`; no jail made |
+| SR-03 MAC stored before the rules | Pass | `r2-mac` given `58:9c:fc:00:00:02` in window 2: start 422 `container_mac_invalid` at submission; no jail made |
+| SR-06 quarantined, agent running (window 1) | Pass | `r2-q1` (jail running, JID 16) recorded `failed`: GET and list show `failed`, not running; start, stop, restart: 409 `container_quarantined`; still `failed` after |
+| SR-06 delete | Pass | Delete task: "removing the quarantined jail without running any of its code", dataset destroyed; a watcher polling the jail root every 50 ms never saw the `rc.shutdown.local` marker; jail, dataset, run directory, devfs gone |
+| SR-06 sweep (window 2) | Pass | `r2-q2` (running) recorded `failed`; at agent start `jail_quarantine_removed`, summary `removed_without_exec_stop: 1`; state `stopped` with the sweep detail; no marker, no `--- shutdown ---` in its log, devfs gone. Afterwards a normal start and stop of `r2-q2` wrote the marker |
+| SR-06 marker control | Pass | `r2-s`: a normal stop wrote the marker and `r2 rc.shutdown.local ran` in the shutdown section |
+| SR-09 (as root) | Pass | Both tests passed in 0.01 s; FIFO, directory, symlink, and the device node (made: it **ran**, refused with "operation not supported") all refused; `WriteJailFilesRefusesFIFO` passed. Binary sha256 `828d1fba…` |
+| SR-11 | Pass | Rollback of a stopped jail to its snapshot: `s7snap` 403 (`permission: container:write`), `s7write` 403 (`container:snapshot`), `s7viewer` 403 (`container:write`), each an `authz.deny` audit entry; `s7oper` and `s7admin` succeeded. Users deleted (the deleted user's session then 401), roles deleted, `GET /roles` shows only the built-ins |
+| SR-I3 | Pass | In a running jail (`/dev/zfs` present, `allow.mount` and `allow.mount.zfs` false, `enforce_statfs` 2): `zfs list` "no datasets available", `zpool list` "no pools available", `zfs set skep:container_id=x`, `zfs snapshot`, and `zfs get` on its own dataset "dataset does not exist"; on the host the property is still the container ID and no snapshot was made |
+| Probe (a) memlock | Done | See 24.4 |
+| Probe (b) `/etc/rc.shutdown` exit 1 | **`jail -r` fails** | See 24.5 and finding 1 |
+| Cleanup | Done | No containers, jails, epairs, RCTL rules, jail devfs, or test files; `/var/run/skep/jails` empty; ZFS list equal to the pre-check; built-in roles only; users as before; both services running `8c81e35`, `/health` ok; `if_epair` loaded; `/` 17 %. The three sessions logged out |
+
+No security property failed. Agent and API logs during the run: the
+expected refusals at WARN, the probe (b) `jail_remove_failed` (WARN) and
+its `task failed` (ERROR, the only ERROR), and the `orphaned_devfs_removed`
+after the manual `jail -r`.
+
+### 24.3 Findings (functional, not security)
+
+1. **A jail whose `/etc/rc.shutdown` exits non-zero cannot be stopped or
+   deleted through the API** (probe b). `jail -r` exits 1 and jail(8)
+   does not remove the jail; the stop task fails and the state stays
+   `running` (rc.shutdown has stopped cron; `syslogd` still runs). A new
+   stop runs rc.shutdown again, and a delete of a running container is
+   refused (`notStopped`, by reading the code; not tried on hearst). Only
+   a host `jail -r` frees it. Also: the task error the API returns is the
+   engine's generic `task_failed` "the task failed; see the agent log"
+   (`internal/tasks/engine.go:611`, the hostops error has no code), so the
+   `jail output, last line of stderr: "..."` text (amendment p) is only in
+   the agent log; and that last line is jail(8)'s own
+   `jail: skep-…: /bin/sh /etc/rc.shutdown jail: failed`, not what
+   rc.shutdown wrote. The console log gets no shutdown section (amendment
+   q, kept until this probe). For a decision: give the failure a
+   `container_*` code so the API shows it; whether a stop whose
+   `exec.stop` failed should fall back to removal without `exec.stop`
+   (jail root controls `/etc/rc.shutdown`, so today it can make its jail
+   unremovable through Skep); and whether to append rc.shutdown's output
+   when `jail -r` fails.
+2. **A VM's MAC is refused at create with 400 `invalid_request`**, not 409
+   `container_mac_in_use`: the store's cross-table uniqueness check
+   (`internal/database/containerstore.go:52`, the same in `vmstore.go:129`)
+   runs before the start-time check, which is therefore defence in depth.
+   For a decision: map that store error to `container_mac_in_use` (409) so
+   the UI hint applies.
+3. Nit: `learntMACs`' comment shows `Vlan1`; 15.1 prints `Vlan0`. The
+   parser does not use that field.
+
+### 24.4 Probe (a): RLIMIT_MEMLOCK
+
+- **Step 9's "unlimited" and run 1's 64 KiB are different commands, not a
+  host change.** `jexec -U root` (with or without `-l`) applies the jail's
+  `root` login class: `unlimited`. `jexec` without `-U` (run 1) keeps the
+  caller's limit, and `sudo` gives 64 KiB (`sudo sh -c 'ulimit -l'`).
+  Step 9 recorded "the jail's root under jexec -l" (its exact command was
+  not kept), which matches `-U root`. The jail's and the host's
+  `login.conf.db` give the same classes: `root` infinity, `default` 64 KiB,
+  `daemon` 131072 KiB; the 23.3 guess about the 2026-11-19 pkg upgrade is
+  not needed.
+- **`/etc/rc` already runs unlimited.** The agent starts it with
+  `jexec -l -U root` (`jailRCArgs`): `rc.local` recorded `unlimited` soft
+  and hard, and the `sleep` it left had `infinity`. 23.3 said the jail's
+  rc processes inherit the agent's 128 MiB; they do not. The 128 MiB of
+  `cron` and `syslogd` comes from rc.subr.
+- **rc.subr re-applies the login class to every service it starts with
+  `command`** (`limits -C ${name}_login_class:-daemon $_limits`, rc.subr
+  line 1549). `cron` restarted from a shell with 256 MiB or unlimited came
+  back with 128 MiB; with `cron_limits="-l 300m"`, 300 MiB; with
+  `cron_login_class=root`, unlimited. `rc.local` (a `start_cmd`, no
+  `limits` wrapper) keeps the caller's limit (262144 KiB in, 262144 out).
+- **What an agent-provided limit would need to reach a service:** a limit
+  set on the `/etc/rc` process does not survive into rc.subr services, and
+  `/etc/rc` is already unlimited. It would need the jail's own
+  configuration: `<name>_limits` or `<name>_login_class` in the jail's
+  `rc.conf`, or the `daemon` class in its `login.conf` (plus `cap_mkdb`).
+  All are writes into the jail's tree, which Skep does not do after the
+  first start, and choices the jail's administrator can already make.
+- **Recommendation:** drop the backlog item for an agent-provided memlock
+  limit. Correct the jails.md note of amendment t point 2 before writing it:
+  rc.d services get the jail's `daemon` class (128 MiB) through rc.subr,
+  and a jail administrator raises it per service with
+  `<name>_limits="-l <size>"` or `<name>_login_class`; `/etc/rc`,
+  `rc.local` and their children, and `jexec -U root`, get the `root` class
+  (unlimited); `default` (64 KiB) applies to other logins and to `jexec`
+  without `-U`; RCTL `memorylocked` (`limits.locked_memory`) remains the
+  jail-wide bound.
+
+### 24.5 Probe (b): `/etc/rc.shutdown` exits 1
+
+In `r2-pb`, the last line of `/etc/rc.shutdown` (`exit 0`) was replaced
+with `echo r2pb rc.shutdown exiting 1 >&2; exit 1`, after its normal work.
+Stop: **`jail -r` exited 1 and the jail was not removed** (still JID 14).
+The task failed with the generic `task_failed` (finding 1); the agent log
+has `jail_remove_failed` with `exit_code` 1 and `jail_output`
+`jail: skep-…: /bin/sh /etc/rc.shutdown jail: failed`, and `task failed`
+with `jail output, last line of stderr: "…"`. No shutdown section in
+`console.log`. State `running`; `syslogd` still running in the jail.
+Removed with the approved `sudo jail -r skep-<id>` (no host `jail.conf`,
+so no `exec.stop`); it left the jail's devfs, which the Skep delete
+unmounted (`orphaned_devfs_removed`) before destroying the dataset.
+
+### 24.6 Affects run 3
+
+- Nothing left on hearst; `if_epair` still loaded live only.
+- Finding 1 needs a decision before any run-3 test of a failing stop, and
+  the jails.md memlock note should use 24.4.
+- The SR-03 learnt-table refusal for a device that is not a member (only
+  `vtnet1`'s universal neighbours were learnt) and the bridge's own
+  address remain untested; neither can be reached without another device
+  or a host change.
+
+### 24.7 Commits
+
+The commit with this section and the record.
