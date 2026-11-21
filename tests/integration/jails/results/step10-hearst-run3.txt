@@ -1,0 +1,1750 @@
+# M7b step 10 (ADR 0010), hearst validation run 3 of 3, 2026-11-21
+# Branch feat/m7b-templates. Pre-check on 8c81e35, then 8d65b9f (the pushed
+# head) deployed with scripts/deploy-test.sh.
+# API calls: merrick -> https://10.79.20.170:8443/api/v1, bearer sessions,
+# curl with --pinnedpubkey sha256//d5zF7I2qOwTO/RTcbcbJrB7ZiaQJgxVhpH7H0FzAad0=
+# (= 779cc5ec... from `skep-api tls fingerprint`), never -k. Each api call
+# prints "HTTP nnn" then the body; tokens and passwords are never printed
+# (credentials loaded from ~/.skep-test-creds into the scripts' environment
+# with the shell's read builtin). At most one login per user per script; the
+# sessions of the first scripts expired during the approval wait (about an
+# hour), so the bridge1 and cleanup scripts logged in again.
+# Web UI: Playwright 1.65.0 / Chromium on merrick, pinned to the same SPKI
+# with --ignore-certificate-errors-spki-list (ignoreHTTPSErrors false);
+# controls show that no pin and a wrong pin are refused.
+# Hearst commands ran over ssh, traced with `set -x`.
+# Approval during the run (step10-progress.md 26.1): bridge1 added to
+# network.bridges in agent.json for the static tests, with agent restarts
+# only while no test jail ran, sha256 recorded before and after, and the file
+# restored afterwards.
+# Order: pre-check, deploy, hostops test binary, u1-u7, step-10 list a-j,
+# bridge1 window (static parts of c and e, UI notice), cleanup.
+# Script mistakes are kept in the record, each followed by its repeat:
+# u2 (API field 'text', not 'content'), u7 (no sysrc in minimal-151),
+# 5h/5f first attempt (nameservers kept when omitted; the 30 s metrics
+# sampler), first UI script (Nameservers expected with no NIC).
+
+######## Pre-check, 2026-11-21T16:33:58Z
++ date -u
+Sat Nov 21 16:33:58 UTC 2026
++ /usr/local/sbin/skep-agent -version
+skep-agent 0.1.0 (commit 8c81e35, built 2026-11-21T14:27:32Z, go1.27.4 freebsd/amd64)
++ /usr/local/sbin/skep-api -version
+skep-api 0.1.0 (commit 8c81e35, built 2026-11-21T14:27:32Z, go1.27.4 freebsd/amd64)
++ /usr/local/bin/skepctl -version
+skepctl 0.1.0 (commit 8c81e35, built 2026-11-21T14:27:32Z, go1.27.4 freebsd/amd64)
++ sudo service skep_agent status
+skep_agent is running as pid 86341 (supervisor pid 86340).
++ sudo service skep_api status
+skep_api is running as pid 86473 (supervisor pid 86472).
++ sysctl hw.vmm.vmx.cap.virtual_interrupt_delivery
+hw.vmm.vmx.cap.virtual_interrupt_delivery: 0
++ kldstat -q -m if_epair
+if_epair loaded: exit 0
++ echo 'if_epair loaded: exit 0'
++ jls
+   JID  IP Address      Hostname                      Path
++ ifconfig -l
+vtnet0 vtnet1 lo0 bridge0
++ ifconfig -g epair
++ ifconfig bridge0
++ grep -E 'ether|member'
+	ether 58:9c:fc:10:9f:32
+	member: vtnet1 flags=143<LEARNING,DISCOVER,AUTOEDGE,AUTOPTP>
++ sudo rctl
++ mount -t devfs
+devfs on /dev (devfs)
++ df -h /
+Filesystem     Size    Used   Avail Capacity  Mounted on
+/dev/da0s1a    120G     19G     91G    17%    /
++ freebsd-version -kru
+15.1-RELEASE-p7
+15.1-RELEASE-p7
+15.1-RELEASE-p7
++ uptime
+11:33AM  up 2 days, 7 mins, 5 users, load averages: 0.13, 0.16, 0.15
++ last reboot
++ head -2
+boot time                                  Thu Nov 19 11:27
+shutdown time                              Thu Nov 19 11:26
++ sudo ls -la /var/run/skep/jails/
+total 16
+drwx------  2 root skep 512 Nov 21 10:15 .
+drwxr-x---  4 root skep 512 Nov 21 10:14 ..
++ zfs list -H -t all -o name -r skeptest
+skeptest
+skeptest/skep
+skeptest/skep-enc
+skeptest/skep-enc/vm
+skeptest/skep/handmade
+skeptest/skep/jail
+skeptest/skep/templates
+skeptest/skep/templates/dbf4243a-81fe-4914-8f7a-fd0a768476aa
+skeptest/skep/templates/dbf4243a-81fe-4914-8f7a-fd0a768476aa@skep-base
+skeptest/skep/templates/f496866f-32ba-4527-bcee-5a717a2f74c0
+skeptest/skep/templates/f496866f-32ba-4527-bcee-5a717a2f74c0@skep-base
+skeptest/skep/vm
+skeptest/skep/vm/c0e23174-3dc0-4503-a691-9af23f657078
+skeptest/skep/vm/c0e23174-3dc0-4503-a691-9af23f657078@skep-ec1f5086-b697-45bf-bc36-d0e729afc06f
+skeptest/skep/vm/c0e23174-3dc0-4503-a691-9af23f657078/disk0
+skeptest/skep/vm/c0e23174-3dc0-4503-a691-9af23f657078/disk0@skep-ec1f5086-b697-45bf-bc36-d0e729afc06f
+skeptest/skep/vm/fc8640f3-205c-404d-855b-1376c792d86e
+skeptest/skep/vm/fc8640f3-205c-404d-855b-1376c792d86e@skep-b4b27599-01fb-46a8-b87a-d53ec3407c23
+skeptest/skep/vm/fc8640f3-205c-404d-855b-1376c792d86e@skep-8d347601-c546-41ce-a078-650a21438fca
+skeptest/skep/vm/fc8640f3-205c-404d-855b-1376c792d86e/disk0
+skeptest/skep/vm/fc8640f3-205c-404d-855b-1376c792d86e/disk0@skep-b4b27599-01fb-46a8-b87a-d53ec3407c23
+skeptest/skep/vm/fc8640f3-205c-404d-855b-1376c792d86e/disk0@skep-8d347601-c546-41ce-a078-650a21438fca
+skeptest/skep/vm/fc8640f3-205c-404d-855b-1376c792d86e/disk1
+skeptest/skep/vm/fc8640f3-205c-404d-855b-1376c792d86e/disk1@skep-b4b27599-01fb-46a8-b87a-d53ec3407c23
+skeptest/skep/vm/fc8640f3-205c-404d-855b-1376c792d86e/disk1@skep-8d347601-c546-41ce-a078-650a21438fca
++ sudo /usr/local/sbin/skep-api tls fingerprint -data-dir /var/db/skep
+source:       self-signed
+public key:   sha256:779cc5ec8daa3b04cefd14dc6dc6c9ac1ed989a409831561a47ec7d05cc069dd
+certificate:  sha256:f573e54e4de2c94f30a04be45911d832d02a838ae534bf95fb4ae3eef5883653
+valid until:  2027-12-15T17:39:13Z
+names:        hearst.greenbean.org, hearst, localhost, 127.0.0.1, ::1, 10.79.20.170
++ ls -la /tmp
++ grep -i -e r1- -e r2- -e r3- -e mlock -e hostops
++ sudo ls -la /var/db/skep/agent/ /var/db/skep/api/
+/var/db/skep/agent/:
+total 11544
+drwx------  3 root wheel     512 Nov 21 10:15 .
+drwxr-xr-x  6 root wheel     512 Nov 16 14:03 ..
+-rw-------  1 root wheel 1650688 Nov 21 11:31 agent.db
+-rw-------  1 root wheel   32768 Nov 21 11:33 agent.db-shm
+-rw-------  1 root wheel 4120032 Nov 21 11:33 agent.db-wal
+drwx------  4 root wheel     512 Nov 15 06:59 vm
+
+/var/db/skep/api/:
+total 1280
+drwx------  3 skep skep     512 Nov 21 10:15 .
+drwxr-xr-x  6 root wheel    512 Nov 16 14:03 ..
+-rw-------  1 skep skep  266240 Nov 21 10:14 api.db
+-rw-------  1 skep skep   32768 Nov 21 10:20 api.db-shm
+-rw-------  1 skep skep  341992 Nov 21 10:15 api.db-wal
+drwx------  2 skep skep     512 Nov 13 12:39 tls
++ sudo -u skep sqlite3 -readonly /var/db/skep/api/api.db 'SELECT id FROM roles;'
+admin
+operator
+viewer
+-- API (merrick, pinned)
+{"status":"ok"}
+
+login s7oper: HTTP 200 (token not shown)
+login s7admin: HTTP 200 (token not shown)
+login s7viewer: HTTP 200 (token not shown)
+HTTP 200
+{"items":[]}
+
+f496866f-32ba-4527-bcee-5a717a2f74c0 minimal-151 15.1-RELEASE-p6 has_sshd=False ['FreeBSD-set-minimal']
+dbf4243a-81fe-4914-8f7a-fd0a768476aa minimal-ssh-151 15.1-RELEASE-p6 has_sshd=True ['FreeBSD-set-minimal', 'FreeBSD-ssh']
+vm c0e23174-3dc0-4503-a691-9af23f657078 fbsd1 [('02:1e:08:e9:9d:7c', 'bridge0')]
+vm fc8640f3-205c-404d-855b-1376c792d86e snaptest [('02:ea:fb:62:fb:03', 'bridge0')]
+users: [('andy', 'admin'), ('m6check', 'admin'), ('m6operator', 'operator'), ('m6viewer', 'viewer'), ('m7a5admin', 'admin'), ('m7a5operator', 'operator'), ('m7a5viewer', 'viewer'), ('s6admin', 'admin'), ('s6oper', 'operator'), ('s7admin', 'admin'), ('s7oper', 'operator'), ('s7viewer', 'viewer')]
+roles: ['admin', 'operator', 'viewer']
+
+######## Deploy 8d65b9f, 2026-11-21T16:34:24Z
+8d65b9fa0e9e968bd85a5480002d38575b523e6a
+8d65b9fa0e9e968bd85a5480002d38575b523e6a
+deploy-test: hearst:/usr/local/sbin/skep-agent root:wheel 0555 13582506 bytes sha256 ba0cb0151bac19aa01829540bc5492a2f4aaacab8a2fd47803f17af27ae6d28c
+deploy-test: hearst:/usr/local/sbin/skep-api root:wheel 0555 14180522 bytes sha256 2837e9eae1f302163e0001add75b34b0681542a8f40fa70eb592c90994074484
+deploy-test: synced
+deploy-test: hearst:/usr/local/bin/skepctl root:wheel 0555 7217322 bytes sha256 b70baa2c916e0036a2b311d15a3e996c78075628dab9aaa2ef129aa25b3c6705
+deploy-test: synced
+deploy-test: restarting skep_api and skep_agent on hearst
+Stopping skep_api.
+Waiting for PIDS: 86472.
+Stopping skep_agent.
+Waiting for PIDS: 86340.
+Starting skep_agent.
+Starting skep_api.
+deploy-test: skep_agent pid 95280 runs /usr/local/sbin/skep-agent: skep-agent 0.1.0 (commit 8d65b9f, built 2026-11-21T16:34:15Z, go1.27.4 freebsd/amd64)
+deploy-test: skep_api pid 95339 runs /usr/local/sbin/skep-api: skep-api 0.1.0 (commit 8d65b9f, built 2026-11-21T16:34:15Z, go1.27.4 freebsd/amd64)
+deploy-test: hearst runs 8d65b9f
+deploy exit 0
++ /usr/local/sbin/skep-agent -version
+skep-agent 0.1.0 (commit 8d65b9f, built 2026-11-21T16:34:15Z, go1.27.4 freebsd/amd64)
++ /usr/local/sbin/skep-api -version
+skep-api 0.1.0 (commit 8d65b9f, built 2026-11-21T16:34:15Z, go1.27.4 freebsd/amd64)
++ /usr/local/bin/skepctl -version
+skepctl 0.1.0 (commit 8d65b9f, built 2026-11-21T16:34:15Z, go1.27.4 freebsd/amd64)
++ sudo cat /var/run/skep/agent.pid
++ p=95280
++ sudo fstat -p 95280
++ awk '$4 == "text" { print $6 }'
+agent pid 95280 text inode 3045005
++ echo 'agent pid 95280 text inode 3045005'
++ sudo cat /var/run/skep/api.pid
++ p=95339
++ awk '$4 == "text" { print $6 }'
++ sudo fstat -p 95339
+api pid 95339 text inode 3045006
++ echo 'api pid 95339 text inode 3045006'
++ stat -f '%i %N' /usr/local/sbin/skep-agent /usr/local/sbin/skep-api
+3045005 /usr/local/sbin/skep-agent
+3045006 /usr/local/sbin/skep-api
++ sudo service skep_agent status
+skep_agent is running as pid 95280 (supervisor pid 95278).
++ sudo service skep_api status
+skep_api is running as pid 95339 (supervisor pid 95338).
+{"status":"ok"}
+
+
+######## hostops test binary (8d65b9f) as unprivileged aba, 2026-11-21T16:34:49Z
++ id
+uid=1001(aba) gid=1001(aba) groups=0(wheel),1001(aba)
++ sha256 -q /tmp/r3-hostops.test
+f9c0a79b0d926208d734e8c752398c1a5c42c5094fc2dd4ac7fb21d8644b009d
++ cd /tmp
++ ./r3-hostops.test -test.list 'RemoveJail|DiscardFailure|Quarantined'
++ wc -l
+       8
++ ./r3-hostops.test -test.run 'RemoveJail|DiscardFailure|Quarantined' -test.v '-test.count=1'
+=== RUN   TestRemoveJailFailureForcesRemoval
+=== RUN   TestRemoveJailFailureForcesRemoval/control_characters
+=== RUN   TestRemoveJailFailureForcesRemoval/over-long_line
+=== RUN   TestRemoveJailFailureForcesRemoval/bidi_override
+=== RUN   TestRemoveJailFailureForcesRemoval/empty_stderr
+--- PASS: TestRemoveJailFailureForcesRemoval (0.01s)
+    --- PASS: TestRemoveJailFailureForcesRemoval/control_characters (0.00s)
+    --- PASS: TestRemoveJailFailureForcesRemoval/over-long_line (0.00s)
+    --- PASS: TestRemoveJailFailureForcesRemoval/bidi_override (0.00s)
+    --- PASS: TestRemoveJailFailureForcesRemoval/empty_stderr (0.00s)
+=== RUN   TestRemoveJailForcedRemovalFails
+--- PASS: TestRemoveJailForcedRemovalFails (0.01s)
+=== RUN   TestRemoveJailTimeoutForcesRemoval
+--- PASS: TestRemoveJailTimeoutForcesRemoval (0.33s)
+=== RUN   TestRemoveJailCancelledIsNotForced
+--- PASS: TestRemoveJailCancelledIsNotForced (0.11s)
+=== RUN   TestDiscardFailureForcesRemovalWithoutLog
+--- PASS: TestDiscardFailureForcesRemovalWithoutLog (0.01s)
+=== RUN   TestRemoveJailLeftJailForcesRemoval
+--- PASS: TestRemoveJailLeftJailForcesRemoval (0.00s)
+=== RUN   TestRemoveJailDestroysEpairsFirst
+--- PASS: TestRemoveJailDestroysEpairsFirst (0.00s)
+=== RUN   TestFinishStartRefusalWithFailedRemovalIsQuarantined
+--- PASS: TestFinishStartRefusalWithFailedRemovalIsQuarantined (0.00s)
+PASS
+test exit 0
++ echo 'test exit 0'
++ rm /tmp/r3-hostops.test
++ ls /tmp/r3-hostops.test
+ls: /tmp/r3-hostops.test: No such file or directory
+
+######## u1: /etc/rc.shutdown exits 1 -> forced removal, 2026-11-21T16:36:11Z
+HTTP 202
+task 94615fc2-3dc4-46b6-ae72-132471452d93 (container.create): succeeded 
+container r3-u1 9298c2c7-3523-4125-a0d7-43a91840d27d
+start: HTTP 202 
+task 458f9571-c57b-462b-ad52-d4d3be894fc1 (container.start): succeeded 
++ jls -j skep-9298c2c7-3523-4125-a0d7-43a91840d27d jid name
+19 skep-9298c2c7-3523-4125-a0d7-43a91840d27d
++ sudo rctl jail:skep-9298c2c7-3523-4125-a0d7-43a91840d27d
+jail:skep-9298c2c7-3523-4125-a0d7-43a91840d27d:maxproc:deny=200
++ ifconfig -g epair
+epair0a
++ mount -p
++ grep -F /skeptest/skep/jail/9298c2c7-3523-4125-a0d7-43a91840d27d
+skeptest/skep/jail/9298c2c7-3523-4125-a0d7-43a91840d27d /skeptest/skep/jail/9298c2c7-3523-4125-a0d7-43a91840d27d zfs	rw,nfsv4acls 	0 0
+devfs			/skeptest/skep/jail/9298c2c7-3523-4125-a0d7-43a91840d27d/dev devfs	rw		0 0
++ sudo tail -2 /skeptest/skep/jail/9298c2c7-3523-4125-a0d7-43a91840d27d/etc/rc.shutdown
+echo '.'
+exit 0
++ sudo sed -i '' -e '$s/^exit 0$/echo r3 exiting 1 >\&2; exit 1/' /skeptest/skep/jail/9298c2c7-3523-4125-a0d7-43a91840d27d/etc/rc.shutdown
++ sudo tail -2 /skeptest/skep/jail/9298c2c7-3523-4125-a0d7-43a91840d27d/etc/rc.shutdown
+echo '.'
+echo r3 exiting 1 >&2; exit 1
+stop: HTTP 202 
+task 4878f373-e46f-4108-85b9-0b58ce290921 (container.stop): succeeded 
+stop task: status succeeded error: None result: {'container_id': '9298c2c7-3523-4125-a0d7-43a91840d27d', 'state': 'stopped'}
+events: ['task is pending', 'task is running', 'stopping the jail (/etc/rc.shutdown, then SIGTERM and SIGKILL)', 'task is succeeded']
+state: stopped started_once: True detail: 
++ jls -j skep-9298c2c7-3523-4125-a0d7-43a91840d27d jid
+jls: jail "skep-9298c2c7-3523-4125-a0d7-43a91840d27d" not found
+jls exit 1
++ echo 'jls exit 1'
++ mount -p
++ grep -F /skeptest/skep/jail/9298c2c7-3523-4125-a0d7-43a91840d27d
+skeptest/skep/jail/9298c2c7-3523-4125-a0d7-43a91840d27d /skeptest/skep/jail/9298c2c7-3523-4125-a0d7-43a91840d27d zfs	rw,nfsv4acls 	0 0
+devfs on root/dev: grep exit 0
++ echo 'devfs on root/dev: grep exit 0'
++ ifconfig -g epair
++ sudo rctl jail:skep-9298c2c7-3523-4125-a0d7-43a91840d27d
++ sudo rctl
++ grep -c skep-9298c2c7-3523-4125-a0d7-43a91840d27d
+rctl lines: 0
++ echo 'rctl lines: 0'
++ sudo cat -v /var/run/skep/jails/9298c2c7-3523-4125-a0d7-43a91840d27d/console.log
++ sed -n '/--- shutdown ---/,$p'
+--- shutdown ---
+Stopping cron.
+Waiting for PIDS: 96328.
+.
+--- shutdown stderr ---
+r3 exiting 1
+Terminated
+jail: skep-9298c2c7-3523-4125-a0d7-43a91840d27d: /bin/sh /etc/rc.shutdown jail: failed
+--- jail -r failed: jail: skep-9298c2c7-3523-4125-a0d7-43a91840d27d: /bin/sh /etc/rc.shutdown jail: failed ---
++ sudo ls -la /var/run/skep/jails/9298c2c7-3523-4125-a0d7-43a91840d27d/
+total 32
+drwx------  2 root skep  512 Nov 21 11:36 .
+drwx------  3 root skep  512 Nov 21 11:36 ..
+-rw-------  1 root skep 1855 Nov 21 11:36 console.log
+-rw-------  1 root skep  989 Nov 21 11:36 jail.conf
+-- agent log for r3-u1
+Nov 21 11:36:11 hearst skep-agent[95278]: {"time":"2026-11-21T11:36:11.06019113-05:00","level":"INFO","msg":"task accepted","task_id":"94615fc2-3dc4-46b6-ae72-132471452d93","type":"container.create","actor_id":"f3b71fbe-2e24-4539-9ec2-8be0fcde53ed","resource_type":"container","resource_id":"9298c2c7-3523-4125-a0d7-43a91840d27d"}
+Nov 21 11:36:12 hearst skep-agent[95278]: {"time":"2026-11-21T11:36:12.742652881-05:00","level":"INFO","msg":"task accepted","task_id":"458f9571-c57b-462b-ad52-d4d3be894fc1","type":"container.start","actor_id":"f3b71fbe-2e24-4539-9ec2-8be0fcde53ed","resource_type":"container","resource_id":"9298c2c7-3523-4125-a0d7-43a91840d27d"}
+Nov 21 11:36:14 hearst skep-agent[95278]: {"time":"2026-11-21T11:36:14.575059147-05:00","level":"INFO","msg":"task accepted","task_id":"4878f373-e46f-4108-85b9-0b58ce290921","type":"container.stop","actor_id":"f3b71fbe-2e24-4539-9ec2-8be0fcde53ed","resource_type":"container","resource_id":"9298c2c7-3523-4125-a0d7-43a91840d27d"}
+Nov 21 11:36:14 hearst skep-agent[95278]: {"time":"2026-11-21T11:36:14.749272282-05:00","level":"INFO","msg":"hostops: destroyed the jail's epairs before removing it","event":"jail_interfaces_destroyed","container_id":"9298c2c7-3523-4125-a0d7-43a91840d27d","interfaces":["epair0a"]}
+Nov 21 11:36:14 hearst skep-agent[95278]: {"time":"2026-11-21T11:36:14.885399926-05:00","level":"WARN","msg":"hostops: jail -r failed","event":"jail_remove_failed","container_id":"9298c2c7-3523-4125-a0d7-43a91840d27d","exit_code":1,"jail_output":"jail: skep-9298c2c7-3523-4125-a0d7-43a91840d27d: /bin/sh /etc/rc.shutdown jail: failed"}
+Nov 21 11:36:15 hearst skep-agent[95278]: {"time":"2026-11-21T11:36:15.009949909-05:00","level":"WARN","msg":"hostops: unmounted a devfs a removal outside Skep left on the jail's root","event":"orphaned_devfs_removed","container_id":"9298c2c7-3523-4125-a0d7-43a91840d27d","mountpoint":"/skeptest/skep/jail/9298c2c7-3523-4125-a0d7-43a91840d27d/dev","fsids":["FSID:1895890707:113"]}
+Nov 21 11:36:15 hearst skep-agent[95278]: {"time":"2026-11-21T11:36:15.014038656-05:00","level":"INFO","msg":"hostops: removed the RCTL rules of a jail","event":"jail_rctl_removed","container_id":"9298c2c7-3523-4125-a0d7-43a91840d27d","rules":"jail:skep-9298c2c7-3523-4125-a0d7-43a91840d27d:maxproc:deny=200"}
+Nov 21 11:36:15 hearst skep-agent[95278]: {"time":"2026-11-21T11:36:15.014066238-05:00","level":"WARN","msg":"hostops: jail -r failed, so the jail was removed with jail -R","event":"container_stop_forced","container_id":"9298c2c7-3523-4125-a0d7-43a91840d27d","exec_stop":true,"jail_output":"jail: skep-9298c2c7-3523-4125-a0d7-43a91840d27d: /bin/sh /etc/rc.shutdown jail: failed"}
+-- API console-log tail
+['text', 'truncated']
+
+######## u1 second part: start again, 2026-11-21T16:36:16Z
+start: HTTP 202 
+task d2b09020-fb47-4d6d-b02e-eb7abf1e5e6e (container.start): succeeded 
+state: running started_once: True detail: 
++ jls -j skep-9298c2c7-3523-4125-a0d7-43a91840d27d jid name
+20 skep-9298c2c7-3523-4125-a0d7-43a91840d27d
++ ifconfig -g epair
+epair0a
++ sudo rctl jail:skep-9298c2c7-3523-4125-a0d7-43a91840d27d
+jail:skep-9298c2c7-3523-4125-a0d7-43a91840d27d:maxproc:deny=200
+
+######## u2: forced removal with control characters (same jail), 2026-11-21T16:36:18Z
++ sudo sed -i '' -e '$s/^.*$/printf "x\\033[31m\\342\\200\\256y\\n" >\&2; exit 1/' /skeptest/skep/jail/9298c2c7-3523-4125-a0d7-43a91840d27d/etc/rc.shutdown
++ sudo tail -1 /skeptest/skep/jail/9298c2c7-3523-4125-a0d7-43a91840d27d/etc/rc.shutdown
+printf "x\033[31m\342\200\256y\n" >&2; exit 1
+stop: HTTP 202 
+task c36c3191-a405-4479-9089-230be8a23e64 (container.stop): succeeded 
+stop task: status succeeded error: None
+state: stopped started_once: True detail: 
++ jls -j skep-9298c2c7-3523-4125-a0d7-43a91840d27d jid
+jls: jail "skep-9298c2c7-3523-4125-a0d7-43a91840d27d" not found
+jls exit 1
++ echo 'jls exit 1'
++ mount -p
++ grep -F /skeptest/skep/jail/9298c2c7-3523-4125-a0d7-43a91840d27d
+skeptest/skep/jail/9298c2c7-3523-4125-a0d7-43a91840d27d /skeptest/skep/jail/9298c2c7-3523-4125-a0d7-43a91840d27d zfs	rw,nfsv4acls 	0 0
++ ifconfig -g epair
++ sudo rctl
++ grep -c skep-9298c2c7-3523-4125-a0d7-43a91840d27d
+rctl lines: 0
++ echo 'rctl lines: 0'
++ sudo cat -v /var/run/skep/jails/9298c2c7-3523-4125-a0d7-43a91840d27d/console.log
++ sed -n '/--- shutdown stderr ---/,$p'
+--- shutdown stderr ---
+x^[[31mM-.y
+Terminated
+jail: skep-9298c2c7-3523-4125-a0d7-43a91840d27d: /bin/sh /etc/rc.shutdown jail: failed
+--- jail -r failed: jail: skep-9298c2c7-3523-4125-a0d7-43a91840d27d: /bin/sh /etc/rc.shutdown jail: failed ---
++ sudo sed -n '/--- shutdown stderr ---/,$p' /var/run/skep/jails/9298c2c7-3523-4125-a0d7-43a91840d27d/console.log
++ od -c
++ tail -8
+0000220        f   a   i   l   e   d   :       j   a   i   l   :       s
+0000240    k   e   p   -   9   2   9   8   c   2   c   7   -   3   5   2
+0000260    3   -   4   1   2   5   -   a   0   d   7   -   4   3   a   9
+0000300    1   8   4   0   d   2   7   d   :       /   b   i   n   /   s
+0000320    h       /   e   t   c   /   r   c   .   s   h   u   t   d   o
+0000340    w   n       j   a   i   l   :       f   a   i   l   e   d    
+0000360    -   -   -  \n                                                
+0000364
+-- agent log
+Nov 21 11:36:18 hearst skep-agent[95278]: {"time":"2026-11-21T11:36:18.8652376-05:00","level":"WARN","msg":"hostops: jail -r failed","event":"jail_remove_failed","container_id":"9298c2c7-3523-4125-a0d7-43a91840d27d","exit_code":1,"jail_output":"jail: skep-9298c2c7-3523-4125-a0d7-43a91840d27d: /bin/sh /etc/rc.shutdown jail: failed"}
+Nov 21 11:36:19 hearst skep-agent[95278]: {"time":"2026-11-21T11:36:19.285383473-05:00","level":"WARN","msg":"hostops: unmounted a devfs a removal outside Skep left on the jail's root","event":"orphaned_devfs_removed","container_id":"9298c2c7-3523-4125-a0d7-43a91840d27d","mountpoint":"/skeptest/skep/jail/9298c2c7-3523-4125-a0d7-43a91840d27d/dev","fsids":["FSID:1895890708:113"]}
+Nov 21 11:36:19 hearst skep-agent[95278]: {"time":"2026-11-21T11:36:19.289486747-05:00","level":"INFO","msg":"hostops: removed the RCTL rules of a jail","event":"jail_rctl_removed","container_id":"9298c2c7-3523-4125-a0d7-43a91840d27d","rules":"jail:skep-9298c2c7-3523-4125-a0d7-43a91840d27d:maxproc:deny=200"} {"time":"2026-11-21T11:36:19.28950392-05:00","level":"WARN","msg":"hostops: jail -r failed, so the jail was removed with jail -R","event":"container_stop_forced","container_id":"9298c2c7-3523-4125-a0d7-43a91840d27d","exec_stop":true,"jail_output":"jail: skep-9298c2c7-3523-4125-a0d7-43a91840d27d: /bin/sh /etc/rc.shutdown jail: failed"}
+-- API console-log from the stderr marker on (repr; must have no ESC and no U+202E)
+Traceback (most recent call last):
+  File "<string>", line 1, in <module>
+    import json,sys;d=json.load(open(sys.argv[1]));print(eval(sys.argv[2]))
+                                                         ~~~~^^^^^^^^^^^^^
+  File "<string>", line 1, in <module>
+    import json,sys;d=json.load(open(sys.argv[1]));print(eval(sys.argv[2]))
+         ^^^^^^^^^^^^
+KeyError: 'content'
+Traceback (most recent call last):
+  File "<string>", line 1, in <module>
+    import json,sys;d=json.load(open(sys.argv[1]));print(eval(sys.argv[2]))
+                                                         ~~~~^^^^^^^^^^^^^
+  File "<string>", line 1, in <module>
+    import json,sys;d=json.load(open(sys.argv[1]));print(eval(sys.argv[2]))
+                                                               ^^^^^^^^^^^^
+KeyError: 'content'
+
+######## u1/u2 cleanup: restore rc.shutdown, start, normal stop, delete, 2026-11-21T16:36:20Z
++ sudo sed -i '' -e '$s/^.*$/exit 0/' /skeptest/skep/jail/9298c2c7-3523-4125-a0d7-43a91840d27d/etc/rc.shutdown
++ sudo tail -2 /skeptest/skep/jail/9298c2c7-3523-4125-a0d7-43a91840d27d/etc/rc.shutdown
+echo '.'
+exit 0
++ sudo diff /skeptest/skep/templates/f496866f-32ba-4527-bcee-5a717a2f74c0/etc/rc.shutdown /skeptest/skep/jail/9298c2c7-3523-4125-a0d7-43a91840d27d/etc/rc.shutdown
+rc.shutdown equal to the template
++ echo 'rc.shutdown equal to the template'
+start: HTTP 202 
+task 3987f062-14f9-4415-a2b0-303275279f39 (container.start): succeeded 
+stop: HTTP 202 
+task 87485458-1d7a-4f22-9d3a-3ab941bacd21 (container.stop): succeeded 
+--- shutdown ---
+--- shutdown stderr ---
+jls: jail "skep-9298c2c7-3523-4125-a0d7-43a91840d27d" not found
+jls exit 1
+delete: HTTP 202 
+task 6e6cf93b-ac60-42f3-abb2-6e99419b811d (container.delete): succeeded 
++ zfs list -H skeptest/skep/jail/9298c2c7-3523-4125-a0d7-43a91840d27d
+cannot open 'skeptest/skep/jail/9298c2c7-3523-4125-a0d7-43a91840d27d': dataset does not exist
++ sudo ls /var/run/skep/jails/
+
+######## u2 (repeat; the first run's API check read the wrong field, 'content' instead of 'text'), 2026-11-21T16:36:40Z
+HTTP 202
+task 56afdb0a-af2b-4eb2-89f0-b443141d0b70 (container.create): succeeded 
+container r3-u2 cbaefdee-42f6-4ceb-a352-6925522c6c9b
++ sudo sed -i '' -e '$s/^exit 0$/printf "x\\033[31m\\342\\200\\256y\\n" >\&2; exit 1/' /skeptest/skep/jail/cbaefdee-42f6-4ceb-a352-6925522c6c9b/etc/rc.shutdown
++ sudo tail -1 /skeptest/skep/jail/cbaefdee-42f6-4ceb-a352-6925522c6c9b/etc/rc.shutdown
+printf "x\033[31m\342\200\256y\n" >&2; exit 1
+start: HTTP 202 
+task 3a7b07f1-78c9-4480-be3b-4a9248902358 (container.start): succeeded 
+stop: HTTP 202 
+task c179c6a9-a810-4ef5-99ab-31069f46faba (container.stop): succeeded 
+stop task: status succeeded error: None
+state: stopped started_once: True detail: 
++ jls -j skep-cbaefdee-42f6-4ceb-a352-6925522c6c9b jid
+jls exit 1
+jls: jail "skep-cbaefdee-42f6-4ceb-a352-6925522c6c9b" not found
++ echo 'jls exit 1'
++ mount -t devfs
+devfs on /dev (devfs)
++ sudo cat -v /var/run/skep/jails/cbaefdee-42f6-4ceb-a352-6925522c6c9b/console.log
++ sed -n '/--- shutdown stderr ---/,$p'
+--- shutdown stderr ---
+x^[[31mM-.y
+Terminated
+jail: skep-cbaefdee-42f6-4ceb-a352-6925522c6c9b: /bin/sh /etc/rc.shutdown jail: failed
+--- jail -r failed: jail: skep-cbaefdee-42f6-4ceb-a352-6925522c6c9b: /bin/sh /etc/rc.shutdown jail: failed ---
++ sudo grep -a -A1 -e '--- shutdown stderr ---' /var/run/skep/jails/cbaefdee-42f6-4ceb-a352-6925522c6c9b/console.log
++ od -An -tx1 -c
++ head -8
+           2d  2d  2d  20  73  68  75  74  64  6f  77  6e  20  73  74  64
+           -   -   -       s   h   u   t   d   o   w   n       s   t   d
+           65  72  72  20  2d  2d  2d  0a  78  1b  5b  33  31  6d  e2  80
+           e   r   r       -   -   -  \n   x 033   [   3   1   m 256 200
+           ae  79  0a                                                    
+         256   y  \n                                                    
++ sudo grep -a -e '--- jail -r failed' /var/run/skep/jails/cbaefdee-42f6-4ceb-a352-6925522c6c9b/console.log
++ tr -cd '\033'
++ wc -c
++ sudo grep -a -e '--- jail -r failed' /var/run/skep/jails/cbaefdee-42f6-4ceb-a352-6925522c6c9b/console.log
++ printf '\342\200\256'
++ grep -c $'\342\200\256'
+failure line: ESC count        0, U+202E: 0
++ echo 'failure line: ESC count        0, U+202E: 0'
+"event":"orphaned_devfs_removed"
+"event":"container_stop_forced"
+-- API console-log from the stderr marker on (repr)
+truncated: False
+'--- shutdown stderr ---\nx[31my\nTerminated\njail: skep-cbaefdee-42f6-4ceb-a352-6925522c6c9b: /bin/sh /etc/rc.shutdown jail: failed\n--- jail -r failed: jail: skep-cbaefdee-42f6-4ceb-a352-6925522c6c9b: /bin/sh /etc/rc.shutdown jail: failed ---\n'
+ESC in API text: False, U+202E in API text: False, x[31my present: True
+-- cleanup: delete r3-u2 (stopped)
+delete: HTTP 202 
+task 72b9ebdd-61d3-4ae2-8503-5138331c5d03 (container.delete): succeeded 
+cannot open 'skeptest/skep/jail/cbaefdee-42f6-4ceb-a352-6925522c6c9b': dataset does not exist
+
+######## u3: rc.shutdown hangs (sleep 600 after the watchdog is gone), exec.timeout, 2026-11-21T16:37:02Z
+HTTP 202
+task c0b1fb67-8f0c-4079-9ade-4efecaa9c3ac (container.create): succeeded 
+container r3-u3 60f8211d-ddf8-47b0-82a8-bfa47174e717
++ sudo sed -i '' -e '$s/^exit 0$/echo r3u3 sleeping >\&2; sleep 600; exit 0/' /skeptest/skep/jail/60f8211d-ddf8-47b0-82a8-bfa47174e717/etc/rc.shutdown
++ sudo tail -1 /skeptest/skep/jail/60f8211d-ddf8-47b0-82a8-bfa47174e717/etc/rc.shutdown
+echo r3u3 sleeping >&2; sleep 600; exit 0
++ sudo grep -n 'rcshutdown_timeout\|pkill -TERM -P' /skeptest/skep/jail/60f8211d-ddf8-47b0-82a8-bfa47174e717/etc/rc.shutdown
+68:if [ -n "$rcshutdown_timeout" ]; then
+70:	sleep $rcshutdown_timeout && (
+71:		_msg="$rcshutdown_timeout second watchdog"
+108:	pkill -TERM -P $_rcshutdown_watchdog >/dev/null 2>&1
+start: HTTP 202 
+task b06a74ce-ac0a-46da-9993-d2ab2ca67765 (container.start): succeeded 
+	exec.stop = "/bin/sh /etc/rc.shutdown jail";
+	exec.timeout = 120;
+(no line: defaults 120 / 10)
+stop submitted at 16:37:05
+stop: HTTP 202 task a60f5c59-d252-4ee8-a1ca-7f9b374ea4cc
+-- at +60 s: processes in the jail (host view)
++ jls -j skep-60f8211d-ddf8-47b0-82a8-bfa47174e717 jid
+23
++ ps -J skep-60f8211d-ddf8-47b0-82a8-bfa47174e717 -o pid,ppid,etime,command
+  PID  PPID ELAPSED COMMAND
+98893     1   01:01 /usr/sbin/syslogd -s
+98896     1   01:01 syslogd: syslogd.casper (syslogd)
+98897     1   01:01 syslogd: system.net (syslogd)
+98986 98985   01:00 /bin/sh /etc/rc.shutdown jail
+99063 98986   01:00 sleep 600
++ pgrep -lf 'jail -f /var/run/skep/jails/60f8211d-ddf8-47b0-82a8-bfa47174e717'
+98985 /usr/sbin/jail -f /var/run/skep/jails/60f8211d-ddf8-47b0-82a8-bfa47174e717/jail.conf -r skep-60f8211d-ddf8-47b0-82a8-bfa47174e717
+task a60f5c59-d252-4ee8-a1ca-7f9b374ea4cc (container.stop): succeeded 
+stop finished at 16:39:07, 122 s after submission
+task: status succeeded error: None started 2026-11-21T16:37:05.628Z finished 2026-11-21T16:39:06.771Z
+state: stopped started_once: True detail: 
++ jls -j skep-60f8211d-ddf8-47b0-82a8-bfa47174e717 jid
+jls: jail "skep-60f8211d-ddf8-47b0-82a8-bfa47174e717" not found
+jls exit 1
++ echo 'jls exit 1'
++ ps -ax -o pid,jid,command
++ awk '$2 != 0'
++ head
+  PID JID COMMAND
++ mount -t devfs
+devfs on /dev (devfs)
++ sudo cat -v /var/run/skep/jails/60f8211d-ddf8-47b0-82a8-bfa47174e717/console.log
++ sed -n '/--- shutdown ---/,$p'
+--- shutdown ---
+Stopping cron.
+Waiting for PIDS: 98930.
+.
+--- shutdown stderr ---
+r3u3 sleeping
+Terminated
+jail: skep-60f8211d-ddf8-47b0-82a8-bfa47174e717: /bin/sh /etc/rc.shutdown jail: timed out
+--- jail -r failed: jail: skep-60f8211d-ddf8-47b0-82a8-bfa47174e717: /bin/sh /etc/rc.shutdown jail: timed out ---
+-- agent log
+Nov 21 11:37:02 hearst skep-agent[95278]: {"time":"2026-11-21T11:37:02.046742653-05:00","level":"INFO","msg":"task accepted","task_id":"c0b1fb67-8f0c-4079-9ade-4efecaa9c3ac","type":"container.create","actor_id":"f3b71fbe-2e24-4539-9ec2-8be0fcde53ed","resource_type":"container","resource_id":"60f8211d-ddf8-47b0-82a8-bfa47174e717"}
+Nov 21 11:37:03 hearst skep-agent[95278]: {"time":"2026-11-21T11:37:03.840720764-05:00","level":"INFO","msg":"task accepted","task_id":"b06a74ce-ac0a-46da-9993-d2ab2ca67765","type":"container.start","actor_id":"f3b71fbe-2e24-4539-9ec2-8be0fcde53ed","resource_type":"container","resource_id":"60f8211d-ddf8-47b0-82a8-bfa47174e717"}
+Nov 21 11:37:05 hearst skep-agent[95278]: {"time":"2026-11-21T11:37:05.628739255-05:00","level":"INFO","msg":"task accepted","task_id":"a60f5c59-d252-4ee8-a1ca-7f9b374ea4cc","type":"container.stop","actor_id":"f3b71fbe-2e24-4539-9ec2-8be0fcde53ed","resource_type":"container","resource_id":"60f8211d-ddf8-47b0-82a8-bfa47174e717"}
+Nov 21 11:39:06 hearst skep-agent[95278]: {"time":"2026-11-21T11:39:06.736145883-05:00","level":"WARN","msg":"hostops: jail -r failed","event":"jail_remove_failed","container_id":"60f8211d-ddf8-47b0-82a8-bfa47174e717","exit_code":1,"jail_output":"jail: skep-60f8211d-ddf8-47b0-82a8-bfa47174e717: /bin/sh /etc/rc.shutdown jail: timed out"}
+Nov 21 11:39:06 hearst skep-agent[95278]: {"time":"2026-11-21T11:39:06.752939546-05:00","level":"WARN","msg":"hostops: unmounted a devfs a removal outside Skep left on the jail's root","event":"orphaned_devfs_removed","container_id":"60f8211d-ddf8-47b0-82a8-bfa47174e717","mountpoint":"/skeptest/skep/jail/60f8211d-ddf8-47b0-82a8-bfa47174e717/dev","fsids":["FSID:1895890711:113"]}
+Nov 21 11:39:06 hearst skep-agent[95278]: {"time":"2026-11-21T11:39:06.764495311-05:00","level":"WARN","msg":"hostops: jail -r failed, so the jail was removed with jail -R","event":"container_stop_forced","container_id":"60f8211d-ddf8-47b0-82a8-bfa47174e717","exec_stop":true,"jail_output":"jail: skep-60f8211d-ddf8-47b0-82a8-bfa47174e717: /bin/sh /etc/rc.shutdown jail: timed out"}
+-- cleanup: restore rc.shutdown, delete
+restored
+delete: HTTP 202 
+task 42db39c8-d647-4a59-91b1-95fa26b8ab9c (container.delete): succeeded 
+cannot open 'skeptest/skep/jail/60f8211d-ddf8-47b0-82a8-bfa47174e717': dataset does not exist
+
+######## u5: delete of a quarantined jail (SR-06 method of run 2), 2026-11-21T16:39:29Z
+HTTP 202
+task f1781c77-b3fe-4111-ac91-1cfa4e37da76 (container.create): succeeded 
+container r3-u5 7c627d29-a331-40d3-a9b9-232fb8f0cc83
+start: HTTP 202 
+task 2723f2a3-2536-4342-a6c1-d0821922c1c2 (container.start): succeeded 
+-- window: skep_api stopped, agent running; agent.db backed up; one-row UPDATE on r3-u5
++ sudo service skep_api stop
+Stopping skep_api.
+Waiting for PIDS: 95338.
++ sudo service skep_agent status
+skep_agent is running as pid 95280 (supervisor pid 95278).
++ umask 077
++ sudo sqlite3 /var/db/skep/agent/agent.db '.timeout 5000' '.backup /var/db/skep/agent/agent.db.pre-run3'
++ sudo ls -l /var/db/skep/agent/agent.db.pre-run3
+-rw-------  1 root wheel 1703936 Nov 21 11:39 /var/db/skep/agent/agent.db.pre-run3
++ sudo sqlite3 /var/db/skep/agent/agent.db '.timeout 5000' $'UPDATE containers SET observed_state = \'failed\', observed_detail = \'run 3 test: quarantine set with sqlite3 (u5, SR-06 method)\' WHERE id = \'7c627d29-a331-40d3-a9b9-232fb8f0cc83\' AND observed_state = \'running\'; SELECT changes();'
+1
++ sudo sqlite3 -readonly /var/db/skep/agent/agent.db $'SELECT id, name, desired_state, observed_state, observed_detail FROM containers WHERE id = \'7c627d29-a331-40d3-a9b9-232fb8f0cc83\';'
+7c627d29-a331-40d3-a9b9-232fb8f0cc83|r3-u5|running|failed|run 3 test: quarantine set with sqlite3 (u5, SR-06 method)
++ sudo service skep_api start
+Starting skep_api.
++ sleep 3
++ sudo service skep_api status
+skep_api is running as pid 99885 (supervisor pid 99884).
+{"status":"ok"}
+
+state: failed started_once: True detail: run 3 test: quarantine set with sqlite3 (u5, SR-06 method)
+start: HTTP 409 container_quarantined
+stop: HTTP 409 container_quarantined
+restart: HTTP 409 container_quarantined
++ jls -j skep-7c627d29-a331-40d3-a9b9-232fb8f0cc83 jid
+24
++ sudo ls /skeptest/skep/jail/7c627d29-a331-40d3-a9b9-232fb8f0cc83/var/tmp/
+vi.recover
+-- delete with a watcher polling for the marker every 50 ms
+delete: HTTP 202
+task a72851f7-ccfa-4f5a-8df3-a7687cbdb956 (container.delete): succeeded 
+watcher: marker seen=no, polls=18, root still there: no
+events: ['task is pending', 'task is running', 'removing the quarantined jail without running any of its code', "destroying the jail's dataset", 'task is succeeded']
+HTTP 404
++ jls -j skep-7c627d29-a331-40d3-a9b9-232fb8f0cc83 jid
+jls: jail "skep-7c627d29-a331-40d3-a9b9-232fb8f0cc83" not found
++ zfs list -H skeptest/skep/jail/7c627d29-a331-40d3-a9b9-232fb8f0cc83
+cannot open 'skeptest/skep/jail/7c627d29-a331-40d3-a9b9-232fb8f0cc83': dataset does not exist
++ sudo ls /var/run/skep/jails/
++ mount -t devfs
+devfs on /dev (devfs)
++ ifconfig -g epair
++ sudo rm /var/db/skep/agent/agent.db.pre-run3
++ sudo ls /var/db/skep/agent/
+agent.db
+agent.db-shm
+agent.db-wal
+vm
+-- u5 agent log (events)
+"level":"INFO","msg":"task accepted"
+"level":"INFO","msg":"task accepted"
+"level":"INFO","msg":"task accepted"
+
+######## u6: a MAC held by a VM or another jail -> 409 at create, update, clone, 2026-11-21T16:40:04Z
+containers before: []
+-- create with fbsd1's MAC 02:1e:08:e9:9d:7c (upper case)
+create: HTTP 409 container_mac_in_use | the MAC address 02:1e:08:e9:9d:7c of NIC slot 0 is also held by the vm fbsd1 (slot 0); give the NIC another address | details {'held_by_id': 'c0e23174-3dc0-4503-a691-9af23f657078', 'held_by_kind': 'vm', 'held_by_name': 'fbsd1', 'mac_address': '02:1e:08:e9:9d:7c', 'slot': 0}
+-- test jail r3-u6 with its own MAC 02:52:33:00:00:06
+HTTP 202
+task edde1c57-0c78-4ad0-9589-b4c303e8de6d (container.create): succeeded 
+container r3-u6 19eb6eba-40f8-4a31-83f5-28abc5c25a75
+-- update r3-u6's NIC to fbsd1's MAC
+update: HTTP 409 container_mac_in_use | the MAC address 02:1e:08:e9:9d:7c of NIC slot 0 is also held by the vm fbsd1 (slot 0); give the NIC another address | details {'container_id': '19eb6eba-40f8-4a31-83f5-28abc5c25a75', 'held_by_id': 'c0e23174-3dc0-4503-a691-9af23f657078', 'held_by_kind': 'vm', 'held_by_name': 'fbsd1', 'mac_address': '02:1e:08:e9:9d:7c', 'slot': 0}
+r3-u6 NICs after: [(0, '02:52:33:00:00:06', 'bridge0')]
+-- clone r3-u6 with fbsd1's MAC
+clone: HTTP 409 container_mac_in_use | the MAC address 02:1e:08:e9:9d:7c of NIC slot 0 is also held by the vm fbsd1 (slot 0); give the NIC another address | details {'held_by_id': 'c0e23174-3dc0-4503-a691-9af23f657078', 'held_by_kind': 'vm', 'held_by_name': 'fbsd1', 'mac_address': '02:1e:08:e9:9d:7c', 'slot': 0}
+-- create with r3-u6's MAC (held by a jail)
+create: HTTP 409 container_mac_in_use | the MAC address 02:52:33:00:00:06 of NIC slot 0 is also held by the container r3-u6 (slot 0); give the NIC another address | details {'held_by_id': '19eb6eba-40f8-4a31-83f5-28abc5c25a75', 'held_by_kind': 'container', 'held_by_name': 'r3-u6', 'mac_address': '02:52:33:00:00:06', 'slot': 0}
+containers after: ['r3-u6']
+r3-u6 snapshots: 0
+skeptest/skep/jail
+skeptest/skep/jail/19eb6eba-40f8-4a31-83f5-28abc5c25a75
+-- the refusals in the agent's audit (newest first)
+None container.create denied {"error_code": "container_mac_in_use"}
+None container.clone denied {"error_code": "container_mac_in_use"}
+None container.update denied {"error_code": "container_mac_in_use"}
+None container.create success {"task_id": "edde1c57-0c78-4ad0-9589-b4c303e8de6d"}
+None container.create denied {"error_code": "container_mac_in_use"}
+None container.delete success {"task_id": "a72851f7-ccfa-4f5a-8df3-a7687cbdb956"}
+
+######## u7: memlock login classes (jails.md note), jail r3-u6 (DHCP, bridge0), 2026-11-21T16:40:17Z
+start: HTTP 202 
+task 507c7a88-1a1c-4d85-86dc-e1cebfea9970 (container.start): succeeded 
++ sudo jexec -U root skep-19eb6eba-40f8-4a31-83f5-28abc5c25a75 sh -c 'ulimit -l'
+unlimited
++ sudo jexec skep-19eb6eba-40f8-4a31-83f5-28abc5c25a75 sh -c 'ulimit -l'
+64
++ pgrep -j skep-19eb6eba-40f8-4a31-83f5-28abc5c25a75 -x cron
++ grep -E 'PID|memorylocked'
++ sudo procstat -l 767
+  PID COMM             RLIMIT                  SOFT             HARD     
+  767 cron             memorylocked          131072 KB        131072 KB  
++ sudo jexec -U root skep-19eb6eba-40f8-4a31-83f5-28abc5c25a75 sysrc 'cron_limits=-l 300m'
+jexec: execvp: sysrc: No such file or directory
++ sudo jexec -U root skep-19eb6eba-40f8-4a31-83f5-28abc5c25a75 service cron restart
+Stopping cron.
+Waiting for PIDS: 767.
+Starting cron.
++ pgrep -j skep-19eb6eba-40f8-4a31-83f5-28abc5c25a75 -x cron
++ grep -E 'PID|memorylocked'
++ sudo procstat -l 869
+  PID COMM             RLIMIT                  SOFT             HARD     
+  869 cron             memorylocked          131072 KB        131072 KB  
++ sudo jexec -U root skep-19eb6eba-40f8-4a31-83f5-28abc5c25a75 sysrc -x cron_limits
+jexec: execvp: sysrc: No such file or directory
++ sudo jexec -U root skep-19eb6eba-40f8-4a31-83f5-28abc5c25a75 sysrc -a
+jexec: execvp: sysrc: No such file or directory
++ sudo jexec -U root skep-19eb6eba-40f8-4a31-83f5-28abc5c25a75 service cron restart
+Stopping cron.
+Waiting for PIDS: 869.
+Starting cron.
++ pgrep -j skep-19eb6eba-40f8-4a31-83f5-28abc5c25a75 -x cron
++ grep memorylocked
++ sudo procstat -l 930
+  930 cron             memorylocked          131072 KB        131072 KB  
+stop: HTTP 202 
+task e4544dbb-bce5-48b1-933f-3a12d06c8dc5 (container.stop): succeeded 
+delete: HTTP 202 
+task 61fa2fb6-ab26-4eb7-bfa5-f2628da9fbe7 (container.delete): succeeded 
+skeptest/skep/jail
+   JID  IP Address      Hostname                      Path
+
+######## u7 (rc.conf part repeated; minimal-151 has no sysrc), jail r3-u7, 2026-11-21T16:40:31Z
+HTTP 202
+task e93b96cc-7ce6-4747-b306-50a8dd73fd88 (container.create): succeeded 
+container r3-u7 d7346b6d-a052-423f-a720-8fe82b94fff8
+start: HTTP 202 
+task f998caa2-b976-40ff-9eb3-506ec60adc63 (container.start): succeeded 
++ sudo jexec -U root skep-d7346b6d-a052-423f-a720-8fe82b94fff8 sh -c 'ls -l /etc/rc.conf; which sysrc'
+ls: /etc/rc.conf: No such file or directory
++ pgrep -j skep-d7346b6d-a052-423f-a720-8fe82b94fff8 -x cron
++ grep memorylocked
++ sudo procstat -l 1413
+ 1413 cron             memorylocked          131072 KB        131072 KB  
++ sudo jexec -U root skep-d7346b6d-a052-423f-a720-8fe82b94fff8 sh -c 'echo cron_limits=\"-l 300m\" >> /etc/rc.conf; cat /etc/rc.conf'
+cron_limits="-l 300m"
++ sudo jexec -U root skep-d7346b6d-a052-423f-a720-8fe82b94fff8 service cron restart
+Stopping cron.
+Waiting for PIDS: 1413.
+Starting cron.
++ pgrep -j skep-d7346b6d-a052-423f-a720-8fe82b94fff8 -x cron
++ grep memorylocked
++ sudo procstat -l 1519
+ 1519 cron             memorylocked          307200 KB        307200 KB  
+stop: HTTP 202 
+task 79ce687c-a891-470e-a8bf-5a8186e59346 (container.stop): succeeded 
+delete: HTTP 202 
+task 6381fbbb-9f01-41b2-8c19-1b8c6f19d380 (container.delete): succeeded 
+skeptest/skep/jail
+   JID  IP Address      Hostname                      Path
+
+######## 5a: fresh throwaway template build (s7admin), build jail sysv*, 2026-11-21T16:41:35Z
+create template: HTTP 202 
+{"template":{"id":"4507dc50-a679-4954-a16c-3f4d7c3d024f","name":"r3-tpl","pool":"skeptest","source":"pkgbase","packages":["FreeBSD-set-minimal","FreeBSD-ssh"],"provisioned":false,"patch_differs":false,"has_sshd":false,"used_bytes":0,"created_at":"2026-11-21T16:41:37.457Z"},"task":{"id":"6dfc0c21-2149-4138-96e6-dbccd3e1410d","node_id":"97fc6968-7e82-49c9-bda8-9026775ca964","type":"container.templat
+template 4507dc50-a679-4954-a16c-3f4d7c3d024f task 6dfc0c21-2149-4138-96e6-dbccd3e1410d
+task 6dfc0c21-2149-4138-96e6-dbccd3e1410d: succeeded after 43 s; error: None
+progress: ['task is pending', 'task is running', 'checking the templates directory', 'recording the host files', 'creating the template dataset', 'installing the base packages (scripts and triggers off)', 'checking the package scripts against the allowlist', 'checking the trigger files against the allowlist', "checking the template's release", 'starting the build jail', 'running /usr/sbin/certctl rehash in the build jail', 'running /usr/sbin/pwd_mkdb -i -p -d /etc /etc/master.passwd in the build jail', 'running /usr/sbin/services_mkdb -l -q -o /var/db/services.db /etc/services in the build jail', 'running /usr/bin/cap_mkdb -l /etc/login.conf in the build jail', 'running /usr/bin/makewhatis /usr/share/man in the build jail', 'running /usr/bin/makewhatis /usr/share/openssl/man in the build jail', 'removing the build jail', 'checking for deferred triggers', 'checking that the template holds no SSH host keys', 'removing the repository catalogues and checking the package cache', 'comparing the host files', 'removing the work area', 'taking @skep-base', 'task is succeeded']
+poller: build jail seen after 390 polls at 16:42:16
+enforce_statfs=2
+ip4=disable
+ip6=disable
+jid=27
+name=skep-build-4507dc50-a679-4954-a16c-3f4d7c3d024f
+path=/skeptest/skep/templates/4507dc50-a679-4954-a16c-3f4d7c3d024f
+securelevel=2
+sysvmsg=disable
+sysvsem=disable
+sysvshm=disable
+vnet=inherit
+children.max=0
+f496866f-32ba-4527-bcee-5a717a2f74c0 minimal-151 source=pkgbase provisioned=True release=15.1-RELEASE-p6 has_sshd=False packages=['FreeBSD-set-minimal'] used=81452032
+dbf4243a-81fe-4914-8f7a-fd0a768476aa minimal-ssh-151 source=pkgbase provisioned=True release=15.1-RELEASE-p6 has_sshd=True packages=['FreeBSD-set-minimal', 'FreeBSD-ssh'] used=84792832
+4507dc50-a679-4954-a16c-3f4d7c3d024f r3-tpl source=pkgbase provisioned=True release=15.1-RELEASE-p7 has_sshd=True packages=['FreeBSD-set-minimal', 'FreeBSD-ssh'] used=84811264
++ zfs list -H -t all -o name,readonly -r skeptest/skep/templates
+skeptest/skep/templates	off
+skeptest/skep/templates/4507dc50-a679-4954-a16c-3f4d7c3d024f	on
+skeptest/skep/templates/4507dc50-a679-4954-a16c-3f4d7c3d024f@skep-base	-
+skeptest/skep/templates/dbf4243a-81fe-4914-8f7a-fd0a768476aa	on
+skeptest/skep/templates/dbf4243a-81fe-4914-8f7a-fd0a768476aa@skep-base	-
+skeptest/skep/templates/f496866f-32ba-4527-bcee-5a717a2f74c0	on
+skeptest/skep/templates/f496866f-32ba-4527-bcee-5a717a2f74c0@skep-base	-
++ jls
+   JID  IP Address      Hostname                      Path
++ sudo ls -la /skeptest/skep/templates/
+total 13
+drwx------   5 root wheel  5 Nov 21 11:42 .
+drwxr-xr-x   4 root wheel  4 Nov 16 21:18 ..
+drwxr-xr-x  17 root wheel 18 Nov 21 11:42 4507dc50-a679-4954-a16c-3f4d7c3d024f
+drwxr-xr-x  17 root wheel 18 Nov 16 21:18 dbf4243a-81fe-4914-8f7a-fd0a768476aa
+drwxr-xr-x  17 root wheel 18 Nov 16 18:47 f496866f-32ba-4527-bcee-5a717a2f74c0
++ sudo grep -h skep-agent /var/log/daemon.log
++ grep -F 4507dc50-a679-4954-a16c-3f4d7c3d024f
++ grep -o '"level":"[A-Z]*","msg":"[^"]*"'
++ sort
++ uniq -c
+   1 "level":"INFO","msg":"task accepted"
+
+######## 5b: has_sshd and create-with-key, 2026-11-21T16:42:52Z
+minimal-151 has_sshd=False
+minimal-ssh-151 has_sshd=True
+r3-tpl has_sshd=True
+create with key from minimal-151 (has_sshd false): HTTP 422 container_ssh_unavailable | the template minimal-151 has no sshd, so an SSH key cannot be used; build a template with FreeBSD-ssh in storage.template_packages
+containers: []
+-- create with key from r3-tpl (has_sshd true), DHCP NIC on bridge0
+HTTP 202
+task 82cc82fa-f070-4aeb-83f6-fbcc3d45ed2c (container.create): succeeded 
+container r3-dhcp 646c80cd-e0be-4376-b761-471aa1b7ea76
++ sudo cat /skeptest/skep/jail/646c80cd-e0be-4376-b761-471aa1b7ea76/etc/rc.conf
+# Written by Skep before this jail's first start (ADR 0010 decision 13).
+ifconfig_skep0="SYNCDHCP"
+sshd_enable="YES"
+sshd_flags="-o PermitRootLogin=prohibit-password"
++ sudo ls -la /skeptest/skep/jail/646c80cd-e0be-4376-b761-471aa1b7ea76/root/.ssh
+total 3
+drwx------  2 root wheel  3 Nov 21 11:42 .
+drwxr-x---  3 root wheel  6 Nov 21 11:42 ..
+-rw-------  1 root wheel 93 Nov 21 11:42 authorized_keys
++ sudo cat /skeptest/skep/jail/646c80cd-e0be-4376-b761-471aa1b7ea76/root/.ssh/authorized_keys
+ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBKSEY1GyvYXgBLXH/rFqIbSc2qJ1jhk0Ppx/eAmkUNo r3-test-key
+
+######## 5c: lifecycle of the DHCP jail r3-dhcp on bridge0, 2026-11-21T16:42:54Z
+state: stopped started_once: False detail: 
+start: HTTP 202 
+task 9bd9679a-663e-490f-9af4-98ee72a313bd (container.start): succeeded 
+state: running started_once: True detail: 
++ jls -j skep-646c80cd-e0be-4376-b761-471aa1b7ea76 jid name host.hostname vnet
+28 skep-646c80cd-e0be-4376-b761-471aa1b7ea76 r3-dhcp.lab new
++ ifconfig -g epair
+epair0a
++ sudo jexec skep-646c80cd-e0be-4376-b761-471aa1b7ea76 ifconfig skep0
++ grep -E 'inet |ether|status'
+	ether 02:69:2c:0e:03:ba
+	inet 10.79.60.112 netmask 0xffffff00 broadcast 10.79.60.255
+	status: active
++ sudo jexec skep-646c80cd-e0be-4376-b761-471aa1b7ea76 sockstat -4l
++ grep -E 'sshd|USER'
+USER COMMAND     PID FD PROTO LOCAL ADDRESS         FOREIGN ADDRESS      
+root sshd       4236  7 tcp4  *:22                  *:*                  
++ mount -t devfs
+devfs on /dev (devfs)
+devfs on /skeptest/skep/jail/646c80cd-e0be-4376-b761-471aa1b7ea76/dev (devfs)
+DHCP address: 10.79.60.112
+-- SSH from merrick with the test key (StrictHostKeyChecking=accept-new into a throwaway known_hosts)
+Warning: Permanently added '10.79.60.112' (ED25519) to the list of known hosts.
+uid=0(root) gid=0(wheel) groups=0(wheel),5(operator)
+r3-dhcp.lab
+15.1-RELEASE-p7
+restart: HTTP 202 
+task 7d6ff198-b31b-4f66-a8cf-2c314b1fe736 (container.restart): succeeded 
+state: running started_once: True detail: 
++ jls -j skep-646c80cd-e0be-4376-b761-471aa1b7ea76 jid
+29
++ ifconfig -g epair
+epair0a
++ mount -t devfs
+devfs on /dev (devfs)
+devfs on /skeptest/skep/jail/646c80cd-e0be-4376-b761-471aa1b7ea76/dev (devfs)
+console-log after restart: truncated=False lines=41 last: Sat Nov 21 16:43:02 UTC 2026
+stop: HTTP 202 
+task f691348d-202d-4bbb-9659-08f8cffbadf8 (container.stop): succeeded 
+state: stopped started_once: True detail: 
++ jls -j skep-646c80cd-e0be-4376-b761-471aa1b7ea76 jid
+jls: jail "skep-646c80cd-e0be-4376-b761-471aa1b7ea76" not found
++ ifconfig -g epair
++ mount -t devfs
+devfs on /dev (devfs)
++ sudo sed -n '/--- shutdown ---/,$p' /var/run/skep/jails/646c80cd-e0be-4376-b761-471aa1b7ea76/console.log
++ head -12
+--- shutdown ---
+Stopping sshd.
+Waiting for PIDS: 4988.
+Stopping cron.
+Waiting for PIDS: 5020.
+.
+skep-646c80cd-e0be-4376-b761-471aa1b7ea76: removed
+--- shutdown stderr ---
+Terminated
+(r3-dhcp kept for 5e/5f/5g/5h; deleted in the cleanup)
+
+######## 5d: failed start (rc.local blocks past start_timeout_seconds=120), 2026-11-21T16:43:33Z
+HTTP 202
+task 630da073-f955-441a-8e09-efe611e69cb2 (container.create): succeeded 
+container r3-fail 7f9ce9c3-3186-414b-a39f-b25a92a78df2
+start: HTTP 202 
+task 4b363a1e-fa6a-4ba3-8686-37feeaf5ab9d (container.start): failed {'code': 'container_start_failed', 'message': "the jail's /etc/rc failed or outlasted the start timeout, so the jail was stopped and removed (its output is in the console log): hostops: jexec timed out after 2m0s"}
+start ended 122 s after submission
+task error: {'code': 'container_start_failed', 'message': "the jail's /etc/rc failed or outlasted the start timeout, so the jail was stopped and removed (its output is in the console log): hostops: jexec timed out after 2m0s"}
+state: stopped started_once: True detail: the last start failed: container_start_failed: the jail's /etc/rc failed or outlasted the start timeout, so the jail was stopped and removed (its output is in the console log): hostops: jexec timed out after 2m0s
++ jls -j skep-7f9ce9c3-3186-414b-a39f-b25a92a78df2 jid
+jls: jail "skep-7f9ce9c3-3186-414b-a39f-b25a92a78df2" not found
+jls exit 1
++ echo 'jls exit 1'
++ ifconfig -g epair
++ mount -t devfs
+devfs on /dev (devfs)
++ sudo rctl
++ grep -c skep-7f9ce9c3-3186-414b-a39f-b25a92a78df2
+0
++ sudo cat -v /var/run/skep/jails/7f9ce9c3-3186-414b-a39f-b25a92a78df2/console.log
++ tail -25
+	inet 127.0.0.1 netmask 0xff000000
+	inet6 ::1 prefixlen 128
+	inet6 fe80::1%lo0 prefixlen 64 scopeid 0x5
+	groups: lo
+	nd6 options=21<PERFORMNUD,AUTO_LINKLOCAL>
+route: message indicates error: File exists
+add host 127.0.0.1: gateway lo0 fib 0: route already in table
+route: message indicates error: File exists
+add host ::1: gateway lo0 fib 0: route already in table
+add net fe80::: gateway ::1
+add net ff02::: gateway ::1
+add net ::ffff:0.0.0.0: gateway ::1
+add net ::0.0.0.0: gateway ::1
+Updating /var/run/os-release done.
+Clearing /tmp (X related).
+Creating and/or trimming log files.
+Updating motd:.
+Starting syslogd.
+Starting local daemons:r3 rc.local: about to block in the foreground
+r3 rc.local: stderr line
+--- shutdown ---
+.
+skep-7f9ce9c3-3186-414b-a39f-b25a92a78df2: removed
+--- shutdown stderr ---
+Terminated
+-- GET console-log (last 12 lines)
+truncated=False
+Updating /var/run/os-release done.
+Clearing /tmp (X related).
+Creating and/or trimming log files.
+Updating motd:.
+Starting syslogd.
+Starting local daemons:r3 rc.local: about to block in the foreground
+r3 rc.local: stderr line
+--- shutdown ---
+.
+skep-7f9ce9c3-3186-414b-a39f-b25a92a78df2: removed
+--- shutdown stderr ---
+Terminated
+"level":"INFO","msg":"task accepted"
+"level":"INFO","msg":"task accepted"
+"level":"WARN","msg":"hostops: /etc/rc failed in a jail; removing it","event":"jail_rc_failed"
+-- the web UI hint for this code (web/src/pages/containers/container.ts)
+313:    case "container_start_failed":
+314-      return "The console log below shows what /etc/rc wrote.";
+315-    case "snapshot_not_latest":
+316-      return "Rolling back to an older snapshot destroys the newer ones, and must be asked for.";
+(r3-fail kept for the UI check; deleted in the cleanup)
+
+######## 5e: snapshots, rollback, clones on r3-dhcp (DHCP, started once), 2026-11-21T16:46:20Z
+state: stopped started_once: True detail: 
+snapshot r3-a: HTTP 202 
+task 3cac6d90-d6f1-46ee-a4ae-917bbf66c6b2 (container.snapshot.create): succeeded 
+start: HTTP 202 
+task 6b9ab970-8ff7-40de-aa42-894f38525531 (container.start): succeeded 
+snapshot r3-b: HTTP 202 
+task 3355cec0-d8e4-48d8-b5de-9dc1b8dfe09d (container.snapshot.create): succeeded 
+ba4460c8-0f38-476e-8882-e64d4a42eadd r3-a consistency=consistent
+8f36c6cc-63ff-48ec-bca3-28b644c2df12 r3-b consistency=crash_consistent
+-- rollback while running
+rollback (running): HTTP 409 container_not_stopped
+stop: HTTP 202 
+task 1d82a133-aa20-4fdc-9727-1aef37593052 (container.stop): succeeded 
+-- files before rollback:
+r3-after-a
+r3-after-b
+rollback to r3-b (latest): HTTP 202 
+task 2d133944-29ae-4c06-a4e0-710040ef336c (container.snapshot.rollback): succeeded 
+-- files after rollback to r3-b:
+r3-after-a
+state: stopped started_once: True detail: 
+rollback to r3-a without destroy_newer: HTTP 409 snapshot_not_latest | the snapshot is not the latest; rolling back to it destroys the newer ones, which needs destroy_newer
+rollback to r3-a with destroy_newer: HTTP 202 
+task db92fb0d-65e2-44dc-bc11-980e3d87f4cf (container.snapshot.rollback): succeeded 
+result: {'container_id': '646c80cd-e0be-4376-b761-471aa1b7ea76', 'datasets_destroyed': [{'name': 'skeptest/skep/jail/646c80cd-e0be-4376-b761-471aa1b7ea76@skep-8f36c6cc-63ff-48ec-bca3-28b644c2df12', 'type': 'snapshot', 'used_bytes': 1024}], 'destroyed_snapshots': [{'id': '8f36c6cc-63ff-48ec-bca3-28b644c2df12', 'name': 'r3-b'}], 'name': 'r3-a', 'snapshot_id': 'ba4460c8-0f38-476e-8882-e64d4a42eadd'}
+-- files after rollback to r3-a:
+(no r3- files)
+state: stopped started_once: True detail: 
+snapshots: ['r3-a']
+skeptest/skep/jail/646c80cd-e0be-4376-b761-471aa1b7ea76@skep-ba4460c8-0f38-476e-8882-e64d4a42eadd	ba4460c8-0f38-476e-8882-e64d4a42eadd
+-- clone r3-dhcp from r3-a -> r3-clone (DHCP, new MAC)
+clone: HTTP 202 
+task e4c6e355-ee7f-45ec-a788-d8f01ef74e12 (container.clone): succeeded 
+source NICs: [(0, '02:69:2c:0e:03:ba', {'mode': 'dhcp'}, 'bridge0')]
+clone: name r3-clone hostname r3-clone started_once True origin None NICs [(0, '02:c5:d5:59:35:7e', {'mode': 'dhcp'}, 'bridge0')]
+origin	skeptest/skep/jail/646c80cd-e0be-4376-b761-471aa1b7ea76@skep-ba4460c8-0f38-476e-8882-e64d4a42eadd
+refquota	none
+start: HTTP 202 
+task b6b7b31f-0b9c-4a1a-84a4-0abd81153b9b (container.start): succeeded 
++ jls -j skep-cdcdd626-2fe3-4442-950a-bbdffd8cbfa5 jid host.hostname
+32 r3-clone
++ sudo jexec skep-cdcdd626-2fe3-4442-950a-bbdffd8cbfa5 ifconfig skep0
++ grep -E 'inet |ether'
+	ether 02:c5:d5:59:35:7e
+	inet 10.79.60.113 netmask 0xffffff00 broadcast 10.79.60.255
++ sudo jexec skep-cdcdd626-2fe3-4442-950a-bbdffd8cbfa5 hostname
+r3-clone
++ sudo ls /skeptest/skep/jail/cdcdd626-2fe3-4442-950a-bbdffd8cbfa5/root/
++ grep r3-
+(no r3- files: r3-a predates both markers)
++ echo '(no r3- files: r3-a predates both markers)'
++ sudo diff -q /skeptest/skep/jail/646c80cd-e0be-4376-b761-471aa1b7ea76/etc/ssh/ssh_host_ed25519_key.pub /skeptest/skep/jail/cdcdd626-2fe3-4442-950a-bbdffd8cbfa5/etc/ssh/ssh_host_ed25519_key.pub
+host key equal to the source (documented)
++ echo 'host key equal to the source (documented)'
+-- deleting r3-a while the clone exists
+delete r3-a: HTTP 409 snapshot_has_clones | a linked clone depends on the snapshot; delete the clone first
+delete the source (has a clone): HTTP 409 snapshot_has_clones | a linked clone depends on the snapshot; delete the clone first
+stop: HTTP 202 
+task df08e47d-cb4a-414a-9f5c-647843041bdf (container.stop): succeeded 
+delete: HTTP 202 
+task 5a8d3f61-9750-4816-afbb-e8dd9a3f9b75 (container.delete): succeeded 
+delete r3-a after the clone is gone: HTTP 202 
+task 050c9297-7278-4b81-bce3-d76b924bbd0b (container.snapshot.delete): succeeded 
+snapshots: []
+skeptest/skep/jail
+skeptest/skep/jail/646c80cd-e0be-4376-b761-471aa1b7ea76
+skeptest/skep/jail/7f9ce9c3-3186-414b-a39f-b25a92a78df2
+
+######## 5h: edit rules, never-started container r3-edit, 2026-11-21T16:47:41Z
+HTTP 202
+task 69cff28c-f170-4a04-8273-4a8f4a952f9f (container.create): succeeded 
+container r3-edit 792e8292-0011-4fe3-8dba-c701be23b472
++ sudo cat /skeptest/skep/jail/792e8292-0011-4fe3-8dba-c701be23b472/etc/rc.conf
+# Written by Skep before this jail's first start (ADR 0010 decision 13).
+sshd_enable="YES"
+sshd_flags="-o PermitRootLogin=prohibit-password"
++ sudo cat /skeptest/skep/jail/792e8292-0011-4fe3-8dba-c701be23b472/root/.ssh/authorized_keys
+ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBKSEY1GyvYXgBLXH/rFqIbSc2qJ1jhk0Ppx/eAmkUNo r3-test-key
++ sudo ls -l /skeptest/skep/jail/792e8292-0011-4fe3-8dba-c701be23b472/etc/resolv.conf
+ls: /skeptest/skep/jail/792e8292-0011-4fe3-8dba-c701be23b472/etc/resolv.conf: No such file or directory
+PUT never started: hostname, sysvipc, limits, key K2, no NICs, nameserver: HTTP 202  | 
+task 136cd86e-7709-41d3-9586-aaa295a98cda (container.update): succeeded 
++ sudo cat /skeptest/skep/jail/792e8292-0011-4fe3-8dba-c701be23b472/etc/rc.conf
+# Written by Skep before this jail's first start (ADR 0010 decision 13).
+sshd_enable="YES"
+sshd_flags="-o PermitRootLogin=prohibit-password"
++ sudo cat /skeptest/skep/jail/792e8292-0011-4fe3-8dba-c701be23b472/root/.ssh/authorized_keys
+ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIG/E24+NUjPhzoy12RUqrXCuvuaWPiJ6wlIoMLm3qEXx r3-test-key-2
++ sudo cat /skeptest/skep/jail/792e8292-0011-4fe3-8dba-c701be23b472/etc/resolv.conf
+# Written by Skep before this jail's first start (ADR 0010 decision 13).
+nameserver 192.0.2.53
++ zfs get -H -o value refquota skeptest/skep/jail/792e8292-0011-4fe3-8dba-c701be23b472
+512M
+PUT never started: DHCP NIC together with a nameserver: HTTP 400 invalid_request | nameservers are for static addressing only: with DHCP, dhclient writes the jail's resolv.conf
+PUT never started: DHCP NIC, no nameservers: HTTP 400 invalid_request | nameservers are for static addressing only: with DHCP, dhclient writes the jail's resolv.conf
++ sudo cat /skeptest/skep/jail/792e8292-0011-4fe3-8dba-c701be23b472/etc/rc.conf
+# Written by Skep before this jail's first start (ADR 0010 decision 13).
+sshd_enable="YES"
+sshd_flags="-o PermitRootLogin=prohibit-password"
++ sudo ls -l /skeptest/skep/jail/792e8292-0011-4fe3-8dba-c701be23b472/etc/resolv.conf
+-rw-r--r--  1 root wheel 95 Nov 21 11:47 /skeptest/skep/jail/792e8292-0011-4fe3-8dba-c701be23b472/etc/resolv.conf
++ sudo cat /skeptest/skep/jail/792e8292-0011-4fe3-8dba-c701be23b472/root/.ssh/authorized_keys
+ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIG/E24+NUjPhzoy12RUqrXCuvuaWPiJ6wlIoMLm3qEXx r3-test-key-2
+r3-edit: hostname r3-edit2.lab options {'sysvipc': True, 'mlock': False} limits {'memory': 268435456, 'cpu_percent': 50, 'max_processes': 64, 'open_files': 512, 'disk_quota': 536870912} nics [] nameservers ['192.0.2.53'] ssh_key_set True
+start: HTTP 202 
+task faafd48b-489a-4464-a2cc-14c45e6f43c2 (container.start): succeeded 
++ jls -j skep-792e8292-0011-4fe3-8dba-c701be23b472 host.hostname sysvshm sysvsem sysvmsg
+r3-edit2.lab new new new
++ sudo rctl jail:skep-792e8292-0011-4fe3-8dba-c701be23b472
+jail:skep-792e8292-0011-4fe3-8dba-c701be23b472:openfiles:deny=512
+jail:skep-792e8292-0011-4fe3-8dba-c701be23b472:maxproc:deny=64
+jail:skep-792e8292-0011-4fe3-8dba-c701be23b472:pcpu:deny=50
+jail:skep-792e8292-0011-4fe3-8dba-c701be23b472:memoryuse:deny=268435456
+-- PUT while running
+PUT running: hostname: HTTP 409 container_not_stopped | the jail is running; stop it first
+
+######## 5f: /metrics compared with rctl -u, r3-edit running with limits, 2026-11-21T16:47:46Z
+metrics: []
+cputime=0 datasize=86016 stacksize=0 coredumpsize=0 memoryuse=23003136 memorylocked=0 maxproc=5 openfiles=200 vmemoryuse=84934656 pseudoterminals=0 swapuse=0 nthr=5 msgqqueued=0 msgqsize=0 nmsgq=0 nsem=0 nsemop=0 nshm=0 shmsize=0 wallclock=47 pcpu=0 readbps=0 writebps=0 readiops=0 writeiops=0 
+used	283648 referenced	84851200 refquota	536870912 
+metrics: []
+cputime=0 datasize=86016 stacksize=0 coredumpsize=0 memoryuse=23003136 memorylocked=0 maxproc=5 openfiles=200 vmemoryuse=84934656 pseudoterminals=0 swapuse=0 nthr=5 msgqqueued=0 msgqsize=0 nmsgq=0 nsem=0 nsemop=0 nshm=0 shmsize=0 wallclock=63 pcpu=0 readbps=0 writebps=0 readiops=0 writeiops=0 
+used	283648 referenced	84851200 refquota	536870912 
+metrics keys for a stopped jail elsewhere: [('r3-dhcp', ['disk_referenced_bytes', 'disk_used_bytes', 'id', 'name', 'state']), ('r3-fail', ['disk_referenced_bytes', 'disk_used_bytes', 'id', 'name', 'state'])]
+stop: HTTP 202 
+task 76b395a8-9642-4f58-a9cd-50e07889979d (container.stop): succeeded 
+after the stop: [{'id': '792e8292-0011-4fe3-8dba-c701be23b472', 'name': 'r3-edit', 'state': 'running', 'cpu_percent': 0, 'cpu_time_seconds': 0, 'resident_memory_bytes': 23003136, 'processes': 5, 'open_file_slots': 200, 'disk_used_bytes': 283648, 'disk_referenced_bytes': 84851200}]
+
+######## 5h: edit rules, started container r3-edit (stopped now), 2026-11-21T16:48:02Z
+Traceback (most recent call last):
+  File "<string>", line 1, in <module>
+    import json,sys;d=json.load(open(sys.argv[1]));print(eval(sys.argv[2]))
+                                                         ~~~~^^^^^^^^^^^^^
+  File "<string>", line 1, in <module>
+    import json,sys;d=json.load(open(sys.argv[1]));print(eval(sys.argv[2]))
+    ^^^^^^^^^^^^
+IndexError: list index out of range
+current MAC 
+PUT started: hostname, options, limits (NIC unchanged): HTTP 400 invalid_request | nameservers are for static addressing only: with DHCP, dhclient writes the jail's resolv.conf
+PUT started: change the key: HTTP 400 invalid_request | nameservers are for static addressing only: with DHCP, dhclient writes the jail's resolv.conf
+PUT started: remove the key: HTTP 400 invalid_request | nameservers are for static addressing only: with DHCP, dhclient writes the jail's resolv.conf
+PUT started: nameservers: HTTP 400 invalid_request | nameservers are for static addressing only: with DHCP, dhclient writes the jail's resolv.conf
+PUT started: add a NIC: HTTP 400 invalid_request | nameservers are for static addressing only: with DHCP, dhclient writes the jail's resolv.conf
+PUT started: remove the NIC: HTTP 202  | 
+task 52904faf-179a-4b33-b238-ca7ffc89e9d7 (container.update): succeeded 
+PUT started: new MAC on slot 0: HTTP 400 invalid_request | nameservers are for static addressing only: with DHCP, dhclient writes the jail's resolv.conf
+PUT started: disk_quota 64 MiB (below referenced): HTTP 400 invalid_request | nameservers are for static addressing only: with DHCP, dhclient writes the jail's resolv.conf
+referenced	84851200 refquota	536870912 
+r3-edit now: hostname r3-edit2.lab options {'sysvipc': True, 'mlock': False} limits {'memory': 268435456, 'cpu_percent': 50, 'max_processes': 64, 'open_files': 512, 'disk_quota': 536870912} nics [] ssh_key_set True
+ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIG/E24+NUjPhzoy12RUqrXCuvuaWPiJ6wlIoMLm3qEXx r3-test-key-2
+# Written by Skep before this jail's first start (ADR 0010 decision 13).
+nameserver 192.0.2.53
+start: HTTP 202 
+task 350231da-cc1f-4c33-bcbd-c4c725cd2d09 (container.start): succeeded 
++ jls -j skep-792e8292-0011-4fe3-8dba-c701be23b472 host.hostname sysvshm
+r3-edit2.lab new
++ sudo rctl jail:skep-792e8292-0011-4fe3-8dba-c701be23b472
+jail:skep-792e8292-0011-4fe3-8dba-c701be23b472:openfiles:deny=512
+jail:skep-792e8292-0011-4fe3-8dba-c701be23b472:maxproc:deny=64
+jail:skep-792e8292-0011-4fe3-8dba-c701be23b472:pcpu:deny=50
+jail:skep-792e8292-0011-4fe3-8dba-c701be23b472:memoryuse:deny=268435456
++ sudo jexec skep-792e8292-0011-4fe3-8dba-c701be23b472 ifconfig skep0
++ grep ether
+ifconfig: interface skep0 does not exist
+stop: HTTP 202 
+task 22cbdd11-b1d9-405b-8c59-dfd607b283eb (container.stop): succeeded 
+
+######## 5f (repeat): /metrics vs rctl -u; the agent samples every 30 s (monitoring.DefaultInterval), 2026-11-21T16:48:34Z
+start: HTTP 202 
+task 5e0c3618-bdeb-47a8-9ae7-3b12fee1e80d (container.start): succeeded 
+9066  0.0 sshd: /usr/sbin/sshd -o PermitRootLogin=prohibit-password [listener] 0 of 10-100 startups (sshd)
+9098  0.0 /usr/sbin/cron -s
+9110  9.5 sh -c while :; do :; done
+metrics top-level keys: ['capacity_fail_percent', 'capacity_warn_percent', 'containers', 'node_id', 'observed_at', 'pools', 'vms']  sample time: None
+metrics r3-edit: [{'id': '792e8292-0011-4fe3-8dba-c701be23b472', 'name': 'r3-edit', 'state': 'running', 'cpu_percent': 8, 'cpu_time_seconds': 10, 'resident_memory_bytes': 25948160, 'processes': 6, 'open_file_slots': 200, 'disk_used_bytes': 289792, 'disk_referenced_bytes': 84851200}]
+16:49:18
+cputime=20 memoryuse=25948160 maxproc=6 openfiles=200 pcpu=8 
+used	289792 referenced	84851200 
+metrics top-level keys: ['capacity_fail_percent', 'capacity_warn_percent', 'containers', 'node_id', 'observed_at', 'pools', 'vms']  sample time: None
+metrics r3-edit: [{'id': '792e8292-0011-4fe3-8dba-c701be23b472', 'name': 'r3-edit', 'state': 'running', 'cpu_percent': 91, 'cpu_time_seconds': 26, 'resident_memory_bytes': 25948160, 'processes': 6, 'open_file_slots': 200, 'disk_used_bytes': 289792, 'disk_referenced_bytes': 84851200}]
+16:49:49
+cputime=36 memoryuse=25948160 maxproc=6 openfiles=200 pcpu=27 
+used	289792 referenced	84851200 
+metrics top-level keys: ['capacity_fail_percent', 'capacity_warn_percent', 'containers', 'node_id', 'observed_at', 'pools', 'vms']  sample time: None
+metrics r3-edit: [{'id': '792e8292-0011-4fe3-8dba-c701be23b472', 'name': 'r3-edit', 'state': 'running', 'cpu_percent': 27, 'cpu_time_seconds': 40, 'resident_memory_bytes': 25948160, 'processes': 6, 'open_file_slots': 200, 'disk_used_bytes': 289792, 'disk_referenced_bytes': 84851200}]
+16:50:20
+cputime=52 memoryuse=25948160 maxproc=6 openfiles=200 pcpu=72 
+used	289792 referenced	84851200 
+stop: HTTP 202 
+task 3405d946-8da0-463f-8b76-33e23626bb00 (container.stop): succeeded 
+31 s after the stop: [{'id': '792e8292-0011-4fe3-8dba-c701be23b472', 'name': 'r3-edit', 'state': 'stopped', 'disk_used_bytes': 288768, 'disk_referenced_bytes': 84850176}]
+
+######## 5h (repeat): edit rules. In the first attempt the PUTs left 'nameservers' out, which keeps the stored ones, so the DHCP cases were refused 400; here every PUT says what it means, 2026-11-21T16:51:48Z
+---- never started: r3-edit2 (r3-tpl, key K1, DHCP NIC on bridge0)
+HTTP 202
+task 324e4e85-f335-427c-8a28-e102739837af (container.create): succeeded 
+container r3-edit2 56beade9-2050-439b-b1d2-7b79db728aa7
+  now: hostname r3-edit2 options {'sysvipc': False, 'mlock': False} limits {} nics [(0, '02:6d:05:53:66:65', 'dhcp', 'bridge0')] nameservers None key_set True
+  rc.conf:
+    # Written by Skep before this jail's first start (ADR 0010 decision 13).
+    ifconfig_skep0="SYNCDHCP"
+    sshd_enable="YES"
+    sshd_flags="-o PermitRootLogin=prohibit-password"
+  resolv.conf:
+sed: /skeptest/skep/jail/56beade9-2050-439b-b1d2-7b79db728aa7/etc/resolv.conf: No such file or directory
+  authorized_keys:
+    ssh-ed25519 AAAAC3NzPpx/eAmkUNo r3-test-key
+PUT never started: hostname, sysvipc, limits, key K2, no NICs, a nameserver: HTTP 202  | 
+task 4a7d1c25-0a6d-430d-94c9-c14956fa3ce1 (container.update): succeeded 
+  now: hostname r3-e2.lab options {'sysvipc': True, 'mlock': False} limits {'max_processes': 64} nics [] nameservers ['192.0.2.53'] key_set True
+  rc.conf:
+    # Written by Skep before this jail's first start (ADR 0010 decision 13).
+    sshd_enable="YES"
+    sshd_flags="-o PermitRootLogin=prohibit-password"
+  resolv.conf:
+    # Written by Skep before this jail's first start (ADR 0010 decision 13).
+    nameserver 192.0.2.53
+  authorized_keys:
+    ssh-ed25519 AAAAC3NzlIoMLm3qEXx r3-test-key-2
+PUT never started: a DHCP NIC with a given MAC, nameservers cleared: HTTP 202  | 
+task 4ae5fd00-2bed-4534-a2ad-b4c54ffd2d31 (container.update): succeeded 
+  now: hostname r3-e2.lab options {'sysvipc': True, 'mlock': False} limits {'max_processes': 64} nics [(0, '02:52:33:00:00:e2', 'dhcp', 'bridge0')] nameservers None key_set True
+  rc.conf:
+    # Written by Skep before this jail's first start (ADR 0010 decision 13).
+    ifconfig_skep0="SYNCDHCP"
+    sshd_enable="YES"
+    sshd_flags="-o PermitRootLogin=prohibit-password"
+  resolv.conf:
+sed: /skeptest/skep/jail/56beade9-2050-439b-b1d2-7b79db728aa7/etc/resolv.conf: No such file or directory
+  authorized_keys:
+    ssh-ed25519 AAAAC3NzlIoMLm3qEXx r3-test-key-2
+PUT never started: remove the key: HTTP 202  | 
+task c8a6ffff-9201-410c-ab29-298e66eac044 (container.update): succeeded 
+  now: hostname r3-e2.lab options {'sysvipc': True, 'mlock': False} limits {'max_processes': 64} nics [(0, '02:52:33:00:00:e2', 'dhcp', 'bridge0')] nameservers None key_set False
+  rc.conf:
+    # Written by Skep before this jail's first start (ADR 0010 decision 13).
+    ifconfig_skep0="SYNCDHCP"
+  resolv.conf:
+sed: /skeptest/skep/jail/56beade9-2050-439b-b1d2-7b79db728aa7/etc/resolv.conf: No such file or directory
+  authorized_keys:
+    cut: /skeptest/skep/jail/56beade9-2050-439b-b1d2-7b79db728aa7/root/.ssh/authorized_keys: No such file or directory
+PUT never started: key K1 again: HTTP 202  | 
+task ac26a7a6-f23c-489e-830d-37b9feb9e99b (container.update): succeeded 
+  now: hostname r3-e2.lab options {'sysvipc': True, 'mlock': False} limits {'max_processes': 64} nics [(0, '02:52:33:00:00:e2', 'dhcp', 'bridge0')] nameservers None key_set True
+  rc.conf:
+    # Written by Skep before this jail's first start (ADR 0010 decision 13).
+    ifconfig_skep0="SYNCDHCP"
+    sshd_enable="YES"
+    sshd_flags="-o PermitRootLogin=prohibit-password"
+  resolv.conf:
+sed: /skeptest/skep/jail/56beade9-2050-439b-b1d2-7b79db728aa7/etc/resolv.conf: No such file or directory
+  authorized_keys:
+    ssh-ed25519 AAAAC3NzPpx/eAmkUNo r3-test-key
+---- started: r3-edit (started, stopped; no NICs; nameserver 192.0.2.53; key K2)
+  now: hostname r3-edit2.lab options {'sysvipc': True, 'mlock': False} limits {'memory': 268435456, 'cpu_percent': 50, 'max_processes': 64, 'open_files': 512, 'disk_quota': 536870912} nics [] nameservers ['192.0.2.53'] key_set True
+PUT started: hostname, options, limits: HTTP 202  | 
+task 2ee1efaa-1792-4b6f-81e0-c3b1761ee608 (container.update): succeeded 
+  now: hostname r3-edit3.lab options {'sysvipc': False, 'mlock': False} limits {'max_processes': 80, 'disk_quota': 536870912} nics [] nameservers ['192.0.2.53'] key_set True
+PUT started: change the key: HTTP 409 container_started | the jail has started at least once, so Skep no longer writes into its tree (an SSH key change is the jail's own business now)
+PUT started: remove the key: HTTP 409 container_started | the jail has started at least once, so Skep no longer writes into its tree (an SSH key change is the jail's own business now)
+PUT started: change the nameservers: HTTP 409 container_started | the jail has started at least once, so Skep no longer writes into its tree: after the first start only the bridge and MAC address of an existing NIC can change; its addressing is the jail's own business now
+PUT started: add a NIC (and clear the nameservers): HTTP 409 container_started | the jail has started at least once, so Skep no longer writes into its tree: after the first start only the bridge and MAC address of an existing NIC can change; its addressing is the jail's own business now
+PUT started: disk_quota 64 MiB (below what it references): HTTP 202  | 
+task c9899753-1198-45ce-bf25-da53470de7a4 (container.update): failed {'code': 'invalid_request', 'message': "the disk quota is below what the jail's root already uses (84850176 bytes)"}
+referenced	84850176 refquota	536870912 
+  now: hostname r3-edit3.lab options {'sysvipc': False, 'mlock': False} limits {'max_processes': 80, 'disk_quota': 536870912} nics [] nameservers ['192.0.2.53'] key_set True
+  rc.conf:
+    # Written by Skep before this jail's first start (ADR 0010 decision 13).
+    sshd_enable="YES"
+    sshd_flags="-o PermitRootLogin=prohibit-password"
+  resolv.conf:
+    # Written by Skep before this jail's first start (ADR 0010 decision 13).
+    nameserver 192.0.2.53
+  authorized_keys:
+    ssh-ed25519 AAAAC3NzlIoMLm3qEXx r3-test-key-2
+start: HTTP 202 
+task c45757b3-5893-428a-93f7-8488aa8afc19 (container.start): succeeded 
++ jls -j skep-792e8292-0011-4fe3-8dba-c701be23b472 host.hostname sysvshm sysvsem sysvmsg
+r3-edit3.lab disable disable disable
++ sudo rctl jail:skep-792e8292-0011-4fe3-8dba-c701be23b472
+jail:skep-792e8292-0011-4fe3-8dba-c701be23b472:maxproc:deny=80
+stop: HTTP 202 
+task f9a10c2e-9fb4-49ff-b1b5-5c2056d76413 (container.stop): succeeded 
+---- started with a NIC: r3-dhcp (DHCP on bridge0)
+  now: hostname r3-dhcp.lab options {'sysvipc': False, 'mlock': False} limits {} nics [(0, '02:69:2c:0e:03:ba', 'dhcp', 'bridge0')] nameservers None key_set True
+PUT started: add a second NIC: HTTP 409 container_started | the jail has started at least once, so Skep no longer writes into its tree: after the first start only the bridge and MAC address of an existing NIC can change; its addressing is the jail's own business now
+PUT started: remove the NIC: HTTP 409 container_started | the jail has started at least once, so Skep no longer writes into its tree: after the first start only the bridge and MAC address of an existing NIC can change; its addressing is the jail's own business now
+PUT started: new MAC on slot 0 (same bridge, DHCP): HTTP 202  | 
+task 09d739dc-d50e-4bc0-8b54-045d992d3379 (container.update): succeeded 
+PUT started: a bridge not in the allow-list: HTTP 422 bridge_not_allowed | the bridge is not in network.bridges of the agent's configuration
+  now: hostname r3-dhcp.lab options {'sysvipc': False, 'mlock': False} limits {} nics [(0, '02:52:33:00:00:d1', 'dhcp', 'bridge0')] nameservers None key_set True
+start: HTTP 202 
+task 031e20cb-e5d5-40fe-bc69-e577d73796c4 (container.start): succeeded 
+	ether 02:52:33:00:00:d1
+	inet 10.79.60.114 netmask 0xffffff00 broadcast 10.79.60.255
+stop: HTTP 202 
+task e7bf1a89-57f2-4f0a-94f4-c6902594d830 (container.stop): succeeded 
+
+######## 5g: per-role allow/refuse (s7viewer, s7oper, s7admin), 2026-11-21T16:52:42Z
+-- reads
+s7viewer  GET    /containers                                                HTTP 200  
+s7viewer  GET    /containers/646c80cd-e0be-4376-b761-471aa1b7ea76           HTTP 200  
+s7viewer  GET    /containers/646c80cd-e0be-4376-b761-471aa1b7ea76/console-log HTTP 200  
+s7viewer  GET    /containers/646c80cd-e0be-4376-b761-471aa1b7ea76/snapshots HTTP 200  
+s7viewer  GET    /metrics                                                   HTTP 200  
+s7viewer  GET    /storage/templates                                         HTTP 200  
+s7viewer  GET    /storage/template-sources                                  HTTP 200  
+s7viewer  GET    /system                                                    HTTP 200  
+s7oper    GET    /containers                                                HTTP 200  
+s7oper    GET    /containers/646c80cd-e0be-4376-b761-471aa1b7ea76           HTTP 200  
+s7oper    GET    /containers/646c80cd-e0be-4376-b761-471aa1b7ea76/console-log HTTP 200  
+s7oper    GET    /containers/646c80cd-e0be-4376-b761-471aa1b7ea76/snapshots HTTP 200  
+s7oper    GET    /metrics                                                   HTTP 200  
+s7oper    GET    /storage/templates                                         HTTP 200  
+s7oper    GET    /storage/template-sources                                  HTTP 200  
+s7oper    GET    /system                                                    HTTP 200  
+s7admin   GET    /containers                                                HTTP 200  
+s7admin   GET    /containers/646c80cd-e0be-4376-b761-471aa1b7ea76           HTTP 200  
+s7admin   GET    /containers/646c80cd-e0be-4376-b761-471aa1b7ea76/console-log HTTP 200  
+s7admin   GET    /containers/646c80cd-e0be-4376-b761-471aa1b7ea76/snapshots HTTP 200  
+s7admin   GET    /metrics                                                   HTTP 200  
+s7admin   GET    /storage/templates                                         HTTP 200  
+s7admin   GET    /storage/template-sources                                  HTTP 200  
+s7admin   GET    /system                                                    HTTP 200  
+-- s7viewer: every write refused
+s7viewer  POST   /containers                                                HTTP 403 forbidden container:write
+s7viewer  PUT    /containers/646c80cd-e0be-4376-b761-471aa1b7ea76           HTTP 403 forbidden container:write
+s7viewer  POST   /containers/646c80cd-e0be-4376-b761-471aa1b7ea76/actions   HTTP 403 forbidden container:power
+s7viewer  POST   /containers/646c80cd-e0be-4376-b761-471aa1b7ea76/actions   HTTP 403 forbidden container:power
+s7viewer  POST   /containers/646c80cd-e0be-4376-b761-471aa1b7ea76/actions   HTTP 403 forbidden container:power
+s7viewer  DELETE /containers/646c80cd-e0be-4376-b761-471aa1b7ea76           HTTP 403 forbidden container:delete
+s7viewer  POST   /containers/646c80cd-e0be-4376-b761-471aa1b7ea76/snapshots HTTP 403 forbidden container:snapshot
+s7viewer  POST   /containers/646c80cd-e0be-4376-b761-471aa1b7ea76/clone     HTTP 403 forbidden container:write
+s7viewer  POST   /storage/templates                                         HTTP 403 forbidden storage:write
+s7viewer  DELETE /storage/templates/4507dc50-a679-4954-a16c-3f4d7c3d024f    HTTP 403 forbidden storage:write
+-- s7oper: container writes allowed; template build/delete refused
+s7oper    PUT    /containers/646c80cd-e0be-4376-b761-471aa1b7ea76           HTTP 202  
+s7oper    POST   /containers/646c80cd-e0be-4376-b761-471aa1b7ea76/actions   HTTP 202  
+s7oper    POST   /containers/646c80cd-e0be-4376-b761-471aa1b7ea76/actions   HTTP 202  
+s7oper    POST   /containers/646c80cd-e0be-4376-b761-471aa1b7ea76/actions   HTTP 202  
+s7oper    POST   /containers/646c80cd-e0be-4376-b761-471aa1b7ea76/snapshots HTTP 202  
+s7viewer  POST   /containers/646c80cd-e0be-4376-b761-471aa1b7ea76/snapshots/677f611c-9560-4963-848d-6448e6f0a5a0/rollback HTTP 403 forbidden container:write
+s7viewer  DELETE /containers/646c80cd-e0be-4376-b761-471aa1b7ea76/snapshots/677f611c-9560-4963-848d-6448e6f0a5a0 HTTP 403 forbidden container:snapshot
+s7oper    POST   /containers/646c80cd-e0be-4376-b761-471aa1b7ea76/snapshots/677f611c-9560-4963-848d-6448e6f0a5a0/rollback HTTP 202  
+s7oper    DELETE /containers/646c80cd-e0be-4376-b761-471aa1b7ea76/snapshots/677f611c-9560-4963-848d-6448e6f0a5a0 HTTP 202  
+s7oper    POST   /storage/templates                                         HTTP 403 forbidden storage:write
+s7oper    DELETE /storage/templates/4507dc50-a679-4954-a16c-3f4d7c3d024f    HTTP 403 forbidden storage:write
+-- s7admin: container writes allowed
+s7admin   PUT    /containers/646c80cd-e0be-4376-b761-471aa1b7ea76           HTTP 202  
+s7admin   POST   /containers/646c80cd-e0be-4376-b761-471aa1b7ea76/actions   HTTP 202  
+s7admin   POST   /containers/646c80cd-e0be-4376-b761-471aa1b7ea76/actions   HTTP 202  
+s7admin   POST   /containers/646c80cd-e0be-4376-b761-471aa1b7ea76/snapshots HTTP 202  
+s7admin   POST   /containers/646c80cd-e0be-4376-b761-471aa1b7ea76/clone     HTTP 202  
+s7admin   DELETE /containers/7c521634-18ec-4e88-ae00-2dfc9a4fbcce           HTTP 202  
+s7admin   DELETE /containers/646c80cd-e0be-4376-b761-471aa1b7ea76/snapshots/09913202-9dae-4dfa-b615-905a007d1c9e HTTP 202  
+-- state after: nothing the viewer asked for happened
+containers: [('r3-dhcp', 'stopped', 'r3-dhcp.lab'), ('r3-edit', 'stopped', 'r3-edit3.lab'), ('r3-edit2', 'stopped', 'r3-e2.lab'), ('r3-fail', 'stopped', 'r3-fail')]
+r3-dhcp snapshots: []
+templates: ['minimal-151', 'minimal-ssh-151', 'r3-tpl']
+-- authz.deny entries in the API's audit log for s7viewer and s7oper (newest 25)
+authz.deny denied {"method": "DELETE", "permission": "storage:write", "role": "operator", "route": "/api/v1/storage/templates/{id}"}
+authz.deny denied {"method": "POST", "permission": "storage:write", "role": "operator", "route": "/api/v1/storage/templates"}
+authz.deny denied {"method": "DELETE", "permission": "container:snapshot", "role": "viewer", "route": "/api/v1/containers/{id}/snapshots/{sid}"}
+authz.deny denied {"method": "POST", "permission": "container:write", "role": "viewer", "route": "/api/v1/containers/{id}/snapshots/{sid}/rollback"}
+authz.deny denied {"method": "DELETE", "permission": "storage:write", "role": "viewer", "route": "/api/v1/storage/templates/{id}"}
+authz.deny denied {"method": "POST", "permission": "storage:write", "role": "viewer", "route": "/api/v1/storage/templates"}
+authz.deny denied {"method": "POST", "permission": "container:write", "role": "viewer", "route": "/api/v1/containers/{id}/clone"}
+authz.deny denied {"method": "POST", "permission": "container:snapshot", "role": "viewer", "route": "/api/v1/containers/{id}/snapshots"}
+authz.deny denied {"method": "DELETE", "permission": "container:delete", "role": "viewer", "route": "/api/v1/containers/{id}"}
+authz.deny denied {"method": "POST", "permission": "container:power", "role": "viewer", "route": "/api/v1/containers/{id}/actions"}
+authz.deny denied {"method": "POST", "permission": "container:power", "role": "viewer", "route": "/api/v1/containers/{id}/actions"}
+authz.deny denied {"method": "POST", "permission": "container:power", "role": "viewer", "route": "/api/v1/containers/{id}/actions"}
+authz.deny denied {"method": "PUT", "permission": "container:write", "role": "viewer", "route": "/api/v1/containers/{id}"}
+authz.deny denied {"method": "POST", "permission": "container:write", "role": "viewer", "route": "/api/v1/containers"}
+container.update denied {"error_code": "bridge_not_allowed"}
+container.update denied {"error_code": "container_started"}
+container.update denied {"error_code": "container_started"}
+container.update denied {"error_code": "container_started"}
+container.update denied {"error_code": "container_started"}
+container.update denied {"error_code": "container_started"}
+container.update denied {"error_code": "container_started"}
+
+######## 5i: leftover devfs unmounted by the start and the delete paths (hand jail -r, approved), r3-edit, 2026-11-21T16:53:14Z
+start: HTTP 202 
+task 040eee25-752d-45d8-b0eb-f49f0d202b2f (container.start): succeeded 
++ mount -t devfs
+devfs on /dev (devfs)
+devfs on /skeptest/skep/jail/792e8292-0011-4fe3-8dba-c701be23b472/dev (devfs)
++ sudo rctl jail:skep-792e8292-0011-4fe3-8dba-c701be23b472
+jail:skep-792e8292-0011-4fe3-8dba-c701be23b472:maxproc:deny=80
++ sudo jail -r skep-792e8292-0011-4fe3-8dba-c701be23b472
+hand jail -r exit 0
++ echo 'hand jail -r exit 0'
++ jls -j skep-792e8292-0011-4fe3-8dba-c701be23b472 jid
+jls: jail "skep-792e8292-0011-4fe3-8dba-c701be23b472" not found
++ mount -t devfs
+devfs on /dev (devfs)
+devfs on /skeptest/skep/jail/792e8292-0011-4fe3-8dba-c701be23b472/dev (devfs)
++ sudo rctl jail:skep-792e8292-0011-4fe3-8dba-c701be23b472
+jail:skep-792e8292-0011-4fe3-8dba-c701be23b472:maxproc:deny=80
+state: stopped started_once: True detail: the jail is not running although it should be: it was removed outside Skep, or the host restarted
+-- start through the API with the leftover devfs present
+start: HTTP 202 
+task 9f551d18-5134-4506-b376-1b9858aa7b87 (container.start): succeeded 
++ jls -j skep-792e8292-0011-4fe3-8dba-c701be23b472 jid
+42
++ mount -t devfs
+devfs on /dev (devfs)
+devfs on /skeptest/skep/jail/792e8292-0011-4fe3-8dba-c701be23b472/dev (devfs)
++ sudo rctl jail:skep-792e8292-0011-4fe3-8dba-c701be23b472
+jail:skep-792e8292-0011-4fe3-8dba-c701be23b472:maxproc:deny=80
+"level":"INFO","msg":"hostops: removed the RCTL rules of a jail","event":"jail_rctl_removed","container_id":"792e8292-0011-4fe3-8dba-c701be23b472","rules":"jail:skep-792e8292-0011-4fe3-8dba-c701be23b472:maxproc:deny=80"
+"level":"INFO","msg":"hostops: removed the RCTL rules of a jail","event":"jail_rctl_removed","container_id":"792e8292-0011-4fe3-8dba-c701be23b472","rules":"jail:skep-792e8292-0011-4fe3-8dba-c701be23b472:maxproc:deny=80"
+"level":"WARN","msg":"hostops: unmounted a devfs a removal outside Skep left on the jail's root","event":"orphaned_devfs_removed","container_id":"792e8292-0011-4fe3-8dba-c701be23b472","mountpoint":"/skeptest/skep/jail/792e8292-0011-4fe3-8dba-c701be23b472/dev","fsids":["FSID:1895890728:113"]
+stop: HTTP 202 
+task 7ddfc349-f4bd-4cea-8ae1-6ffd7cdafc2d (container.stop): succeeded 
++ mount -t devfs
+devfs on /dev (devfs)
+-- again: start, hand jail -r, then delete through the API
+start: HTTP 202 
+task 868319b8-31e3-4ca3-b01a-5368dd56597f (container.start): succeeded 
++ sudo jail -r skep-792e8292-0011-4fe3-8dba-c701be23b472
+hand jail -r exit 0
++ echo 'hand jail -r exit 0'
++ mount -t devfs
+devfs on /dev (devfs)
+devfs on /skeptest/skep/jail/792e8292-0011-4fe3-8dba-c701be23b472/dev (devfs)
++ sudo rctl jail:skep-792e8292-0011-4fe3-8dba-c701be23b472
+jail:skep-792e8292-0011-4fe3-8dba-c701be23b472:maxproc:deny=80
+state: stopped started_once: True detail: the jail is not running although it should be: it was removed outside Skep, or the host restarted
+delete: HTTP 202 
+task 1e888b22-4729-4686-8484-a86e844d06e7 (container.delete): succeeded 
++ zfs list -H skeptest/skep/jail/792e8292-0011-4fe3-8dba-c701be23b472
+cannot open 'skeptest/skep/jail/792e8292-0011-4fe3-8dba-c701be23b472': dataset does not exist
++ mount -t devfs
+devfs on /dev (devfs)
++ sudo rctl jail:skep-792e8292-0011-4fe3-8dba-c701be23b472
++ sudo rctl
++ grep -c 792e8292-0011-4fe3-8dba-c701be23b472
+0
++ sudo ls /var/run/skep/jails/
+646c80cd-e0be-4376-b761-471aa1b7ea76
+7f9ce9c3-3186-414b-a39f-b25a92a78df2
+"level":"WARN","msg":"hostops: unmounted a devfs a removal outside Skep left on the jail's root","event":"orphaned_devfs_removed","container_id":"792e8292-0011-4fe3-8dba-c701be23b472","mountpoint":"/skeptest/skep/jail/792e8292-0011-4fe3-8dba-c701be23b472/dev","fsids":["FSID:1895890728:113"]
+"level":"INFO","msg":"hostops: removed the RCTL rules of a jail","event":"jail_rctl_removed","container_id":"792e8292-0011-4fe3-8dba-c701be23b472","rules":"jail:skep-792e8292-0011-4fe3-8dba-c701be23b472:maxproc:deny=80"
+"level":"INFO","msg":"hostops: removed the RCTL rules of a jail","event":"jail_rctl_removed","container_id":"792e8292-0011-4fe3-8dba-c701be23b472","rules":"jail:skep-792e8292-0011-4fe3-8dba-c701be23b472:maxproc:deny=80"
+"level":"WARN","msg":"hostops: unmounted a devfs a removal outside Skep left on the jail's root","event":"orphaned_devfs_removed","container_id":"792e8292-0011-4fe3-8dba-c701be23b472","mountpoint":"/skeptest/skep/jail/792e8292-0011-4fe3-8dba-c701be23b472/dev","fsids":["FSID:1895890730:113"]
+
+######## 5j: web UI against the real API (Playwright Version 1.65.0, Chromium, SPKI-pinned), 2026-11-21T16:55:02Z
+PASS  TLS control: no pin -> refused  -- page.goto: net::ERR_CERT_AUTHORITY_INVALID at https://10.79.20.170:8443/api/v1/health
+PASS  TLS control: wrong pin -> refused  -- page.goto: net::ERR_CERT_AUTHORITY_INVALID at https://10.79.20.170:8443/api/v1/health
+PASS  TLS control: hearst pin -> loads  -- loaded
+PASS  s7oper log in
+PASS  containers list  -- r3-dhcp, r3-edit2, r3-fail listed; Create container shown
+PASS  create dialog: SSH key field follows has_sshd  -- minimal-151: no key field; r3-tpl: key field
+PASS  create r3-ui (minimal-151, no NIC) through the UI  -- detail page; Start, Delete, Edit enabled
+FAIL  edit dialog of a never-started jail offers NICs, nameservers  -- no Nameservers
+FAIL  start r3-ui from the UI  -- locator.click: Timeout 30000ms exceeded. | Call log: |   - waiting for getByRole('button', { name: 'Start' })
+FAIL  usage card shows RACCT figures (after a 30 s sample)  -- page.waitForFunction: Timeout 40000ms exceeded.
+FAIL  console log card shows rc output  -- locator.textContent: Timeout 30000ms exceeded. | Call log: |   - waiting for getByTestId('console-log')
+PASS  take a snapshot while running (crash-consistent)  -- row r3-ui-s
+FAIL  stop r3-ui from the UI  -- locator.click: Timeout 30000ms exceeded. | Call log: |   - waiting for getByRole('button', { name: 'Stop' })
+PASS  clone dialog shows the identity note  -- The clone is the same guestA clone is the same guest as its source. Skep gives it a new ID, name, hostname, and MAC addr
+PASS  delete the snapshot from the UI  -- row gone
+PASS  edit dialog of a started jail (r3-dhcp): bridge only  -- skep0 bridge only; no Address, Nameservers, Add NIC, SSH key
+PASS  started static-less DHCP jail: Clone allowed (no clone-blocked note)  -- no clone-blocked note
+PASS  limit removal asks first (r3-edit2, Processes 64)  -- listed: Processes; Keep editing sent nothing
+PASS  r3-fail: last start failure in state detail, rc output in the console log  -- state_detail and console log as expected
+PASS  r3-fail: failed start from the UI shows the code and the hint (about 2 min)  -- container.startfailedtask detailscontainer_start_failed: the jail's /etc/rc failed or outlasted the start timeout, so the jail was stopped and removed (its output is in the console log): hostops: jexec timed out after 2m0sThe console log be
+PASS  delete r3-ui from the UI  -- gone from the list
+PASS  s7viewer log in
+PASS  viewer: no Create container
+PASS  viewer: no actions on r3-dhcp; console log and usage shown  -- no action buttons; usage card shown
+
+console errors (other than 401/409 responses): 0
+SUMMARY: 19 passed, 5 failed
+ui exit 1
+
+######## 5j second UI script (the first run's edit-dialog step expected Nameservers with no NIC, then left the dialog open, which failed the next four steps), 2026-11-21T17:00:40Z
+PASS  s7oper log in (second UI script)
+PASS  create r3-ui2 (minimal-151, no NIC) through the UI
+PASS  edit dialog of a never-started jail: Add NIC; Nameservers only with an all-static NIC set  -- Nameservers: hidden with no NIC, shown with a static NIC, hidden with DHCP (nothing saved)
+PASS  start r3-ui2 from the UI  -- Stop enabled; Delete and Edit disabled while running
+PASS  console log card shows rc output  -- 900 chars
+PASS  usage card shows RACCT figures (after a 30 s sample)  -- CPU (approximate)0%CPU time0sResident memory11.5 MiBProcesses4File-table slots160Disk referenced77.7 MiBDisk used, with snapshots246 KiBSampled Nov 21, 2026, 12:00:57 PM. Referenced space includes what the root shares with its template.
+PASS  stop r3-ui2 from the UI  -- Start enabled again
+PASS  delete r3-ui2 from the UI  -- gone from the list
+
+console errors (other than 401/409 responses): 0
+SUMMARY: 8 passed, 0 failed
+ui2 exit 0
+
+######## bridge1 window, part 1 (approved by Andy during the run): agent.json gets bridge1, agent restart, 2026-11-21T17:58:16Z
+Traceback (most recent call last):
+  File "<string>", line 1, in <module>
+    import json,sys;d=json.load(open(sys.argv[1]));print(eval(sys.argv[2]))
+                                                         ~~~~^^^^^^^^^^^^^
+  File "<string>", line 1, in <module>
+    import json,sys;d=json.load(open(sys.argv[1]));print(eval(sys.argv[2]))
+                                      ~~~~~~~^^^
+KeyError: 'items'
+containers and states before the restart: 
++ jls -N -h jid
++ tail -n +2
+no jails running
++ test -z ''
++ echo 'no jails running'
++ jls
+   JID  IP Address      Hostname                      Path
++ A=/usr/local/etc/skep/agent.json
++ sudo ls -l /usr/local/etc/skep/agent.json
+-rw-------  1 root wheel 500 Nov 17 18:25 /usr/local/etc/skep/agent.json
++ sudo sha256 /usr/local/etc/skep/agent.json
+SHA256 (/usr/local/etc/skep/agent.json) = 490bc08738a2dd835952e19c4f59e869857fd15a1a6ce8e8c0b9df1d1f3cb134
++ sudo cp -p /usr/local/etc/skep/agent.json /usr/local/etc/skep/agent.json.pre-run3
++ sudo ls -l /usr/local/etc/skep/agent.json.pre-run3
+-rw-------  1 root wheel 500 Nov 17 18:25 /usr/local/etc/skep/agent.json.pre-run3
++ sudo sha256 -q /usr/local/etc/skep/agent.json.pre-run3
+490bc08738a2dd835952e19c4f59e869857fd15a1a6ce8e8c0b9df1d1f3cb134
++ sudo sed -i '' -e 's/"bridges": \["bridge0"\],/"bridges": ["bridge0", "bridge1"],/' /usr/local/etc/skep/agent.json
++ sudo diff /usr/local/etc/skep/agent.json.pre-run3 /usr/local/etc/skep/agent.json
+17c17
+<     "bridges": ["bridge0"],
+---
+>     "bridges": ["bridge0", "bridge1"],
++ true
++ sudo ls -l /usr/local/etc/skep/agent.json
+-rw-------  1 root wheel 511 Nov 21 12:58 /usr/local/etc/skep/agent.json
++ sudo sha256 /usr/local/etc/skep/agent.json
+SHA256 (/usr/local/etc/skep/agent.json) = 7999ba604a57af57887376629d15e4220bf8e4eb8bc12fdde19d947394f22264
++ sudo ifconfig bridge1 create up
++ ifconfig bridge1
+bridge1: flags=1008843<UP,BROADCAST,RUNNING,SIMPLEX,MULTICAST,LOWER_UP> metric 0 mtu 1500
+	options=10<VLAN_HWTAGGING>
+	ether 58:9c:fc:10:8c:43
+	id 00:00:00:00:00:00 priority 32768 hellotime 2 fwddelay 15
+	maxage 20 holdcnt 6 proto rstp maxaddr 2000 timeout 1200
+	root id 00:00:00:00:00:00 priority 32768 ifcost 0 port 0
+	bridge flags=0<>
+	groups: bridge
+	nd6 options=9<PERFORMNUD,IFDISABLED>
++ sudo service skep_api stop
+Stopping skep_api.
+Waiting for PIDS: 99884.
++ sudo service skep_agent stop
+Stopping skep_agent.
+Waiting for PIDS: 95278.
++ sudo service skep_agent start
+Starting skep_agent.
++ sudo service skep_api start
+Starting skep_api.
++ sleep 4
++ sudo cat /var/run/skep/agent.pid
++ p=22347
++ sudo fstat -p 22347
++ awk '$4 == "text" { print $6 }'
+agent pid 22347 text inode 3045005
++ echo 'agent pid 22347 text inode 3045005'
++ sudo cat /var/run/skep/api.pid
++ p=22407
++ sudo fstat -p 22407
++ awk '$4 == "text" { print $6 }'
+api pid 22407 text inode 3045006
++ echo 'api pid 22407 text inode 3045006'
++ stat -f '%i %N' /usr/local/sbin/skep-agent /usr/local/sbin/skep-api
+3045005 /usr/local/sbin/skep-agent
+3045006 /usr/local/sbin/skep-api
++ /usr/local/sbin/skep-agent -version
+skep-agent 0.1.0 (commit 8d65b9f, built 2026-11-21T16:34:15Z, go1.27.4 freebsd/amd64)
++ sudo service skep_agent status
+skep_agent is running as pid 22347 (supervisor pid 22345).
++ sudo service skep_api status
+skep_api is running as pid 22407 (supervisor pid 22406).
+{"status":"ok"}
+
+Traceback (most recent call last):
+  File "<string>", line 1, in <module>
+    import json,sys;d=json.load(open(sys.argv[1]));print(eval(sys.argv[2]))
+                                                         ~~~~^^^^^^^^^^^^^
+  File "<string>", line 1, in <module>
+    import json,sys;d=json.load(open(sys.argv[1]));print(eval(sys.argv[2]))
+    ^^^^^^^^^^
+KeyError: 'bhyve'
+System.bhyve.bridges: 
+   1 "level":"WARN","msg":"hostops: /etc/rc failed in a jail; removing it"
+   2 "level":"WARN","msg":"hostops: unmounted a devfs a removal outside Skep left on the jail's root"
+
+######## 5c/5e static part on the uplink-less bridge1 (192.0.2.0/24), 2026-11-21T17:58:45Z
+(the earlier sessions had expired during the approval wait; one new login for this script)
+login s7oper: HTTP 200 (token not shown)
+System.bhyve.bridges: ['bridge0', 'bridge1']
+containers: [('r3-dhcp', 'stopped'), ('r3-edit2', 'stopped'), ('r3-fail', 'stopped')]
+---- 5c: static jail r3-st1 192.0.2.11/24 on bridge1
+HTTP 202
+task 83d1c8a0-381b-4c06-a035-8d845795a0f6 (container.create): succeeded 
+container r3-st1 a8650c6d-9738-4f3a-a082-024063efc35a
++ sudo cat /skeptest/skep/jail/a8650c6d-9738-4f3a-a082-024063efc35a/etc/rc.conf /skeptest/skep/jail/a8650c6d-9738-4f3a-a082-024063efc35a/etc/resolv.conf
+# Written by Skep before this jail's first start (ADR 0010 decision 13).
+ifconfig_skep0="inet 192.0.2.11/24"
+# Written by Skep before this jail's first start (ADR 0010 decision 13).
+nameserver 192.0.2.53
+---- 5e: clones of the never-started static jail
+clone without new addressing: HTTP 422 clone_addressing_required | the source has a static address on these NIC slots, and the clone would hold the same address; give each new addressing in nics | {'slots': [0]}
+clone with 192.0.2.12/24: HTTP 202  | 
+task c99c8cdf-b12e-4b79-85ee-efdeec95887d (container.clone): succeeded 
+r3-st2: started_once False nics [(0, 'bridge1', '02:50:db:6d:a4:35', {'mode': 'static', 'address': '192.0.2.12/24'})] nameservers ['192.0.2.53']
++ sudo cat /skeptest/skep/jail/2afc806f-8925-4e1b-986a-37a060d566aa/etc/rc.conf /skeptest/skep/jail/2afc806f-8925-4e1b-986a-37a060d566aa/etc/resolv.conf
+# Written by Skep before this jail's first start (ADR 0010 decision 13).
+ifconfig_skep0="inet 192.0.2.12/24"
+# Written by Skep before this jail's first start (ADR 0010 decision 13).
+nameserver 192.0.2.53
+---- 5c: lifecycle of r3-st1 and r3-st2
+start: HTTP 202 
+task 1fe17d80-0db6-471a-a85d-f7961ea8df42 (container.start): succeeded 
+start: HTTP 202 
+task 9bc0fa34-b77c-4715-b517-7c1a2d2f2466 (container.start): succeeded 
++ jls
+   JID  IP Address      Hostname                      Path
+    46                  r3-st1                        /skeptest/skep/jail/a8650c6d-9738-4f3a-a082-024063efc35a
+    47                  r3-st2                        /skeptest/skep/jail/2afc806f-8925-4e1b-986a-37a060d566aa
++ ifconfig bridge1
++ grep member
+	member: epair1a flags=143<LEARNING,DISCOVER,AUTOEDGE,AUTOPTP>
+	member: epair0a flags=143<LEARNING,DISCOVER,AUTOEDGE,AUTOPTP>
++ sudo jexec skep-a8650c6d-9738-4f3a-a082-024063efc35a ifconfig skep0
++ grep -E 'inet |ether'
+	ether 02:19:47:b3:c5:bd
+	inet 192.0.2.11 netmask 0xffffff00 broadcast 192.0.2.255
++ sudo jexec skep-2afc806f-8925-4e1b-986a-37a060d566aa ifconfig skep0
++ grep -E 'inet |ether'
+	ether 02:50:db:6d:a4:35
+	inet 192.0.2.12 netmask 0xffffff00 broadcast 192.0.2.255
++ sudo jexec skep-a8650c6d-9738-4f3a-a082-024063efc35a ping -c 2 -t 5 192.0.2.12
+PING 192.0.2.12 (192.0.2.12): 56 data bytes
+64 bytes from 192.0.2.12: icmp_seq=0 ttl=64 time=0.108 ms
+64 bytes from 192.0.2.12: icmp_seq=1 ttl=64 time=0.433 ms
+
+--- 192.0.2.12 ping statistics ---
+2 packets transmitted, 2 packets received, 0.0% packet loss
+round-trip min/avg/max/stddev = 0.108/0.271/0.433/0.163 ms
++ sudo jexec skep-a8650c6d-9738-4f3a-a082-024063efc35a netstat -rn -f inet
++ head -8
+Routing tables
+
+Internet:
+Destination        Gateway            Flags         Netif Expire
+127.0.0.1          link#8             UH              lo0
+192.0.2.0/24       link#7             U             skep0
+192.0.2.11         link#8             UHS             lo0
+-- r3-st3: the same address as r3-st1, started while r3-st1 runs
+HTTP 202
+task 3e9d7761-232a-4b64-9e90-cfe9d73bc719 (container.create): succeeded 
+container r3-st3 bb884a7d-3f3b-432f-bae7-e66ecf6e28c0
+start: HTTP 409 container_address_in_use
+restart: HTTP 202 
+task 6a884fe8-0505-465f-9429-d5eb1ff12868 (container.restart): succeeded 
+state: running started_once: True detail: 
+1 packets transmitted, 1 packets received, 0.0% packet loss
+round-trip min/avg/max/stddev = 0.385/0.385/0.385/0.000 ms
+---- 5e: clone of the started static jail r3-st1
+clone of the started (running) r3-st1 with new addressing: HTTP 409 container_started | the source jail has started, so the clone's tree has run code and Skep does not write new addressing into it (decision 13); clone a snapshot of a jail that never started, or keep the source's addressing
+clone of the started r3-st1 without new addressing: HTTP 422 clone_addressing_required | the source has a static address on these NIC slots, and the clone would hold the same address; give each new addressing in nics
+stop: HTTP 202 
+task 0ad0cd27-b587-4c53-a274-94fe00cb01bf (container.stop): succeeded 
+clone of the started, stopped r3-st1 with new addressing: HTTP 409 container_started | the source jail has started, so the clone's tree has run code and Skep does not write new addressing into it (decision 13); clone a snapshot of a jail that never started, or keep the source's addressing
+containers: [('r3-dhcp', 'stopped'), ('r3-edit2', 'stopped'), ('r3-fail', 'stopped'), ('r3-st1', 'stopped'), ('r3-st2', 'running'), ('r3-st3', 'stopped')]
+(r3-st2 left running for the UI check; r3-st1 stopped and started-once)
+
+######## 5j third UI script: the static-jail clone notice, 2026-11-21T17:59:13Z
+PASS  s7oper log in (third UI script)
+PASS  started static jail r3-st1: clone-blocked note, Clone disabled  -- Cannot be clonedThis jail has a static address and has started, so it cannot be cloned. A clone would need new addressing, and Skep writes addressing only into a jail's tree before any of its code has
+PASS  never-started static clone r3-st2 (running now): network table shows 192.0.2.12/24 on bridge1
+console errors: 0
+SUMMARY: 3 passed, 0 failed
+ui3 exit 0
+
+######## Cleanup, 2026-11-21T17:59:38Z
+(one login each for s7oper and s7admin in this script; the earlier s7admin and s7viewer sessions had expired)
+login s7oper: HTTP 200 (token not shown)
+login s7admin: HTTP 200 (token not shown)
+stop: HTTP 202 
+task 20e3df87-70a3-413d-a30c-b21e8eb9d119 (container.stop): succeeded 
+r3-st2 2afc806f-8925-4e1b-986a-37a060d566aa:
+delete: HTTP 202 
+task 8e5d41a2-e35c-4503-86be-a939a4a06a96 (container.delete): succeeded 
+r3-st3 bb884a7d-3f3b-432f-bae7-e66ecf6e28c0:
+delete: HTTP 202 
+task d69c014b-97d0-48b1-be4b-af60a8cabf89 (container.delete): succeeded 
+r3-st1 a8650c6d-9738-4f3a-a082-024063efc35a:
+delete: HTTP 202 
+task a8bc7206-5a8f-460a-b8fa-da416c60844a (container.delete): succeeded 
+r3-dhcp 646c80cd-e0be-4376-b761-471aa1b7ea76:
+delete: HTTP 202 
+task f459786c-6aac-44cc-aa06-2015fae421fc (container.delete): succeeded 
+r3-edit2 56beade9-2050-439b-b1d2-7b79db728aa7:
+delete: HTTP 202 
+task d3e0b4fa-60db-496b-9a4b-c46351d99bd1 (container.delete): succeeded 
+r3-fail 7f9ce9c3-3186-414b-a39f-b25a92a78df2:
+delete: HTTP 202 
+task 02c89c82-5e0a-47aa-b58c-d3949bb930dc (container.delete): succeeded 
+HTTP 200
+{"items":[]}
+
+delete template r3-tpl: HTTP 202 
+task b24e0269-074c-4df6-a9d4-86fa66fe1d99 (container.template.delete): succeeded 
+templates: [('minimal-151', 'f496866f-32ba-4527-bcee-5a717a2f74c0'), ('minimal-ssh-151', 'dbf4243a-81fe-4914-8f7a-fd0a768476aa')]
+---- bridge1 window, part 2: restore agent.json (no jail running), restart, remove the backup and bridge1
++ jls -N -h jid
++ tail -n +2
+no jails running
++ test -z ''
++ echo 'no jails running'
++ A=/usr/local/etc/skep/agent.json
++ sudo sha256 -q /usr/local/etc/skep/agent.json
+7999ba604a57af57887376629d15e4220bf8e4eb8bc12fdde19d947394f22264
++ sudo cp -p /usr/local/etc/skep/agent.json.pre-run3 /usr/local/etc/skep/agent.json
++ sudo ls -l /usr/local/etc/skep/agent.json
+-rw-------  1 root wheel 500 Nov 17 18:25 /usr/local/etc/skep/agent.json
++ sudo sha256 /usr/local/etc/skep/agent.json
+SHA256 (/usr/local/etc/skep/agent.json) = 490bc08738a2dd835952e19c4f59e869857fd15a1a6ce8e8c0b9df1d1f3cb134
++ sudo sha256 -q /usr/local/etc/skep/agent.json
+agent.json sha256 equals the pre-run value
++ test 490bc08738a2dd835952e19c4f59e869857fd15a1a6ce8e8c0b9df1d1f3cb134 '=' 490bc08738a2dd835952e19c4f59e869857fd15a1a6ce8e8c0b9df1d1f3cb134
++ echo 'agent.json sha256 equals the pre-run value'
++ sudo service skep_api stop
+Stopping skep_api.
+Waiting for PIDS: 22406.
++ sudo service skep_agent stop
+Stopping skep_agent.
+Waiting for PIDS: 22345.
++ sudo service skep_agent start
+Starting skep_agent.
++ sudo service skep_api start
+Starting skep_api.
++ sleep 4
++ sudo cat /var/run/skep/agent.pid
++ p=24795
++ sudo fstat -p 24795
++ awk '$4 == "text" { print $6 }'
+agent pid 24795 text inode 3045005
++ echo 'agent pid 24795 text inode 3045005'
++ sudo cat /var/run/skep/api.pid
++ p=24856
++ sudo fstat -p 24856
++ awk '$4 == "text" { print $6 }'
+api pid 24856 text inode 3045006
++ echo 'api pid 24856 text inode 3045006'
++ stat -f '%i %N' /usr/local/sbin/skep-agent /usr/local/sbin/skep-api
+3045005 /usr/local/sbin/skep-agent
+3045006 /usr/local/sbin/skep-api
++ sudo rm /usr/local/etc/skep/agent.json.pre-run3
++ sudo ls -la /usr/local/etc/skep/
+total 24
+drwxr-xr-x   2 root wheel  512 Nov 21 12:59 .
+drwxr-xr-x  11 root wheel 1024 Nov 15 09:38 ..
+-rw-------   1 root wheel  500 Nov 17 18:25 agent.json
++ sudo ifconfig bridge1 destroy
++ ifconfig -l
+vtnet0 vtnet1 lo0 bridge0
+---- final state
++ /usr/local/sbin/skep-agent -version
+skep-agent 0.1.0 (commit 8d65b9f, built 2026-11-21T16:34:15Z, go1.27.4 freebsd/amd64)
++ /usr/local/sbin/skep-api -version
+skep-api 0.1.0 (commit 8d65b9f, built 2026-11-21T16:34:15Z, go1.27.4 freebsd/amd64)
++ /usr/local/bin/skepctl -version
+skepctl 0.1.0 (commit 8d65b9f, built 2026-11-21T16:34:15Z, go1.27.4 freebsd/amd64)
++ sudo service skep_agent status
+skep_agent is running as pid 24795 (supervisor pid 24793).
++ sudo service skep_api status
+skep_api is running as pid 24856 (supervisor pid 24854).
++ sysctl hw.vmm.vmx.cap.virtual_interrupt_delivery
+hw.vmm.vmx.cap.virtual_interrupt_delivery: 0
++ kldstat -q -m if_epair
+if_epair loaded: exit 0
++ echo 'if_epair loaded: exit 0'
++ jls
+   JID  IP Address      Hostname                      Path
++ ifconfig -l
+vtnet0 vtnet1 lo0 bridge0
++ ifconfig -g epair
++ ifconfig bridge0
++ grep -E 'ether|member'
+	ether 58:9c:fc:10:9f:32
+	member: vtnet1 flags=143<LEARNING,DISCOVER,AUTOEDGE,AUTOPTP>
++ sudo rctl
++ mount -t devfs
+devfs on /dev (devfs)
++ df -h /
+Filesystem     Size    Used   Avail Capacity  Mounted on
+/dev/da0s1a    120G     19G     91G    17%    /
++ freebsd-version -kru
+15.1-RELEASE-p7
+15.1-RELEASE-p7
+15.1-RELEASE-p7
++ uptime
+12:59PM  up 2 days,  1:33, 5 users, load averages: 0.10, 0.20, 0.19
++ sudo ls -la /var/run/skep/jails/
+total 16
+drwx------  2 root skep 512 Nov 21 12:59 .
+drwxr-x---  4 root skep 512 Nov 21 12:59 ..
++ sudo ls -la /var/db/skep/agent/ /var/db/skep/api/
+/var/db/skep/agent/:
+total 4808
+drwx------  3 root wheel     512 Nov 21 12:59 .
+drwxr-xr-x  6 root wheel     512 Nov 16 14:03 ..
+-rw-------  1 root wheel 1982464 Nov 21 12:59 agent.db
+-rw-------  1 root wheel   32768 Nov 21 12:59 agent.db-shm
+-rw-------  1 root wheel  383192 Nov 21 12:59 agent.db-wal
+drwx------  4 root wheel     512 Nov 15 06:59 vm
+
+/var/db/skep/api/:
+total 808
+drwx------  3 skep skep     512 Nov 21 12:59 .
+drwxr-xr-x  6 root wheel    512 Nov 16 14:03 ..
+-rw-------  1 skep skep  331776 Nov 21 12:59 api.db
+-rw-------  1 skep skep   32768 Nov 21 12:59 api.db-shm
+-rw-------  1 skep skep   32992 Nov 21 12:59 api.db-wal
+drwx------  2 skep skep     512 Nov 13 12:39 tls
++ ls -la /tmp
++ grep -i -e r1- -e r2- -e r3- -e mlock -e hostops
++ sudo -u skep sqlite3 -readonly /var/db/skep/api/api.db 'SELECT id FROM roles;'
+admin
+operator
+viewer
++ zfs list -H -t all -o name -r skeptest
++ cat /tmp/r3-zfs-after.txt
+skeptest
+skeptest/skep
+skeptest/skep-enc
+skeptest/skep-enc/vm
+skeptest/skep/handmade
+skeptest/skep/jail
+skeptest/skep/templates
+skeptest/skep/templates/dbf4243a-81fe-4914-8f7a-fd0a768476aa
+skeptest/skep/templates/dbf4243a-81fe-4914-8f7a-fd0a768476aa@skep-base
+skeptest/skep/templates/f496866f-32ba-4527-bcee-5a717a2f74c0
+skeptest/skep/templates/f496866f-32ba-4527-bcee-5a717a2f74c0@skep-base
+skeptest/skep/vm
+skeptest/skep/vm/c0e23174-3dc0-4503-a691-9af23f657078
+skeptest/skep/vm/c0e23174-3dc0-4503-a691-9af23f657078@skep-ec1f5086-b697-45bf-bc36-d0e729afc06f
+skeptest/skep/vm/c0e23174-3dc0-4503-a691-9af23f657078/disk0
+skeptest/skep/vm/c0e23174-3dc0-4503-a691-9af23f657078/disk0@skep-ec1f5086-b697-45bf-bc36-d0e729afc06f
+skeptest/skep/vm/fc8640f3-205c-404d-855b-1376c792d86e
+skeptest/skep/vm/fc8640f3-205c-404d-855b-1376c792d86e@skep-b4b27599-01fb-46a8-b87a-d53ec3407c23
+skeptest/skep/vm/fc8640f3-205c-404d-855b-1376c792d86e@skep-8d347601-c546-41ce-a078-650a21438fca
+skeptest/skep/vm/fc8640f3-205c-404d-855b-1376c792d86e/disk0
+skeptest/skep/vm/fc8640f3-205c-404d-855b-1376c792d86e/disk0@skep-b4b27599-01fb-46a8-b87a-d53ec3407c23
+skeptest/skep/vm/fc8640f3-205c-404d-855b-1376c792d86e/disk0@skep-8d347601-c546-41ce-a078-650a21438fca
+skeptest/skep/vm/fc8640f3-205c-404d-855b-1376c792d86e/disk1
+skeptest/skep/vm/fc8640f3-205c-404d-855b-1376c792d86e/disk1@skep-b4b27599-01fb-46a8-b87a-d53ec3407c23
+skeptest/skep/vm/fc8640f3-205c-404d-855b-1376c792d86e/disk1@skep-8d347601-c546-41ce-a078-650a21438fca
+ZFS list equal to the pre-check (25 entries)
+{"status":"ok"}
+
+containers: []
+System.bhyve.bridges: ['bridge0']
+roles: ['admin', 'operator', 'viewer']
+users: [('andy', 'admin'), ('m6check', 'admin'), ('m6operator', 'operator'), ('m6viewer', 'viewer'), ('m7a5admin', 'admin'), ('m7a5operator', 'operator'), ('m7a5viewer', 'viewer'), ('s6admin', 'admin'), ('s6oper', 'operator'), ('s7admin', 'admin'), ('s7oper', 'operator'), ('s7viewer', 'viewer')]
+
+######## WARN/ERROR lines from skep-agent and skep-api in daemon.log during the run (from 11:33 local)
+  35 "level":"WARN","msg":"task refused"
+  14 "level":"WARN","msg":"request denied"
+   6 "level":"WARN","msg":"hostops: unmounted a devfs a removal outside Skep left on the jail's root","event":"orphaned_devfs_removed"
+   4 "level":"WARN","msg":"hostops: jail -r failed, so the jail was removed with jail -R","event":"container_stop_forced"
+   4 "level":"WARN","msg":"hostops: jail -r failed","event":"jail_remove_failed"
+   2 "level":"WARN","msg":"hostops: /etc/rc failed in a jail; removing it","event":"jail_rc_failed"
+   1 "level":"INFO","msg":"http request"
+   1 "level":"INFO","msg":"hostops: removed the RCTL rules of a jail","event":"jail_rctl_removed"
+-- logout
+logout s7oper: 204
+logout s7admin: 204
+

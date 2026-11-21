@@ -2129,3 +2129,149 @@ classes; and the commit with this section.
    parser ignores the field).
 
 Only the answers were recorded in this session; no code was written.
+
+## 26. Run 3 results (hearst, 2026-11-21)
+
+Hearst validation run 3 of 3: the hostops test binary, amendment u tests
+u1, u2, u3, u5, u6, u7 (25.6; u4 stays merrick-only), and the step-10
+list (sections 7, 10, and 12). `8d65b9f`, the pushed head of
+`feat/m7b-templates`, deployed with `scripts/deploy-test.sh`. API calls
+from merrick, curl pinned to hearst's key (`779cc5ec…`, equal to `skep-api
+tls fingerprint`), no `-k`; at most one login per user per script. The web
+UI ran in Playwright 1.65.0 (Chromium, already installed on merrick),
+pinned to the same key with `--ignore-certificate-errors-spki-list` and
+`ignoreHTTPSErrors` off. Record (commands and output):
+[step10-hearst-run3.txt](step10-hearst-run3.txt).
+
+### 26.1 Pre-check, approval during the run, and host changes
+
+- Pre-check as expected: `8c81e35` (agent, API, skepctl), `/health` ok,
+  `virtual_interrupt_delivery` 0, `if_epair` loaded, no jails, epairs,
+  RCTL rules, or jail devfs, `/var/run/skep/jails` empty, no test files in
+  `/tmp`, `/` 17 %, `freebsd-version -kru` 15.1-RELEASE-p7 ×3, uptime
+  2 days (last boot 2026-11-19 11:27), built-in roles only.
+- **Approved by Andy during the run, before it was done:** the static
+  parts of items c and e need a bridge in `network.bridges`, which held
+  only `bridge0`. `agent.json` was backed up (sha256 `490bc087…` before),
+  `"bridge1"` added (one-line diff, sha256 `7999ba60…`), `bridge1` created
+  with no member and no address, and the services restarted (API stop,
+  agent stop, agent start, API start) with no test jail running, as Andy
+  required. After the static tests, with no jail running, `agent.json` was
+  copied back from the backup (sha256 `490bc087…` again, mode, owner, and
+  mtime kept by `cp -p`), the services restarted the same way, the backup
+  removed, and `bridge1` destroyed.
+- **u5 used run 2's SR-06 method** (25.6 says "as SR-06's delete"):
+  `skep_api` stopped, `agent.db` backed up with `.backup`, a one-row
+  `UPDATE` setting the running test container `r3-u5` to `failed`, the
+  API started; the backup was removed after the delete.
+- **Changes on hearst, all reverted:** the deploy (kept); `skep_api` and
+  `skep_agent` restarted three times (deploy, bridge1 in, bridge1 out) and
+  `skep_api` once more (u5); `agent.json` and `bridge1` as above;
+  `agent.db.pre-run3` (removed); `/tmp/r3-hostops.test` (removed); the
+  throwaway template `r3-tpl` (built and deleted); test containers `r3-u1`,
+  `r3-u2`, `r3-u3`, `r3-u5`, `r3-u6`, `r3-u7`, `r3-dhcp`, `r3-clone`,
+  `r3-edit`, `r3-edit2`, `r3-fail`, `r3-admclone`, `r3-ui`, `r3-ui2`,
+  `r3-st1`, `r3-st2`, `r3-st3`, and their snapshots (all deleted). Inside
+  test jails: `/etc/rc.shutdown` (u1, u2, u3), `rc.shutdown.local` (u5),
+  `rc.local` (5d), `rc.conf` (`cron_limits`, u7), files under `/root` (5e),
+  a busy loop (5f). Two hand `jail -r` on `r3-edit` (5i, approved). No
+  reboot; no loader.conf, sysctl, kld, pf, login.conf, or api.json change;
+  nothing static on VLAN 60 (DHCP leases 10.79.60.112 to .114).
+
+### 26.2 Results
+
+| Test | Result | Notes |
+|---|---|---|
+| Pre-check | Done | See 26.1 |
+| Deploy `8d65b9f` | Pass | Running inodes = installed (agent 3045005, API 3045006); `-version` of agent, API, skepctl = `8d65b9f`; `/health` ok |
+| hostops binary, `RemoveJail\|DiscardFailure\|Quarantined` | Pass | As unprivileged `aba`: 8 of 8 matched tests passed (12 with subtests), none skipped; sha256 `f9c0a79b…`; log `~/skep-test-logs/20261121T163449Z-hearst-hostops-test-run3.log` |
+| u1 failing rc.shutdown | Pass | `exit 1` after rc.shutdown's normal work: stop task **succeeded**, no jail, state `stopped`; log: `--- shutdown ---` (Stopping cron …), `--- shutdown stderr ---` (`r3 exiting 1`, `Terminated`, jail(8)'s line), then `--- jail -r failed: jail: skep-…: /bin/sh /etc/rc.shutdown jail: failed ---`; agent log `jail_remove_failed` (exit 1), `orphaned_devfs_removed`, `jail_rctl_removed`, `container_stop_forced` (WARN); no devfs, epair, or RCTL rule left. Started again (`running`, new epair, rule back), later stopped normally and deleted |
+| u2 control characters | Pass | On disk the stderr section keeps ESC (`1b`) and U+202E (`e2 80 ae`); the failure line has neither; the API's text has neither (`x[31my`). The failure line is jail(8)'s own last line, so no jail text reached it (see 26.4, item 6). First attempt's API check read the wrong field; repeated on a new jail |
+| u3 hanging rc.shutdown | Pass | **See 26.3.** jail(8) gave up at `exec.timeout` (120 s): `jail -r` exited 1 with `… /etc/rc.shutdown jail: timed out`, the jail left; forced removal; stop succeeded 121 s after submission |
+| u5 quarantined delete | Pass | State `failed`; start, stop, restart 409 `container_quarantined`; delete: "removing the quarantined jail without running any of its code"; the 50 ms watcher never saw the `rc.shutdown.local` marker; jail, dataset, run directory gone. `jail -r` without `exec.stop` succeeded, so no fallback was needed |
+| u6 MAC held at create, update, clone | Pass | `fbsd1`'s MAC (upper case in the request) at create, update, clone: 409 `container_mac_in_use`, `held_by_kind vm`, `held_by_name fbsd1`; another jail's MAC at create: 409, `held_by_kind container`; nothing created, the NIC unchanged, no snapshot made; each refusal audited `denied` |
+| u7 memlock note | Pass | `jexec -U root … ulimit -l` unlimited, plain `jexec` 64; cron 131072 KB; with `cron_limits="-l 300m"` in the jail's `rc.conf` and a restart, 307200 KB. First attempt used `sysrc`, which minimal-151 lacks; the rc.conf part was repeated with `echo >>` |
+| 5a template build, build jail sysv | Pass | `r3-tpl` (pkgbase, FreeBSD-set-minimal + FreeBSD-ssh) built in 43 s as `s7admin`; the build jail as the kernel reported it (polled every 0.1 s): `sysvshm`, `sysvsem`, `sysvmsg` = `disable`, `securelevel` 2, `children.max` 0, `enforce_statfs` 2, no IP; release 15.1-RELEASE-p7, `readonly=on`, `@skep-base` |
+| 5b has_sshd and the key | Pass | `has_sshd`: minimal-151 false, minimal-ssh-151 true, r3-tpl true (false while unbuilt). Key with minimal-151: 422 `container_ssh_unavailable`; with r3-tpl: created, `rc.conf` and `authorized_keys` written, SSH as root with the key worked |
+| 5c DHCP jail on bridge0 | Pass | Create, start (lease 10.79.60.112, `host.hostname` set, sshd listening), SSH, restart (new JID, console log has only the new start), stop (`--- shutdown ---` with sshd and cron), no epair or jail devfs after the stop |
+| 5c static jail on bridge1 | Pass | (bridge1 window) `ifconfig_skep0="inet 192.0.2.11/24"` and `resolv.conf` written; `r3-st1` and its clone `r3-st2` (192.0.2.12) ping each other; restart; `r3-st3` with 192.0.2.11 refused at start 409 `container_address_in_use` while `r3-st1` ran |
+| 5d failed start | Pass | `rc.local` blocking in the foreground: after 122 s `container_start_failed` "… /etc/rc failed or outlasted the start timeout … (its output is in the console log): hostops: jexec timed out after 2m0s"; `state_detail` the same; jail, epair, devfs, rules gone; disk and API console log end with rc's lines, rc.local's two marker lines, then the shutdown sections; agent `jail_rc_failed`. The UI showed the code and the hint (5j) |
+| 5e snapshots, rollback, clones (DHCP) | Pass | `consistent` when stopped, `crash_consistent` when running; rollback while running 409 `container_not_stopped`; rollback to the latest removed the newer file; to an older one 409 `snapshot_not_latest` without `destroy_newer`, then success destroying `r3-b` (named in the result); `started_once` stayed true; clone from a snapshot: new MAC, own lease, hostname = name, origin = the snapshot, the source's host keys (documented); snapshot and source delete 409 `snapshot_has_clones` while the clone exists |
+| 5e static clones | Pass | Never-started source: 422 `clone_addressing_required` (`slots [0]`) without new addressing; with 192.0.2.12/24 accepted and written. **Started source: 409 `container_started`**, running or stopped; without addressing 422 `clone_addressing_required` (26.4, item 2). UI: clone-blocked notice, Clone disabled |
+| 5f /metrics vs rctl -u | Pass | `memoryuse`, `maxproc`, `openfiles` equal `resident_memory_bytes`, `processes`, `open_file_slots`; disk equals `zfs get used,referenced`; `cpu_time_seconds` and `cpu_percent` trail by up to one 30 s sample. With `cpu_percent` 50 and a busy loop, pcpu swung 8 to 91 (documented). First attempt looked before the first sample (26.4, item 5) |
+| 5g per-role | Pass | Reads 200 for all three. `s7viewer`: create, update, start, stop, restart, delete, snapshot, rollback, snapshot delete, clone, template build and delete: 403 with the missing permission, 14 `authz.deny` entries; nothing changed. `s7oper`: container writes 202; template build and delete 403 `storage:write`. `s7admin`: container writes, clone, deletes 202 |
+| 5h edit rules | Pass, with a finding | Never started: hostname, `sysvipc`, limits, key, NICs, nameservers all change, and the files follow (rc.conf, resolv.conf removed with the nameservers, authorized_keys removed with the key and back). Running: 409 `container_not_stopped`. Started: hostname, options, limits accepted and applied at the next start (`sysv*` `disable`, `maxproc:deny=80`); key change or removal, nameservers, adding or removing a NIC: 409 `container_started`; a new MAC on slot 0 accepted and used; an unlisted bridge 422 `bridge_not_allowed`; a quota below what the root references: **202, then the task fails `invalid_request`** (26.4, item 1). First attempt omitted `nameservers` (26.4, item 4) |
+| 5i devfs leftovers | Pass | After a hand `jail -r`: devfs still on `<root>/dev`, RCTL rule still there, state `stopped` with the "removed outside Skep" detail. API start: `orphaned_devfs_removed` (the old fsid) before `jail -c`, one devfs after; normal stop: none. Second hand `jail -r`, then API delete: `orphaned_devfs_removed`, rule removed, dataset gone, no devfs |
+| 5j UI against the real API | Pass | TLS controls: no pin and a wrong pin refused (`ERR_CERT_AUTHORITY_INVALID`), the pin loads. 30 checks passed across three scripts: list, create dialog (key field follows `has_sshd`), create, edit dialog never started (NICs; Nameservers only with an all-static NIC set) and started (bridge only), start, console log, usage card (sample time shown), snapshot take and delete, clone notice, limit-removal confirmation ("Keep editing" sends nothing), the failed start's code and hint, delete; the static notice; viewer sees no actions. The first script's edit-dialog check expected Nameservers with no NIC and left the dialog open, failing the next four steps; they passed in the second script. No console errors |
+| Cleanup | Done | No containers, jails, epairs, RCTL rules, or jail devfs; `/var/run/skep/jails` empty; ZFS list equal to the pre-check (25 entries); template list as before; `agent.json` sha256 as before, backup removed; `bridge1` gone; built-in roles and the same 12 users; `/` 17 %; `/health` ok; sessions logged out. Differences from the pre-check: the deploy |
+
+No security property failed. Agent and API logs during the run: WARN
+only (35 `task refused`, 14 `request denied`, 6 `orphaned_devfs_removed`,
+4 `jail_remove_failed`, 4 `container_stop_forced`, 2 `jail_rc_failed`), no
+ERROR.
+
+### 26.3 u3: what jail(8) does at `exec.timeout`
+
+With `exec.timeout = 120` in the rendered jail.conf and `/etc/rc.shutdown`
+ending in `sleep 600` (after rc.shutdown's own 90 s watchdog has been
+killed, line 108, so only `exec.timeout` applies): at +60 s the jail still
+ran `/bin/sh /etc/rc.shutdown jail` and its `sleep 600` under `jail -f …
+-r`. At 120 s **jail(8) gave up on `exec.stop`, printed `jail:
+skep-<id>: /bin/sh /etc/rc.shutdown jail: timed out`, exited 1, and did
+not remove the jail**. The agent took that as a failure under amendment u
+3a: it appended the shutdown sections and `--- jail -r failed: jail:
+skep-<id>: /bin/sh /etc/rc.shutdown jail: timed out ---`, removed the jail
+with `jail -R`, and cleaned up. The stop task succeeded 121 s after it was
+submitted; the runner's own timeout (start + stop + 30 s = 160 s) was not
+reached. A hang inside an rc.d script's stop (before line 108) would be
+killed by rc.shutdown's watchdog at 90 s instead (not run; from reading
+the jail's `/etc/rc.shutdown`).
+
+### 26.4 Findings and backlog items (functional, not security)
+
+1. **A `disk_quota` below what the root references is accepted (202) and
+   the update task then fails with the generic `invalid_request`** "the
+   disk quota is below what the jail's root already uses (N bytes)". The
+   limits stay unchanged. jails.md says such a quota "is refused", which
+   is true but late. For a decision: refuse at submission, or give it a
+   code (`container_quota_below_used`) so the UI can hint.
+2. **Cloning a started static jail without addressing** gets 422
+   `clone_addressing_required` "give each new addressing in nics", which
+   can never succeed for that source (with addressing it is 409
+   `container_started`). Nit: check `container_started` first for a
+   started source with a static NIC.
+3. **Nameservers on a jail with no NIC:** the API accepts them and writes
+   `resolv.conf` (5h); the UI offers the field only when at least one NIC
+   exists and all are static. Harmless; noted for consistency.
+4. **An update that leaves `nameservers` out keeps the stored ones**, so
+   a PUT that adds a DHCP NIC to a never-started jail with nameservers is
+   refused 400 "nameservers are for static addressing only" although it
+   does not mention nameservers; it must send `"nameservers": []`. The UI
+   sends the full set. Same family as the clone backlog item of amendment
+   m (empty list vs omitted).
+5. **`/metrics` is a sample, up to 30 s old** (`monitoring.DefaultInterval`;
+   the response has `observed_at`). A jail started within the last
+   interval is missing, and just after a stop it still shows `running`
+   with its last figures. The UI shows the sample time; jails.md's Usage
+   paragraph does not mention the sampling. Doc nit.
+6. **The failure line comes from jail(8):** with a failing or hanging
+   rc.shutdown on 15.1 the last line of `jail -r`'s stderr is always
+   jail(8)'s own (`… jail: failed` or `… jail: timed out`), so the jail's
+   text never reached the failure line on hearst; its cleaning stays
+   covered by the merrick tests.
+7. **Two JSON records on one `daemon.log` line** (u2: `jail_rctl_removed`
+   and `container_stop_forced` at 11:36:19). Seen once; cause not
+   established (the daemon(8)-to-syslog path). Backlog: check.
+8. **Docs still say the UI is pending validation against a real agent**
+   (jails.md status paragraph, web-ui.md). Not changed in this run.
+9. **`web/playwright.config.ts` sets `ignoreHTTPSErrors: true`**, also in
+   its external mode meant for hearst. This run used a separate script
+   pinned with `--ignore-certificate-errors-spki-list`. Backlog: use the
+   SPKI pin in external mode.
+10. Every jail start logs `route: message indicates error: File exists`
+    for the loopback routes (base rc in a VNET jail). Cosmetic; not
+    investigated.
+
+### 26.5 Commits
+
+The commit with this section and the record.
