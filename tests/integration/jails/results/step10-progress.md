@@ -2470,8 +2470,8 @@ Recommendation: **(c)**. It is the only option with no
      MiB).
   2. `PUT /containers/<id>` `{"limits":{"disk_quota":"64M"}}`: expect 422
      `container_disk_quota_below_usage`, `details.referenced_bytes` = R,
-     `details.disk_quota` = 67108864. `GET /tasks?type=container.update`
-     shows no new task, the access/agent audit has a `denied` entry, and
+     `details.disk_quota` = 67108864. `GET /tasks` (newest first) shows
+     no new `container.update` task, the access/agent audit has a `denied` entry, and
      `zfs get -Hp refquota` is still `0`.
   3. `PUT` with `"disk_quota": R` (bytes): 202, the task succeeds,
      `refquota` = R. Then `"disk_quota": R − 1` is 422. (R does not change
