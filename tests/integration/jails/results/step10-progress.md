@@ -2815,6 +2815,16 @@ that window should show which rule, if any, matched the three echo
 requests. Log: `~/skep-test-logs/20261121T193326Z-hearst-icmp-rule-06-test1-rerun.log`
 (appended to the record).
 
+### 30.6 Test 1 re-run 2: pass (2026-11-21T19:40Z)
+
+After a further change on OPNsense between 19:33 and 19:40 UTC (Andy's
+side; not recorded here), `jexec icmptest-1929 ping -c 3 10.79.60.1` from
+10.79.60.115, sent 19:39:59–19:40:01 UTC: **3 transmitted, 3 received,
+0 % loss**, 0.36–0.98 ms, TTL 64 (exit 0). Test 1 passes. Tests 2 and 3
+were not repeated after the change. Log:
+`~/skep-test-logs/20261121T193958Z-hearst-icmp-rule-07-test1-rerun2.log`
+(appended to the record).
+
 ## 31. SR-02 anti-spoofing measurements (hearst, 2026-11-21)
 
 Measure only; nothing was fixed. Andy watched OPNsense (capture on LAB and
