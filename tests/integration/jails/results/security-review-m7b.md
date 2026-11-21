@@ -41,6 +41,8 @@
 - **Gain:** the attacker steals or intercepts traffic of other jails, VMs and LAN hosts on the same bridge: ARP-spoofing the default gateway, stealing a static IP, or hijacking a MAC in the bridge's forwarding table. It can also run a rogue DHCP server for every DHCP jail and VM on the bridge. The duplicate-IP refusal is advisory only: it covers the API's configuration, not what the jail does.
 - **Confidence:** the absence of a control is confirmed by reading. The effect is likely, as standard if_bridge behaviour. Your notes already list the spoofing tests as deferred, so this records the gap from the code side.
 - **Proof on hearst:** the deferred spoofing tests (with Andy at OPNsense). Jail A takes jail B's static IP and MAC, and B's traffic is seen at A with `tcpdump` in A. Then gratuitous ARP for the bridge's gateway.
+- **Measured (2026-11-21):** every forged frame passed the host bridge: forged IPv4 sources on- and off-subnet, a changed MAC, and an address claim with gratuitous ARP ([step10-progress.md](step10-progress.md) §31).
+- **Decision (2026-11-21, [ADR 0010 amendment y](../../../../docs/decisions/0010-storage-and-jails.md)):** root in a jail is not trusted on the network; jails keep `/dev/bpf`; source enforcement lives on the host per guest port (epair host end, VM tap), not upstream; the API's recorded MAC is authoritative and IP/ARP from any but the configured address is dropped; static NICs get MAC and IP pinning, DHCP NICs MAC pinning only (documented gap), VMs the same rules, IPv6 dropped where none is configured. **Not built in M7b:** its own ADR and work right after the M7b merge, and a **release blocker**. The mechanism (pf `ether` rules vs ipfw on the bridge) waits for a hearst probe. The answers to the seven questions are §32 of the progress log.
 
 ### SR-03 (medium): an API user can give a jail NIC any unicast MAC, including the LAN gateway's or the host's
 
@@ -181,7 +183,7 @@ written.
 | Finding | Severity | Disposition |
 |---|---|---|
 | SR-01 console.log descriptor | high | Probe and propose only; not built in this run. The options are compared in step10-progress.md, and Andy decides the fix. |
-| SR-02 L2/L3 anti-spoofing | medium | Deferred until the spoofing tests with Andy at OPNsense. No code. |
+| SR-02 L2/L3 anti-spoofing | medium | Deferred until the spoofing tests with Andy at OPNsense. No code. **2026-11-21: decided (ADR 0010 amendment y), build pending, release blocker.** |
 | SR-03 arbitrary NIC MAC | medium | Fix now: unicast, locally administered, not all zeros (422 in create, edit, clone and the UI); the agent refuses at start a MAC already on the target bridge, its members, or another Skep container. |
 | SR-04 unbounded locked memory | medium | Fix now: `locked_memory` required with `mlock`; applied as its own RCTL rule and read back whenever set, with or without `memory`. |
 | SR-05 RCTL coverage, optional limits | medium | Documentation now (what the limits do not cover, and that `container:write` can create an unlimited jail). Default limits or limits required per role: backlog. |

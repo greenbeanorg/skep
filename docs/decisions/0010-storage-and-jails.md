@@ -485,7 +485,9 @@ refuses a start with `epair_unavailable` when the module is absent. On
   nothing. bpf in a VNET jail sees only the jail's own interfaces (what
   the bridge delivers to its port) and can write any frame on its epair,
   which is what a VM can do on its tap; amendment f already accepts
-  spoofing on the epair.
+  spoofing on the epair. (Amendment y keeps bpf but no longer accepts
+  the spoofing: source enforcement on the host, per port, is a release
+  blocker built after M7b.)
 - **`if_epair` in production**: the operator sets `kld_list="if_epair"`
   (the installer writes it into its profiles in Milestone 10), as for
   `vmm`. Skep checks `kldstat -q -m if_epair` before any `ifconfig epair
@@ -863,7 +865,9 @@ Amendments made at acceptance, worked into the text:
     spoof packets on its own epair: any source IPv4 or IPv6 address, and
     any source MAC, as a VM can on its NIC. The VLAN isolation test of
     step 8 must therefore include source-IP and source-MAC spoofing from
-    a jail (Decision 16, "Jail networking").
+    a jail (Decision 16, "Jail networking"). (Amendment y: such spoofing
+    is not accepted; the host will enforce the recorded MAC and
+    addresses per port, a release blocker built after M7b.)
 - **g. SSH keys and host keys** (Decision 12; Andy, 2026-11-16, from the
   step 7 probe). The key only for a template with sshd
   (`container_ssh_unavailable` otherwise); `FreeBSD-ssh` in the default
@@ -1095,7 +1099,7 @@ Amendments made at acceptance, worked into the text:
   - **SR-01** (console.log): probe and proposal only, not built in this
     run; the fix is decided after the comparison of options.
   - **SR-02** (layer-2/3 anti-spoofing): deferred until the spoofing tests
-    with Andy at OPNsense; no code.
+    with Andy at OPNsense; no code. (Decided 2026-11-21, amendment y.)
   - **Backlog:** SR-07, SR-08, SR-10, SR-I1, SR-I2, SR-I4, SR-I5, SR-I6.
   - **Hearst validation list:** SR-I3 (jail root cannot use `/dev/zfs` to
     list, set properties on, or snapshot datasets).
@@ -1340,6 +1344,53 @@ Amendments made at acceptance, worked into the text:
     is refused at submission with 422
     `container_disk_quota_below_usage`; the details carry `disk_quota`
     and the template's referenced bytes.
+
+- **y. SR-02: layer-2/3 anti-spoofing** (Andy and review, 2026-11-21,
+  from section 31 of
+  [step10-progress.md](../../tests/integration/jails/results/step10-progress.md);
+  the answers to its seven questions are section 32). It supersedes the
+  acceptance of spoofing on the epair in amendments f and h.
+  1. **Root in a jail is not trusted on the network.** Skep does not rely
+     on `allow.raw_sockets` for VNET jails: it has no effect there
+     (31.1). The jail.conf keeps it off, as before.
+  2. **Jails keep `/dev/bpf`** (ruleset 6001 unchanged). A VNET jail's
+     root can already send raw packets, change its MAC, and add
+     addresses; hiding bpf would only break `dhclient`, and bpf is
+     confined to the jail's own interfaces.
+  3. **Source enforcement lives on the host, per guest port**: the
+     epair's host end for a jail, the tap for a VM. Skep must not assume
+     an upstream firewall; upstream filtering (OPNsense, for example) is
+     optional defence in depth.
+  4. **The MAC recorded by the API is authoritative.** A jail can still
+     change its MAC, but the host drops frames whose source MAC is not
+     the recorded one.
+  5. **A jail can still add addresses, but the host drops IP and ARP
+     whose sender address is not the configured one.**
+  6. **Per NIC type:** a static NIC gets MAC and IP pinning; a DHCP NIC
+     gets MAC pinning only, and the IP gap is a documented limitation
+     (the lease cannot be learnt from a trustworthy source: the lease
+     file belongs to the jail's root). VMs get the same per-port rules.
+     IPv6 on a port with no IPv6 configured is dropped.
+  7. **Proof:** T1 to T5 of section 31 run again with `rawping` on
+     `bridge1` (192.0.2.0/24), a second jail as the victim, and
+     `tcpdump` on the host side; the test passes when no forged frame
+     leaves the port. No OPNsense changes.
+  - **Scope: not built in M7b.** It is its own piece of work immediately
+    after the M7b merge, with its own ADR, and it **blocks any public
+    release or 0.1 preview**. Until it lands, a jail's root can forge
+    source IPs within its subnet, take over unused addresses, and change
+    its MAC (section 31, T1, T4, T5), and jails should be given only to
+    trusted users on shared networks; the guides say so under known
+    limitations.
+  - **Open questions for that ADR** (the mechanism is undecided and needs
+    a `hearst` probe first; neither is chosen here):
+    - pf `ether` rules in a Skep-owned anchor: layer-3 matching is
+      available, tables are not allowed in `ether` rules, and whether the
+      layer-3 matching covers ARP sender addresses is unverified;
+    - ipfw through the bridge's pfil and `ipfw_arp` sysctls.
+  - **Backlog link:** the backlog item "a VM create does not refuse a MAC
+    address a jail holds" (amendment v) is tracked with SR-02, since the
+    recorded MAC becomes the enforced one.
 
 ## Implementation notes
 

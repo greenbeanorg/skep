@@ -29,6 +29,7 @@ run is **pending FreeBSD validation**, whatever CI says.
 | Symlink rule: a started jail cannot be updated in a way that writes into its tree; `O_RESOLVE_BENEATH` with planted links fails safely (natively) | **passed** (2026-11-16) | [step7-validation.txt](results/step7-validation.txt) §0, 9 |
 | Permissions (jails): operator allowed `container:*`, refused `storage:write`; viewer reads and is refused every write; refusals audited | **passed** (2026-11-16) | [step7-validation.txt](results/step7-validation.txt) §11 |
 | Jail networking (including epair clean-up and spoofing), orphaned epairs, `started_once` after a rollback, limits, clone identity, monitoring | pending (steps 8 to 10) | |
+| Spoofing from a jail (SR-02): forged source IPs on and off the subnet, a changed MAC, an address claim with ARP | **measured** (2026-11-21): every forged frame passed the host bridge. Decided in ADR 0010 amendment y: host-side enforcement per port, built after M7b (release blocker); its proof re-runs T1 to T5 on `bridge1` | [step10-progress.md](results/step10-progress.md) §31, §32 |
 
 Not verifiable on this host and pending regardless: a ZFS-root host; a host
 installed from distribution sets (the `dist` source is checked, the host

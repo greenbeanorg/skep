@@ -598,6 +598,14 @@ anything.
   `container_started` first.
 - Run 3 (26.4 item 3, amendment w): the API accepts nameservers on a jail
   with no NIC; the UI offers them only with all-static NICs.
+- **SR-02: decided, build pending, release blocker** (2026-11-21, ADR
+  0010 amendment y, section 32): host-side source enforcement per guest
+  port (recorded MAC; configured IP and ARP sender for static NICs; IPv6
+  dropped where none is configured). Its own ADR and work right after
+  the M7b merge; blocks any public release or 0.1 preview.
+- Linked to SR-02 (amendment v, 25.5 point 3): a VM create does not
+  refuse a MAC address a jail holds (`vmstore` checks only
+  `vm_networks`). Before public release.
 - Run 3 (26.4 item 4, amendment w): API design, PUT replace versus merge
   semantics (an omitted `nameservers` is kept).
 - Run 3 (26.4 item 6, amendment w): the forced-removal failure line is
@@ -2928,3 +2936,89 @@ table may hold 10.79.60.50 → `02:17:fb:89:a2:1a` until it expires.
 `tests/integration/jails/tools/rawping` (tool and unit tests), the jails
 README's tool note, this section and the run record. Self-approved as
 test tooling and docs; no code, API, security, or schema change.
+
+## 32. SR-02 decision (Andy and review, 2026-11-21), recorded as amendment y
+
+The decision on the §31 measurements is ADR 0010 amendment y; the
+security review's SR-02 entry points to it. No behaviour change in this
+section: nothing is built in M7b. The answers to the questions of 31.5,
+in order:
+
+1. **`allow.raw_sockets` and trust.** Root in a jail is **not** trusted
+   on the network. Skep does not rely on `allow.raw_sockets` for VNET
+   jails; it has no effect there (31.1). The jail.conf keeps
+   `allow.raw_sockets = 0` and `checkJailParams` still checks every
+   `allow.*` the kernel reports, but no security property depends on it
+   (the grep of 32.2 found no code that does).
+2. **`/dev/bpf`.** Jails keep it; ruleset 6001 is unchanged. A VNET
+   jail's root can already send raw packets, change its MAC, and add
+   addresses, so hiding bpf would only break `dhclient`, and bpf is
+   confined to the jail's own interfaces.
+3. **Where enforcement lives.** On the **host**, per guest port: the
+   epair's host end for a jail, the tap for a VM. Skep must not assume an
+   upstream firewall; upstream filtering (OPNsense, for example) is
+   optional defence in depth. For a DHCP NIC see 6.
+4. **MAC changes (T4).** A jail can still change its MAC, but the host
+   will drop frames whose source MAC is not the MAC recorded by the API.
+   The recorded MAC is authoritative.
+5. **Added addresses (T5).** A jail can still add addresses, but the
+   host will drop IP and ARP whose sender address is not the configured
+   one.
+6. **Static, DHCP, VMs.** Static NICs: MAC and IP pinning. DHCP NICs: MAC
+   pinning only; the IP gap is a documented limitation, since the lease
+   cannot be learnt from a trustworthy source (the lease file belongs to
+   the jail's root). VMs: the same per-port rules. IPv6 on a port with
+   no IPv6 configured is dropped.
+7. **Proof.** T1 to T5 run again with `rawping` on `bridge1`
+   (192.0.2.0/24), with a second jail as the victim and `tcpdump` on the
+   host side. Pass: forged frames never leave the port. No OPNsense
+   changes.
+
+### 32.1 Scope and open questions
+
+Not built in M7b. It becomes its own piece of work immediately after the
+M7b merge, with its own ADR, and blocks any public release or 0.1
+preview. The mechanism is undecided and needs a `hearst` probe first;
+the open questions for that ADR, neither option chosen:
+
+- pf `ether` rules in a Skep-owned anchor: layer-3 matching exists,
+  tables are not allowed in `ether` rules, and it is unverified whether
+  the layer-3 matching covers ARP sender addresses;
+- ipfw through the bridge's pfil and `ipfw_arp` sysctls.
+
+### 32.2 Documentation corrected
+
+A grep of code, docs, ADRs, and UI text for `raw_sockets` and for
+statements that jails cannot spoof or are network-isolated:
+
+- **Code:** `internal/hostops/jails.go` (`jailAllow`) sets
+  `allow.raw_sockets = 0` and its comment already says a VNET jail has
+  raw sockets whatever it says; `internal/hostops/templates_jail.go`
+  lists it in the build jail's `allow.*` set; `pkg/models/containers.go`
+  notes that the opt-in was dropped. **No code relies on
+  `allow.raw_sockets` for a security property**; nothing changed.
+- **UI text:** "its own network stack" (Containers page, create dialog)
+  is true and claims no isolation; unchanged.
+- **Docs changed:** `docs/administration/jails.md` (the baseline's raw
+  sockets paragraph, which presented spoofing as accepted, and a new
+  Known limitations section), `docs/security/overview.md` (the raw
+  sockets bullet, which said only that the networking step tests
+  spoofing), `docs/architecture/overview.md` (Known limitations),
+  the README's "Not yet" row, `tests/integration/jails/README.md` (a
+  spoofing row), and ADR 0010 (amendment y; notes on
+  amendments f, h, and n that amendment y supersedes their acceptance of
+  spoofing). The security review's SR-02 entry and triage row and the
+  backlog (13.8) are updated.
+
+The statement used in the docs: until the anti-spoofing work lands, a
+jail's root can forge source IPs within its subnet, take over unused
+addresses, and change its MAC (31.3: T1, T4, T5), and jails should only
+be given to trusted users on shared networks. VM guests are in the same
+position: their taps join the bridge with a plain `addm` as well
+(confirmed by reading `internal/hostops/net.go`; not measured on
+`hearst`).
+
+### 32.3 Commits
+
+The commit with this section, amendment y, and the documentation fixes.
+Docs only; no code, API, security behaviour, or schema change.

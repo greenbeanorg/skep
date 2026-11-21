@@ -419,8 +419,11 @@ What that means inside a jail: mounting, loading kernel modules, writing
 sysctls, changing the hostname, lowering the securelevel, and clearing
 `schg` flags all fail. **Raw sockets work** (`ping` does): FreeBSD gives
 every VNET jail raw sockets on its own network stack, whatever
-`allow.raw_sockets` says, so a jail can craft packets on its own
-interface as a VM can on its NIC.
+`allow.raw_sockets` says, and a VNET jail's root can also change its
+interface's MAC and add addresses. Skep does not rely on
+`allow.raw_sockets`, and root in a jail is not trusted on the network.
+Today nothing on the host checks what a jail sends: see
+[Known limitations](#known-limitations).
 
 `securelevel=2` means base system files with the `schg` flag cannot be
 replaced from inside the jail, so `pkg upgrade` of `FreeBSD-*` packages
@@ -448,6 +451,26 @@ amendment l). Each one is logged with the event `orphaned_devfs_removed`,
 the mount point, and the fsid; a failed check at agent start is logged as
 `orphaned_devfs_check_failed`, and the jail's next start or delete tries
 again.
+
+## Known limitations
+
+- **No anti-spoofing on jail ports yet** (ADR 0010 amendment y, SR-02).
+  The host bridge passes whatever a jail sends. Until the anti-spoofing
+  work lands, a jail's root can forge source IPv4 addresses within its
+  subnet, take over unused addresses on the network (it answers ARP for
+  them), and change its MAC; this was measured on FreeBSD 15.1 (step 10
+  progress log, section 31, tests T1, T4, and T5). Forged off-subnet
+  sources leave the host too (T2, T3); whether they get further depends
+  on the upstream router. **Give jails only to trusted users when they
+  share a network with other machines.** VM guests are in the same
+  position: their taps are not filtered either (not measured).
+- The planned fix, a release blocker built after Milestone 7b: the host
+  drops frames from a guest port whose source MAC is not the MAC Skep
+  recorded, and, for a static NIC, IP and ARP whose sender is not the
+  configured address; IPv6 is dropped on a port with no IPv6 configured.
+  A DHCP NIC will get MAC pinning only, because its lease cannot be
+  learnt from a source the jail does not control. An upstream firewall
+  is optional defence in depth, not something Skep relies on.
 
 ## Snapshots and clones
 

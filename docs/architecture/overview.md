@@ -423,6 +423,13 @@ imported, both as an unprivileged user and as root.
 
 ## Known limitations
 
+- **No anti-spoofing on guest ports yet (SR-02, a release blocker).**
+  Until the host-side enforcement of ADR 0010 amendment y lands, a
+  jail's root can forge source IPs within its subnet, take over unused
+  addresses, and change its MAC (measured on `hearst`, step 10 progress
+  log section 31); VM guests are in the same position (not measured).
+  Give jails only to trusted users on shared networks. See
+  [Jails: known limitations](../administration/jails.md#known-limitations).
 - Permissions are global: there is no per-resource scoping and no custom
   roles yet.
 - Sessions and users are per node.
