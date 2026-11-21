@@ -1173,6 +1173,26 @@ Amendments made at acceptance, worked into the text:
     Cf, including the bidi overrides U+202A–U+202E and U+2066–U+2069, is
     removed wherever Skep reports or logs jail output, alongside the
     existing control-character cleanup.
+- **r. Decisions on the amendment q build** (Andy, 2026-11-21, from
+  section 19 of
+  [step10-progress.md](../../tests/integration/jails/results/step10-progress.md)).
+  - **Approved as built:** the eight changes outside the request (section
+    19.3).
+  - **The console log is cleaned when the API serves it** (19.4 point 1).
+    `GET /containers/{id}/console-log` strips Unicode format characters
+    (category Cf) and C0 and C1 control characters, except newline and
+    tab, from what it returns. The file on disk stays as the jail wrote
+    it. jails.md and the OpenAPI description say so.
+  - **The other reports of jail-side output are cleaned** (19.4 point 2):
+    `cleanLine` is applied to the first stderr line of a failed
+    `RunBuildCommand` in build errors, and to the first stderr line of a
+    failed `jail -c`.
+  - **`skepctl`'s `clean` also strips Cf characters** (19.4 point 3).
+  - **The changes to the hearst list are approved** (section 19.5): the
+    new expectations of tests 2, 4, 6, 7, 8, and 10, U+202E in test 10's
+    `printf`, and the new test 11. Added, test 12: a test jail whose rc
+    writes U+202E and a C1 character to its output; `console.log` on disk
+    keeps them, and the API's console-log response has them stripped.
 
 ## Implementation notes
 

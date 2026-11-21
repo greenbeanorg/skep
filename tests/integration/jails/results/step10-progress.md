@@ -1256,3 +1256,23 @@ expected results of some tests:
 `7335875` feat(hostops): strip Unicode format characters from reported
 jail output; `a1f4f2b` feat(hostops): append rc.shutdown's stderr to the
 jail's console log; and the docs commit with this section.
+
+### 19.7 Andy's answers (2026-11-21), recorded as amendment r
+
+1. **19.3:** all eight changes approved as built.
+2. **19.4 point 1, the console log:** when the API serves it, strip
+   Unicode format characters (Cf) and C0/C1 control characters except
+   `\n` and `\t`. The file on disk stays as written. Document it in
+   jails.md and in the OpenAPI description.
+3. **19.4 point 2:** apply the existing `cleanLine` cleanup to
+   `RunBuildCommand`'s first stderr line in build errors, and to
+   `jail -c`'s first stderr line.
+4. **19.4 point 3:** `skepctl`'s `clean` also strips Cf characters.
+5. **19.5:** every change to the 17.5 hearst list approved, including
+   U+202E in test 10's `printf` and the new test 11. Added:
+   - **Test 12:** a test jail whose rc writes U+202E and a C1 character
+     to its output. `console.log` on disk keeps them; the API's
+     console-log response has them stripped.
+
+No code was written in this session; points 2–4 of this list are the
+next build.
