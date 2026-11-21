@@ -1,10 +1,11 @@
 # ADR 0011: Anti-spoofing on guest ports (SR-02, Milestone 7c)
 
-- Status: **Proposed** (draft written in an unattended run, 2026-11-21).
-  Not accepted. Nothing in it is built. It must not be merged while it is
-  Proposed: Andy's answers to [Decisions for Andy](#decisions-for-andy)
-  come first, are recorded here, and only then can it be marked Accepted.
-- Date: 2026-11-21
+- Status: **Accepted** 2026-11-21 by Andy, with the answers recorded in
+  [Andy's answers](#andys-answers-2026-11-21) and the
+  [additions on acceptance](#additions-on-acceptance). Where an answer
+  settles something the draft left open, the decision text below has been
+  changed to match; the answers are the authority if anything disagrees.
+- Date: 2026-11-21 (proposed and accepted)
 - Depends on: [ADR 0003](0003-read-only-discovery.md) (enabling a
   capability is an administrative action), [ADR 0004](0004-privilege-boundary.md)
   (typed operations, no shell), [ADR 0009](0009-first-vm-bhyve.md)
@@ -18,6 +19,97 @@
   (part 2: netgraph), both run on `hearst` (15.1-RELEASE-p7) on
   2026-11-21. Section references below such as "P1 4.6" or "P2 7.2" point
   into those two files.
+
+## Andy's answers (2026-11-21)
+
+Given for an unattended run, recorded here verbatim in substance.
+
+1. **Mechanism:** netgraph `ng_bpf` per port plus bridge `vlanfilter`.
+2. **Talking to netgraph:** `ngctl -f -` with validated values, no shell.
+3. **Health check:** 10 s interval. Reaction: event + audit, reinstall,
+   `deletem` if the reinstall fails. If the same port fails **3 checks in
+   a row**, detach it and stop reinstalling until the guest is restarted.
+4. **IPv6:** a jail NIC with `ipv6_mode` `slaac` or `static`, and **every
+   VM port**: ethertype 0x86dd allowed, MAC-only, with the RA guard. A
+   jail NIC with no IPv6: IPv6 dropped. IPv6 source and neighbour-discovery
+   pinning: a later ADR (backlog).
+5. **Guards: yes.** Drop UDP source port 67 (handling the IPv4 header
+   length and fragments correctly) on **every** port, static jails
+   included, and ICMPv6 type 134 wherever IPv6 is allowed. The RA guard is
+   documented as best-effort against extension-header evasion.
+6. **Unfiltered bridges:** a bridge without `VLANFILTER`, or a port without
+   a PVID: the guest starts, and the health check `bridge_vlan_unfiltered`
+   reports it at WARNING. Not a start error. The installer sets
+   `vlanfilter` by default (Milestone 10 note). Revisit refusing at 1.0.
+   `bridge0` on `hearst` may be switched to `vlanfilter` live for the
+   validation, with `vtnet1`'s PVID set first and nothing in `rc.conf`.
+7. **VMs:** MAC-only. Backlog: an optional pinned address for VM NICs.
+8. **Jail root and netgraph:** accepted and documented, including the note
+   about VNET jails that Skep does not manage.
+9. **Throughput:** accepted; re-measure on bare metal (Milestone 11).
+10. **Names approved:** `port_filter_unavailable`, `port_filter_failed`;
+    events `port_filter_missing`, `port_filter_restored`,
+    `port_filter_detached`; health check `port_filters`. No API field, no
+    config key, no migration.
+11. **Validation plan approved**, in this order: module-missing first
+    (the modules are not loaded on `hearst` now), then load them live,
+    deploy, items 1–5 and 7–9 (a VM on `bridge1`, the upgrade case from
+    b61e578 with a running jail, a DHCP test jail on `bridge0`, the agent
+    restart with test jails running). The reboot/autostart item (10) is
+    not run; it is listed for Andy with the exact `kld_list` line.
+
+## Additions on acceptance
+
+**(a) Only completed installs are checked; one lock per port.** A port is
+in the health check's scope only once its install has completed, which is
+the same as "it is a member of its bridge": `addm` is the last step of
+Decision 3, so a port still being installed is never a member. Each port
+has a lock, keyed by owner and NIC slot (not by interface name, which the
+kernel reuses), held as an `flock(2)` on `port<slot>.lock` in the owner's
+runtime directory (`<JailRunDir>/<id>/` for a jail, `<RunDir>/<id>/` for a
+VM; both root-only, both gone at reboot). It works across processes,
+which the VM runner needs. The lock is held by:
+
+- **jail start**, from `epair create` until the host end is a bridge
+  member;
+- **the VM runner**, from `CreateTap` until `AddBridgeMember` for each NIC;
+- **the health check**, for the check and the reaction on that port. It
+  takes the lock without waiting; a port whose lock is held is skipped in
+  that round (an install is running).
+
+Under the lock the check reads the port again (exists, same `skep:`
+description, member of the recorded bridge), reads the `ng_ether` node's
+ID, and from then on addresses the node by ID (`[id]:`), never by name.
+A port destroyed and its name reused during the check therefore makes the
+check's messages fail with "no such node" instead of reaching the new
+interface; that outcome is "port gone", not a failure.
+
+Taps are created **once per VM run** (the runner's boot), not per guest
+reboot: the bhyve reboot loop keeps the same taps (`runner.boot`). A VM
+stop and start, or a runner that died and a new run, creates new taps
+under the lock. (Decision 4's draft said "on every boot loop"; that was
+wrong and is corrected below.)
+
+**Who reinstalls.** The agent's port-filter checker owns the check and the
+whole reaction (event, audit, reinstall, detach) for **every** port, jail
+and VM alike. The runner installs a VM's filters at boot and does nothing
+afterwards; it is blocked in the bhyve wait loop and has no audit log.
+Jail start installs a jail's. Nothing else touches the filters.
+
+**(b) Residual risk, stated.** A DHCP jail or a VM can still claim
+**another IPv4 address** using its own recorded MAC (it can answer ARP for
+an address it does not hold, and send from it). The forged traffic carries
+the guest's recorded MAC, so it is traceable to the guest from any switch
+or neighbour table, but it is not prevented. This is the documented limit
+of MAC-only ports (amendment y.6 for DHCP jails; answer 7 for VMs), and it
+is in the security guide's known limitations.
+
+**(c) Control frames.** The program is default deny on the ethertype, so it
+also drops from guests: STP/RSTP BPDUs and every other 802.3 length-field
+(LLC) frame, LLDP (0x88cc), LACP and other slow protocols (0x8809), PAUSE
+(0x8808), 802.1X (0x888e), and Q-in-Q tags left in the frame. A guest
+cannot take part in the bridge's spanning tree or announce itself with
+LLDP. This is intended.
 
 ## Summary
 
@@ -33,7 +125,7 @@ Amendment y of ADR 0010 decided **what** must hold on every guest port
 | E | DHCP NICs: MAC pinning only; DHCP from 0.0.0.0 passes, a forged MAC is still dropped |
 | F | drop IPv6 on a port with no IPv6 configured |
 
-This ADR proposes:
+This ADR decides:
 
 1. **netgraph on the host end**: `<port>:lower → ng_bpf "skf_<port>" →
    <port>:upper`, one BPF program per port, generated by the agent from
@@ -89,7 +181,22 @@ case, near-misses, short frames and tags in both modes (P2 section 1).
 | Static IPv4 (jail) | Ethernet source = recorded MAC; then ethertype 0x0800 with IPv4 source = configured address (whole header present), **or** 0x0806 with htype 1, ptype 0x0800, hlen 6, plen 4, sender MAC = recorded MAC, sender IP = configured address or 0.0.0.0 (RFC 5227 probe); **everything else dropped**, IPv6 included. 23 instructions. |
 | DHCP IPv4 (jail) | The same, except IPv4 passes with any source and the ARP sender IP is not checked. 19 instructions. |
 | VM (tap) | Skep records only a MAC for a VM NIC (`vm_networks` has no address), so a VM port gets the **DHCP (MAC-only) program**: A, the ARP sender MAC part of C, E. B and the sender-IP part of C are not enforced for VMs (a documented limitation, as for DHCP jails in amendment y.6). |
-| Any NIC with IPv6 configured (`ipv6_mode` `slaac` or `static`) | **Open** (Andy, question 4). The probe tested only F (IPv6 dropped). |
+| Jail NIC with `ipv6_mode` `slaac` or `static` (answer 4) | As its IPv4 mode, plus ethertype 0x86dd **allowed MAC-only** (the Ethernet source check at the top still applies), except ICMPv6 type 134 (router advertisement) with ICMPv6 as the IPv6 header's next header, which is dropped (RA guard). IPv6 source and neighbour-discovery pinning: later ADR. |
+| Jail NIC without IPv6 (`ipv6_mode` `none`) | 0x86dd dropped (F), as in the draft. |
+| VM (tap), IPv6 (answer 4) | Every VM port allows 0x86dd MAC-only with the RA guard: VMs have no IPv6 setting, and dropping IPv6 would break guests that use SLAAC today. |
+
+**Guards on every port (answer 5).** Every program, static jails
+included, drops IPv4 UDP with **source port 67** (a guest acting as a DHCP
+server). The program finds the UDP header from the IPv4 header length
+(`IHL`, via `ldx 4*([14]&0xf)`), drops IPv4 whose version is not 4 or
+whose IHL is below 5, and checks the port only in a datagram's **first
+fragment** (fragment offset 0); later fragments carry no UDP header and
+pass on, and without the dropped first fragment they never reassemble. A
+first fragment too short to hold the UDP header makes the port load run
+past the frame, which drops it. Where IPv6 is allowed, the RA guard above
+applies. It is **best-effort**: an RA behind an IPv6 extension header
+(hop-by-hop, destination options, fragment) is not recognised and passes.
+That is documented as a known limitation.
 
 The program on the `bridge` hook is a single `ret #0xffffffff`. It only
 carries frames the host stack itself sends out of the host end, which
@@ -141,13 +248,14 @@ Install time is about 0.01 s per port (P2 4.2).
 
 | Event | What happens |
 |---|---|
-| Guest start | Decision 3. |
+| Guest start | Decision 3, under the port's lock (addition a). |
 | Guest stop or delete | The host end (epair or tap) is destroyed as today; its ether node and the ng_bpf node go with it (P2 7.1, 0.9). No separate removal step. |
 | A reused interface name | Starts with **no** filter and a new node ID; nothing is inherited (P2 7.1). Decision 3 installs a fresh one. The node ID, not the name, identifies a port's node in Decision 5. |
 | Agent restart | Filters are kernel state and survive (P2 7.3). At start, before the socket is served (where the orphan check runs today), the agent runs Decision 5's check once on every running guest's ports and applies its reaction. |
-| VM runner restart / guest reboot | The runner recreates taps on every boot loop (it destroys leftovers first), so each boot goes through Decision 3. |
+| Guest reboot inside a VM run | The taps and their filters stay (the bhyve reboot loop reuses them); nothing to do. |
+| VM stop/start, or a new run after a runner died | The runner destroys leftover taps and creates new ones, each through Decision 3 under the port lock. |
 | Host reboot | Nothing survives (interfaces and nodes are gone). Guests that autostart go through Decision 3. The modules must already be loaded at boot (Decision 6), or every start is refused. |
-| Upgrade from a Skep without filters | At the first agent start after the upgrade, running guests have no filters. The check in that row installs them (if the reaction in Decision 5 is "reinstall") or reports them. |
+| Upgrade from a Skep without filters | At the first agent start after the upgrade, running guests' ports are bridge members with no filter. The start-up check finds them and the reaction installs them (`port_filter_missing`, then `port_filter_restored`). If the modules are not loaded, the check reports every port as unfiltered (critical) and installs nothing. |
 
 ## Decision 5: detecting the fail-open states
 
@@ -169,22 +277,36 @@ messages (P2 8.2):
    pass-all).
 
 Cost: negligible when batched (P2 8.2: 200 messages below `time`'s
-resolution). Interval: proposed **10 seconds** (Andy, question 3).
+resolution). Interval: **10 seconds** (answer 3), a constant.
 netgraph sends no event that a userland process can receive when someone
 else removes a node, so polling is the only detection found; the window
 is the interval.
 
-**Reaction on a failed check** (Andy, question 3). Proposed:
+**Reaction on a failed check** (answer 3):
 
 1. a critical event `port_filter_missing` naming the guest, NIC slot and
    what was wrong, and an audit entry;
 2. **reinstall** the filter at once, on the port as it is (Decision 3's
    step 2; the port stays a bridge member, so frames sent during the gap
-   were already forwarded);
+   were already forwarded): whatever is left of the old graph on the
+   ether node is removed first (`rmhook` of `lower` and `upper`), then
+   the install script runs and is verified; success is
+   `port_filter_restored` and an audit entry;
 3. if the reinstall fails, **remove the port from the bridge** (`deletem`),
-   so the guest is cut off rather than unfiltered, and report
-   `port_filter_failed`;
-4. `port_filters` stays critical until every port passes.
+   so the guest is cut off rather than unfiltered: event
+   `port_filter_detached`, an audit entry, error `port_filter_failed` in
+   its details;
+4. if the **same port fails 3 checks in a row** (reinstalls succeeded but
+   the filter keeps disappearing), it is detached the same way and not
+   reinstalled again until the guest is restarted (a new port);
+5. `port_filters` stays critical while any port is unfiltered or
+   detached. A detached port is recognised without memory, so also after
+   an agent restart: a port of a running guest, lock free, not a member
+   of its bridge.
+
+The counter of consecutive failures is in the agent's memory, keyed by
+the ether node's ID, so a new interface starts at zero; an agent restart
+also resets it (the port then gets three more tries).
 
 ## Decision 6: the modules
 
@@ -216,15 +338,14 @@ Summarised from Decision 2:
 |---|---|---|---|---|---|
 | Jail, static IPv4 | yes | yes | yes (sender MAC and IP) | n/a | yes (IPv6 dropped) |
 | Jail, DHCP | yes | **no** (amendment y.6) | sender MAC only | yes | yes |
-| VM (tap) | yes | **no** (no address recorded) | sender MAC only | yes | **open** (question 4) |
+| VM (tap) | yes | **no** (no address recorded) | sender MAC only | yes | IPv6 allowed MAC-only (answer 4) |
 
-Two follow-ups from P1 section 7, not decided here (question 5):
+Every port also has the DHCP-server guard; every port where IPv6 is
+allowed has the RA guard (answer 5).
 
-- A DHCP or VM guest could act as a **DHCP server** (UDP source port 67)
-  on the bridge.
-- Where IPv6 is allowed, a guest could send **router advertisements**.
-
-Both are cheap to drop in BPF (a few instructions).
+The two follow-ups from P1 section 7, a guest acting as a **DHCP server**
+and a guest sending **router advertisements**, are settled by answer 5:
+both are dropped (Decision 2).
 
 ## Decision 8: VLANs
 
@@ -235,7 +356,7 @@ choosing**; the bridge forwards them tagged (P2 5, V1). On a bridge with a
 trunk uplink, that frame leaves on the chosen VLAN. Two tags (Q-in-Q) are
 dropped by the program's ethertype check (V3).
 
-**Proposed: the bridge does VLAN filtering.** if_bridge on 15.x has
+**Decided: the bridge does VLAN filtering.** if_bridge on 15.x has
 `vlanfilter`: a member with a PVID (`ifuntagged`) accepts untagged frames
 into its PVID and drops every tagged frame whose VID is not in its access
 list, the PVID itself included; Q-in-Q is dropped unless `qinq` is set.
@@ -247,10 +368,12 @@ Bridges are the operator's (Skep creates none, ADR 0009 Decision 5). So:
 - the operator configures each bridge in `network.bridges` with
   `vlanfilter`, `defuntagged <vid>` (so new members get the PVID), and the
   uplink's `ifuntagged`/`iftagged`;
-- after `addm`, the agent **checks** that the bridge has `VLANFILTER` and
-  that the new port has a PVID;
-- what happens when it does not is question 6: refuse the start with
-  **`bridge_vlan_unfiltered`**, or start with a warning health check.
+- the agent **checks**, as the health check **`bridge_vlan_unfiltered`**
+  (WARNING, answer 6), that every bridge with a running guest port has
+  `VLANFILTER` and that each guest port on it has a PVID. A failure does
+  not stop or refuse a guest. The installer sets `vlanfilter` by default
+  (Milestone 10). Refusing starts on an unfiltered bridge is to be
+  revisited at 1.0.
 
 Caution, measured: `vlanfilter` on a member with **no** PVID drops all
 its untagged traffic (P2 6). Turning it on for `bridge0` without first
@@ -312,10 +435,12 @@ persisted data and config format are "ask first").
     status and shape as `epair_unavailable` (task failure detail on start).
   - `port_filter_failed`: install or verification failed; details carry the
     guest ID, slot, host interface and the step.
-  - `bridge_vlan_unfiltered`: only if question 6 chooses "refuse".
-- New health check `port_filters` (critical) in the existing health
-  listing, and a capability entry for the netgraph modules where
-  `epair_unavailable`'s capability is reported.
+  - (`bridge_vlan_unfiltered` is **not** an error code: answer 6 made it
+    a WARNING health check.)
+- New health checks: `port_filters` (critical) and
+  `bridge_vlan_unfiltered` (warning, answer 6), in the existing health
+  listing. The netgraph modules are reported where `epair_unavailable`'s
+  capability is.
 - New events: `port_filter_missing`, `port_filter_restored`,
   `port_filter_detached` (the port was removed from the bridge).
 - Optional, **not proposed**: a read-only `filter` status per NIC in `GET
@@ -345,13 +470,17 @@ persisted data and config format are "ask first").
   address loses connectivity on the new address (ADR 0010 Decision 10
   already calls the record "descriptive" after a change; it becomes
   enforced).
-- VMs: IPv6 handling depends on question 4.
+- VMs: IPv6 is allowed, MAC-only, with the RA guard (answer 4). No guest
+  can act as a DHCP server on its bridge (answer 5).
 - Throughput: about 12 % lower single-stream TCP on an epair in a 4-vCPU
   VM (P2 11); latency differences were within noise.
 
 ## Decision 12: validation on `hearst`
 
-Run after the build, with a Proxmox snapshot named in the prompt:
+Run after the build, with a Proxmox snapshot named in the prompt, in the
+order of answer 11: item 6 first (the modules are not loaded on `hearst`
+at acceptance time, so no reboot is needed for it), then load the modules
+live, deploy, items 1–5 and 7–9. Item 10 is left to Andy.
 
 1. **T1–T5 rerun** (amendment y.7) with `rawping` on `bridge1`, a second
    jail as victim, tcpdump on the host side: no forged frame leaves the
@@ -367,22 +496,22 @@ Run after the build, with a Proxmox snapshot named in the prompt:
    (Decision 5) happens and is audited. The reinstall-failure path: after
    removing `lower`, connect a hand-made test node to `<host>:lower` so the
    reinstall's `mkpeer` fails; the port must be detached from the bridge.
-5. **Agent restart** with running filtered jails (needs the standing
-   approval's "no test jails running" rule relaxed for this test, or a
-   hand-made port as in P2 7.3), and an **upgrade** run from b61e578 with
-   a running jail (the start-up check installs the missing filter).
-6. **Module missing**: start refused with `port_filter_unavailable` (on
-   `hearst` this needs the modules unloaded, which needs a reboot; a
-   simulated capability in unit tests otherwise).
+5. **Agent restart** with running filtered jails (approved for this run
+   with test jails running, answer 11), and an **upgrade** run from
+   b61e578 with a running jail (the start-up check installs the missing
+   filter).
+6. **Module missing**: start refused with `port_filter_unavailable`. Run
+   first, while the modules are not loaded (answer 11).
 7. **VM**: a VM on `bridge1` with the MAC-only program: A1-style and ARP
    sender MAC tests from inside the guest. Not measured in the probes.
 8. **DHCP jail on `bridge0`** with a real lease and renewal through the
    filter (not done in P2, deviation 1).
-9. **VLAN**: `vlanfilter` on `bridge1` with Skep's ports, and, only with
-   Andy's approval, on `bridge0` with `vtnet1`'s PVID (changes `hearst`'s
-   guest bridge).
-10. **Reboot**: needs Andy. After a reboot with `kld_list` set, an
-    autostart guest comes up filtered.
+9. **VLAN**: `vlanfilter` on `bridge1` with Skep's ports, and on `bridge0`
+   live only, with `vtnet1`'s PVID set **first** (approved, answer 6);
+   nothing in `rc.conf`. Also the `bridge_vlan_unfiltered` warning before
+   it is switched on.
+10. **Reboot**: needs Andy; not run in the validation run. After a reboot
+    with `kld_list` set, an autostart guest comes up filtered.
 
 ## Consequences
 
@@ -398,7 +527,10 @@ Run after the build, with a Proxmox snapshot named in the prompt:
 - No new dependency in Go (the agent runs `/usr/sbin/ngctl` with typed,
   validated arguments, or speaks `PF_NETGRAPH` directly; question 2).
 
-## Decisions for Andy
+## Decisions for Andy (answered 2026-11-21)
+
+The questions as they were put; the answers are in
+[Andy's answers](#andys-answers-2026-11-21).
 
 1. **Mechanism**: netgraph `ng_bpf` per port plus bridge `vlanfilter`
    (recommended), or ipfw for A/B/D/E/F with C documented as a limitation,
