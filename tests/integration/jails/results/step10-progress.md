@@ -2108,3 +2108,16 @@ only.
 `e01f3ea` fix(containers): refuse a held MAC at create, update, and clone
 with 409; `d4066c1` docs(jails): forced removal, MAC 409, memlock login
 classes; and the commit with this section.
+
+### 25.8 Andy's answers (2026-11-21), recorded as amendment v
+
+1. **The changes of 25.4** (1 to 9) are approved as built.
+2. **25.5:** the run directory stays after a forced stop; the timeout's
+   failure line is approved as built; a VM create that does not refuse a
+   MAC address a jail holds goes to the backlog ("before public
+   release"). Point 4 (the `Vlan1` comment nit) was not answered and stays
+   open.
+3. **25.6:** u1 to u7 and the `-test.run` addition are approved for run 3;
+   u4 stays merrick-only.
+
+Only the answers were recorded in this session; no code was written.

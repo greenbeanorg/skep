@@ -1275,6 +1275,24 @@ Amendments made at acceptance, worked into the text:
     that is not a bridge member, and the bridge's own address; they are
     covered by the merrick unit tests.
 
+- **v. Decisions on the amendment u build** (Andy, 2026-11-21, from
+  section 25 of
+  [step10-progress.md](../../tests/integration/jails/results/step10-progress.md)).
+  - **Approved as built:** the nine changes outside the request (section
+    25.4).
+  - **The run directory stays after a forced stop** (25.5 point 1), as
+    after a normal stop: it holds the console log with the failure line.
+  - **The timeout's failure line is approved as built** (25.5 point 2):
+    `--- jail -r failed: timed out after <duration>, last line of stderr:
+    <line> ---` (or `, no jail output on stderr`).
+  - **A VM create with a MAC address a jail holds** (25.5 point 3) is not
+    refused today (`vmstore` checks only `vm_networks`). Backlog, before
+    public release.
+  - **The hearst additions for run 3 are approved** (section 25.6): u1 to
+    u7 and the `-test.run 'RemoveJail|DiscardFailure|Quarantined'`
+    addition to the unprivileged hostops test binary; u4
+    (`container_remove_failed`) stays merrick-only.
+
 ## Implementation notes
 
 Recorded during the build of 7a (from 2026-11-14). The decisions above
