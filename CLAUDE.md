@@ -146,6 +146,7 @@ Adjust the layout when implementation shows a better boundary, and record substa
 - **Never claim a test passed unless you ran it and saw it pass.**
 - **Never claim bhyve, ZFS, jails, or any FreeBSD feature works because it compiled on Linux.** Cross-compilation proves compilation, not runtime behavior. Mark such items "pending FreeBSD validation."
 - Don't substitute Linux functionality for FreeBSD functionality without saying so.
+- Whenever `make test` or `go test` runs, tee the full output to `~/skep-test-logs/<UTC timestamp>-<target>.log` (outside the repo; for example `~/skep-test-logs/20261121T104900Z-make-test.log`), so an intermittent failure keeps its package and test name. Report the log path with the result.
 
 **Docs:** update the README, architecture docs, API docs, install and dev instructions, security docs, and ADRs whenever behavior or architecture changes.
 
@@ -167,7 +168,7 @@ Adjust the layout when implementation shows a better boundary, and record substa
 - `hearst` is a test VM, not production. Even so, discovery stays read-only, and never run privileged or destructive commands there (`kldload`, `zpool create`, network changes) without asking first.
 - Lab notes that affect your work:
   - `merrick` and `hearst` both run on the Proxmox host `swearengen`, which has planned downtime coming (CPU replacement). Commit and push to GitHub often; don't leave work only on disk.
-  - `hearst` exposes VT-x with EPT and UG (Proxmox CPU type `host`, confirmed 2026-11-11). It is small (2 cores, 2 GB RAM) and UFS-root. A file-backed test pool named `skeptest` may exist; it is the only pool you may touch.
+  - `hearst` exposes VT-x with EPT and UG (Proxmox CPU type `host`, confirmed 2026-11-11). It is small (4 CPUs, 6 GiB RAM, 4 GiB swap; checked 2026-11-17) and UFS-root. A file-backed test pool named `skeptest` may exist; it is the only pool you may touch.
   - You have passwordless `sudo` on `hearst`. Read-only checks and loading/unloading `vmm` are fine. Ask first before anything persistent or destructive: `loader.conf`, `rc.conf`, network changes, package installs, `zpool create/destroy`, or any disk other than the `skeptest` file. Never touch hearst's root filesystem or boot configuration. A Proxmox snapshot exists for recovery, but don't rely on it.
   - DNS goes through Pi-hole with aggressive blocklists. If `go get`, `npm install`, or another download fails with a name-resolution error, stop and tell Andy rather than working around it.
 - Lab hostnames and private IPs are fine in committed files. Keys, passwords, and tokens are still never committed.
@@ -206,3 +207,29 @@ Don't build speculative features just because they appear in a later milestone.
 Don't rewrite working components without reason. Preserve backward compatibility where possible. When an architectural choice is uncertain, present the alternatives and recommend one. When something is incomplete, state its limits plainly.
 
 **Guiding principle:** correctness, reliability, security, and architectural clarity come before speed. Build it properly, one tested subsystem at a time.
+
+## Autonomy and standing approvals (adopted 2026-11-21)
+
+### Pre-approved on hearst — no need to ask
+Conditions for all: test objects only; back up anything you change first; restore it and verify (sha256 for files) before the run ends; record every change in the progress log.
+- Deploying the pushed branch head with scripts/deploy-test.sh (inode, -version and /health verified).
+- Temporary edits to /usr/local/etc/skep/agent.json (e.g. a test bridge in network.bridges); restarting skep_agent / skep_api only with no test jails running, verified the same way as a deploy.
+- sqlite3 on agent.db / api.db after a .backup: with the service stopped, or with .timeout 5000 for a single-row edit of the live agent.db. Backups deleted at cleanup.
+- Temporary test roles and users: random passwords generated in the script, never printed or stored; deleted at cleanup.
+- Test bridges (bridge1, 192.0.2.0/24, no uplink), hand-made epairs, kldload if_epair (live only).
+- Anything inside Skep test jails (rc.conf, rc.local, rc.shutdown, rc.shutdown.local, login.conf, dd, test binaries); jail -r / jail -R on Skep test jails.
+- Cross-compiled test binaries; Playwright against hearst using the TLS pin.
+
+### Still requires Andy
+Reboots; persistent loader.conf / sysctl / kld changes; pf; host login.conf; static addresses on VLAN 60; OPNsense or Proxmox; changing or deleting permanent users, roles, templates, VMs, pools or backups; anything touching ~/.skep-test-creds beyond the silent loader; skipping or narrowing any security test; ADR acceptance; merging to main.
+Stop immediately if any security property fails.
+
+### Unrequested changes
+- Self-approve, and list under "Self-approved" in the stop report: tests, docs, refactors with no behavior change, UI text and hints, test tooling.
+- Ask first: changes to security behavior, permissions, API contracts, error codes or HTTP statuses, persisted data or schema, config format.
+
+### Workflow
+- Small amendments: record the decisions and build in the same session if /context is under ~120k; otherwise record, push, /clear, build.
+- In questions to Andy, never recommend skipping or reducing a security test to keep a run moving; say plainly what coverage would be lost.
+- Hearst runs may run unattended once Andy has taken a Proxmox snapshot for that run; the prompt names the snapshot.
+- Stop reports also go to ~/stop-report.md; tee all test output to ~/skep-test-logs/.

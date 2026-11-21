@@ -1,0 +1,11 @@
+skeptest/skep/jail/d1db6333-9b51-4dff-ac39-e469d8578b0f	readonly	off	local
+skeptest/skep/jail/d1db6333-9b51-4dff-ac39-e469d8578b0f	origin	skeptest/skep/templates/f496866f-32ba-4527-bcee-5a717a2f74c0@skep-base	-
+skeptest/skep/jail/d1db6333-9b51-4dff-ac39-e469d8578b0f	skep:container_id	d1db6333-9b51-4dff-ac39-e469d8578b0f	local
+skeptest/skep/jail/d1db6333-9b51-4dff-ac39-e469d8578b0f	mountpoint	/skeptest/skep/jail/d1db6333-9b51-4dff-ac39-e469d8578b0f	default
+skeptest/skep/templates/f496866f-32ba-4527-bcee-5a717a2f74c0	readonly	on	local
+skeptest/skep/jail	/skeptest/skep/jail
+/skeptest/skep/jail root:wheel drwx------
+/skeptest/skep/templates root:wheel drwx------
+/skeptest/skep/jail/d1db6333-9b51-4dff-ac39-e469d8578b0f root:wheel drwxr-xr-x
+-rw-r--r--  1 root wheel 0 Nov 16 21:18 /skeptest/skep/jail/d1db6333-9b51-4dff-ac39-e469d8578b0f/var/tmp/.skep-writable
+touch: /skeptest/skep/templates/f496866f-32ba-4527-bcee-5a717a2f74c0/var/tmp/.x: Read-only file system

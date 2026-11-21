@@ -1,0 +1,94 @@
+# Cleanup: stop and delete remove the epair; kill -9 of the agent, 2026-11-17T18:48:55Z
+## 5a. stop n8dhcp2 (7a1e3658-aced-47d1-bf56-8b9a2478632e)
+-- before:
+epair0a skep:7a1e3658-aced-47d1-bf56-8b9a2478632e:0
+bridge0: epair0a vtnet1 
+container.stop succeeded   started 2026-11-17T18:48:55.246Z finished 2026-11-17T18:48:55.48Z
+result: {"container_id": "7a1e3658-aced-47d1-bf56-8b9a2478632e", "state": "stopped"}
+-- after stop:
+bridge0: vtnet1 
+-- start again:
+container.start succeeded   started 2026-11-17T18:48:56.562Z finished 2026-11-17T18:48:56.927Z
+result: {"container_id": "7a1e3658-aced-47d1-bf56-8b9a2478632e", "epairs": {"0": "epair0a"}, "jid": 26, "state": "running"}
+epair0a skep:7a1e3658-aced-47d1-bf56-8b9a2478632e:0
+bridge0: epair0a vtnet1 
+
+## 5b. kill -9 of the agent during /etc/rc (n8rcfail 8a868d32-561d-41ed-9d1a-551fe9710da6, rc.local sleeps 600)
+rc.shutdown.local markers: 1 | rc.local starts: 2
+start task ee5115a7-ef14-4d9d-b239-f9f8b096660d submitted
+-- 15 s later, while rc runs:
+state starting desired running jid None detail: the last start failed: container_start_failed: the jail's /etc/rc failed or outlasted the start timeout, so the jail was stopped and removed (its output is in the console log): hostops: jexec timed out after 2m0s
+ nic 0 bridge0 02:ac:40:31:6a:c1 sj8a868d3256n0 {'mode': 'dhcp'} host_if 
+jails: [skep-8a868d32-561d-41ed-9d1a-551fe9710da6 ]
+agent pid 67450; kill -9 at 18:49:27
+-- after the restart:
+72830 /usr/local/sbin/skep-agent -data-dir /var/db/skep
+jails: []
+epair0a skep:7a1e3658-aced-47d1-bf56-8b9a2478632e:0
+no sleep 600 left
+-- agent log of the restart:
+{"time":"2026-11-17T13:32:14.242928243-05:00","level":"INFO","msg":"task engine started","workers":4,"queue_size":64,"interrupted":0}
+{"time":"2026-11-17T13:32:14.248153871-05:00","level":"INFO","msg":"containers: observed the jails","containers":0,"running":0,"half_started_removed":0}
+{"time":"2026-11-17T13:32:14.253695751-05:00","level":"INFO","msg":"orphans: interface check finished","event":"orphaned_interface_check","found":0}
+{"time":"2026-11-17T13:49:33.043766049-05:00","level":"INFO","msg":"starting skep-agent","version":"0.1.0","commit":"79620ef","dev_mode":false,"data_dir":"/var/db/skep"}
+{"time":"2026-11-17T13:49:33.049690611-05:00","level":"INFO","msg":"task engine started","workers":4,"queue_size":64,"interrupted":1}
+{"time":"2026-11-17T13:49:33.219573195-05:00","level":"WARN","msg":"containers: removed a jail an agent restart left half-started","event":"jail_start_interrupted","container_id":"8a868d32-561d-41ed-9d1a-551fe9710da6"}
+{"time":"2026-11-17T13:49:33.219933754-05:00","level":"INFO","msg":"containers: observed the jails","containers":3,"running":1,"half_started_removed":1}
+{"time":"2026-11-17T13:49:33.226622994-05:00","level":"INFO","msg":"orphans: interface check finished","event":"orphaned_interface_check","found":0}
+-- the task:
+container.start interrupted agent_restart the agent restarted before this task finished; it was not resumed started 2026-11-17T18:49:12.766Z finished 2026-11-17T18:49:33.048Z
+-- the container:
+state stopped desired running jid None detail: a start was interrupted by an agent restart; the half-started jail was removed without running /etc/rc.shutdown
+ nic 0 bridge0 02:ac:40:31:6a:c1 sj8a868d3256n0 {'mode': 'dhcp'} host_if 
+rc.shutdown.local markers: 1 | rc.local starts: 3
+
+## 5c. orphaned epair: kill -9 of the agent, then n8dhcp2's jail removed by hand while the agent is down
+kill -9 72830 at 18:49:59
+skep-7a1e3658-aced-47d1-bf56-8b9a2478632e: removed
+jail -r exit 0 at 18:49:59
+73280 /usr/local/sbin/skep-agent -data-dir /var/db/skep
+jails: []
+epair0a skep:7a1e3658-aced-47d1-bf56-8b9a2478632e:0
+sj7a1e3658acn0 
+-- agent log of the restart:
+{"time":"2026-11-17T13:49:33.219933754-05:00","level":"INFO","msg":"containers: observed the jails","containers":3,"running":1,"half_started_removed":1}
+{"time":"2026-11-17T13:49:33.226622994-05:00","level":"INFO","msg":"orphans: interface check finished","event":"orphaned_interface_check","found":0}
+{"time":"2026-11-17T13:50:04.164611216-05:00","level":"INFO","msg":"starting skep-agent","version":"0.1.0","commit":"79620ef","dev_mode":false,"data_dir":"/var/db/skep"}
+{"time":"2026-11-17T13:50:04.176670818-05:00","level":"INFO","msg":"containers: observed the jails","containers":3,"running":0,"half_started_removed":0}
+{"time":"2026-11-17T13:50:04.183391527-05:00","level":"INFO","msg":"orphans: interface check finished","event":"orphaned_interface_check","found":1}
+-- health:
+status degraded orphaned_interfaces {'status': 'degraded', 'critical': False, 'error': '1 interface(s) with a skep: description belong to a jail or VM that is not running; see the agent log'}
+-- the container:
+state stopped desired running jid None detail: the jail is not running although it should be: it was removed outside Skep, or the host restarted
+ nic 0 bridge0 02:d6:4d:28:d1:3b sj7a1e3658acn0 {'mode': 'dhcp'} host_if 
+-- delete n8dhcp2 (s7oper):
+container.delete succeeded   started 2026-11-17T18:50:09.665Z finished 2026-11-17T18:50:09.723Z
+result: {"container_id": "7a1e3658-aced-47d1-bf56-8b9a2478632e", "datasets_destroyed": [{"name": "skeptest/skep/jail/7a1e3658-aced-47d1-bf56-8b9a2478632e", "type": "filesystem", "used_bytes": 352768}], "interfaces_destroyed": ["epair0a"], "name": "n8dhcp2"}
+epairs: []
+bridge0: vtnet1
+-- health after delete (15 s cache):
+status ok orphaned_interfaces {'status': 'ok', 'critical': False}
+-- the warning event of that restart:
+{"time":"2026-11-17T13:50:04.183374052-05:00","level":"WARN","msg":"orphans: an interface Skep made belongs to a jail or VM that is not running; it is destroyed by the owner's next start, stop, or delete","event":"orphaned_interface","interface":"epair0a","kind":"epair","owner_id":"7a1e3658-aced-47d1-bf56-8b9a2478632e","slot":0,"owner_exists":true}
+
+## Result
+5a. A stop destroyed the jail's epair (bridge0 back to vtnet1 alone); the
+next start made a new one.
+5b. kill -9 of the agent while /etc/rc ran (rc.local's sleep 600): the
+restarted agent (daemon(8), 5 s) marked the start task interrupted, found
+the container still "starting" with its jail present, and removed the
+jail without exec.stop (no new rc.shutdown.local marker in console.log;
+the sleep was gone), destroyed its epair, and recorded it stopped with
+"a start was interrupted by an agent restart; the half-started jail was
+removed without running /etc/rc.shutdown" (half_started_removed 1,
+event jail_start_interrupted). Seen on the way: while a start runs, the
+container keeps the previous start's failure as its detail
+(MarkStarting does not clear state_detail); cosmetic, not fixed.
+5c. kill -9 of the agent, then the jail removed by hand with its own
+jail.conf while the agent was down: the epair's jail end came back to
+the host. The restarted agent reported it (orphaned_interface_check
+found 1, a warning event naming epair0a and its owner) and /health went
+degraded on orphaned_interfaces, naming no interface. The container
+showed stopped, desired running. Its delete destroyed epair0a
+(interfaces_destroyed), bridge0 was back to vtnet1, and /health returned
+to ok.

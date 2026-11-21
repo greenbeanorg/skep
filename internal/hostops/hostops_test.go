@@ -12,6 +12,8 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/greenbeanorg/skep/pkg/models"
 )
@@ -26,12 +28,40 @@ type script struct {
 	// answers maps "binary arg arg ..." to an output or an error.
 	answers map[string]any
 	calls   []string
+	// envs holds the environment of each RunEnv call, in order, and
+	// envCmds the whole command.
+	envs    [][]string
+	envCmds []EnvCommand
+	// onRun, when set, sees every call before it is answered.
+	onRun func(call string)
+}
+
+// RunEnv implements EnvRunner: the call is recorded and answered like
+// Run, and its environment and output file are kept.
+func (s *script) RunEnv(ctx context.Context, c EnvCommand) ([]byte, error) {
+	s.envs = append(s.envs, c.Env)
+	s.envCmds = append(s.envCmds, c)
+	return s.Run(ctx, c.Path, c.Args...)
 }
 
 func (s *script) Run(_ context.Context, path string, args ...string) ([]byte, error) {
 	call := filepath.Base(path) + " " + strings.Join(args, " ")
 	s.calls = append(s.calls, call)
-	switch v := s.answers[call].(type) {
+	if s.onRun != nil {
+		s.onRun(call)
+	}
+	v := s.answers[call]
+	if seq, ok := v.([]any); ok {
+		// A sequence answers the calls in turn; the last answer repeats.
+		n := 0
+		for _, c := range s.calls[:len(s.calls)-1] {
+			if c == call {
+				n++
+			}
+		}
+		v = seq[min(n, len(seq)-1)]
+	}
+	switch v := v.(type) {
 	case string:
 		return []byte(v), nil
 	case error:
@@ -517,4 +547,91 @@ func firstCreate(calls []string) string {
 		}
 	}
 	return ""
+}
+
+// A failed jail -r's stderr line (amendments p and q): control
+// characters, format characters (Cf), and bytes that are not UTF-8
+// removed, at most 200 bytes on a character boundary.
+func TestCleanLine(t *testing.T) {
+	long := strings.Repeat("a", 300)
+	accents := strings.Repeat("é", 150) // 300 bytes
+	for _, tc := range []struct{ name, in, want string }{
+		{"plain", "jail: skep-x: failed", "jail: skep-x: failed"},
+		{"escape sequence", "\x1b[2J\x1b[31mjail: red\x1b[0m", "[2J[31mjail: red[0m"},
+		{"carriage return", "fake ok\rjail: real error", "fake okjail: real error"},
+		{"tab nul del bell", "a\tb\x00c\x7fd\x07e", "abcde"},
+		{"C1 as UTF-8", "a\u009b31mb\u0085c", "a31mbc"},
+		{"C1 as a raw byte", "a\x9b31mb\xffc", "a31mbc"},
+		{"surrounding spaces", "  \x1b jail: x \t", "jail: x"},
+		{"over-long", long, long[:200]},
+		{"over-long multibyte", accents, strings.Repeat("é", 100)},
+		{"cut before a split character", "a" + accents, "a" + strings.Repeat("é", 99)},
+		{"exactly 200", long[:200], long[:200]},
+		{"empty", "", ""},
+		{"only controls", "\x1b\r\x00", ""},
+		{"printable unicode kept", "jail: ünïcödé ✓", "jail: ünïcödé ✓"},
+		{"right-to-left override", "jail: \u202eko ekaf", "jail: ko ekaf"},
+		{"bidi embeddings and overrides", "a\u202ab\u202bc\u202cd\u202de\u202ef", "abcdef"},
+		{"bidi isolates", "a\u2066b\u2067c\u2068d\u2069e", "abcde"},
+		{"other format characters", "a\u200bb\u200dc\u200ed\u00ade\ufefff\u2060g", "abcdefg"},
+		{"format characters around spaces", "\u202e jail: x \u2069", "jail: x"},
+		{"only format characters", "\u202e\u2066\ufeff", ""},
+		{"cut after format characters removed", strings.Repeat("\u202e", 100) + long, long[:200]},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := cleanLine(tc.in, maxStderrLine)
+			if got != tc.want {
+				t.Fatalf("cleanLine(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+			for _, r := range got {
+				if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
+					t.Fatalf("cleanLine(%q) kept %U", tc.in, r)
+				}
+			}
+			if len(got) > maxStderrLine || !utf8.ValidString(got) {
+				t.Fatalf("cleanLine(%q) = %d bytes, valid %v", tc.in, len(got), utf8.ValidString(got))
+			}
+		})
+	}
+}
+
+// Every character of category Cf is removed, not only the bidi ones
+// (amendment q).
+func TestCleanLineRemovesAllFormatCharacters(t *testing.T) {
+	var n int
+	for _, rt := range unicode.Cf.R16 {
+		for r := rune(rt.Lo); r <= rune(rt.Hi); r += rune(rt.Stride) {
+			if got := cleanLine("a"+string(r)+"b", maxStderrLine); got != "ab" {
+				t.Errorf("cleanLine kept %U: %q", r, got)
+			}
+			n++
+		}
+	}
+	for _, rt := range unicode.Cf.R32 {
+		for r := rune(rt.Lo); r <= rune(rt.Hi); r += rune(rt.Stride) {
+			if got := cleanLine("a"+string(r)+"b", maxStderrLine); got != "ab" {
+				t.Errorf("cleanLine kept %U: %q", r, got)
+			}
+			n++
+		}
+	}
+	if n < 100 {
+		t.Fatalf("only %d format characters checked", n)
+	}
+}
+
+func TestLastLine(t *testing.T) {
+	for in, want := range map[string]string{
+		"":                      "",
+		"only":                  "only",
+		"first\nsecond\n":       "second",
+		"first\nsecond\n\n \n":  "second",
+		"first\r\nsecond\r\n":   "second",
+		"\n\n":                  "",
+		"rc: a\nrc: b\njail: x": "jail: x",
+	} {
+		if got := lastLine([]byte(in)); got != want {
+			t.Errorf("lastLine(%q) = %q, want %q", in, got, want)
+		}
+	}
 }

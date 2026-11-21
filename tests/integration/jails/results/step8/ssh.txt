@@ -1,0 +1,15 @@
+# SSH from merrick (10.79.20.80) into the DHCP jail n8dhcp2 (7a1e3658-aced-47d1-bf56-8b9a2478632e), 2026-11-17T18:43:44Z
+jail address (DHCP): 10.79.60.104
+## host keys made in the jail at first start
+ssh_host_ecdsa_key ssh_host_ecdsa_key.pub ssh_host_ed25519_key ssh_host_ed25519_key.pub ssh_host_rsa_key ssh_host_rsa_key.pub 
+## ssh -i <throwaway key> root@10.79.60.104
+Warning: Permanently added '10.79.60.104' (ED25519) to the list of known hosts.
+whoami: root
+hostname: n8dhcp2
+jailed: 1
+securelevel: 2
+interfaces: lo0 sj7a1e3658acn0
+ssh client seen as: 10.79.20.80
+ssh exit=0
+## password login refused (PermitRootLogin prohibit-password, no key)
+root@10.79.60.104: Permission denied (publickey,keyboard-interactive).

@@ -9,6 +9,8 @@ import { SystemProvider } from "@/app/system";
 import { ThemeProvider } from "@/app/theme";
 import { AppShell } from "@/layouts/AppShell";
 import { AccountPage } from "@/pages/AccountPage";
+import { ContainerDetailPage } from "@/pages/containers/ContainerDetailPage";
+import { ContainersPage } from "@/pages/containers/ContainersPage";
 import { DashboardPage } from "@/pages/DashboardPage";
 import { ForbiddenPage } from "@/pages/ForbiddenPage";
 import { LoginPage } from "@/pages/LoginPage";
@@ -69,6 +71,22 @@ function Routed() {
             element={
               <Guarded permission={PERMISSIONS.vmRead}>
                 <VMsPage />
+              </Guarded>
+            }
+          />
+          <Route
+            path="containers"
+            element={
+              <Guarded permission={PERMISSIONS.containerRead}>
+                <ContainersPage />
+              </Guarded>
+            }
+          />
+          <Route
+            path="containers/:id"
+            element={
+              <Guarded permission={PERMISSIONS.containerRead}>
+                <ContainerDetailPage />
               </Guarded>
             }
           />

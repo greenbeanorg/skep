@@ -21,6 +21,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"syscall"
+	"time"
 
 	"github.com/greenbeanorg/skep/internal/agent"
 	"github.com/greenbeanorg/skep/internal/agentproto"
@@ -28,6 +29,7 @@ import (
 	"github.com/greenbeanorg/skep/internal/auditarchive"
 	"github.com/greenbeanorg/skep/internal/config"
 	"github.com/greenbeanorg/skep/internal/console"
+	"github.com/greenbeanorg/skep/internal/containers"
 	"github.com/greenbeanorg/skep/internal/database"
 	"github.com/greenbeanorg/skep/internal/hardware"
 	"github.com/greenbeanorg/skep/internal/hostops"
@@ -35,10 +37,12 @@ import (
 	"github.com/greenbeanorg/skep/internal/internalapi"
 	"github.com/greenbeanorg/skep/internal/logging"
 	"github.com/greenbeanorg/skep/internal/monitoring"
+	"github.com/greenbeanorg/skep/internal/orphans"
 	"github.com/greenbeanorg/skep/internal/retention"
 	"github.com/greenbeanorg/skep/internal/storage"
 	"github.com/greenbeanorg/skep/internal/sysaccount"
 	"github.com/greenbeanorg/skep/internal/tasks"
+	"github.com/greenbeanorg/skep/internal/templates"
 	"github.com/greenbeanorg/skep/internal/vm"
 	"github.com/greenbeanorg/skep/migrations"
 	"github.com/greenbeanorg/skep/pkg/models"
@@ -212,6 +216,57 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 			return err
 		}
 	}
+	// Jail templates (ADR 0010 decision 7): built by a task, as admin
+	// only, from the configured packages or the dist directory.
+	templateSvc, err := templates.New(templates.Options{
+		NodeID:   nodeID,
+		Store:    database.NewTemplateStore(db),
+		Engine:   engine,
+		Host:     host,
+		Packages: cfg.Storage.TemplatePackages,
+		Logger:   log,
+	})
+	if err != nil {
+		return err
+	}
+	for _, def := range templateSvc.Definitions() {
+		if err := engine.Register(def); err != nil {
+			return err
+		}
+	}
+	// Jails (ADR 0010 decisions 8, 9, and 13): clones of a template, run
+	// by jail(8) from a generated jail.conf. The host's total of locked
+	// memory defaults to a quarter of hw.physmem, read once here
+	// (amendment o, SR-04).
+	physMem := host.VMM.Capabilities(ctx).HostMemoryBytes
+	maxLocked := containers.MaxLockedMemory(cfg.Containers.MaxLockedMemoryBytes, physMem)
+	if maxLocked == 0 {
+		log.Warn("jails may lock no memory: physical memory could not be read and containers.max_locked_memory_bytes is not set")
+	}
+	log.Info("jail locked-memory total", "max_locked_memory_bytes", maxLocked, "physical_memory_bytes", physMem,
+		"configured", cfg.Containers.MaxLockedMemoryBytes > 0)
+	containerSvc, err := containers.New(containers.Options{
+		NodeID:          nodeID,
+		Store:           database.NewContainerStore(db),
+		Templates:       database.NewTemplateStore(db),
+		Snapshots:       database.NewSnapshotStore(db),
+		MaxSnapshots:    cfg.Storage.MaxSnapshotsPerResource,
+		Engine:          engine,
+		Host:            host,
+		StopTimeout:     time.Duration(cfg.Containers.StopTimeoutSeconds) * time.Second,
+		StartTimeout:    time.Duration(cfg.Containers.StartTimeoutSeconds) * time.Second,
+		MaxLockedMemory: cfg.Containers.MaxLockedMemoryBytes,
+		PhysicalMemory:  physMem,
+		Logger:          log,
+	})
+	if err != nil {
+		return err
+	}
+	for _, def := range containerSvc.Definitions() {
+		if err := engine.Register(def); err != nil {
+			return err
+		}
+	}
 	// The storage inventory reads the host and the database; it changes
 	// nothing.
 	storageSvc, err := storage.New(storage.Options{
@@ -228,6 +283,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		NodeID:      nodeID,
 		Host:        host,
 		VMs:         vms,
+		Containers:  containerSvc,
 		WarnPercent: cfg.Storage.CapacityWarnPercent,
 		FailPercent: cfg.Storage.CapacityFailPercent,
 		MaxAge:      2 * monitoring.DefaultInterval,
@@ -238,8 +294,23 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	}
 	checks[models.CheckStorageCapacity] = sampler.CapacityProbe
 	checks[models.CheckStorageLocked] = sampler.LockedProbe
+	// Interfaces Skep made whose owner is not running (ADR 0010 decision
+	// 10): reported at start and by a health check, destroyed by the
+	// owner's next start, stop, or delete.
+	orphanChecker, err := orphans.New(orphans.Options{
+		Jails:     host.Jails,
+		VMM:       host.VMM,
+		Container: orphans.ContainerOwner(database.NewContainerStore(db).Get),
+		VM:        orphans.VMOwner(database.NewVMStore(db).Get),
+		Logger:    log,
+	})
+	if err != nil {
+		return err
+	}
+	checks[models.CheckOrphanedInterfaces] = orphanChecker.Probe
 	svc, err := agent.NewService(agent.Options{
 		Bhyve:      vms.Capabilities,
+		Containers: containerSvc.Capabilities,
 		NodeID:     nodeID,
 		DevMode:    cfg.DevMode,
 		Discoverer: disc,
@@ -310,11 +381,27 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		return err
 	}, log)
 
+	// A build jail outlives a crashed agent (it is persistent); remove any
+	// before the socket is served (the step 6 decision, item 2).
+	if err := templateSvc.SweepBuildJails(ctx); err != nil {
+		log.Error("could not remove every leftover template build jail", "error", err)
+	}
+
+	// A jail outlives the agent (it is persistent): look at every one
+	// before anything can ask about it.
+	if err := containerSvc.ObserveAll(ctx); err != nil {
+		log.Warn("could not observe the jails", "error", err)
+	}
+
 	// Look at every VM before anything can ask about one: a restarted
 	// agent knows what is running before it serves its socket.
 	if err := vms.ObserveAll(ctx); err != nil {
 		log.Warn("could not observe the virtual machines", "error", err)
 	}
+
+	// After both observations, which reset the starting and stopping a
+	// crash left: report every epair and tap whose owner is not running.
+	_ = orphanChecker.Report(ctx)
 	go vms.Watch(ctx, cfg.Hypervisor.Bhyve.WatchInterval.Std())
 	go sampler.Run(ctx, monitoring.DefaultInterval)
 	if caps := vms.Capabilities(ctx); caps.Available {
@@ -334,6 +421,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		VMs:            vms,
 		Console:        consoles,
 		Storage:        storageSvc,
+		Templates:      templateSvc,
+		Containers:     containerSvc,
 		Metrics:        sampler,
 		RequestTimeout: cfg.Socket.RequestTimeout.Std(),
 		Logger:         log,
@@ -370,6 +459,8 @@ func confinement(cfg config.Config) hostops.Confinement {
 		FirmwareDir:          cfg.Hypervisor.Bhyve.FirmwareDir,
 		RunDir:               cfg.VMRunDir(),
 		StateDir:             cfg.VMStateDir(),
+		JailRunDir:           cfg.JailRunDir(),
+		DistDir:              cfg.Storage.DistDir,
 	}
 }
 

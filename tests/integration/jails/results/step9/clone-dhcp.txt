@@ -1,0 +1,27 @@
+# Check 4: clone of a DHCP jail gets network (source s9dhcp c5d71062-66f8-4008-862e-b5b01e963245), 2026-11-17T22:42:49Z
+container.start succeeded  
+-- clone from current state (running source):
+HTTP 202
+container.clone succeeded  
+result: {"container_id": "340ac09a-3dd5-4a2e-8327-19d6c8625885", "dataset": "skeptest/skep/jail/340ac09a-3dd5-4a2e-8327-19d6c8625885", "files_written": false, "name": "c9dhcp", "origin": "skeptest/skep/jail/c5d71062-66f8-4008-862e-b5b01e963245@skep-25622413-d2e6-444c-91d3-d10e6367d53f", "snapshot_id": "25622413-d2e6-444c-91d3-d10e6367d53f", "snapshot_taken": true, "source_container_id": "c5d71062-66f8-4008-862e-b5b01e963245"}
+clone: name=c9dhcp hostname=c9dhcp started_once=True cloned_from=25622413-d2e6-444c-91d3-d10e6367d53f nics=[{'id': '94e1fceb-2570-47de-bb85-821e0010d2c6', 'slot': 0, 'bridge': 'bridge0', 'mac_address': '02:65:c7:89:15:2d', 'interface': 'skep0', 'ipv4': {'mode': 'dhcp'}}]
+source nics=[{'id': 'bc274be2-c49c-4caa-996e-0ab4782f2488', 'slot': 0, 'bridge': 'bridge0', 'mac_address': '02:46:b1:b6:e7:cf', 'interface': 'skep0', 'ipv4': {'mode': 'dhcp'}, 'host_interface': 'epair0a'}]
+-- snapshot left on the source: [('c9dhcp', 'crash_consistent', ['c9dhcp'])]
+-- zfs origin: skeptest/skep/jail/c5d71062-66f8-4008-862e-b5b01e963245@skep-25622413-d2e6-444c-91d3-d10e6367d53f 340ac09a-3dd5-4a2e-8327-19d6c8625885 off on 
+container.start succeeded  
+result: {"container_id": "340ac09a-3dd5-4a2e-8327-19d6c8625885", "epairs": {"0": "epair1a"}, "jid": 39, "state": "running"}
+-- inside the clone:
+lo0 skep0
+	ether 02:65:c7:89:15:2d
+	inet 10.79.60.107 netmask 0xffffff00 broadcast 10.79.60.255
+-- inside the source:
+	ether 02:46:b1:b6:e7:cf
+	inet 10.79.60.106 netmask 0xffffff00 broadcast 10.79.60.255
+-- host: vtnet0 vtnet1 lo0 bridge0 epair0a epair1a
+	member: epair1a flags=143<LEARNING,DISCOVER,AUTOEDGE,AUTOPTP>;	member: epair0a flags=143<LEARNING,DISCOVER,AUTOEDGE,AUTOPTP>;	member: vtnet1 flags=143<LEARNING,DISCOVER,AUTOEDGE,AUTOPTP>;
+-- SSH host keys (sha256 of the ed25519 public key), source vs clone:
+7c86b606dc7cdb789f8c8c12893c95ac84a443c66580f1fe8319f39ab2007f16
+7c86b606dc7cdb789f8c8c12893c95ac84a443c66580f1fe8319f39ab2007f16
+-- delete the origin snapshot while the clone exists:
+{"error":{"code":"snapshot_has_clones","message":"a linked clone depends on the snapshot; delete the clone first","request_id":"b8019125d9691a2b44a25bbb","details":{"clones":[{"id":"340ac09a-3dd5-4a2e-8327-19d6c8625885","name":"c9dhcp"}]}}}
+HTTP 409

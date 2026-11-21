@@ -1,0 +1,155 @@
+# openfiles: what holds the jail's count (4c7d8e0, s9mem, open_files 256), 2026-11-17T21:23:15Z
+-- jail openfiles usage, idle: openfiles=40
+-- per process: pid, command, RACCT openfiles, fds actually open (procstat -f, numbered fds)
+8216 cron openfiles=40 open=5
+-- sum of per-process openfiles: 40
+-- kern.maxfilesperproc: 175716
+
+# tail -f on 300 files in one process, 2026-11-17T21:23:30Z
+-- during tail -f on 300 files
+jail: openfiles=40
+8216 cron openfiles=40 open=5 highest_fd=4
+refused opens: 5
+tail: f1: Too many open files
+tail: f10: Invalid argument
+-- after: openfiles=40
+
+# tail -f on n files (n = 10 to 300), one process each, 2026-11-17T21:23:47Z
+rctl: malformed rule '8346': missing subject
+sh: cannot open /tmp/of.err: No such file or directory
+n=10 tail running: openfiles=0 open_fds=21 highest_fd=14 jail openfiles=40 errors=       0
+rctl: malformed rule '8377': missing subject
+sh: cannot open /tmp/of.err: No such file or directory
+n=30 tail running: openfiles=40 open_fds=41 highest_fd=34 jail openfiles=120 errors=       0
+n=60 tail exited; errors:
+   1 tail: kqueue: Too many open files
+rctl: malformed rule '8429': missing subject
+sh: cannot open /tmp/of.err: No such file or directory
+n=100 tail running: openfiles=40 open_fds=69 highest_fd=62 jail openfiles=208 errors=      42
+n=150 tail exited; errors:
+  41 tail: fN: Invalid argument
+   1 tail: fN: Too many open files
+   8 tail: fN: Invalid argument
+   1 tail: fN: Too many open files
+  39 tail: fN: Invalid argument
+   1 tail: kqueue: Too many open files
+n=300 tail exited; errors:
+  41 tail: fN: Invalid argument
+   1 tail: fN: Too many open files
+   8 tail: fN: Invalid argument
+   1 tail: fN: Too many open files
+  66 tail: fN: Invalid argument
+   1 tail: fN: Too many open files
+  88 tail: fN: Invalid argument
+   1 tail: fN: Too many open files
+  33 tail: fN: Invalid argument
+   1 tail: kqueue: Too many open files
+-- after: openfiles=40
+
+# The run above is muddled (pgrep matched two processes, and the error count was read on the host). Clean run: every process of the jail listed, 2026-11-17T21:24:21Z
+n=10: jail openfiles=40
+   8216 cron racct_openfiles=40 open_fds=5 highest_fd=4
+   8496 tail racct_openfiles=0 open_fds=15 highest_fd=14
+   8504 tail racct_openfiles=0 open_fds=6 highest_fd=6
+   errors: 
+n=16: jail openfiles=120
+   8216 cron racct_openfiles=40 open_fds=5 highest_fd=4
+   8561 tail racct_openfiles=40 open_fds=21 highest_fd=20
+   8569 tail racct_openfiles=40 open_fds=6 highest_fd=6
+   errors: 
+n=17: jail openfiles=120
+   8216 cron racct_openfiles=40 open_fds=5 highest_fd=4
+   8626 tail racct_openfiles=40 open_fds=22 highest_fd=21
+   8634 tail racct_openfiles=40 open_fds=6 highest_fd=6
+   errors: 
+n=30: jail openfiles=120
+   8216 cron racct_openfiles=40 open_fds=5 highest_fd=4
+   8691 tail racct_openfiles=40 open_fds=35 highest_fd=34
+   8699 tail racct_openfiles=40 open_fds=6 highest_fd=6
+   errors: 
+n=40: jail openfiles=120
+   8216 cron racct_openfiles=40 open_fds=5 highest_fd=4
+   8756 tail racct_openfiles=40 open_fds=45 highest_fd=44
+   8764 tail racct_openfiles=40 open_fds=6 highest_fd=6
+   errors: 
+n=60: jail openfiles=40
+   8216 cron racct_openfiles=40 open_fds=5 highest_fd=4
+   errors:  1 tail: kqueue: Too many open files;
+-- after: openfiles=40
+
+# Where the step is: n = 40 to 60, with parent pids, 2026-11-17T21:25:09Z
+n=40: jail openfiles=120
+   errors: 
+n=56: jail openfiles=120
+   errors: 
+n=58: jail openfiles=120
+   errors: 
+n=60: jail openfiles=40
+   errors:  1 tail: kqueue: Too many open files;
+-- after: openfiles=40
+
+# The listing above printed no processes (ps -o pid=,ppid=,... makes one column); rerun, 2026-11-17T21:25:29Z
+n=58: jail openfiles=120
+awk: syntax error at source line 1
+ context is
+	 >>> $4==\ <<< "k\"
+awk: bailing out at source line 1
+   pid 8216 ppid 1 racct_openfiles=40 highest_fd=4 kqueues=0 /usr/sbin/cron -s
+awk: syntax error at source line 1
+ context is
+	 >>> $4==\ <<< "k\"
+awk: bailing out at source line 1
+   pid 8988 ppid 8984 racct_openfiles=40 highest_fd=62 kqueues=0 tail -f f1 f2 f3 f4 f5 f6 f7 f8 f9 f10 f11 f12
+awk: syntax error at source line 1
+ context is
+	 >>> $4==\ <<< "k\"
+awk: bailing out at source line 1
+   pid 8996 ppid 1 racct_openfiles=40 highest_fd=6 kqueues=0 tail: system.fileargs (tail)
+   errors: 
+n=59: jail openfiles=208
+awk: syntax error at source line 1
+ context is
+	 >>> $4==\ <<< "k\"
+awk: bailing out at source line 1
+   pid 8216 ppid 1 racct_openfiles=40 highest_fd=4 kqueues=0 /usr/sbin/cron -s
+awk: syntax error at source line 1
+ context is
+	 >>> $4==\ <<< "k\"
+awk: bailing out at source line 1
+   pid 9051 ppid 8984 racct_openfiles=40 highest_fd=63 kqueues=0 tail -f f1 f2 f3 f4 f5 f6 f7 f8 f9 f10 f11 f12
+awk: syntax error at source line 1
+ context is
+	 >>> $4==\ <<< "k\"
+awk: bailing out at source line 1
+   pid 9059 ppid 1 racct_openfiles=128 highest_fd=6 kqueues=0 tail: system.fileargs (tail)
+   errors: 
+n=60: jail openfiles=40
+awk: syntax error at source line 1
+ context is
+	 >>> $4==\ <<< "k\"
+awk: bailing out at source line 1
+   pid 8216 ppid 1 racct_openfiles=40 highest_fd=4 kqueues=0 /usr/sbin/cron -s
+   errors:  1 tail: kqueue: Too many open files;
+-- after: openfiles=40
+
+# Conclusion
+# (The awk errors above are in the kqueue column of my listing only; the
+# other columns are right.)
+# - RACCT's openfiles counts each process's descriptor-table size, not
+#   its open descriptors. The first table (20 slots) is not charged; when
+#   a process first uses descriptor 20 its table grows and it is charged
+#   40, at descriptor 64 it is charged 128, at 128 it is charged 256; the
+#   charge never shrinks while the process lives. Idle, the jail is
+#   charged 40 for cron, which has 5 descriptors open.
+# - FreeBSD's tail(1) opens files through a Capsicum helper process
+#   (casper, "tail: system.fileargs"), and that process's table is
+#   charged too (128 at n=59, with only descriptors up to 6 open).
+# - So at n=58 the jail is charged 120 (cron 40, tail 40, helper 40), at
+#   n=59 it is 208 (the helper grew to 128), and at n=60 tail needs
+#   descriptor 64, a 128-slot table: 40 + 128 + 128 = 296 > 256, refused
+#   ("kqueue: Too many open files"). In the 300-file run of
+#   maxproc-openfiles-quota.txt, 59 opens succeeded for the same reason.
+#   Nothing else held ~200 open files.
+# - For the docs: open_files is a budget of descriptor-table slots across
+#   every process in the jail, rounded up in steps per process; size it
+#   well above the descriptors the jail's programs keep open.

@@ -1,0 +1,25 @@
+# Deploy of 79620ef to hearst, 2026-11-17T18:32:10Z (undo: redeploy 57d74bb)
+-- before:
+skep-agent 0.1.0 (commit 57d74bb, built 2026-11-17T14:28:54Z, go1.27.4 freebsd/amd64)
+Stopping skep_api.
+Waiting for PIDS: 65297.
+Stopping skep_agent.
+Waiting for PIDS: 65238.
+no skep processes
+deploy-test: hearst:/usr/local/sbin/skep-agent root:wheel 0555 13324458 bytes sha256 fd1448ca5104877585ab66e891d1522d297fb2a01ea50f8e82d517b56cd05699
+deploy-test: hearst:/usr/local/sbin/skep-api root:wheel 0555 14102698 bytes sha256 c3650c60ed973faf82097db5f7cde643cf752f6e7c2804768ac01d7ee8e4677a
+deploy-test: synced
+deploy-test: hearst:/usr/local/bin/skepctl root:wheel 0555 7217322 bytes sha256 0da2db63f65fb0251b61d970d49ba2466e2419c4dcf1eec8ec1698d6279f7a55
+deploy-test: synced
+Starting skep_agent.
+Starting skep_api.
+skep_agent is running as pid 67450 (supervisor pid 67449).
+skep_api is running as pid 67510 (supervisor pid 67509).
+skep-agent 0.1.0 (commit 79620ef, built 2026-11-17T18:32:01Z, go1.27.4 freebsd/amd64)
+-- agent log since start (/var/log/daemon.log):
+Nov 17 13:32:14 hearst skep-agent[67449]: {"time":"2026-11-17T13:32:14.239137347-05:00","level":"INFO","msg":"starting skep-agent","version":"0.1.0","commit":"79620ef","dev_mode":false,"data_dir":"/var/db/skep"}
+Nov 17 13:32:14 hearst skep-agent[67449]: {"time":"2026-11-17T13:32:14.242928243-05:00","level":"INFO","msg":"task engine started","workers":4,"queue_size":64,"interrupted":0}
+Nov 17 13:32:14 hearst skep-agent[67449]: {"time":"2026-11-17T13:32:14.246468811-05:00","level":"INFO","msg":"templates: build jail sweep finished","event":"build_jail_sweep","found":0,"removed":0,"failed":0}
+Nov 17 13:32:14 hearst skep-agent[67449]: {"time":"2026-11-17T13:32:14.248153871-05:00","level":"INFO","msg":"containers: observed the jails","containers":0,"running":0,"half_started_removed":0}
+Nov 17 13:32:14 hearst skep-agent[67449]: {"time":"2026-11-17T13:32:14.253695751-05:00","level":"INFO","msg":"orphans: interface check finished","event":"orphaned_interface_check","found":0}
+Nov 17 13:32:14 hearst skep-agent[67449]: {"time":"2026-11-17T13:32:14.259915203-05:00","level":"INFO","msg":"internal API listening","socket":"/var/run/skep/agent.sock","base_path":"/internal/v1","mode":"0660","group":"skep","allowed_uids":[0,1002]}

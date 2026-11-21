@@ -1,0 +1,101 @@
+# Ruleset 6001 (include 5) exposes host devices: found 2026-11-17T14:27:41Z
+## full /dev listing of the running DHCP jail n8dhcp, ruleset 6001
+acpi apm apmctl atkbd0 audit auditpipe bpf bpf0 bpsm0 cd0 console consolectl ctty da0 da0s1 da0s1a da0s1b devctl devctl2 devstat fd fido full geom.ctl hpet0 input io iso9660 kbd0 kbd1 kbdmux0 klog kmem mdctl mem mlx5ctl netdump netmap null pass0 pass1 pci pfil psm0 pts pvclock random reroot sndstat stderr stdin stdout sysmouse tcp_log ttyV0.1 ttyv0 ttyv1 ttyv2 ttyv3 ttyv4 ttyv5 ttyv6 ttyv7 ttyv8 ttyv9 ttyva ttyvb ufssuspend ugen0.1 ugen1.1 ugen2.1 ugen3.1 ugen4.1 ugen5.1 ugen6.1 ugen7.1 ugen7.2 uinput urandom usb usbctl vmmctl vtcon xpt0 zero zfs zvol 
+## stop (s7oper)
+"type":"container.stop","status":"succeeded"
+   JID  IP Address      Hostname                      Path
+-- epairs:
+-- mounts:
+1
+
+## devfs(8) on hearst
+"include ruleset: Apply all the rules in ruleset number ruleset to the node. ... Include commands in the referenced ruleset are not resolved."
+
+## rulesets 1-5 on hearst
+-- ruleset 1:
+100 hide
+-- ruleset 2:
+100 path null unhide
+200 path zero unhide
+300 path crypto unhide
+400 path random unhide
+500 path urandom unhide
+-- ruleset 3:
+100 path ptyp* unhide
+200 path ptyq* unhide
+300 path ptyr* unhide
+400 path ptys* unhide
+500 path ptyP* unhide
+600 path ptyQ* unhide
+700 path ptyR* unhide
+800 path ptyS* unhide
+900 path ptyl* unhide
+1000 path ptym* unhide
+1100 path ptyn* unhide
+1200 path ptyo* unhide
+1300 path ptyL* unhide
+1400 path ptyM* unhide
+1500 path ptyN* unhide
+1600 path ptyO* unhide
+1700 path ttyp* unhide
+1800 path ttyq* unhide
+1900 path ttyr* unhide
+2000 path ttys* unhide
+2100 path ttyP* unhide
+2200 path ttyQ* unhide
+2300 path ttyR* unhide
+2400 path ttyS* unhide
+2500 path ttyl* unhide
+2600 path ttym* unhide
+2700 path ttyn* unhide
+2800 path ttyo* unhide
+2900 path ttyL* unhide
+3000 path ttyM* unhide
+3100 path ttyN* unhide
+3200 path ttyO* unhide
+3300 path ptmx unhide
+3400 path pts unhide
+3500 path pts/* unhide
+3600 path fd unhide
+3700 path fd/* unhide
+3800 path stdin unhide
+3900 path stdout unhide
+4000 path stderr unhide
+-- ruleset 4:
+100 include 1
+200 include 2
+300 include 3
+400 path fuse unhide
+500 path zfs unhide
+-- ruleset 5:
+100 include 1
+200 include 2
+300 include 3
+400 include 4
+500 path pf unhide
+
+## delete n8dhcp (s7oper)
+"type":"container.delete","status":"succeeded"
+"datasets_destroyed":[{"name":"skeptest/skep/jail/7b6993aa-d68e-4f52-b7e1-3c3faf05a868","type":"filesystem","used_bytes":296448}]
+## remove Skep's ruleset 6001 from the kernel
+delset exit 0
+1 2 3 4 5 
+
+## What it means
+
+Ruleset 6001 as amendment h defines it ("100 include 5", "200 path bpf*
+unhide") resolves to ruleset 5's own non-include rule (`path pf unhide`)
+and bpf: nothing hides anything, so the jail's devfs showed every host
+device. The jail ran from 14:24:54 to about 14:27:45 UTC with only
+/etc/rc and dhclient in it; nothing else ran inside it, and nothing was
+tried with the devices. Not tested, on purpose: what the jail's root
+could have done with them. securelevel 2 and the jail's missing
+PRIV_KMEM/PRIV_IO privileges stop writes to disks and kernel memory, but
+reads of the raw host disk (da0, root:operator 0640; the jail's root is
+uid 0) are likely possible. Ruleset 5 jails (step 7) were never
+affected: their /dev holds only fd null pts random stderr stdin stdout
+urandom zero zfs.
+
+Clean-up: n8dhcp stopped and deleted (dataset destroyed, epair gone),
+ruleset 6001 removed with `devfs rule -s 6001 delset`, 57d74bb redeployed
+so no build with this ruleset runs on hearst.

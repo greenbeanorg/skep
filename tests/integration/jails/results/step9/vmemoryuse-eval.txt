@@ -1,0 +1,42 @@
+# Evaluation of vmemoryuse deny (Decision 11), on the test jail s9lim only, 2026-11-17T20:17:33Z
+# A rule added by hand for the evaluation and removed afterwards; Skep does not set vmemoryuse.
++ rctl -a jail:skep-cea95763-0103-49c9-a43a-0eac38f1d70c:vmemoryuse:deny=268435456
+exit 0
+jail:skep-cea95763-0103-49c9-a43a-0eac38f1d70c:vmemoryuse:deny=268435456
+jail:skep-cea95763-0103-49c9-a43a-0eac38f1d70c:openfiles:deny=256
+jail:skep-cea95763-0103-49c9-a43a-0eac38f1d70c:maxproc:deny=40
+jail:skep-cea95763-0103-49c9-a43a-0eac38f1d70c:pcpu:deny=50
+jail:skep-cea95763-0103-49c9-a43a-0eac38f1d70c:memoryuse:deny=268435456
+-- dd bs=128m count=1 (buffer allocated and filled from /dev/zero)
+dd: input buffer: Cannot allocate memory
+dd exit 1
+-- dd bs=200m count=1 (buffer allocated and filled from /dev/zero)
+dd: input buffer: Cannot allocate memory
+dd exit 1
+-- dd bs=300m count=1 (buffer allocated and filled from /dev/zero)
+dd: input buffer: Cannot allocate memory
+dd exit 1
+-- dd bs=512m count=1 (buffer allocated and filled from /dev/zero)
+dd: input buffer: Cannot allocate memory
+dd exit 1
+-- ordinary commands under it
+ls 0
+ssh-keygen 127
+sh 0
+-- usage
+memoryuse=798720
+vmemoryuse=14643200
++ rctl -r jail:skep-cea95763-0103-49c9-a43a-0eac38f1d70c:vmemoryuse
+exit 0
+-- rules left (Skep's four)
+jail:skep-cea95763-0103-49c9-a43a-0eac38f1d70c:openfiles:deny=256
+jail:skep-cea95763-0103-49c9-a43a-0eac38f1d70c:maxproc:deny=40
+jail:skep-cea95763-0103-49c9-a43a-0eac38f1d70c:pcpu:deny=50
+jail:skep-cea95763-0103-49c9-a43a-0eac38f1d70c:memoryuse:deny=268435456
+
+# Address space of small processes (no vmemoryuse rule; sampled after 1.5 s)
+sleep 3:                                      memoryuse=3194880 vmemoryuse=29065216 
+dd if=/dev/zero bs=1m count=1 | sleep 3:      memoryuse=9895936 vmemoryuse=61419520 
+dd if=/dev/zero bs=64m count=1 | sleep 3:     memoryuse=76189696 vmemoryuse=228667392 
+-- idle jail
+memoryuse=798720 vmemoryuse=14643200 

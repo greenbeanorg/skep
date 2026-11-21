@@ -1,0 +1,21 @@
+# Native devfs tests on hearst, 2a1c2f4, 2026-11-17T23:18:49Z
+## mount -p -t devfs before
+devfs			/dev			devfs	rw		0 0
+devfs			/skeptest/skep/jail/c5d71062-66f8-4008-862e-b5b01e963245/dev devfs	rw		0 0
+devfs			/skeptest/skep/jail/340ac09a-3dd5-4a2e-8327-19d6c8625885/dev devfs	rw		0 0
+## sudo hostops.test -test.run 'TestNative(MountTable|SymlinkedDevLeavesHostUntouched)$' -test.v
+=== RUN   TestNativeMountTable
+    jaildevfs_freebsd_test.go:52: devfs on /dev FSID:1895890688:113
+    jaildevfs_freebsd_test.go:52: devfs on /skeptest/skep/jail/c5d71062-66f8-4008-862e-b5b01e963245/dev FSID:1895890708:113
+    jaildevfs_freebsd_test.go:52: devfs on /skeptest/skep/jail/340ac09a-3dd5-4a2e-8327-19d6c8625885/dev FSID:1895890709:113
+--- PASS: TestNativeMountTable (0.00s)
+=== RUN   TestNativeSymlinkedDevLeavesHostUntouched
+    jaildevfs_freebsd_test.go:82: root /tmp/TestNativeSymlinkedDevLeavesHostUntouched753473388/001, dev -> /dev: nothing to unmount
+    jaildevfs_freebsd_test.go:82: root /tmp/TestNativeSymlinkedDevLeavesHostUntouched753473388/002, dev -> /: nothing to unmount
+--- PASS: TestNativeSymlinkedDevLeavesHostUntouched (0.00s)
+PASS
+exit 0
+## mount -p -t devfs after
+devfs			/dev			devfs	rw		0 0
+devfs			/skeptest/skep/jail/c5d71062-66f8-4008-862e-b5b01e963245/dev devfs	rw		0 0
+devfs			/skeptest/skep/jail/340ac09a-3dd5-4a2e-8327-19d6c8625885/dev devfs	rw		0 0

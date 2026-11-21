@@ -1,0 +1,317 @@
+ADR 0010 phase 7b, step 6: how `pkg --rootdir` runs package scripts and
+triggers, and whether a pkgbase build changes the host. Recorded 2026-11-16
+on hearst (FreeBSD 15.1-RELEASE-p6, amd64, pkg 2.9.2, pkgbase host, RACCT on).
+
+This is the evidence the "scripts and triggers are verified, not assumed" rule
+of Decision 7a (amendment a) asks for. It was a hand-run build into a scratch
+dataset (skeptest/trace-7b, outside skeptest/skep), not a Skep task: Skep has
+no template code yet. Scripts: ../pkgbase-trace.sh (as run) and
+../pkgbase-trace-analyze.sh.
+
+== 1. What the pkg 2.9.2 source says (freebsd/pkg tag 2.9.2, libpkg/) ==
+
+- Shell scripts (pre/post-install/deinstall), scripts.c pkg_script_run():
+  posix_spawn(_PATH_BSHELL) on the HOST. No chroot. Environment: pkg's own
+  environ plus PKG_NAME, PKG_PREFIX, PKG_ROOTDIR=<rootdir>, PKG_MSGFD,
+  PKG_UPGRADE when upgrading. Gated only by the RUN_SCRIPTS option
+  (default true).
+- Lua package scripts, lua_scripts.c: fork() on the host, no chroot.
+  io.open/os.remove/os.rename are replaced by openat/unlinkat/renameat on
+  rootfd (relative, no O_RESOLVE_BENEATH); pkg.exec/pkg.exec_capture spawn
+  host binaries (posix_spawnp).
+- Lua triggers, triggers.c: under --rootdir pkg_set_rootdir() sets
+  ctx.defer_triggers = true, and trigger_execute_lua_common() then SAVES
+  every trigger declared `sandbox: false` into <PKG_DBDIR>/triggers/ to be
+  run later by `pkg triggers` inside the target, instead of running it.
+  Sandboxed triggers (the default) run forked, after cap_enter() (Capsicum).
+- Paths under --rootdir, pkg_config.c: every absolute string default is
+  prefixed with the rootdir (pkg.conf, PKG_DBDIR, PKG_CACHEDIR); REPOS_DIR is
+  an array and is NOT prefixed, so the host's repository configuration is
+  used. Values given with -o are taken as they are (host-absolute).
+- Trust anchors, pkg_repo.c pkg_repo_load_fingerprints_from_path(): the
+  fingerprints directory is looked up INSIDE the rootdir first, and on the
+  host only if absent there. Safe for Skep only because a template root is
+  always a directory Skep has just created empty.
+
+== 2. Which scripts the minimal set has (hearst's installed package DB) ==
+
+FreeBSD-set-minimal and its dependencies (53 in the host's DB, 66 from the
+repository): three packages carry scripts, all shell, none Lua.
+
+FreeBSD-caroot     post-install   /usr/sbin/certctl -D${PKG_ROOTDIR}/ ${PKG_METALOG:+-U -M $PKG_METALOG} rehash
+FreeBSD-runtime    post-install   pwd_mkdb -i -p -d ${PKG_ROOTDIR}/etc ${PKG_ROOTDIR}/etc/master.passwd
+                                  services_mkdb -l -q -o ${PKG_ROOTDIR}/var/db/services.db ${PKG_ROOTDIR}/
+FreeBSD-utilities  post-install   cap_mkdb -l ${PKG_ROOTDIR}/etc/login.conf
+
+One trigger: /usr/share/pkg/triggers/mandoc.ucl (FreeBSD-mandoc), sandbox:
+false, which runs pkg.exec({"/usr/bin/makewhatis", "/usr/share/man"}), a host
+path if it ran on the host. Under --rootdir it is deferred (section 1).
+
+== 3. The traced build ==
+
+Command (inside ktrace -i -t cn, so every child is traced):
+
+  env -i PATH=/sbin:/bin:/usr/sbin:/usr/bin ASSUME_ALWAYS_YES=yes \
+    /usr/sbin/pkg --rootdir /skeptest/trace-7b/root \
+      -o PKG_CACHEDIR=/skeptest/trace-7b/work/cache \
+      -o PKG_DBDIR=/skeptest/trace-7b/root/var/db/pkg \
+      install -y FreeBSD-set-minimal
+
+/skeptest/trace-7b is root:wheel 0700 (the template-parent rule of Decision 9).
+Outbound HTTPS to pkg.FreeBSD.org worked (hearst change 6); Pi-hole did not
+block it.
+
+Result: pkg exit 0; 66 packages; the root is 126M, the work-area cache 37M
+(outside the root); `chroot <root> freebsd-version -u` = 15.1-RELEASE-p6,
+equal to the host's kernel and userland. The scripts' outputs exist in the
+root: etc/pwd.db, etc/spwd.db (0600), var/db/services.db, etc/login.conf.db,
+118 entries in etc/ssl/certs.
+
+Host state (Decision 16, "template host safety"): before and after, for every
+regular file and symlink under /etc, /var/db/pkg, /usr/share/certs: type,
+mode, owner, size, mtime (stat), and SHA-256 of every regular file.
+
+  host-before.txt sha256 bcc015b24ee2b6639e08bd2f826bac798785f76aa8cbc4470aa1e078ea42e672
+  host-after.txt  sha256 bcc015b24ee2b6639e08bd2f826bac798785f76aa8cbc4470aa1e078ea42e672
+  HOST STATE: identical  (1521 lines)
+
+Wider sweep: `find / -xdev -newer host-before.txt ! -newer host-after.txt`
+(the UFS root, excluding the trace output and /var/log) lists only the
+directory /tmp itself (see below for why).
+
+== 4. What the trace shows (pkgbase-trace-analyze.sh output) ==
+
+kdump lines:   639272
+== processes (pid comm), in order of appearance ==
+2402 ktrace
+2409 pkg
+2506 pkg
+2517 pkg
+2688 pkg
+2689 pkg
+2730 pkg
+2731 pkg
+2820 pkg
+3714 pkg
+3727 pkg
+3729 sh
+3741 pkg
+== every execve/fexecve: pid comm path ==
+2402 ktrace "/usr/local/sbin/env"
+2402 ktrace "/usr/local/bin/env"
+2402 ktrace "/usr/sbin/env"
+2402 ktrace "/usr/bin/env"
+2402 env "/usr/sbin/pkg"
+2402 pkg "/usr/local/sbin/pkg"
+3714 pkg "/bin/sh"
+3714 sh "/usr/sbin/certctl"
+3727 pkg "/bin/sh"
+3729 sh "/usr/sbin/pwd_mkdb"
+3727 sh "/usr/sbin/services_mkdb"
+3741 pkg "/bin/sh"
+3741 sh "/usr/bin/cap_mkdb"
+== writes outside the root and the work area ==
+   1 RELATIVE(836) 2409 pkg symlinkat
+   1 RELATIVE(827) 2409 pkg utimensat
+   1 RELATIVE(827) 2409 pkg fchownat
+   1 RELATIVE(827) 2409 pkg fchmodat
+   1 RELATIVE(8) 2409 pkg chflagsat
+   1 RELATIVE(5852) 2409 pkg linkat
+   1 RELATIVE(5848) 2409 pkg openat
+   1 RELATIVE(4650) 2409 pkg renameat
+   1 RELATIVE(342) 3714 certctl renameat
+   1 RELATIVE(171) 3714 certctl openat
+   1 RELATIVE(1430) 2409 pkg mkdirat
+   1 RELATIVE(114) 2409 pkg unlinkat
+   1 2409 pkg unlink /tmp/meta.conf.NNC98e
+   1 2409 pkg unlink /tmp/meta.conf.CxnyYO
+   1 2409 pkg unlink /tmp/meta.conf.2hphTa
+   1 2409 pkg unlink /tmp/filesite.yaml.tzst.V8YDer
+   1 2409 pkg unlink /tmp/filesite.yaml.pkg.9AuvlE
+   1 2409 pkg unlink /tmp/files.tzst.Bq9MDr
+   1 2409 pkg unlink /tmp/files.tzst.4ctqYS
+   1 2409 pkg unlink /tmp/files.pkg.VbkMzt
+   1 2409 pkg unlink /tmp/files.pkg.CXKL2O
+   1 2409 pkg unlink /tmp/data.pkg.s3HykK
+   1 2409 pkg unlink /tmp/data.pkg.IkLPQX
+   1 2409 pkg unlink /tmp/data.pkg.CRUAhS
+   1 2409 pkg unlink /tmp/data.iQJdD3
+   1 2409 pkg unlink /tmp/data.5OM3Q4
+   1 2409 pkg unlink /tmp/data.0v6wij
+   1 2409 pkg openat /tmp/meta.conf.NNC98e
+   1 2409 pkg openat /tmp/meta.conf.CxnyYO
+   1 2409 pkg openat /tmp/meta.conf.2hphTa
+   1 2409 pkg openat /tmp/filesite.yaml.tzst.V8YDer
+   1 2409 pkg openat /tmp/filesite.yaml.pkg.9AuvlE
+   1 2409 pkg openat /tmp/files.tzst.Bq9MDr
+   1 2409 pkg openat /tmp/files.tzst.4ctqYS
+   1 2409 pkg openat /tmp/files.pkg.VbkMzt
+   1 2409 pkg openat /tmp/files.pkg.CXKL2O
+   1 2409 pkg openat /tmp/data.pkg.s3HykK
+   1 2409 pkg openat /tmp/data.pkg.IkLPQX
+   1 2409 pkg openat /tmp/data.pkg.CRUAhS
+   1 2409 pkg openat /tmp/data.iQJdD3
+   1 2409 pkg openat /tmp/data.5OM3Q4
+   1 2409 pkg openat /tmp/data.0v6wij
+   1 2409 pkg mkdir /skeptest/trace-7b
+   1 2409 pkg mkdir /skeptest
+   1 2402 pkg openat /dev/null
+== absolute host paths read by script processes (sh and children) ==
+   4 sh /libexec/ld-elf.so.1
+   3 sh /var/run/ld-elf.so.hints
+   3 sh /usr/local/etc/libmap.d
+   3 sh /lib/libtinfow.so.9
+   3 sh /lib/libsys.so.7
+   3 sh /lib/libedit.so.8
+   3 sh /lib/libc.so.7
+   3 sh /etc/malloc.conf
+   3 sh /etc/libmap.conf
+   2 sh /usr/sbin/services_mkdb
+   2 sh /usr/sbin/pwd_mkdb
+   2 sh /usr/bin/cap_mkdb
+   2 pwd_mkdb /etc/nsswitch.conf
+   2 certctl /lib/libcrypto.so.35
+   1 sh /usr/sbin/certctl
+   1 sh /usr/sbin/cap_mkdb
+   1 sh /sbin/services_mkdb
+   1 sh /sbin/pwd_mkdb
+   1 sh /sbin/cap_mkdb
+   1 sh /bin/services_mkdb
+   1 sh /bin/pwd_mkdb
+   1 sh /bin/cap_mkdb
+   1 services_mkdb /var/run/ld-elf.so.hints
+   1 services_mkdb /usr/local/etc/libmap.d
+   1 services_mkdb /lib/libsys.so.7
+   1 services_mkdb /lib/libc.so.7
+   1 services_mkdb /etc/malloc.conf
+   1 services_mkdb /etc/libmap.conf
+   1 pwd_mkdb /var/run/ld-elf.so.hints
+   1 pwd_mkdb /usr/local/etc/libmap.d
+   1 pwd_mkdb /lib/libsys.so.7
+   1 pwd_mkdb /lib/libc.so.7
+   1 pwd_mkdb /etc/shells
+   1 pwd_mkdb /etc/malloc.conf
+   1 pwd_mkdb /etc/libmap.conf
+   1 certctl /var/run/ld-elf.so.hints
+   1 certctl /usr/local/etc/libmap.d
+   1 certctl /lib/libthr.so.3
+   1 certctl /lib/libsys.so.7
+   1 certctl /lib/libc.so.7
+   1 certctl /etc/ssl/openssl.cnf
+   1 certctl /etc/malloc.conf
+   1 certctl /etc/libmap.conf
+   1 cap_mkdb /var/run/ld-elf.so.hints
+   1 cap_mkdb /usr/local/etc/libmap.d
+   1 cap_mkdb /lib/libsys.so.7
+   1 cap_mkdb /lib/libc.so.7
+   1 cap_mkdb /etc/malloc.conf
+   1 cap_mkdb /etc/libmap.conf
+== template root: deferred triggers, cache, size ==
+/skeptest/trace-7b/root/var/db/pkg/:
+total 2357
+drwxr-xr-x   4 root wheel       5 Nov 16 14:08 .
+drwxr-xr-x  10 root wheel      11 Nov 16 14:08 ..
+-rw-r--r--   1 root wheel 3112960 Nov 16 14:08 local.sqlite
+drwxr-xr-x   5 root wheel       5 Nov 16 14:08 repos
+drwxr-xr-x   2 root wheel       3 Nov 16 14:08 triggers
+
+/skeptest/trace-7b/root/var/db/pkg/triggers:
+total 4
+drwxr-xr-x  2 root wheel   3 Nov 16 14:08 .
+drwxr-xr-x  4 root wheel   5 Nov 16 14:08 ..
+-rw-r--r--  1 root wheel 598 Nov 16 14:08 oR3hHb5PjH
+--- /skeptest/trace-7b/root/var/db/pkg/triggers/oR3hHb5PjH
+--begin args
+-- /usr/share/man/man4/aarch64
+-- /usr/share/man/man3lua
+-- /usr/share/man/man7
+-- /usr/share/man/man4/i386
+-- /usr/share/man/man4/arm
+-- /usr/share/man/man6
+-- /usr/share/man/man9
+-- /usr/share/man/man5
+-- /usr/share/man/man1
+-- /usr/share/man/man4
+-- /usr/share/man/man4/powerpc
+-- /usr/share/openssl/man/man1
+-- /usr/share/man/man8
+--end args
+--
+
+	local dirs = {
+		"/usr/share/man",
+		"/usr/share/openssl/man",
+ls: /skeptest/trace-7b/root/var/cache/pkg: No such file or directory
+ 37M	/skeptest/trace-7b/work/cache
+126M	/skeptest/trace-7b/root
+15.1-RELEASE-p6
+-rw-r--r--  1 root wheel   16384 Nov 16 14:08 /skeptest/trace-7b/root/etc/login.conf.db
+-rw-r--r--  1 root wheel   40960 Nov 16 14:08 /skeptest/trace-7b/root/etc/pwd.db
+-rw-------  1 root wheel   40960 Nov 16 14:08 /skeptest/trace-7b/root/etc/spwd.db
+-rw-r--r--  1 root wheel 2097920 Nov 16 14:08 /skeptest/trace-7b/root/var/db/services.db
+     118
+== procstat -e samples (unique lines) ==
+ 2402 pkg              ASSUME_ALWAYS_YES=yes PATH=/sbin:/bin:/usr/sbin:/usr/bin
+ 2409 pkg              ASSUME_ALWAYS_YES=yes PATH=/sbin:/bin:/usr/sbin:/usr/bin
+ 2506 pkg              ASSUME_ALWAYS_YES=yes PATH=/sbin:/bin:/usr/sbin:/usr/bin
+ 2517 pkg              ASSUME_ALWAYS_YES=yes PATH=/sbin:/bin:/usr/sbin:/usr/bin
+ 3741 cap_mkdb         PKG_CACHEDIR=/skeptest/trace-7b/work/cache PKG_DBDIR=/skeptest/trace-7b/root/var/db/pkg POSIXLY_CORRECT=1 ASSUME_ALWAYS_YES=yes PKG_PREFIX=/ PATH=/sbin:/bin:/usr/sbin:/usr/bin PKG_NAME=FreeBSD-utilities HTTP_USER_AGENT=pkg/2.9.2 PWD=/skeptest/trace-7b/root PKG_ROOTDIR=/skeptest/trace-7b/root PKG_MSGFD=4
+== build log, script/trigger lines ==
+289:==> Running trigger: mandoc.ucl
+== host files changed during the build (UFS root), outside the trace output ==
+/tmp
+
+== 5. Reading of the trace ==
+
+- Exec chain: env -> /usr/sbin/pkg (the bootstrap) -> /usr/local/sbin/pkg
+  (the host's pkg 2.9.2 from ports). Three /bin/sh children, which exec the
+  HOST's /usr/sbin/certctl, /usr/sbin/pwd_mkdb, /usr/sbin/services_mkdb,
+  /usr/bin/cap_mkdb (found through PATH). Nothing ran chrooted.
+- The scripts read host files: the host's libraries and ld-elf hints,
+  /etc/libmap.conf, /etc/malloc.conf, /etc/nsswitch.conf and /etc/shells
+  (pwd_mkdb), /etc/ssl/openssl.cnf (certctl). They wrote only under the root:
+  certctl opened <root>/etc/ssl/{certs,untrusted} and wrote through that
+  descriptor; the mkdb tools were given <root> paths as arguments.
+- pkg's own writes: relative to its root descriptor (the template), plus
+  its repository-catalogue download temporaries in the HOST's /tmp
+  (/tmp/meta.conf.*, /tmp/data.*, /tmp/files.*), each created and unlinked.
+  TMPDIR was not set; the build should set it to the work area.
+- The mandoc trigger was "run" (==> Running trigger: mandoc.ucl) as a deferred
+  save: <root>/var/db/pkg/triggers/<random> holds it, to run on the first
+  `pkg triggers` inside the jail. makewhatis never ran on the host.
+- The environment of a script child (procstat -e of cap_mkdb, the only one
+  the 0.2 s sampler caught; the others ended between samples):
+    PKG_CACHEDIR=... PKG_DBDIR=... POSIXLY_CORRECT=1 ASSUME_ALWAYS_YES=yes
+    PKG_PREFIX=/ PATH=/sbin:/bin:/usr/sbin:/usr/bin PKG_NAME=FreeBSD-utilities
+    HTTP_USER_AGENT=pkg/2.9.2 PWD=/skeptest/trace-7b/root
+    PKG_ROOTDIR=/skeptest/trace-7b/root PKG_MSGFD=4
+  i.e. only the two fixed values given to env -i plus what pkg itself adds.
+- var/cache/pkg does not exist in the root (the cache was in the work area).
+  The root does hold var/db/pkg/repos/ with the catalogues of all three host
+  repositories (FreeBSD-ports included, 38354 packages), because PKG_DBDIR
+  is in the root.
+- Limits of the trace: dirfd-relative paths (pkg's ~20000, certctl's 513)
+  are not resolved by kdump; that they land in the root rests on the source
+  (openat on rootfd) and on the host hashes and the find sweep.
+
+== Conclusion ==
+
+Package shell scripts run UNCHROOTED, as root, on the host, using the host's
+binaries. On the 15.1 minimal set they read a few host configuration files and
+write only into the root, because their text passes ${PKG_ROOTDIR} paths. Lua
+package scripts: none in this set. Unsandboxed triggers are deferred, not run.
+
+By the rule of Decision 7a, "if any script runs unchrooted against host paths,
+that is raised before the template feature is enabled, not worked around".
+Raised with Andy on 2026-11-16; the pkgbase source is not implemented until he
+has answered.
+
+Answered by Andy on 2026-11-16: option B with four changes (a throwaway build
+jail instead of a chroot, an allowlist by package name and script hash, no
+template newer than the host, makewhatis in the build jail with no deferred
+trigger left), keeping the run-time host-file check, TMPDIR in a work area,
+and removing the catalogues. The specification is in ADR 0010, implementation
+notes, "Step 6", "Decision on package scripts".
+
+Scratch left on hearst for review: skeptest/trace-7b (161M) and
+/var/tmp/skep-trace7b (ktrace 57M, kdump, hashes, logs).

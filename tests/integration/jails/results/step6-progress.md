@@ -1,0 +1,362 @@
+# Step 6 build: progress log
+
+ADR 0010 phase 7b, step 6 (template store, dist source, pkgbase builder,
+tasks, routes), branch `feat/m7b-templates`. Started 2026-11-16 from
+`65307d1`, as an unattended run.
+
+## 1. Feasibility probe on hearst: STOPPED (spec not buildable as written)
+
+**What was done.** Before writing builder code, I hand-ran the accepted
+specification's steps on hearst in a new dataset, `skeptest/step6-probe`:
+the install with scripts and triggers off, the build jail with every
+`allow.*` off and no devfs, and the fixed commands through `jexec`.
+Record: [step6-probe.txt](step6-probe.txt); scripts in
+[../step6-probe/](../step6-probe/).
+
+**Found.**
+
+1. `jexec -l -U root` fails before `pwd_mkdb` has run: `getpwnam: root: No
+   such file or directory`. The jail has no `pwd.db` yet, and FreeBSD's
+   `files` passwd backend reads nothing else. The follow-up ruling's fixed
+   order starts with certctl and pwd_mkdb, both run as `-U root`.
+2. After `pwd.db` exists, `-U root` still fails, with `initgroups: root:
+   Operation not permitted`, because item 2 turns every `allow.*` off,
+   including `allow.suser`.
+3. `jexec -l` without `-U` (uid 0, root's login-class environment) runs all
+   six commands with every `allow.*` off, no devfs, and `securelevel=2`. So
+   does `allow.suser=1` with `-l -U root` once pwd_mkdb has run.
+4. `services.db` cannot match the trace. The package script feeds
+   services_mkdb a directory and gets an **empty** database, both in the
+   trace and in hearst's own base system. The ADR's `/etc/services` builds
+   the populated one. pwd.db, spwd.db, login.conf.db and the certs are
+   byte-identical to the trace.
+5. Things that hold as specified: scripts and triggers off (nothing runs,
+   nothing deferred); `TMPDIR` used and cleaned up; all four script hashes
+   and the `mandoc.ucl` hash match the ADR; no command needs devfs or a
+   securelevel below 2; `jail -r` plus `jls -j` confirm removal.
+
+**Decisions made.** None about the spec. I picked the probe's location
+myself (a new skeptest dataset, scripts piped over ssh stdin so nothing was
+copied to the host). This is easy to undo.
+
+**Surprising.** Items 1, 2 and 4 above. Also, `pkg info --raw --raw-format
+json-compact -a` prints one JSON array, not one object per line.
+
+**Stopped** under the run's rule: "the ADR spec turns out to be unbuildable
+as written. Don't work around the spec." Options are at the end of
+step6-probe.txt. I recommend A: `jexec -l` without `-U`, every `allow.*`
+off, and keep `/etc/services`.
+
+**Commit:** `e3fc0c7`.
+
+**hearst state:** no jails. `skeptest/step6-probe` (162M) is left in place.
+`skeptest/trace-7b` and `/var/tmp/skep-trace7b` are untouched. Nothing else
+changed.
+
+## 2. Andy's answers recorded (2026-11-16)
+
+**Done.** ADR 0010: the "Open" section became "Resolved" (option A:
+`jexec -l` without `-U`, every `allow.*` off in the build jail;
+`/etc/services` kept, with the reason; the read-only lookup check);
+amendment e to Decision 9 (ordinary jails keep `allow.suser` on);
+spec items 2 and 3 and the follow-up ruling point to it. The lookup check:
+`getent services ssh` and `domain` both answer on hearst, because
+`services: compat` reads the `/etc/services` text and only the `db` source
+opens the db (libc `getservent.c`, releng/15.1). `skeptest/step6-probe`
+destroyed.
+
+**Commit:** see the next entry.
+
+## 3. hostops template layer, allowlist, build sequence
+
+**Done.** `internal/hostops` gains a `Templates` interface
+(`templates.go`, `templates_pkg.go`, `templates_jail.go`, `hostfiles.go`):
+the templates dataset and its 0700 check, the template dataset and work
+area, `pkg install` with the fixed environment and options, `pkg info
+--raw`, the trigger-directory listing through `os.Root` without following
+links, `USERLAND_VERSION` read from `bin/freebsd-version`, `base.txz`
+checked against `MANIFEST` and extracted, the build jail (create, check
+the kernel's view of its parameters, `jexec -l`, remove and confirm), the
+host-file record. The real runner gains `RunEnv` (its own environment,
+timeout, and output cap; output past the cap is an error there, not cut).
+`internal/templates` holds the compiled allowlist (15.1, pinned by a test
+against the ADR's exact strings) and the build sequence with its clean-up.
+Unit tests: 20 in hostops, 20 in templates, all passing on merrick.
+
+**Decisions made (small, easy to undo, in line with the ADR):**
+
+- The work area is a directory `<templates mountpoint>/.work-<id>`, not a
+  dataset (item 8 allows either). `<root>/templates` is a mounted dataset
+  (unlike `<root>/vm`, which is `canmount=off`), so the work areas are in
+  it and the 0700 parent is a real directory of its own.
+- The build jail's `allow.*` list is fixed in code (19 parameters, the
+  15.1 GENERIC set), and after `jail -c` every `allow.*` that `jls
+  --libxo=json -n` reports must be `false`. The probe showed two default to
+  on (`reserved_ports`, `unprivileged_proc_debug`), which is why each is
+  listed. The JSON form is read rather than `jls -n`, whose `allow.noX`
+  spelling is ambiguous. Fixture: `internal/hostops/testdata/jls-build-jail-15.1.json`,
+  recorded on hearst.
+- A build command runs only if an allowlisted script or trigger in the
+  template asks for it (the ADR maps each script and trigger to its
+  commands), always in the fixed order. The OpenSSL `makewhatis` runs only
+  if `usr/share/openssl/man` exists (the ADR's "if it exists").
+- The template is set `readonly=on` after `@skep-base` ("read-only from
+  then on", decision 7b).
+- New error codes besides the ADR's three: `template_build_failed` (500,
+  a pkg, tar, or build-jail command that ran and failed, with the first
+  stderr line, as item 3 asks), `template_name_taken` (409),
+  `template_not_provisioned` (409), `template_archive_mismatch` (422, the
+  dist check, which the ADR leaves unnamed). `release_unsupported` (422)
+  and `jail_parent_insecure` (409) get their constants. A source that is
+  not available is `storage_feature_unsupported`.
+- A symlink or other non-regular entry in a trigger directory fails with
+  `template_script_unknown` (it is the allowlist check that fails).
+- A failed build that also changed the host files reports
+  `template_host_changed`, with the build's own error in the details. A
+  clean-up failure (a jail that will not go) is appended to the task
+  error's message and details.
+- No general event stream exists in the agent yet. A host change goes in
+  the task error, the audit details and an `event=template_host_changed`
+  error log. The start-up sweep (next piece) logs a warning.
+- A `.work-` directory name cannot collide with a template: template IDs
+  are UUIDs.
+
+## 4. Template store, service, tasks, agent wiring, internal routes
+
+**Done.** `database.TemplateStore` (container_templates, cursor pages by
+name); `templates.Service` with `container.template.create` (cancellable,
+30 min) and `container.template.delete` (5 min), the `template-sources`
+read, idempotency like the VM tasks, and `SweepBuildJails`, which the
+agent runs after the engine starts and before it serves its socket.
+Configuration: `storage.template_packages` (default
+`["FreeBSD-set-minimal"]`, each `^FreeBSD-[a-z0-9][a-z0-9-]*$`, no
+repeats) and `storage.dist_dir` (absolute, clean). The confinement carries
+`DistDir`. The fake host simulates a whole build, with the real 15.1
+script texts, so the dev agent and the UI can use templates. The internal
+API gets `GET /internal/v1/storage/template-sources`, `GET|POST
+/internal/v1/storage/templates`, and `GET|DELETE
+/internal/v1/storage/templates/{id}`. `go test ./...` passes on merrick.
+
+**Decisions made:**
+
+- Routes live under `/storage/templates`, with `storage:read` to read and
+  `storage:write` to change (decision 14 makes writing `storage:write`).
+  `GET /storage/template-sources` is what "capabilities" means in the
+  ADR: host release, whether pkgbase and dist can be used, and why not.
+- Templates are refused in a **directory pool**
+  (`storage_feature_unsupported`) in this step. Decision 6 describes jail
+  roots copied from a template directory, but a template build into a
+  directory pool needs its own layout and has no snapshot, so it is left
+  for later and flagged in the report. This is a scope gap, not a security
+  choice.
+- A dist template's row holds a placeholder checksum of zeros until the
+  build has checked the archive (the schema requires a checksum on every
+  dist row). The API never shows the placeholder.
+- The packages recorded on a template, and passed to its task, are the
+  configured ones at request time.
+- On a host whose release has no allowlist, a pkgbase request is refused
+  with `release_unsupported` before any task exists.
+- Deleting a template first removes a build jail of that template if one
+  is somehow left, then destroys the dataset and work area.
+
+## 5. Public routes, permission, agent client, OpenAPI
+
+**Done.** skep-api serves `GET /api/v1/storage/template-sources`,
+`GET|POST /api/v1/storage/templates`, `GET|DELETE
+/api/v1/storage/templates/{id}`. `storage:write` is now declared and
+enforced on the two writes (admin only: `api/0005` already left it out of
+operator and viewer). The permission matrix test covers the new routes,
+and explicit rows assert that an operator's and a viewer's template create
+gets 403 and is audited. The agent client gains the five calls. OpenAPI
+documents the paths, schemas, and codes; `web/src/api/schema.d.ts` is
+regenerated (`npm run check-types` passes).
+
+**Decisions made:** template writes are audited in the access log with
+resource type `container_template`. A refusal by the task's companion
+(`template_name_taken`) is audited once, by the engine.
+
+**Still owed (memory note, Andy 2026-11-15):** the real-request check that
+an operator's `container.template.create` is refused 403 on hearst. That
+needs the deployed skep-api. It is not part of this run's validation list
+and is left for the step that deploys (see the end of this log).
+
+## 6. Validation on hearst
+
+**Done.** Record: [step6-build.txt](step6-build.txt), logs in
+[step6-build/](step6-build/). The FreeBSD test binary of
+`internal/templates` drove the real builder against
+`skeptest/step6/templates`, as root, from the scratch dataset
+`skeptest/step6-scratch`. Nothing else on hearst was changed: no deploy, no
+config edit.
+
+- Build: `15.1-RELEASE-p6`, 66 packages, 6 commands in the build jail,
+  `@skep-base`, read-only. 36 s.
+- Host files identical, both by the builder (764 entries) and from outside
+  (1521 lines, the trace's method). `pkg` ran with exactly `PATH`,
+  `ASSUME_ALWAYS_YES`, `TMPDIR`. No build jail left, no deferred trigger,
+  no catalogues, no cache, no work area.
+- Comparison with `skeptest/trace-7b`: +2 (`mandoc.db` ×2, makewhatis ran),
+  −18 (the repository catalogues and the trace's deferred trigger),
+  2 changed: `services.db` (intended: populated instead of empty) and
+  `local.sqlite` (only `packages.time` differs). Nothing flagged.
+- Refusal: an appended line in `mandoc.ucl` → `template_script_unknown`
+  with the path, hash and text; nothing left behind.
+- Native hostops template tests as root: 20 pass, 1 skip.
+
+**Surprising:**
+
+- The first build check failed on its own threshold (1000 host files);
+  the trace's "1,500" was a line count. Fixed in `e4f39e8` and re-run:
+  PASS.
+- `pkg shell <file>` opens the *host's* package database, not the file. I
+  ran it once by mistake and it failed to parse before doing anything. The
+  host files were re-hashed straight away and were identical. Comparisons
+  of databases are done on copies on merrick from now on.
+- The whole `hostops.test`, with `TMPDIR` on ZFS, fails the 7a
+  `TestDirPoolNative`. That is the documented compression effect, not this
+  step.
+
+**Commits:** `9ecd9af` (integration test), `e4f39e8` (threshold), this
+entry's commit (records).
+
+## 7. Documentation
+
+**Done.** New guide `docs/administration/jail-templates.md`; a "Jail
+templates" section in `docs/security/overview.md` and in
+`docs/architecture/overview.md`; the README's status table; a pointer from
+the storage guide; ADR 0010's step 6 "Built" notes and status line; the
+README of `tests/integration/jails`.
+
+## 8. Deployed validation run: clean-up of the trace (2026-11-16)
+
+Andy approved, for this run: deploying the branch to hearst with
+`scripts/deploy-test.sh` (undo: redeploy the previous build), destroying
+the trace now, and destroying `skeptest/step6` and `skeptest/step6-scratch`
+once the API-built template matches `skeptest/step6`.
+
+**Done.** `sudo zfs destroy -r skeptest/trace-7b` (161M) and `sudo rm -r
+/var/tmp/skep-trace7b` (86M: the ktrace, kdump, host lists and log of the
+trace). Both confirmed gone; no jail on hearst. The trace's results stay in
+the repository (`step6-pkg-trace.txt`).
+
+**Before the deploy.** The installed build is `54d0566` (skep-agent and
+skep-api report it). No migration was added between `54d0566` and this
+branch, so redeploying `54d0566` is a complete undo: the old agent will not
+meet a newer schema. Copies of the three installed binaries are kept on
+merrick for that.
+
+## 9. Spec change: exclusions in the host-file check (Andy, 2026-11-16)
+
+**Done.** ADR 0010 step 6, item 7 gains "Exclusions": an explicit list of
+exact absolute paths, compiled in, no wildcards and no directory
+exclusions, each entry with its reason. It starts with
+`/var/db/pkg/vuln.xml`. Checked read-only on hearst for the reason: the
+daily periodic run (03:01, `/etc/crontab`) has `405.pkg-base-audit` and
+`410.pkg-audit` (pkg's own periodic scripts), and both run `pkg audit -F`
+once the file is older than `security_status_*audit_expiry` (2 days). On
+hearst it dates from Nov 14 18:30, so the next daily run rewrites it.
+
+Code: `hostops.HostFileExclusions`; `recordFiles` skips a file or link
+whose path equals an entry and still walks a listed directory. Test
+`TestHostFileExclusions`: the list is exactly the ADR's and each entry is
+clean, absolute, wildcard-free and under a root; rewriting the excluded
+file, re-timing it, replacing it with a link, are all not a change; a
+neighbour `vuln.xml.bak` and a file inside a listed directory still are;
+with no list the file is recorded. The admin guide and the security
+overview say so, including the cost (a build that wrote an excluded path
+would not be caught). `go test ./...` passes on merrick.
+
+## 10. Deploy, and the admin build through the API (2026-11-16)
+
+**Deploy.** `make build-freebsd` at `c8b0f06`; services stopped with sudo;
+`scripts/deploy-test.sh hearst` (skep-agent sha256 `012222ac…`, skep-api
+`1f663565…`, skepctl `f1d47f1a…`); started. Both report `commit c8b0f06`;
+the agent's database stayed at schema 5 (`migrations_applied: 0`).
+
+**Accounts.** `s6admin` (admin, `skep-api admin create --password-stdin`)
+and `s6oper` (operator, `POST /api/v1/users` as s6admin). Passwords were
+generated on merrick and are not kept in the repository. curl verified
+the API's certificate as its only CA after checking its key against
+`skep-api tls fingerprint` (`sha256:779cc5ec…`); no verification was
+skipped.
+
+**Build.** `POST /api/v1/storage/templates`
+`{"name":"minimal-151","pool":"skeptest","source":"pkgbase"}` as s6admin:
+202, template `f496866f-…`, task `f81ab83f-…`, succeeded in 33 s. Six
+commands, 66 packages, 4 scripts and `mandoc.ucl` allowed, release
+`15.1-RELEASE-p6` (no patch difference), `@skep-base` with
+`skep:template_id`, `readonly=on`. **763 host files compared**: the 764 of
+the test-binary run less `/var/db/pkg/vuln.xml`, the new exclusion. The
+agent created `skeptest/skep/templates` itself, `root:wheel 0700`. No
+build jail, catalogues, deferred trigger, cache or work area left. pkg's
+environment (301 samples): exactly `PATH`, `ASSUME_ALWAYS_YES`, `TMPDIR`.
+Host files from outside, nothing excluded: 1521 lines before and after,
+identical, and the same hash (`c89c4bb8…`) as the test-binary run.
+
+**Comparison with `skeptest/step6`.** 9922 entries each, none only on one
+side, one different: `var/db/pkg/local.sqlite`, which on copies on
+merrick has the same schema (user_version 42), 36 tables, 66 packages, and
+identical rows except `packages.time` (the install time). So
+`services.db`, both `mandoc.db`, `pwd.db`, `spwd.db`, the certs and the
+rest are byte-identical between the test-binary build and the deployed
+agent's. Records: `step6-deployed/`.
+
+## 11. The operator's refused template build (2026-11-16)
+
+**Done** (the check owed since 2026-11-15; see section 5). Clean-up first: with the comparison matching, `skeptest/step6`
+and `skeptest/step6-scratch` were destroyed (`zfs destroy -r`), as approved.
+
+s6oper logged in (bearer); its permissions include `storage:read` and not
+`storage:write`. `GET /api/v1/storage/templates`: 200. `POST
+/api/v1/storage/templates` `{"name":"oper-attempt",…}`: **403**
+`forbidden`, "your role does not allow this", details `permission:
+storage:write`, request `005a708b…`. The access audit log has it as entry
+278: `authz.deny`, outcome `denied`, actor s6oper, role operator, route
+and method, `permission: storage:write`, same request ID. No task was
+created, no template row, no dataset. Record: `step6-deployed/operator-refusal.txt`.
+
+## 12. Agent restart with no build jail (2026-11-16)
+
+**Found first.** The sweep logged only a removal, so a sweep that found
+nothing left no line, and "ran cleanly" could not be told from "did not
+run". **Changed** (`a34749d`): every completed sweep logs
+`event=build_jail_sweep` with `found`, `removed`, `failed`; unit test
+extended (one removed, one failed, nothing found). Redeployed the same
+way; both binaries report `a34749d`.
+
+**Check.** `jls --libxo=json name`: no jails. `sudo service skep_agent
+restart` at 18:51:30. In the new agent's log (pid 50166), in order:
+database ready (schema 5, no migration), task engine started,
+`build_jail_sweep found=0 removed=0 failed=0`, then `internal API
+listening`: the sweep ran before the socket was served. No ERROR or WARN
+line. `jls` empty afterwards. Through skep-api the template lists as
+provisioned, `15.1-RELEASE-p6`. (The redeploy's own start at 18:51:20
+logged the same sweep line.) Record: `step6-deployed/agent-restart.log`.
+
+## 13. Service lookups, and the record (2026-11-16)
+
+**Done.** Read-only on hearst: `getent services ssh` → `ssh 22/tcp`,
+`getent services domain` → `domain 53/tcp`, both exit 0 (also `22/tcp`
+and `53/udp` by number). `nsswitch.conf` has `services: compat`;
+hearst's `/var/db/services.db` is still the empty one (285 non-zero
+bytes, unchanged hash). Lookups work with the empty database, as the
+probe found.
+
+Record of the whole deployed run: [step6-deployed.txt](step6-deployed.txt).
+ADR 0010's "Built" notes, the admin guide (the sweep line) and the jails
+test README's check table are updated.
+
+**hearst now:** a34749d installed and running; template `minimal-151`
+(`f496866f-…`) in `skeptest/skep/templates`; API users `s6admin` and
+`s6oper`; no jail. The trace and the step 6 test datasets are gone.
+
+**Still open, not part of this run:** dist validation on hearst (no
+`base.txz`); templates in directory pools (refused); step 7.
+
+## 14. After the run (Andy, 2026-11-16)
+
+The sweep's summary line (`a34749d`) is kept. Template `minimal-151`
+(`f496866f-…`) stays on hearst for step 7. `s6admin` and `s6oper` were
+disabled through the API (`PUT /api/v1/users/{id}` `{"disabled":true}`,
+200 each); their bearer tokens then got 401 and a login got
+`invalid_credentials`. Their passwords and tokens were deleted on merrick.

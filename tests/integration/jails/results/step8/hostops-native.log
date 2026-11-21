@@ -1,0 +1,114 @@
+=== RUN   TestDirPoolRefusesWhatSkepDidNotMake
+--- PASS: TestDirPoolRefusesWhatSkepDidNotMake (0.00s)
+=== RUN   TestJailInterfaceName
+--- PASS: TestJailInterfaceName (0.00s)
+=== RUN   TestParseDescription
+--- PASS: TestParseDescription (0.00s)
+=== RUN   TestRenderJailConfNICs
+--- PASS: TestRenderJailConfNICs (0.00s)
+=== RUN   TestCheckJailParamsDevfs
+--- PASS: TestCheckJailParamsDevfs (0.00s)
+=== RUN   TestEpairAvailable
+--- PASS: TestEpairAvailable (0.00s)
+=== RUN   TestCreateJailEpair
+--- PASS: TestCreateJailEpair (0.00s)
+=== RUN   TestCreateJailEpairRefusesForeignName
+--- PASS: TestCreateJailEpairRefusesForeignName (0.00s)
+=== RUN   TestEpairCreateFailureDestroysOnlyOurs
+--- PASS: TestEpairCreateFailureDestroysOnlyOurs (0.00s)
+=== RUN   TestDestroyJailInterfaces
+--- PASS: TestDestroyJailInterfaces (0.00s)
+=== RUN   TestSkepInterfaces
+--- PASS: TestSkepInterfaces (0.00s)
+=== RUN   TestStopJailDestroysEpairsWhenNotRunning
+--- PASS: TestStopJailDestroysEpairsWhenNotRunning (0.00s)
+=== RUN   TestCheckJailNetRefusesWithoutEpair
+--- PASS: TestCheckJailNetRefusesWithoutEpair (0.00s)
+=== RUN   TestJailFilesNameservers
+--- PASS: TestJailFilesNameservers (0.00s)
+=== RUN   TestJailNames
+--- PASS: TestJailNames (0.00s)
+=== RUN   TestRenderJailConf
+--- PASS: TestRenderJailConf (0.00s)
+=== RUN   TestCheckJailParams
+--- PASS: TestCheckJailParams (0.00s)
+=== RUN   TestJailFilesRender
+--- PASS: TestJailFilesRender (0.00s)
+=== RUN   TestJailParentRefusedBeforeAnything
+    jails_test.go:261: as root the parent check passes; covered on hearst
+--- SKIP: TestJailParentRefusedBeforeAnything (0.00s)
+=== RUN   TestDestroyJailRootRefusesRunning
+--- PASS: TestDestroyJailRootRefusesRunning (0.00s)
+=== RUN   TestDestroyJailRootRefusesForeignDataset
+--- PASS: TestDestroyJailRootRefusesForeignDataset (0.00s)
+=== RUN   TestRunningJails
+--- PASS: TestRunningJails (0.00s)
+=== RUN   TestPrepareJailRunRefusesOpenDirectory
+--- PASS: TestPrepareJailRunRefusesOpenDirectory (0.00s)
+=== RUN   TestWriteJailFilesNative
+--- PASS: TestWriteJailFilesNative (0.01s)
+=== RUN   TestWriteJailFilesRefusesForeignRCConf
+--- PASS: TestWriteJailFilesRefusesForeignRCConf (0.00s)
+=== RUN   TestWriteJailFilesPlantedLinks
+=== RUN   TestWriteJailFilesPlantedLinks/etc_relative_link_out
+    jailwrite_freebsd_test.go:169: write: hostops: open etc in the jail: too many links
+    jailwrite_freebsd_test.go:182: remove: hostops: open etc in the jail: too many links
+=== RUN   TestWriteJailFilesPlantedLinks/root_home_link_out
+    jailwrite_freebsd_test.go:169: write: hostops: open root in the jail: too many links
+    jailwrite_freebsd_test.go:182: remove: hostops: open root in the jail: too many links
+=== RUN   TestWriteJailFilesPlantedLinks/.ssh_link_out
+    jailwrite_freebsd_test.go:169: write: hostops: open .ssh in the jail: too many links
+    jailwrite_freebsd_test.go:182: remove: hostops: open .ssh in the jail: too many links
+=== RUN   TestWriteJailFilesPlantedLinks/authorized_keys_link_out
+    jailwrite_freebsd_test.go:169: write: <nil>
+    jailwrite_freebsd_test.go:182: remove: <nil>
+=== RUN   TestWriteJailFilesPlantedLinks/temporary_name_link_out
+    jailwrite_freebsd_test.go:169: write: <nil>
+    jailwrite_freebsd_test.go:182: remove: <nil>
+=== RUN   TestWriteJailFilesPlantedLinks/rc.conf_link_to_an_outside_file
+    jailwrite_freebsd_test.go:169: write: hostops: open rc.conf in the jail: too many links
+    jailwrite_freebsd_test.go:182: remove: hostops: open rc.conf in the jail: too many links
+=== RUN   TestWriteJailFilesPlantedLinks/rc.conf_relative_link_out
+    jailwrite_freebsd_test.go:169: write: hostops: open rc.conf in the jail: too many links
+    jailwrite_freebsd_test.go:182: remove: hostops: open rc.conf in the jail: too many links
+=== RUN   TestWriteJailFilesPlantedLinks/etc_absolute_link_out
+    jailwrite_freebsd_test.go:169: write: hostops: open etc in the jail: too many links
+    jailwrite_freebsd_test.go:182: remove: hostops: open etc in the jail: too many links
+--- PASS: TestWriteJailFilesPlantedLinks (0.01s)
+    --- PASS: TestWriteJailFilesPlantedLinks/etc_relative_link_out (0.00s)
+    --- PASS: TestWriteJailFilesPlantedLinks/root_home_link_out (0.00s)
+    --- PASS: TestWriteJailFilesPlantedLinks/.ssh_link_out (0.00s)
+    --- PASS: TestWriteJailFilesPlantedLinks/authorized_keys_link_out (0.00s)
+    --- PASS: TestWriteJailFilesPlantedLinks/temporary_name_link_out (0.00s)
+    --- PASS: TestWriteJailFilesPlantedLinks/rc.conf_link_to_an_outside_file (0.00s)
+    --- PASS: TestWriteJailFilesPlantedLinks/rc.conf_relative_link_out (0.00s)
+    --- PASS: TestWriteJailFilesPlantedLinks/etc_absolute_link_out (0.00s)
+=== RUN   TestResolveBeneathNative
+    jailwrite_freebsd_test.go:209: out/victim: capabilities insufficient
+    jailwrite_freebsd_test.go:209: etc/../../outside/victim: capabilities insufficient
+    jailwrite_freebsd_test.go:209: /etc/passwd: capabilities insufficient
+    jailwrite_freebsd_test.go:209: ../outside/victim: capabilities insufficient
+--- PASS: TestResolveBeneathNative (0.00s)
+=== RUN   TestWriteJailResolvConfNative
+--- PASS: TestWriteJailResolvConfNative (0.00s)
+=== RUN   TestBuildJailArgs
+--- PASS: TestBuildJailArgs (0.00s)
+=== RUN   TestCheckBuildJail
+--- PASS: TestCheckBuildJail (0.00s)
+=== RUN   TestStartBuildJailChecksParameters
+    templates_test.go:139: covered by the FreeBSD integration test when run as root
+--- SKIP: TestStartBuildJailChecksParameters (0.00s)
+=== RUN   TestBuildJailExec
+--- PASS: TestBuildJailExec (0.00s)
+=== RUN   TestRemoveBuildJail
+--- PASS: TestRemoveBuildJail (0.00s)
+=== RUN   TestBuildJails
+--- PASS: TestBuildJails (0.00s)
+=== RUN   TestParsePkgRaw
+--- PASS: TestParsePkgRaw (0.00s)
+=== RUN   TestParseCPUTime
+--- PASS: TestParseCPUTime (0.00s)
+=== RUN   TestParsePS
+--- PASS: TestParsePS (0.00s)
+PASS
+exit 0

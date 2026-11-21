@@ -44,10 +44,17 @@
     "media_dir": "/var/db/skep/media",
     "max_snapshots_per_resource": 64,
     "capacity_warn_percent": 80,
-    "capacity_fail_percent": 90
+    "capacity_fail_percent": 90,
+    "template_packages": ["FreeBSD-set-minimal", "FreeBSD-ssh"],
+    "dist_dir": ""
   },
   "network": {
     "bridges": [],
     "management_interfaces": []
+  },
+  "containers": {
+    "stop_timeout_seconds": 10,
+    "start_timeout_seconds": 120,
+    "max_locked_memory_bytes": 0
   }
 }

@@ -23,7 +23,7 @@ func New(conf Confinement, opts Options) (Ops, error) {
 	}
 	h := newHost(conf, execRunner{timeout: timeout}, kernel{}, opts.Logger)
 	h.spawn, h.self = execSpawner{}, opts.Self
-	return Ops{Conf: conf, ZFS: h, Dirs: newDirs(conf, kernel{}, opts.Logger), Net: h, VMM: h, Files: h, Procs: h}, nil
+	return Ops{Conf: conf, ZFS: h, Dirs: newDirs(conf, kernel{}, opts.Logger), Net: h, VMM: h, Files: h, Procs: h, Templates: h, Jails: h}, nil
 }
 
 // kernel is the real system binding.
@@ -37,7 +37,12 @@ func (kernel) SysctlUint64(name string) (uint64, error) {
 		}
 		return 0, err
 	}
+	// kern.racct.enable is a bool, one byte (FreeBSD 15.1).
 	switch len(raw) {
+	case 1:
+		return uint64(raw[0]), nil
+	case 2:
+		return uint64(binary.NativeEndian.Uint16(raw)), nil
 	case 4:
 		return uint64(binary.NativeEndian.Uint32(raw)), nil
 	case 8:

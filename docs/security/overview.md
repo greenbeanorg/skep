@@ -428,6 +428,166 @@ The agent changes the host for the first time in Milestone 6
   the context is lost, the console is shown as unavailable; it never falls
   back to the other renderer.
 
+## Jail templates (Milestone 7b, step 6)
+
+Building a template is the first time the root agent installs software
+and makes outbound connections, so it has its own rules
+([ADR 0010](../decisions/0010-storage-and-jails.md), step 6, "Decision on
+package scripts"; [guide](../administration/jail-templates.md)).
+
+- **What `pkg --rootdir` would do unaided.** pkg 2.9.2 runs package shell
+  scripts with the host's `/bin/sh`, unchrooted and as root, with only
+  `PKG_ROOTDIR` pointing at the target. It runs Lua scripts unchrooted
+  too, and saves unsandboxed triggers for later. A script's writes stay in
+  the template only because its text uses `${PKG_ROOTDIR}`
+  ([trace](../../tests/integration/jails/results/step6-pkg-trace.txt)).
+  Skep does not rely on that.
+- **No package code runs on the host.** pkg runs with
+  `RUN_SCRIPTS=false` and `PKG_TRIGGERS_ENABLE=false`, a fixed argument
+  list, and an environment of exactly `PATH`, `ASSUME_ALWAYS_YES`, and
+  `TMPDIR` (in the work area). Package names come only from
+  `storage.template_packages` and must match `FreeBSD-*`. The repositories
+  and signing keys are the host's own. A template root is always empty
+  when pkg starts, because pkg looks for trust anchors in the root first.
+- **What the scripts would have done, Skep does, inside a jail.** Every
+  script and trigger file in the new template must match a compiled,
+  per-release allowlist (package, kind, phase, SHA-256). The allowlist is
+  in the code, not the configuration, because it is a security boundary.
+  The commands those scripts stand for are fixed in Skep's code and run
+  in a throwaway build jail on the template. That jail has no network, no
+  devfs, every `allow.*` off including `allow.suser`, securelevel 2, and
+  no `exec.*`. Its parameters are read back from the kernel before
+  anything runs in it. Commands enter with `jexec -l`, which gives root's
+  login-class environment.
+- **The host is checked, not trusted.** Every file under `/etc`,
+  `/var/db/pkg`, and `/usr/share/certs` is recorded before pkg starts and
+  after the jail is removed, except the exact paths on a short compiled
+  list (only `/var/db/pkg/vuln.xml`, which periodic's `pkg audit -F`
+  rewrites; no wildcards; ADR 0010 records each reason). A build that
+  wrote an excluded path would not be caught. Any difference fails the build
+  (`template_host_changed`), destroys the template, and is reported; Skep
+  does not try to repair the host.
+- **Clean-up does not depend on the task's context.** A failed, cancelled,
+  or timed-out build removes its jail and destroys its dataset on a
+  context of its own. A jail left by a crash is removed at the next agent
+  start, before the socket is served.
+- **Paths inside a template are read through `os.Root`**, and the
+  trigger directories and `bin/freebsd-version` without following symbolic
+  links, so nothing the packages ship can redirect a read or a removal to
+  the host.
+- **Only admin can build** (`storage:write`).
+
+Ordinary jails (step 7) keep `allow.suser` on. With it off, root in a jail
+has no privilege and `/etc/rc` fails (ADR 0010, amendment e). Only the
+build jail turns it off.
+
+
+## Jails (Milestone 7b, step 7)
+
+A jail shares the host's kernel, so its isolation rests on parameters
+Skep fixes and nobody can change through the API
+([ADR 0010](../decisions/0010-storage-and-jails.md), decisions 8, 9, and
+13, amendments e and f; [guide](../administration/jails.md)).
+
+- **A generated jail.conf, no host-side command.** jail(8) reads a
+  root-only `jail.conf` that Skep renders from typed values: the path is
+  derived from the pool and the ID, the hostname is a validated DNS name,
+  and the only command is `exec.stop="/bin/sh /etc/rc.shutdown jail"`,
+  which runs inside the jail. There is never an `exec.start`,
+  `exec.prestart`, `exec.poststart`, or any other command on the host,
+  no `mount.fstab`, and no `exec.consolelog`.
+- **No jailed process holds a host file (amendment o, SR-01).** `/etc/rc`
+  writes to a pipe the agent drains into the jail's `console.log`
+  (truncated at each start, at most the first 256 KiB plus a marker and
+  the last 64 KiB) and closes when the start ends; a process rc leaves
+  running that writes later gets `SIGPIPE` or `EPIPE`, so a jail cannot
+  fill the host's `/var/run` (on a UFS-root host, its root file system)
+  through its console. `/etc/rc.shutdown` writes to `jail -r`'s output,
+  of which the agent keeps the first and last 32 KiB in memory and
+  appends them to `console.log` after a `--- shutdown ---` line
+  (amendment p), followed by a `--- shutdown stderr ---` line and the
+  last 32 KiB of its stderr (amendment q); neither their size nor a
+  failed write makes a removal fail. The console log keeps the jail's
+  bytes as written on disk, but `GET /containers/{id}/console-log`
+  removes Unicode format characters and C0 and C1 control characters
+  except newline and tab from what it returns (amendment r), so neither
+  the web UI's `<pre>` nor a terminal can be made to reorder the text or
+  move the cursor. The first stderr line of a failed `jail -c`, of a
+  failed command in a template build jail, and of the build's failed
+  `pkg install`, `pkg info --raw`, and `tar -x` (amendment s), which
+  reach task errors, are cleaned the same way as `jail -r`'s line below. When `jail -r` fails, the error and the log carry
+  only the last line of its stderr, with control characters and Unicode
+  format characters (category Cf, including the bidirectional overrides
+  U+202A–U+202E and U+2066–U+2069) removed, at most 200 bytes,
+  and labelled as jail output, since the jail writes the start of that
+  stream.
+- **A jail cannot make itself unremovable (amendment u).** The jail's
+  root controls `/etc/rc.shutdown`; one that exits non-zero or hangs
+  makes `jail -r` fail and leaves the jail. The agent then removes it with
+  `jail -R`, which runs none of the jail's code and no `exec.*` command,
+  unmounts its devfs by fsid, and destroys its epairs and RCTL rules; the
+  stop succeeds and is logged as `container_stop_forced`. The
+  `--- jail -r failed: ... ---` line the agent appends to the console log
+  carries the cleaned stderr line, so the jail cannot use it to inject
+  lines or control characters. Only when `jail -R` also fails does the
+  stop or delete fail, with `container_remove_failed`.
+- **Locked memory has a host total (amendment o, SR-04).** `mlock` needs
+  `limits.locked_memory`, and the sum of `locked_memory` over the running
+  jails is bounded by `containers.max_locked_memory_bytes` (a quarter of
+  physical memory by default): a single value above it is refused at
+  create and update (422), and a start that would pass it is refused
+  (`container_locked_memory_exhausted`). Wired memory from jails shares
+  the kernel's `vm.max_user_wired` pool with bhyve VMs that wire theirs.
+- **The `/dev` guard (amendment i).** `jail -c` creates the jail with
+  nothing running in it. The agent lists the jail's `/dev` from the host
+  (opened without following links, required to be a devfs mounted at
+  `<root>/dev`) and removes the jail, without `/etc/rc.shutdown`, if it
+  holds anything outside a short allow-list (`bpf*` only for a DHCP jail).
+  Only then does the agent run `/etc/rc` in the jail with `jexec -l -U
+  root`. This is a check of the result, not of the ruleset text: amendment
+  h's ruleset 6001 (`include 5` plus `bpf*`) exposed every host device,
+  because devfs does not resolve the includes of an included ruleset;
+  ruleset 6001 now writes out ruleset 5's own rules plus `bpf*`.
+- **The baseline.** VNET, `enforce_statfs=2`, `children.max=0`,
+  `securelevel=2`, devfs ruleset 5, `allow.suser` and
+  `allow.reserved_ports` on and every other `allow.*` off. After `jail -c`
+  the agent reads the parameters back from the kernel and removes a jail
+  that does not match.
+- **Raw sockets cannot be taken away from a VNET jail.** FreeBSD 15.1
+  grants them to every jail with its own network stack before it looks
+  at `allow.raw_sockets`, so Skep does not rely on that parameter, and
+  root in a jail is not trusted on the network.
+- **Known limitation: no anti-spoofing on guest ports yet (SR-02, ADR
+  0010 amendment y).** The host bridge passes whatever a jail sends.
+  Until the anti-spoofing work lands, a jail's root can forge source IPs
+  within its subnet, take over unused addresses, and change its MAC
+  (measured on `hearst`: step 10 progress log, section 31, T1, T4, T5);
+  VM guests on the same bridges are in the same position (not measured).
+  Give jails only to trusted users on shared networks. The decided fix
+  enforces, on the host per guest port (epair host end, tap), the MAC
+  recorded by the API and, for static NICs, the configured IP and ARP
+  sender; DHCP NICs get MAC pinning only. It is built right after
+  Milestone 7b, with its own ADR, and blocks any public release.
+- **Host users never reach a jail's tree.** The directory that holds the
+  jail roots, like the templates directory, is `root:wheel 0700` and
+  checked before every start: a jail controls setuid binaries in its tree,
+  and a host user who reached one could run it with the jail root's IDs.
+  Checked on hearst: an unprivileged user gets Permission denied on the
+  jail root and on a setuid file inside a running jail.
+- **Skep writes into a jail only before its first start**, and then only
+  `etc/rc.conf` (its own, recognised by its header) and root's
+  `authorized_keys`, each opened relative to the jail root's directory
+  descriptor with `O_RESOLVE_BENEATH | O_NOFOLLOW` and replaced by a
+  rename, so a planted symbolic link can neither be followed nor lead
+  outside the root (natively tested). `started_once` is set before the
+  jail first runs and never goes back; afterwards such a write is
+  `container_started`.
+- **SSH keys, not passwords.** The only credential Skep handles for a jail
+  is root's public key, accepted only as one plain OpenSSH key line
+  without options, and only for a template that has sshd. sshd allows
+  root with a key only. Templates hold no SSH host keys (the build fails
+  if one is present); each jail generates its own at its first start.
+- **No console, no jexec.** Nothing in the API enters a jail.
 ## Audit logs and retention
 
 There are two audit logs: the agent's operation audit in `agent.db` and

@@ -71,11 +71,22 @@ show no data.
 | Dashboard | The node, its platform and version, uptime, every health check (degraded ones highlighted), capabilities, the five newest tasks |
 | Nodes | The one node: processor, memory, bhyve, QEMU, OpenZFS pools, discovery warnings |
 | Virtual machines | The VM list (state, drift, provisioning); create (one disk, install media, one NIC); a VM's details, power actions, media attach and detach, delete, its serial console, and its snapshots (take, roll back, delete, clone, with the note that a clone is the same guest). See [Virtual machines](virtual-machines.md) |
+| Containers | The jail list (state, template, addressing); create from a built template (name, hostname, NICs with DHCP or a static IPv4 address and gateway, nameservers when no NIC uses DHCP, root's SSH key (only for a template with `has_sshd`), the System V IPC and lock-memory options, the limits); a jail's details, start, stop, restart, edit (a stopped jail, `container:write`: hostname, options, and limits at any time; before the first start also NICs, nameservers, and the SSH key; after it only each NIC's bridge), delete, the task's progress and its error with a hint, the console log, its limits, its current use from `/metrics`, and its snapshots (take, roll back with the confirmation to destroy newer ones, delete) and clones. Each limit says what it does on FreeBSD: memory is soft (a resident-memory target, not a cap), CPU is approximate, the file-table limit counts descriptor-table slots, locked memory is what `mlock` may lock. Without RACCT (`containers.rctl` false in `GET /system`) the page says so and the RCTL limits are disabled. A clone of a jail with a static address asks for new addressing; one that has started cannot be cloned, and the page says why. See [Jails](jails.md) |
 | Storage | Each allow-listed pool with its capacity against the `storage_capacity` thresholds and any locked datasets; the current disk, CPU, and memory use of each VM; the dataset inventory with owners. See [Storage](storage.md) |
 | Tasks (under Monitoring) | Task list with a status filter and paging; task detail with its events; cancel (`task:cancel`) |
 | Users and permissions | Users (create, edit, enable and disable, set password, delete), roles and their permissions, the access audit log |
 | Settings | About this node: version and build, the API certificate, session lifetimes, the theme |
 | Account menu | Your account: identity, the session in use, change your password, log out |
+
+The Containers section was validated against a real `skep-api` and
+agent on `hearst` (FreeBSD 15.1-RELEASE-p7) on 2026-11-21, in Chromium
+trusting `skep-api`'s certificate by its key pin: the jail list, create
+(the SSH key field following the template's `has_sshd`), the edit
+dialog before and after the first start, start, the console log, the
+usage card, snapshots, the clone notices, the confirmation before a
+limit is removed, a failed start's code and hint, delete, and a viewer
+seeing no actions
+([step 10 progress, section 26](../../tests/integration/jails/results/step10-progress.md)).
 
 Entries the role cannot read are hidden. That is a convenience: the server
 decides, and a page reached by its address shows "Your role does not allow

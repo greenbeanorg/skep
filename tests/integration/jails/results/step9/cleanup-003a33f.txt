@@ -1,0 +1,17 @@
+# Cleanup, 2026-11-17T22:51:55Z (rerun after the first attempt stopped on c9dhcp's delete)
+-- first attempt: s9mlock stopped; delete c9dhcp failed: zfs: cannot unmount '/skeptest/skep/jail/340ac09a-...': pool or dataset is busy
+-- cause: devfs left mounted on the roots of the two jails removed by hand in check 9 (jail -r without Skep's jail.conf does not unmount it):
+devfs on /skeptest/skep/jail/c5d71062-66f8-4008-862e-b5b01e963245/dev (devfs)
+devfs on /skeptest/skep/jail/340ac09a-3dd5-4a2e-8327-19d6c8625885/dev (devfs)
+container.delete succeeded  
+
+container.snapshot.delete succeeded  
+container.delete succeeded  
+
+container.delete succeeded  
+
+-- left: ['c9dhcp', 's9dhcp']
+-- jls: []
+-- epairs: []
+-- rctl rules: []
+-- datasets: skeptest/skep/jail/340ac09a-3dd5-4a2e-8327-19d6c8625885 skeptest/skep/jail/c5d71062-66f8-4008-862e-b5b01e963245 skeptest/skep/jail/c5d71062-66f8-4008-862e-b5b01e963245@skep-25622413-d2e6-444c-91d3-d10e6367d53f 

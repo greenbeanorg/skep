@@ -1,0 +1,10 @@
+aba
+(root sees) -r-sr-xr-x  2 root wheel uarch 61496 Oct 20 19:29 /skeptest/skep/jail/d1db6333-9b51-4dff-ac39-e469d8578b0f/sbin/ping
+(root sees) -r-sr-xr-x  1 root wheel schg  17360 Sep 28 20:58 /skeptest/skep/jail/d1db6333-9b51-4dff-ac39-e469d8578b0f/usr/bin/su
+== as aba:
+ls: /skeptest/skep/jail/d1db6333-9b51-4dff-ac39-e469d8578b0f/usr/bin/su: Permission denied
+stat: /skeptest/skep/jail/d1db6333-9b51-4dff-ac39-e469d8578b0f: Permission denied
+sh: /skeptest/skep/jail/d1db6333-9b51-4dff-ac39-e469d8578b0f/sbin/ping: Permission denied
+cd: /skeptest/skep/jail: Permission denied
+ls: /skeptest/skep/jail: Permission denied
+ls: /skeptest/skep/templates: Permission denied

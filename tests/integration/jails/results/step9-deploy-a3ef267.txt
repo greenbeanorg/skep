@@ -1,0 +1,15 @@
+# Deploy of a3ef267 to hearst, 2026-11-17T20:15:18Z (undo: redeploy 79620ef)
+Stopping skep_api.
+Waiting for PIDS: 74552.
+Stopping skep_agent.
+Waiting for PIDS: 74489.
+deploy-test: hearst:/usr/local/sbin/skep-agent root:wheel 0555 13349034 bytes sha256 b6cba2aa04a993755a42e3c0b24f26319f1e886991b0cb0bf420b532a6dc1a60
+deploy-test: hearst:/usr/local/sbin/skep-api root:wheel 0555 14106794 bytes sha256 9711c53e30e6bb9e7fb1aa0159ea6e21ba7aa96005cf70f1e24bdf5d34cde666
+deploy-test: synced
+deploy-test: hearst:/usr/local/bin/skepctl root:wheel 0555 7217322 bytes sha256 b3f1a5a8b2afee46d1f11da673e9acc707770917f4cb8847a9614e35222b8690
+deploy-test: synced
+Starting skep_agent.
+Starting skep_api.
+skep_agent is running as pid 74974 (supervisor pid 74973).
+skep_api is running as pid 75035 (supervisor pid 75034).
+skep-agent 0.1.0 (commit a3ef267, built 2026-11-17T20:15:16Z, go1.27.4 freebsd/amd64)

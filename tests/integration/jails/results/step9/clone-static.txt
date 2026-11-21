@@ -1,0 +1,18 @@
+# Check 5: clone of a jail with a static NIC (never started; nothing on VLAN 60), 2026-11-17T22:43:27Z
+container.create succeeded  
+-- source rc.conf: ifconfig_skep0="inet 192.0.2.10/24"
+-- clone without new addressing:
+{"error":{"code":"clone_addressing_required","message":"the source has a static address on these NIC slots, and the clone would hold the same address; give each new addressing in nics","request_id":"82ceb868f21bdb31bd67f000","details":{"slots":[0]}}}
+HTTP 422
+-- clone with the same address under another prefix:
+{"error":{"code":"clone_addressing_required","message":"the source has a static address on these NIC slots, and the clone would hold the same address; give each new addressing in nics","request_id":"079e5481e83f3eca18f92202","details":{"slots":[0]}}}
+HTTP 422
+-- containers named c9static: []
+-- snapshots left on s9static: []
+-- clone with new addressing (source never started):
+container.clone succeeded  
+result: {"container_id": "2c7adca3-5834-44d6-85c6-ddacbddb7e9d", "dataset": "skeptest/skep/jail/2c7adca3-5834-44d6-85c6-ddacbddb7e9d", "files_written": true, "name": "c9static", "origin": "skeptest/skep/jail/5c343951-88d9-406a-8167-3151333c68c1@skep-e55a6518-c184-4002-9af1-1a10aae314b7", "snapshot_id": "e55a6518-c184-4002-9af1-1a10aae314b7", "snapshot_taken": true, "source_container_id": "5c343951-88d9-406a-8167-3151333c68c1"}
+-- clone rc.conf: # Written by Skep before this jail's first start (ADR 0010 decision 13).|ifconfig_skep0="inet 192.0.2.11/24"|defaultrouter="192.0.2.1"|
+-- clone resolv.conf: # Written by Skep before this jail's first start (ADR 0010 decision 13).|nameserver 192.0.2.53|
+-- source rc.conf unchanged: ifconfig_skep0="inet 192.0.2.10/24"
+clone started_once=False nics=[{'id': '050b0508-1def-455d-a555-22a0245546d2', 'slot': 0, 'bridge': 'bridge0', 'mac_address': '02:fb:a2:08:24:e8', 'interface': 'skep0', 'ipv4': {'mode': 'static', 'address': '192.0.2.11/24', 'gateway': '192.0.2.1'}}]

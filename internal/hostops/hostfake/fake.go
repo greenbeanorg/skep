@@ -65,6 +65,31 @@ type Fake struct {
 	// IgnoreACPI lists the VMs whose guest ignores the ACPI power
 	// button, as an installer menu does.
 	IgnoreACPI map[string]bool
+	// NoEpair simulates a host without if_epair; DevfsConflict one whose
+	// devfs ruleset 6001 holds someone else's rules.
+	NoEpair       bool
+	DevfsConflict bool
+	// QuarantineStart makes the next starts behave like a /dev guard
+	// refusal whose removal failed: the jail is left in place and the
+	// start fails with container_quarantined (amendment n, SR-06).
+	// FailDiscard makes DiscardJail fail, leaving the jail.
+	QuarantineStart bool
+	FailDiscard     error
+	// FailStop makes StopJail fail with it, leaving the jail running (as
+	// hostops does when jail -r and jail -R both fail: amendment u).
+	FailStop error
+	// PresentMACs simulates MAC addresses already present on a bridge (its
+	// own, a member's, or learnt), by bridge (amendment n, SR-03).
+	PresentMACs map[string][]string
+	// RacctDisabled simulates a host booted without kern.racct.enable;
+	// CPUs is hw.ncpu (4 when zero).
+	RacctDisabled bool
+	CPUs          int
+	// JailUsages is what JailUsage reports for a running jail, by
+	// container ID.
+	JailUsages map[string]hostops.JailUsage
+	// rctl holds the RCTL rules on each jail's name, by container ID.
+	rctl map[string][]string
 
 	datasets map[string]hostops.Dataset
 	// diskFiles and dirs are the simulated disk files and VM directories
@@ -75,16 +100,31 @@ type Fake struct {
 	snaps     map[string]hostops.Dataset
 	txg       int64
 	instances map[string]bool
-	calls     []string
+	// sshdTemplates are the templates whose packages included
+	// FreeBSD-ssh; jails maps a running jail's container ID to its JID;
+	// jailFiles holds what ConfigureJail wrote.
+	sshdTemplates map[string]bool
+	jails         map[string]int
+	nextJID       int
+	jailFiles     map[string]hostops.JailFiles
+	// leftoverDevfs are the jails with a devfs a removal outside Skep
+	// left on their <root>/dev (amendment l).
+	leftoverDevfs map[string]bool
+	calls         []string
 	// taps maps a tap to its description and bridge.
 	taps    map[string]fakeTap
 	nextTap int
-	nextPID int
-	runners map[string]*fakeRunner
-	guests  map[string]*Guest
-	ctx     context.Context
-	stop    context.CancelFunc
-	wg      sync.WaitGroup
+	// epairs maps an epair host end to its description and bridge;
+	// devfsDHCP is true once the DHCP ruleset was added.
+	epairs    map[string]fakeTap
+	nextEpair int
+	devfsDHCP bool
+	nextPID   int
+	runners   map[string]*fakeRunner
+	guests    map[string]*Guest
+	ctx       context.Context
+	stop      context.CancelFunc
+	wg        sync.WaitGroup
 }
 
 type fakeTap struct{ desc, bridge string }
@@ -111,6 +151,7 @@ func New(conf hostops.Confinement, opts Options) *Fake {
 		ctx: ctx, stop: stop,
 		IgnoreACPI: map[string]bool{},
 		taps:       map[string]fakeTap{},
+		epairs:     map[string]fakeTap{},
 		nextPID:    10000,
 		runners:    map[string]*fakeRunner{},
 		guests:     map[string]*Guest{},
@@ -131,12 +172,19 @@ func New(conf hostops.Confinement, opts Options) *Fake {
 		UnusableDirs:   map[string]string{},
 		snaps:          map[string]hostops.Dataset{},
 		instances:      map[string]bool{},
+		sshdTemplates:  map[string]bool{},
+		jails:          map[string]int{},
+		rctl:           map[string][]string{},
+		nextJID:        1,
+		jailFiles:      map[string]hostops.JailFiles{},
+		leftoverDevfs:  map[string]bool{},
 	}
 }
 
 // Ops returns the fake as the hostops surface.
 func (f *Fake) Ops() hostops.Ops {
-	return hostops.Ops{Conf: f.conf, ZFS: f, Dirs: fakeDirs{f}, Net: f, VMM: f, Files: fakeFiles{Files: f.files, f: f}, Procs: f}
+	return hostops.Ops{Conf: f.conf, ZFS: f, Dirs: fakeDirs{f}, Net: f, VMM: f, Files: fakeFiles{Files: f.files, f: f}, Procs: f,
+		Templates: fakeTemplates{f}, Jails: fakeJails{f}}
 }
 
 // Calls returns what was called so far, one line per mutating call.

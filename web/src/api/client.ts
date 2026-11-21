@@ -41,6 +41,16 @@ import type {
   SnapshotList,
   SnapshotRollback,
   VMClone,
+  Container,
+  ContainerActionName,
+  ContainerClone,
+  ContainerConsoleLog,
+  ContainerCreate,
+  ContainerCreated,
+  ContainerList,
+  ContainerUpdate,
+  Template,
+  TemplateList,
 } from "./types";
 
 export const API_PREFIX = "/api/v1";
@@ -321,6 +331,29 @@ export const api = {
   // and 15).
   datasets: (q: DatasetQuery = {}, o: ReadOptions = {}) => request<DatasetList>(datasetsPath(q), o),
   metrics: (o: ReadOptions = {}) => request<Metrics>("/metrics", o),
+
+  // Jails and the templates they are made from (ADR 0010 decisions 7 to
+  // 13). Every write answers with the task that carries it out.
+  templates: (o: ReadOptions = {}) => request<TemplateList>("/storage/templates?limit=200", o),
+  template: (id: string, o: ReadOptions = {}) => request<Template>(`/storage/templates/${enc(id)}`, o),
+  containers: (o: ReadOptions = {}) => request<ContainerList>("/containers?limit=200", o),
+  container: (id: string, o: ReadOptions = {}) => request<Container>(`/containers/${enc(id)}`, o),
+  createContainer: (req: ContainerCreate) => request<ContainerCreated>("/containers", { method: "POST", body: req }),
+  updateContainer: (id: string, req: ContainerUpdate) => request<Task>(`/containers/${enc(id)}`, { method: "PUT", body: req }),
+  deleteContainer: (id: string) => request<Task>(`/containers/${enc(id)}`, { method: "DELETE" }),
+  containerAction: (id: string, action: ContainerActionName) =>
+    request<Task>(`/containers/${enc(id)}/actions`, { method: "POST", body: { action } }),
+  containerConsoleLog: (id: string, o: ReadOptions = {}) =>
+    request<ContainerConsoleLog>(`/containers/${enc(id)}/console-log`, o),
+  containerSnapshots: (id: string, o: ReadOptions = {}) => request<SnapshotList>(`/containers/${enc(id)}/snapshots`, o),
+  createContainerSnapshot: (id: string, req: SnapshotCreate) =>
+    request<SnapshotCreated>(`/containers/${enc(id)}/snapshots`, { method: "POST", body: req }),
+  rollbackContainerSnapshot: (id: string, snapId: string, req: SnapshotRollback) =>
+    request<Task>(`/containers/${enc(id)}/snapshots/${enc(snapId)}/rollback`, { method: "POST", body: req }),
+  deleteContainerSnapshot: (id: string, snapId: string) =>
+    request<Task>(`/containers/${enc(id)}/snapshots/${enc(snapId)}`, { method: "DELETE" }),
+  cloneContainer: (id: string, req: ContainerClone) =>
+    request<ContainerCreated>(`/containers/${enc(id)}/clone`, { method: "POST", body: req }),
 };
 
 /**

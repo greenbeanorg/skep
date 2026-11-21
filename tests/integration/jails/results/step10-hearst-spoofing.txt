@@ -1,0 +1,475 @@
+# M7b step 10 (ADR 0010), SR-02 anti-spoofing measurements on hearst, 2026-11-21.
+# Measure only; nothing was fixed. Andy watched OPNsense (packet capture on
+# LAB and the live log); his observations are reported separately.
+# Test jail icmptest-1929 (d892fa70-5e6a-402a-82f7-d9d0f5d3a623), DHCP
+# 10.79.60.115, MAC 02:17:fb:89:a2:1a, host end epair0a on bridge0 (uplink
+# vtnet1, LAB VLAN 60). Unused LAB address: 10.79.60.50 (Andy: "pick the
+# unused LAB IP or just go with .50"; ARP probe from the jail incomplete).
+# Forged MAC 02:5e:00:00:00:01; forged off-subnet source 192.0.2.10.
+# Sender: tests/integration/jails/tools/rawping (skep_testtasks tag; raw
+# socket, IPPROTO_RAW + IP_HDRINCL), cross-compiled on merrick, sha256
+# 05e0a53e..., installed as /root/rawping in the jail only.
+# Observation: tcpdump -n -e -tttt on vtnet1, filter
+# 'icmp or arp or ether host 02:5e:00:00:00:01' (read-only, approved).
+# API calls (jail delete) as s7admin with --cacert + --pinnedpubkey
+# (779cc5ec...), no -k; credentials via the read loop, never printed.
+# Script mistakes kept in the record: the first T1-T5 attempt (19:43:39Z)
+# piped the script to `bash`, which hearst lacks, so nothing ran (its empty
+# capture is included); the first cleanup's DELETE got 409
+# container_not_stopped and the wait loop then polled with an empty task ID
+# (tracebacks trimmed); the repeat stopped the jail first.
+# Full logs: ~/skep-test-logs/20261121T194225Z-hearst-spoofing-0{0..7}-*.log
+
+######## file: 20261121T194225Z-hearst-spoofing-00-source.log
+######## Step 0: source check and jail view, 2026-11-21T19:42:25Z
++ grep -E '^(REVISION|BRANCH)=' /usr/src/sys/conf/newvers.sh
+REVISION="15.1"
+BRANCH="RELEASE-p7"
++ freebsd-version -kru
+15.1-RELEASE-p7
+15.1-RELEASE-p7
+15.1-RELEASE-p7
++ sysctl kern.features.vimage
+kern.features.vimage: 1
++ sha256 /usr/src/sys/kern/kern_jail.c
+SHA256 (/usr/src/sys/kern/kern_jail.c) = 251a114749d84c1e778efb0c20ab029c2b913bff53d3b8b6bb93c64b4337c353
++ grep -n ^prison_priv_check /usr/src/sys/kern/kern_jail.c
+4171:prison_priv_check(struct ucred *cred, int priv)
++ sed -n '4187,4196p;4209,4214p;4273,4282p;4302,4309p;4528,4535p' /usr/src/sys/kern/kern_jail.c
+	if (!jailed(cred))
+		return (0);
+
+#ifdef VIMAGE
+	/*
+	 * Privileges specific to prisons with a virtual network stack.
+	 * There might be a duplicate entry here in case the privilege
+	 * is only granted conditionally in the legacy jail case.
+	 */
+	switch (priv) {
+		 * Network stack privileges.
+		 */
+	case PRIV_NET_BRIDGE:
+	case PRIV_NET_GRE:
+	case PRIV_NET_BPF:
+	case PRIV_NET_RAW:		/* Dup, cond. in legacy jail case. */
+		/*
+		 * IPv4 and IPv6 privileges.
+		 */
+	case PRIV_NETINET_IPFW:
+	case PRIV_NETINET_DIVERT:
+	case PRIV_NETINET_PF:
+	case PRIV_NETINET_DUMMYNET:
+	case PRIV_NETINET_CARP:
+	case PRIV_NETINET_MROUTE:
+	case PRIV_NETINET_RAW:
+	/*
+	 * No default: or deny here.
+	 * In case of no permit fall through to next switch().
+	 */
+		if (cred->cr_prison->pr_flags & PR_VNET)
+			return (0);
+	}
+#endif /* VIMAGE */
+		/*
+		 * Conditionally allow creating raw sockets in jail.
+		 */
+	case PRIV_NETINET_RAW:
+		if (cred->cr_prison->pr_allow & PR_ALLOW_RAW_SOCKETS)
+			return (0);
+		else
+			return (EPERM);
++ sudo jls -j skep-d892fa70-5e6a-402a-82f7-d9d0f5d3a623 allow.raw_sockets vnet devfs_ruleset
+false new 6001
++ sudo devfs rule -s 6001 show
+100 include 1
+200 include 2
+300 include 3
+400 include 4
+500 path pf unhide
+600 path bpf* unhide
++ sudo jexec skep-d892fa70-5e6a-402a-82f7-d9d0f5d3a623 ls -l /dev
+total 2
+crw-------  1 root wheel    0x25 Nov 21 19:29 bpf
+lrwxr-xr-x  1 root wheel       3 Nov 21 19:29 bpf0 -> bpf
+dr-xr-xr-x  2 root wheel     512 Nov 21 19:29 fd
+crw-rw-rw-  1 root wheel    0x15 Nov 21 19:42 null
+dr-xr-xr-x  2 root wheel     512 Nov 21 19:29 pts
+crw-r--r--  1 root wheel     0x5 Nov 19 16:27 random
+lrwxr-xr-x  1 root wheel       4 Nov 21 19:29 stderr -> fd/2
+lrwxr-xr-x  1 root wheel       4 Nov 21 19:29 stdin -> fd/0
+lrwxr-xr-x  1 root wheel       4 Nov 21 19:29 stdout -> fd/1
+lrwxr-xr-x  1 root wheel       6 Nov 21 19:29 urandom -> random
+crw-rw-rw-  1 root wheel    0x16 Nov 19 16:27 zero
+crw-rw-rw-  1 root operator 0x6f Nov 19 16:27 zfs
++ sudo jexec skep-d892fa70-5e6a-402a-82f7-d9d0f5d3a623 ls -l /usr/sbin/tcpdump /usr/bin/nc /sbin/ping
+-r-sr-xr-x  2 root wheel   61496 Oct 20 23:29 /sbin/ping
+-r-xr-xr-x  1 root wheel   33192 Sep 29 00:58 /usr/bin/nc
+-r-xr-xr-x  1 root wheel 1360224 Sep 29 00:58 /usr/sbin/tcpdump
+
+######## file: 20261121T194225Z-hearst-spoofing-01-prep.log
+######## Prep: unused-address check and tool copy, 2026-11-21T19:43:20Z
++ sha256 /tmp/sr02-rawping
+SHA256 (/tmp/sr02-rawping) = 05e0a53e9f8092da3b956b6e3e0acbb5a76410bea4e677ced3592b6f25cc13ff
++ sudo install -m 0755 -o root -g wheel /tmp/sr02-rawping /skeptest/skep/jail/d892fa70-5e6a-402a-82f7-d9d0f5d3a623/root/rawping
++ rm /tmp/sr02-rawping
++ sudo jexec skep-d892fa70-5e6a-402a-82f7-d9d0f5d3a623 sha256 /root/rawping
+SHA256 (/root/rawping) = 05e0a53e9f8092da3b956b6e3e0acbb5a76410bea4e677ced3592b6f25cc13ff
++ sudo jexec skep-d892fa70-5e6a-402a-82f7-d9d0f5d3a623 ping -c 2 -t 3 10.79.60.50
+PING 10.79.60.50 (10.79.60.50): 56 data bytes
+
+--- 10.79.60.50 ping statistics ---
+2 packets transmitted, 0 packets received, 100.0% packet loss
+exit 2
++ echo 'exit 2'
++ sudo jexec skep-d892fa70-5e6a-402a-82f7-d9d0f5d3a623 arp -an
+? (10.79.60.115) at 02:17:fb:89:a2:1a on skep0 permanent [ethernet]
+? (10.79.60.50) at (incomplete) on skep0 expired [ethernet]
+? (10.79.60.1) at bc:24:11:65:45:98 on skep0 expires in 402 seconds [ethernet]
++ sudo jexec skep-d892fa70-5e6a-402a-82f7-d9d0f5d3a623 ifconfig skep0
+skep0: flags=1008843<UP,BROADCAST,RUNNING,SIMPLEX,MULTICAST,LOWER_UP> metric 0 mtu 1500
+	options=60001b<RXCSUM,TXCSUM,VLAN_MTU,VLAN_HWTAGGING,RXCSUM_IPV6,TXCSUM_IPV6>
+	ether 02:17:fb:89:a2:1a
+	hwaddr 58:9c:fc:10:fd:4c
+	inet 10.79.60.115 netmask 0xffffff00 broadcast 10.79.60.255
+	groups: epair
+	media: Ethernet 10Gbase-T (10Gbase-T <full-duplex>)
+	status: active
+	nd6 options=29<PERFORMNUD,IFDISABLED,AUTO_LINKLOCAL>
++ sudo jexec skep-d892fa70-5e6a-402a-82f7-d9d0f5d3a623 netstat -rn -f inet
+Routing tables
+
+Internet:
+Destination        Gateway            Flags         Netif Expire
+default            10.79.60.1         UGS           skep0
+10.79.60.0/24      link#6             U             skep0
+10.79.60.115       link#7             UHS             lo0
+127.0.0.1          link#7             UH              lo0
++ sudo sha256 /usr/local/etc/skep/agent.json
+SHA256 (/usr/local/etc/skep/agent.json) = 490bc08738a2dd835952e19c4f59e869857fd15a1a6ce8e8c0b9df1d1f3cb134
+
+######## file: 20261121T194225Z-hearst-spoofing-02-tcpdump-vtnet1.log
+tcpdump: verbose output suppressed, use -v[v]... for full protocol decode
+listening on vtnet1, link-type EN10MB (Ethernet), snapshot length 262144 bytes
+
+0 packets captured
+0 packets received by filter
+0 packets dropped by kernel
+
+######## file: 20261121T194225Z-hearst-spoofing-03-tests.log
+######## SR-02 tests T1-T5 in skep-d892fa70-5e6a-402a-82f7-d9d0f5d3a623, 2026-11-21T19:43:39Z (tcpdump on vtnet1 started just before)
+sh: bash: not found
+
+######## file: 20261121T194225Z-hearst-spoofing-04-tcpdump-vtnet1.log
+tcpdump: verbose output suppressed, use -v[v]... for full protocol decode
+listening on vtnet1, link-type EN10MB (Ethernet), snapshot length 262144 bytes
+2026-11-21 19:47:01.961094 02:17:fb:89:a2:1a > bc:24:11:65:45:98, ethertype IPv4 (0x0800), length 51: 10.79.60.50 > 10.79.60.1: ICMP echo request, id 21250, seq 0, length 17
+2026-11-21 19:47:01.962402 bc:24:11:65:45:98 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806), length 60: Request who-has 10.79.60.50 tell 10.79.60.1, length 46
+2026-11-21 19:47:03.017631 02:17:fb:89:a2:1a > bc:24:11:65:45:98, ethertype IPv4 (0x0800), length 51: 10.79.60.50 > 10.79.60.1: ICMP echo request, id 21250, seq 1, length 17
+2026-11-21 19:47:03.018287 bc:24:11:65:45:98 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806), length 60: Request who-has 10.79.60.50 tell 10.79.60.1, length 46
+2026-11-21 19:47:04.087620 02:17:fb:89:a2:1a > bc:24:11:65:45:98, ethertype IPv4 (0x0800), length 51: 10.79.60.50 > 10.79.60.1: ICMP echo request, id 21250, seq 2, length 17
+2026-11-21 19:47:04.088124 bc:24:11:65:45:98 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806), length 60: Request who-has 10.79.60.50 tell 10.79.60.1, length 46
+2026-11-21 19:47:24.107312 02:17:fb:89:a2:1a > bc:24:11:65:45:98, ethertype IPv4 (0x0800), length 51: 192.0.2.10 > 10.79.60.1: ICMP echo request, id 21250, seq 0, length 17
+2026-11-21 19:47:25.111176 02:17:fb:89:a2:1a > bc:24:11:65:45:98, ethertype IPv4 (0x0800), length 51: 192.0.2.10 > 10.79.60.1: ICMP echo request, id 21250, seq 1, length 17
+2026-11-21 19:47:26.183704 02:17:fb:89:a2:1a > bc:24:11:65:45:98, ethertype IPv4 (0x0800), length 51: 192.0.2.10 > 10.79.60.1: ICMP echo request, id 21250, seq 2, length 17
+2026-11-21 19:47:46.223044 02:17:fb:89:a2:1a > bc:24:11:65:45:98, ethertype IPv4 (0x0800), length 51: 192.0.2.10 > 1.1.1.1: ICMP echo request, id 21250, seq 0, length 17
+2026-11-21 19:47:47.233601 02:17:fb:89:a2:1a > bc:24:11:65:45:98, ethertype IPv4 (0x0800), length 51: 192.0.2.10 > 1.1.1.1: ICMP echo request, id 21250, seq 1, length 17
+2026-11-21 19:47:48.277420 02:17:fb:89:a2:1a > bc:24:11:65:45:98, ethertype IPv4 (0x0800), length 51: 192.0.2.10 > 1.1.1.1: ICMP echo request, id 21250, seq 2, length 17
+2026-11-21 19:48:08.292866 02:5e:00:00:00:01 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806), length 42: Request who-has 10.79.60.115 tell 10.79.60.115, length 28
+2026-11-21 19:48:08.306812 02:5e:00:00:00:01 > bc:24:11:65:45:98, ethertype IPv4 (0x0800), length 98: 10.79.60.115 > 10.79.60.1: ICMP echo request, id 6547, seq 0, length 64
+2026-11-21 19:48:08.307114 bc:24:11:65:45:98 > 02:5e:00:00:00:01, ethertype IPv4 (0x0800), length 98: 10.79.60.1 > 10.79.60.115: ICMP echo reply, id 6547, seq 0, length 64
+2026-11-21 19:48:09.317122 02:5e:00:00:00:01 > bc:24:11:65:45:98, ethertype IPv4 (0x0800), length 98: 10.79.60.115 > 10.79.60.1: ICMP echo request, id 6547, seq 1, length 64
+2026-11-21 19:48:09.317509 bc:24:11:65:45:98 > 02:5e:00:00:00:01, ethertype IPv4 (0x0800), length 98: 10.79.60.1 > 10.79.60.115: ICMP echo reply, id 6547, seq 1, length 64
+2026-11-21 19:48:10.377121 02:5e:00:00:00:01 > bc:24:11:65:45:98, ethertype IPv4 (0x0800), length 98: 10.79.60.115 > 10.79.60.1: ICMP echo request, id 6547, seq 2, length 64
+2026-11-21 19:48:10.377681 bc:24:11:65:45:98 > 02:5e:00:00:00:01, ethertype IPv4 (0x0800), length 98: 10.79.60.1 > 10.79.60.115: ICMP echo reply, id 6547, seq 2, length 64
+2026-11-21 19:48:10.390224 02:17:fb:89:a2:1a > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806), length 42: Request who-has 10.79.60.115 tell 10.79.60.115, length 28
+2026-11-21 19:48:10.404350 02:17:fb:89:a2:1a > bc:24:11:65:45:98, ethertype IPv4 (0x0800), length 98: 10.79.60.115 > 10.79.60.1: ICMP echo request, id 10387, seq 0, length 64
+2026-11-21 19:48:10.404672 bc:24:11:65:45:98 > 02:17:fb:89:a2:1a, ethertype IPv4 (0x0800), length 98: 10.79.60.1 > 10.79.60.115: ICMP echo reply, id 10387, seq 0, length 64
+2026-11-21 19:48:11.473281 02:17:fb:89:a2:1a > bc:24:11:65:45:98, ethertype IPv4 (0x0800), length 98: 10.79.60.115 > 10.79.60.1: ICMP echo request, id 10387, seq 1, length 64
+2026-11-21 19:48:11.473793 bc:24:11:65:45:98 > 02:17:fb:89:a2:1a, ethertype IPv4 (0x0800), length 98: 10.79.60.1 > 10.79.60.115: ICMP echo reply, id 10387, seq 1, length 64
+2026-11-21 19:48:31.515618 02:17:fb:89:a2:1a > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806), length 42: Request who-has 10.79.60.50 tell 10.79.60.50, length 28
+2026-11-21 19:48:31.566243 02:17:fb:89:a2:1a > bc:24:11:65:45:98, ethertype IPv4 (0x0800), length 98: 10.79.60.50 > 10.79.60.1: ICMP echo request, id 23187, seq 0, length 64
+2026-11-21 19:48:31.566711 bc:24:11:65:45:98 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806), length 60: Request who-has 10.79.60.50 tell 10.79.60.1, length 46
+2026-11-21 19:48:31.566782 02:17:fb:89:a2:1a > bc:24:11:65:45:98, ethertype ARP (0x0806), length 42: Reply 10.79.60.50 is-at 02:17:fb:89:a2:1a, length 28
+2026-11-21 19:48:31.567039 bc:24:11:65:45:98 > 02:17:fb:89:a2:1a, ethertype IPv4 (0x0800), length 98: 10.79.60.1 > 10.79.60.50: ICMP echo reply, id 23187, seq 0, length 64
+2026-11-21 19:48:32.632537 02:17:fb:89:a2:1a > bc:24:11:65:45:98, ethertype IPv4 (0x0800), length 98: 10.79.60.50 > 10.79.60.1: ICMP echo request, id 23187, seq 1, length 64
+2026-11-21 19:48:32.633012 bc:24:11:65:45:98 > 02:17:fb:89:a2:1a, ethertype IPv4 (0x0800), length 98: 10.79.60.1 > 10.79.60.50: ICMP echo reply, id 23187, seq 1, length 64
+2026-11-21 19:48:33.704125 02:17:fb:89:a2:1a > bc:24:11:65:45:98, ethertype IPv4 (0x0800), length 98: 10.79.60.50 > 10.79.60.1: ICMP echo request, id 23187, seq 2, length 64
+2026-11-21 19:48:33.704654 bc:24:11:65:45:98 > 02:17:fb:89:a2:1a, ethertype IPv4 (0x0800), length 98: 10.79.60.1 > 10.79.60.50: ICMP echo reply, id 23187, seq 2, length 64
+
+33 packets captured
+33 packets received by filter
+0 packets dropped by kernel
+
+######## file: 20261121T194225Z-hearst-spoofing-05-tests.log
+######## SR-02 tests T1-T5 in skep-d892fa70-5e6a-402a-82f7-d9d0f5d3a623, 2026-11-21T19:46:57Z (tcpdump on vtnet1 started just before; first attempt at 19:43:39Z did not run: 'sh: bash: not found')
++ J=skep-d892fa70-5e6a-402a-82f7-d9d0f5d3a623
++ sleep 4
++ ts 'T1 start: rawping src 10.79.60.50 -> 10.79.60.1'
++ date -u +%Y-%m-%dT%H:%M:%SZ
+=== T1 start: rawping src 10.79.60.50 -> 10.79.60.1 at 2026-11-21T19:47:01Z
++ echo '=== T1 start: rawping src 10.79.60.50 -> 10.79.60.1 at 2026-11-21T19:47:01Z'
++ sudo jexec skep-d892fa70-5e6a-402a-82f7-d9d0f5d3a623 /root/rawping -src 10.79.60.50 -dst 10.79.60.1 -count 3
+19:47:01.961Z seq 0 10.79.60.50 -> 10.79.60.1: sent 37 bytes
+19:47:03.017Z seq 1 10.79.60.50 -> 10.79.60.1: sent 37 bytes
+19:47:04.087Z seq 2 10.79.60.50 -> 10.79.60.1: sent 37 bytes
+exit 0
++ echo 'exit 0'
++ sudo jexec skep-d892fa70-5e6a-402a-82f7-d9d0f5d3a623 arp -an
+? (10.79.60.115) at 02:17:fb:89:a2:1a on skep0 permanent [ethernet]
+? (10.79.60.1) at bc:24:11:65:45:98 on skep0 expires in 1200 seconds [ethernet]
++ ts 'T1 end'
++ date -u +%Y-%m-%dT%H:%M:%SZ
+=== T1 end at 2026-11-21T19:47:04Z
++ echo '=== T1 end at 2026-11-21T19:47:04Z'
++ gap
++ sleep 20
++ ts 'T2 start: rawping src 192.0.2.10 -> 10.79.60.1'
++ date -u +%Y-%m-%dT%H:%M:%SZ
+=== T2 start: rawping src 192.0.2.10 -> 10.79.60.1 at 2026-11-21T19:47:24Z
++ echo '=== T2 start: rawping src 192.0.2.10 -> 10.79.60.1 at 2026-11-21T19:47:24Z'
++ sudo jexec skep-d892fa70-5e6a-402a-82f7-d9d0f5d3a623 /root/rawping -src 192.0.2.10 -dst 10.79.60.1 -count 3
+19:47:24.107Z seq 0 192.0.2.10 -> 10.79.60.1: sent 37 bytes
+19:47:25.111Z seq 1 192.0.2.10 -> 10.79.60.1: sent 37 bytes
+19:47:26.183Z seq 2 192.0.2.10 -> 10.79.60.1: sent 37 bytes
+exit 0
++ echo 'exit 0'
++ ts 'T2 end'
++ date -u +%Y-%m-%dT%H:%M:%SZ
+=== T2 end at 2026-11-21T19:47:26Z
++ echo '=== T2 end at 2026-11-21T19:47:26Z'
++ gap
++ sleep 20
++ ts 'T3 start: rawping src 192.0.2.10 -> 1.1.1.1'
++ date -u +%Y-%m-%dT%H:%M:%SZ
+=== T3 start: rawping src 192.0.2.10 -> 1.1.1.1 at 2026-11-21T19:47:46Z
++ echo '=== T3 start: rawping src 192.0.2.10 -> 1.1.1.1 at 2026-11-21T19:47:46Z'
++ sudo jexec skep-d892fa70-5e6a-402a-82f7-d9d0f5d3a623 /root/rawping -src 192.0.2.10 -dst 1.1.1.1 -count 3
+19:47:46.222Z seq 0 192.0.2.10 -> 1.1.1.1: sent 37 bytes
+19:47:47.233Z seq 1 192.0.2.10 -> 1.1.1.1: sent 37 bytes
+19:47:48.277Z seq 2 192.0.2.10 -> 1.1.1.1: sent 37 bytes
+exit 0
++ echo 'exit 0'
++ ts 'T3 end'
++ date -u +%Y-%m-%dT%H:%M:%SZ
+=== T3 end at 2026-11-21T19:47:48Z
++ echo '=== T3 end at 2026-11-21T19:47:48Z'
++ gap
++ sleep 20
++ ts 'T4 start: MAC change to 02:5e:00:00:00:01'
++ date -u +%Y-%m-%dT%H:%M:%SZ
+=== T4 start: MAC change to 02:5e:00:00:00:01 at 2026-11-21T19:48:08Z
++ echo '=== T4 start: MAC change to 02:5e:00:00:00:01 at 2026-11-21T19:48:08Z'
++ sudo jexec skep-d892fa70-5e6a-402a-82f7-d9d0f5d3a623 ifconfig skep0 ether 02:5e:00:00:00:01
+exit 0
++ echo 'exit 0'
++ sudo jexec skep-d892fa70-5e6a-402a-82f7-d9d0f5d3a623 ifconfig skep0
+skep0: flags=1008843<UP,BROADCAST,RUNNING,SIMPLEX,MULTICAST,LOWER_UP> metric 0 mtu 1500
+	options=60001b<RXCSUM,TXCSUM,VLAN_MTU,VLAN_HWTAGGING,RXCSUM_IPV6,TXCSUM_IPV6>
+	ether 02:5e:00:00:00:01
+	hwaddr 58:9c:fc:10:fd:4c
+	inet 10.79.60.115 netmask 0xffffff00 broadcast 10.79.60.255
+	groups: epair
+	media: Ethernet 10Gbase-T (10Gbase-T <full-duplex>)
+	status: active
+	nd6 options=29<PERFORMNUD,IFDISABLED,AUTO_LINKLOCAL>
++ ts 'T4 ping'
++ date -u +%Y-%m-%dT%H:%M:%SZ
+=== T4 ping at 2026-11-21T19:48:08Z
++ echo '=== T4 ping at 2026-11-21T19:48:08Z'
++ sudo jexec skep-d892fa70-5e6a-402a-82f7-d9d0f5d3a623 ping -c 3 10.79.60.1
+PING 10.79.60.1 (10.79.60.1): 56 data bytes
+64 bytes from 10.79.60.1: icmp_seq=0 ttl=64 time=0.395 ms
+64 bytes from 10.79.60.1: icmp_seq=1 ttl=64 time=0.481 ms
+64 bytes from 10.79.60.1: icmp_seq=2 ttl=64 time=0.676 ms
+
+--- 10.79.60.1 ping statistics ---
+3 packets transmitted, 3 packets received, 0.0% packet loss
+round-trip min/avg/max/stddev = 0.395/0.518/0.676/0.118 ms
+exit 0
++ echo 'exit 0'
++ sudo jexec skep-d892fa70-5e6a-402a-82f7-d9d0f5d3a623 arp -an
+? (10.79.60.115) at 02:5e:00:00:00:01 on skep0 permanent [ethernet]
+? (10.79.60.1) at bc:24:11:65:45:98 on skep0 expires in 1133 seconds [ethernet]
++ ts 'T4 restore MAC 02:17:fb:89:a2:1a'
++ date -u +%Y-%m-%dT%H:%M:%SZ
+=== T4 restore MAC 02:17:fb:89:a2:1a at 2026-11-21T19:48:10Z
++ echo '=== T4 restore MAC 02:17:fb:89:a2:1a at 2026-11-21T19:48:10Z'
++ sudo jexec skep-d892fa70-5e6a-402a-82f7-d9d0f5d3a623 ifconfig skep0 ether 02:17:fb:89:a2:1a
+exit 0
++ echo 'exit 0'
++ sudo jexec skep-d892fa70-5e6a-402a-82f7-d9d0f5d3a623 ifconfig skep0
+skep0: flags=1008843<UP,BROADCAST,RUNNING,SIMPLEX,MULTICAST,LOWER_UP> metric 0 mtu 1500
+	options=60001b<RXCSUM,TXCSUM,VLAN_MTU,VLAN_HWTAGGING,RXCSUM_IPV6,TXCSUM_IPV6>
+	ether 02:17:fb:89:a2:1a
+	hwaddr 58:9c:fc:10:fd:4c
+	inet 10.79.60.115 netmask 0xffffff00 broadcast 10.79.60.255
+	groups: epair
+	media: Ethernet 10Gbase-T (10Gbase-T <full-duplex>)
+	status: active
+	nd6 options=29<PERFORMNUD,IFDISABLED,AUTO_LINKLOCAL>
++ sudo jexec skep-d892fa70-5e6a-402a-82f7-d9d0f5d3a623 ping -c 2 10.79.60.1
+PING 10.79.60.1 (10.79.60.1): 56 data bytes
+64 bytes from 10.79.60.1: icmp_seq=0 ttl=64 time=0.417 ms
+64 bytes from 10.79.60.1: icmp_seq=1 ttl=64 time=0.989 ms
+
+--- 10.79.60.1 ping statistics ---
+2 packets transmitted, 2 packets received, 0.0% packet loss
+round-trip min/avg/max/stddev = 0.417/0.703/0.989/0.286 ms
+exit 0
++ echo 'exit 0'
++ ts 'T4 end'
++ date -u +%Y-%m-%dT%H:%M:%SZ
+=== T4 end at 2026-11-21T19:48:11Z
++ echo '=== T4 end at 2026-11-21T19:48:11Z'
++ gap
++ sleep 20
++ ts 'T5 start: alias 10.79.60.50/32 on skep0'
++ date -u +%Y-%m-%dT%H:%M:%SZ
+=== T5 start: alias 10.79.60.50/32 on skep0 at 2026-11-21T19:48:31Z
++ echo '=== T5 start: alias 10.79.60.50/32 on skep0 at 2026-11-21T19:48:31Z'
++ sudo jexec skep-d892fa70-5e6a-402a-82f7-d9d0f5d3a623 ifconfig skep0 inet 10.79.60.50/32 alias
+exit 0
++ echo 'exit 0'
++ sudo jexec skep-d892fa70-5e6a-402a-82f7-d9d0f5d3a623 ifconfig skep0 inet
+skep0: flags=1008843<UP,BROADCAST,RUNNING,SIMPLEX,MULTICAST,LOWER_UP> metric 0 mtu 1500
+	options=60001b<RXCSUM,TXCSUM,VLAN_MTU,VLAN_HWTAGGING,RXCSUM_IPV6,TXCSUM_IPV6>
+	inet 10.79.60.115 netmask 0xffffff00 broadcast 10.79.60.255
+	inet 10.79.60.50 netmask 0xffffffff broadcast 10.79.60.50
++ ts 'T5 ping -S 10.79.60.50'
++ date -u +%Y-%m-%dT%H:%M:%SZ
+=== T5 ping -S 10.79.60.50 at 2026-11-21T19:48:31Z
++ echo '=== T5 ping -S 10.79.60.50 at 2026-11-21T19:48:31Z'
++ sudo jexec skep-d892fa70-5e6a-402a-82f7-d9d0f5d3a623 ping -c 3 -S 10.79.60.50 10.79.60.1
+PING 10.79.60.1 (10.79.60.1) from 10.79.60.50: 56 data bytes
+64 bytes from 10.79.60.1: icmp_seq=0 ttl=64 time=1.002 ms
+64 bytes from 10.79.60.1: icmp_seq=1 ttl=64 time=0.909 ms
+64 bytes from 10.79.60.1: icmp_seq=2 ttl=64 time=0.900 ms
+
+--- 10.79.60.1 ping statistics ---
+3 packets transmitted, 3 packets received, 0.0% packet loss
+round-trip min/avg/max/stddev = 0.900/0.937/1.002/0.046 ms
+exit 0
++ echo 'exit 0'
++ ts 'T5 remove alias'
++ date -u +%Y-%m-%dT%H:%M:%SZ
+=== T5 remove alias at 2026-11-21T19:48:33Z
++ echo '=== T5 remove alias at 2026-11-21T19:48:33Z'
++ sudo jexec skep-d892fa70-5e6a-402a-82f7-d9d0f5d3a623 ifconfig skep0 inet 10.79.60.50 -alias
+exit 0
++ echo 'exit 0'
++ sudo jexec skep-d892fa70-5e6a-402a-82f7-d9d0f5d3a623 ifconfig skep0 inet
+skep0: flags=1008843<UP,BROADCAST,RUNNING,SIMPLEX,MULTICAST,LOWER_UP> metric 0 mtu 1500
+	options=60001b<RXCSUM,TXCSUM,VLAN_MTU,VLAN_HWTAGGING,RXCSUM_IPV6,TXCSUM_IPV6>
+	inet 10.79.60.115 netmask 0xffffff00 broadcast 10.79.60.255
++ sudo jexec skep-d892fa70-5e6a-402a-82f7-d9d0f5d3a623 netstat -rn -f inet
+Routing tables
+
+Internet:
+Destination        Gateway            Flags         Netif Expire
+default            10.79.60.1         UGS           skep0
+10.79.60.0/24      link#6             U             skep0
+10.79.60.115       link#7             UHS             lo0
+127.0.0.1          link#7             UH              lo0
++ sudo jexec skep-d892fa70-5e6a-402a-82f7-d9d0f5d3a623 arp -an
+? (10.79.60.115) at 02:17:fb:89:a2:1a on skep0 permanent [ethernet]
+? (10.79.60.1) at bc:24:11:65:45:98 on skep0 expires in 1198 seconds [ethernet]
++ ts 'T5 end'
++ date -u +%Y-%m-%dT%H:%M:%SZ
+=== T5 end at 2026-11-21T19:48:33Z
++ echo '=== T5 end at 2026-11-21T19:48:33Z'
+
+######## file: 20261121T194225Z-hearst-spoofing-06-cleanup.log
+######## Cleanup, 2026-11-21T19:50:07Z, as s7admin
++ sudo jexec skep-d892fa70-5e6a-402a-82f7-d9d0f5d3a623 ifconfig skep0
+skep0: flags=1008843<UP,BROADCAST,RUNNING,SIMPLEX,MULTICAST,LOWER_UP> metric 0 mtu 1500
+	options=60001b<RXCSUM,TXCSUM,VLAN_MTU,VLAN_HWTAGGING,RXCSUM_IPV6,TXCSUM_IPV6>
+	ether 02:17:fb:89:a2:1a
+	hwaddr 58:9c:fc:10:fd:4c
+	inet 10.79.60.115 netmask 0xffffff00 broadcast 10.79.60.255
+	groups: epair
+	media: Ethernet 10Gbase-T (10Gbase-T <full-duplex>)
+	status: active
+	nd6 options=29<PERFORMNUD,IFDISABLED,AUTO_LINKLOCAL>
++ sudo jexec skep-d892fa70-5e6a-402a-82f7-d9d0f5d3a623 ifconfig skep0 inet
+skep0: flags=1008843<UP,BROADCAST,RUNNING,SIMPLEX,MULTICAST,LOWER_UP> metric 0 mtu 1500
+	options=60001b<RXCSUM,TXCSUM,VLAN_MTU,VLAN_HWTAGGING,RXCSUM_IPV6,TXCSUM_IPV6>
+	inet 10.79.60.115 netmask 0xffffff00 broadcast 10.79.60.255
+login s7admin: HTTP 200
+HTTP 200
+before delete: state running | nics [('02:17:fb:89:a2:1a', 'epair0a')] | detail None
+HTTP 409
+HTTP 200
+(404 expected)
+HTTP 200
+containers: ['icmptest-1929']
+logout s7admin: HTTP 204
++ jls
+   JID  IP Address      Hostname                      Path
+    49                  icmptest-1929                 /skeptest/skep/jail/d892fa70-5e6a-402a-82f7-d9d0f5d3a623
++ ifconfig -g epair
+epair0a
++ ifconfig bridge0
++ grep member
+	member: epair0a flags=143<LEARNING,DISCOVER,AUTOEDGE,AUTOPTP>
+	member: vtnet1 flags=143<LEARNING,DISCOVER,AUTOEDGE,AUTOPTP>
++ zfs list -H -o name -r skeptest/skep/jail
+skeptest/skep/jail
+skeptest/skep/jail/d892fa70-5e6a-402a-82f7-d9d0f5d3a623
++ sudo ls -la /var/run/skep/jails/
+total 24
+drwx------  3 root skep 512 Nov 21 14:29 .
+drwxr-x---  4 root skep 512 Nov 21 13:50 ..
+drwx------  2 root skep 512 Nov 21 14:29 d892fa70-5e6a-402a-82f7-d9d0f5d3a623
++ sudo rctl
++ mount -t devfs
+devfs on /dev (devfs)
+devfs on /skeptest/skep/jail/d892fa70-5e6a-402a-82f7-d9d0f5d3a623/dev (devfs)
++ sudo sha256 /usr/local/etc/skep/agent.json
+SHA256 (/usr/local/etc/skep/agent.json) = 490bc08738a2dd835952e19c4f59e869857fd15a1a6ce8e8c0b9df1d1f3cb134
++ ls -la /tmp
++ grep -i sr02
+no sr02 files in /tmp
++ echo 'no sr02 files in /tmp'
+
+######## file: 20261121T194225Z-hearst-spoofing-07-cleanup-repeat.log
+######## Cleanup (repeat), 2026-11-21T19:52:28Z, as s7admin. The first DELETE returned 409; its body was overwritten before it was printed (script mistake), so the DELETE is shown again first.
+login s7admin: HTTP 200
+HTTP 409
+{'error': {'code': 'container_not_stopped', 'message': 'the jail is running; stop it first', 'request_id': '7f843522fda48887d06b7cb7', 'details': {'container_id': 'd892fa70-5e6a-402a-82f7-d9d0f5d3a623'}}}
+HTTP 202
+stop task 01913df9-ed49-4656-a297-86de1916b8aa
+task 01913df9-ed49-4656-a297-86de1916b8aa (container.stop): succeeded 
+HTTP 200
+state stopped | detail None
+HTTP 202
+delete task af4b19b6-dd78-4c50-9950-9448f69ec3be
+task af4b19b6-dd78-4c50-9950-9448f69ec3be (container.delete): succeeded 
+HTTP 404
+not_found
+(404 expected)
+HTTP 200
+containers: []
+logout s7admin: HTTP 204
++ jls
+   JID  IP Address      Hostname                      Path
++ ifconfig -l
+vtnet0 vtnet1 lo0 bridge0
++ ifconfig -g epair
++ ifconfig bridge0
++ grep member
+	member: vtnet1 flags=143<LEARNING,DISCOVER,AUTOEDGE,AUTOPTP>
++ zfs list -H -o name -r skeptest/skep/jail
+skeptest/skep/jail
++ sudo ls -la /var/run/skep/jails/
+total 16
+drwx------  2 root skep 512 Nov 21 14:52 .
+drwxr-x---  4 root skep 512 Nov 21 13:50 ..
++ sudo rctl
++ mount -t devfs
+devfs on /dev (devfs)
++ sudo sha256 /usr/local/etc/skep/agent.json
+SHA256 (/usr/local/etc/skep/agent.json) = 490bc08738a2dd835952e19c4f59e869857fd15a1a6ce8e8c0b9df1d1f3cb134
++ df -h /
+Filesystem     Size    Used   Avail Capacity  Mounted on
+/dev/da0s1a    120G     19G     91G    17%    /
+

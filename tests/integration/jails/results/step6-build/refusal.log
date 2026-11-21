@@ -1,0 +1,16 @@
+=== RUN   TestIntegrationRefusal
+    integration_freebsd_test.go:142: template ID 574e7f38-5fc6-4c3c-b7ea-af18ecbb49b7
+    integration_freebsd_test.go:55: [   0.0s] checking the templates directory
+    integration_freebsd_test.go:55: [   0.0s] recording the host files
+    integration_freebsd_test.go:55: [   0.4s] creating the template dataset
+    integration_freebsd_test.go:55: [   0.4s] installing the base packages (scripts and triggers off)
+    integration_freebsd_test.go:151: appended a line to /skeptest/step6/templates/574e7f38-5fc6-4c3c-b7ea-af18ecbb49b7/usr/share/pkg/triggers/mandoc.ucl
+    integration_freebsd_test.go:55: [  31.3s] checking the package scripts against the allowlist
+    integration_freebsd_test.go:55: [  31.7s] checking the trigger files against the allowlist
+    integration_freebsd_test.go:162: refused: template_script_unknown: the trigger file usr/share/pkg/triggers/mandoc.ucl is not on Skep's allowlist for 15.1
+    integration_freebsd_test.go:163: details: path=usr/share/pkg/triggers/mandoc.ucl sha256=f5886048f251c7be7da0dd2e277acdf5fdcdedde16aeed8f08a6af9881a77151
+    integration_freebsd_test.go:166: text (544 bytes, last line): "-- changed by TestIntegrationRefusal"
+    integration_freebsd_test.go:168: jls name: ""
+    integration_freebsd_test.go:174: zfs list skeptest/step6/templates/574e7f38-5fc6-4c3c-b7ea-af18ecbb49b7: cannot open 'skeptest/step6/templates/574e7f38-5fc6-4c3c-b7ea-af18ecbb49b7': dataset does not exist
+--- PASS: TestIntegrationRefusal (32.17s)
+PASS

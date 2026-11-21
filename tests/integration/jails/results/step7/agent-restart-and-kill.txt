@@ -1,0 +1,25 @@
+== before
+14 skep-d1db6333-9b51-4dff-ac39-e469d8578b0f
+17 skep-66ed9df5-f45c-40a7-b020-0e9f567f9023
+== service skep_agent restart
+Stopping skep_agent.
+Waiting for PIDS: 52832.
+Starting skep_agent.
+14 skep-d1db6333-9b51-4dff-ac39-e469d8578b0f
+17 skep-66ed9df5-f45c-40a7-b020-0e9f567f9023
+Nov 16 21:22:17 hearst skep-agent[55164]: {"time":"2026-11-16T21:22:17.013905129-05:00","level":"INFO","msg":"templates: build jail sweep finished","event":"build_jail_sweep","found":0,"removed":0,"fa
+Nov 16 21:22:17 hearst skep-agent[55164]: {"time":"2026-11-16T21:22:17.018097549-05:00","level":"INFO","msg":"containers: observed the jails","containers":3,"running":2}
+Nov 16 21:22:17 hearst skep-agent[55164]: {"time":"2026-11-16T21:22:17.021625401-05:00","level":"INFO","msg":"internal API listening","socket":"/var/run/skep/agent.sock","base_path":"/internal/v1","mo
+== kill -9 of the agent (the child of daemon(8))
+agent pid 55165
+14 skep-d1db6333-9b51-4dff-ac39-e469d8578b0f
+17 skep-66ed9df5-f45c-40a7-b020-0e9f567f9023
+waiting for daemon(8) to restart it
+new agent pid 55197
+14 skep-d1db6333-9b51-4dff-ac39-e469d8578b0f
+17 skep-66ed9df5-f45c-40a7-b020-0e9f567f9023
+Nov 16 21:22:26 hearst skep-agent[55164]: {"time":"2026-11-16T21:22:26.037400828-05:00","level":"INFO","msg":"containers: observed the jails","containers":3,"running":2}
+Nov 16 21:22:26 hearst skep-agent[55164]: {"time":"2026-11-16T21:22:26.040544332-05:00","level":"INFO","msg":"internal API listening","socket":"/var/run/skep/agent.sock","base_path":"/internal/v1","mo
+j1 running 14 running 
+j2 stopped None stopped 
+j3 running 17 running 

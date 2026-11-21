@@ -1,0 +1,23 @@
+# Access log entries (GET /api/v1/audit as s7admin) for the requests in permissions-requests.txt
+s7viewer POST /containers 403 -> #310 authz.deny denied {"method": "POST", "permission": "container:write", "role": "viewer", "route": "/api/v1/containers"}
+s7viewer PUT /containers/66ed9df5-f45c-40a7-b020-0e9f567f9023 403 -> #311 authz.deny denied {"method": "PUT", "permission": "container:write", "role": "viewer", "route": "/api/v1/containers/{id}"}
+s7viewer DELETE /containers/66ed9df5-f45c-40a7-b020-0e9f567f9023 403 -> #312 authz.deny denied {"method": "DELETE", "permission": "container:delete", "role": "viewer", "route": "/api/v1/containers/{id}"}
+s7viewer POST /containers/66ed9df5-f45c-40a7-b020-0e9f567f9023/actions 403 -> #313 authz.deny denied {"method": "POST", "permission": "container:power", "role": "viewer", "route": "/api/v1/containers/{id}/actions"}
+s7viewer POST /storage/templates 403 -> #314 authz.deny denied {"method": "POST", "permission": "storage:write", "role": "viewer", "route": "/api/v1/storage/templates"}
+s7oper POST /storage/templates 403 -> #315 authz.deny denied {"method": "POST", "permission": "storage:write", "role": "operator", "route": "/api/v1/storage/templates"}
+s7oper DELETE /storage/templates/f496866f-32ba-4527-bcee-5a717a2f74c0 403 -> #316 authz.deny denied {"method": "DELETE", "permission": "storage:write", "role": "operator", "route": "/api/v1/storage/templates/{id}"}
+# The operator's container writes, newest first
+#309 container.restart success 66ed9df5-f45c-40a7-b020-0e9f567f9023 {"task_id": "4215e512-3513-4cde-89f5-dbbb912dccf7"}
+#308 container.update success d3a83eb1-ec83-4f51-95f9-5cc64eb7c619 {"task_id": "fc79fe2f-fb9f-4af0-b8a6-fba3b58c6d97"}
+#307 container.update denied d3a83eb1-ec83-4f51-95f9-5cc64eb7c619 {"error_code": "container_started"}
+#306 container.update denied d3a83eb1-ec83-4f51-95f9-5cc64eb7c619 {"error_code": "container_started"}
+#305 container.stop success d3a83eb1-ec83-4f51-95f9-5cc64eb7c619 {"task_id": "60542494-1ed5-4157-8d22-6af57c13a59e"}
+#304 container.update denied d3a83eb1-ec83-4f51-95f9-5cc64eb7c619 {"error_code": "container_not_stopped"}
+#303 container.update denied d3a83eb1-ec83-4f51-95f9-5cc64eb7c619 {"error_code": "container_started"}
+#302 container.start success 66ed9df5-f45c-40a7-b020-0e9f567f9023 {"task_id": "4ab04cdb-e28c-432d-868c-db686ce2c1cd"}
+#301 container.start success d3a83eb1-ec83-4f51-95f9-5cc64eb7c619 {"task_id": "acc784f1-9016-4d31-aa4b-a07fec863371"}
+#300 container.create success 66ed9df5-f45c-40a7-b020-0e9f567f9023 {"task_id": "2fdf63a3-faa8-4d88-9dfa-5b6e5bc01b9f"}
+#299 container.create success d3a83eb1-ec83-4f51-95f9-5cc64eb7c619 {"task_id": "3315c203-052c-49f6-97cb-86bde014dbae"}
+#298 container.create denied  {"error_code": "container_ssh_unavailable"}
+#297 container.start success d1db6333-9b51-4dff-ac39-e469d8578b0f {"task_id": "8ba713bf-b766-4735-aff7-c2c92162eb07"}
+#296 container.create success d1db6333-9b51-4dff-ac39-e469d8578b0f {"task_id": "19ad6e8d-1bb0-4a15-924a-50c6c83f2d04"}

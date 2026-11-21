@@ -1,0 +1,15 @@
+== the key Skep installed
+uid=0(root) gid=0(wheel) groups=0(wheel),5(operator)
+j2
+login-ok
+exit 0
+== another key
+root@127.0.0.1: Permission denied (publickey,keyboard-interactive).
+exit 255
+== no key (password not offered in batch mode; root password login is not permitted)
+root@127.0.0.1: Permission denied (publickey,keyboard-interactive).
+exit 255
+.ICE-unix
+.X11-unix
+.XIM-unix
+.font-unix

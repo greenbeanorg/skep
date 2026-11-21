@@ -1,12 +1,15 @@
 // Package monitoring samples the node's current resource use (ADR 0010
 // decision 15): the space of every allow-listed pool, the disk use of
 // every VM, and the CPU time and resident memory of each running VM's
-// bhyve process. It keeps the latest sample only; there is no history.
+// bhyve process, and for each jail the space of its root and, while it
+// runs on a host with RACCT, its CPU, memory, process, and file-table
+// use from rctl -u. It keeps the latest sample only; there is no history.
 // The sample also feeds two health checks, storage_capacity and
 // storage_locked.
 //
 // Sampling only reads: zpool and zfs listings, statfs of directory pools,
-// and ps(1) of bhyve processes, all through internal/hostops.
+// ps(1) of bhyve processes, jls(8), and rctl -u, all through
+// internal/hostops.
 package monitoring
 
 import (
@@ -40,11 +43,18 @@ type VMLister interface {
 	VMs(ctx context.Context, opts models.VMListOptions) (models.VMList, error)
 }
 
+// ContainerLister pages through the containers the agent knows.
+type ContainerLister interface {
+	Containers(ctx context.Context, opts models.ContainerListOptions) (models.ContainerList, error)
+}
+
 // Options configures a Sampler.
 type Options struct {
 	NodeID string
 	Host   hostops.Ops
 	VMs    VMLister
+	// Containers lists the jails; nil leaves them out of the sample.
+	Containers ContainerLister
 	// WarnPercent and FailPercent are storage.capacity_warn_percent and
 	// storage.capacity_fail_percent; zero means the default.
 	WarnPercent int
@@ -61,6 +71,7 @@ type Sampler struct {
 	nodeID     string
 	host       hostops.Ops
 	vms        VMLister
+	containers ContainerLister
 	warn, fail int
 	maxAge     time.Duration
 	log        *slog.Logger
@@ -96,7 +107,7 @@ func New(opts Options) (*Sampler, error) {
 		opts.Now = time.Now
 	}
 	return &Sampler{
-		nodeID: opts.NodeID, host: opts.Host, vms: opts.VMs, warn: opts.WarnPercent, fail: opts.FailPercent,
+		nodeID: opts.NodeID, host: opts.Host, vms: opts.VMs, containers: opts.Containers, warn: opts.WarnPercent, fail: opts.FailPercent,
 		maxAge: opts.MaxAge, log: opts.Logger, now: opts.Now,
 	}, nil
 }
@@ -150,7 +161,7 @@ func (s *Sampler) Sample(ctx context.Context) (models.Metrics, error) {
 	m := models.Metrics{
 		NodeID: s.nodeID, ObservedAt: s.now().UTC(),
 		CapacityWarnPercent: s.warn, CapacityFailPercent: s.fail,
-		Pools: []models.PoolMetrics{}, VMs: []models.VMMetrics{},
+		Pools: []models.PoolMetrics{}, VMs: []models.VMMetrics{}, Containers: []models.ContainerMetrics{},
 	}
 	pools, err := s.host.Disks().Pools(ctx)
 	if err != nil {
@@ -184,6 +195,24 @@ func (s *Sampler) Sample(ctx context.Context) (models.Metrics, error) {
 	}
 	for _, vm := range vms {
 		m.VMs = append(m.VMs, s.vmMetrics(ctx, vm, inventory))
+	}
+
+	if s.containers != nil {
+		cs, err := s.allContainers(ctx)
+		if err != nil {
+			return models.Metrics{}, fmt.Errorf("monitoring: list containers: %w", err)
+		}
+		racct := false
+		if len(cs) > 0 && s.host.Jails != nil {
+			info, err := s.host.Jails.RctlInfo(ctx)
+			if err != nil {
+				s.log.Warn("monitoring: could not read whether RACCT is enabled", "error", err)
+			}
+			racct = err == nil && info.Enabled
+		}
+		for _, c := range cs {
+			m.Containers = append(m.Containers, s.containerMetrics(ctx, c, racct, inventory))
+		}
 	}
 
 	s.mu.Lock()
@@ -244,6 +273,59 @@ func CapacityPercent(p hostops.Pool) float64 {
 	}
 	pct := float64(used) * 100 / float64(total)
 	return float64(int64(pct*10+0.5)) / 10
+}
+
+func (s *Sampler) allContainers(ctx context.Context) ([]models.Container, error) {
+	var out []models.Container
+	opts := models.ContainerListOptions{Limit: 200}
+	for {
+		page, err := s.containers.Containers(ctx, opts)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, page.Items...)
+		if page.NextCursor == "" {
+			return out, nil
+		}
+		opts.Cursor = page.NextCursor
+	}
+}
+
+// containerMetrics reads one jail's RACCT figures (running, with RACCT
+// on) and the space of its root dataset. Nothing here changes the host.
+func (s *Sampler) containerMetrics(ctx context.Context, c models.Container, racct bool, inventory map[string][]hostops.Dataset) models.ContainerMetrics {
+	cm := models.ContainerMetrics{ID: c.ID, Name: c.Name, State: c.State}
+	var problems []string
+	if racct && c.State == models.ContainerRunning {
+		u, err := s.host.Jails.JailUsage(ctx, c.ID)
+		switch {
+		case err == nil:
+			cpu, secs := u.CPUPercent, u.CPUTime.Seconds()
+			rss, procs, slots := u.ResidentBytes, u.Processes, u.OpenFiles
+			cm.CPUPercent, cm.CPUTimeSeconds, cm.ResidentMemoryBytes = &cpu, &secs, &rss
+			cm.Processes, cm.OpenFileSlots = &procs, &slots
+		case errors.Is(err, models.ErrNotFound):
+			// It stopped since the watcher looked.
+		default:
+			s.log.Warn("monitoring: could not read a jail's usage", "container_id", c.ID, "error", err)
+			problems = append(problems, "its RACCT usage could not be read")
+		}
+	}
+	if list, ok := inventory[c.Pool]; !ok {
+		problems = append(problems, "the datasets of "+c.Pool+" are not available")
+	} else if root, err := s.host.Conf.OwnerDataset(c.Pool, hostops.Owner{Kind: hostops.OwnerContainer, ID: c.ID}); err != nil {
+		s.log.Warn("monitoring: could not name a jail's root", "container_id", c.ID, "error", err)
+		problems = append(problems, "its root dataset could not be named")
+	} else {
+		for _, ds := range list {
+			if ds.Name == root && !ds.IsSnapshot() && ds.ContainerID == c.ID {
+				cm.DiskUsedBytes, cm.DiskReferencedBytes = ds.UsedBytes, ds.ReferencedBytes
+				break
+			}
+		}
+	}
+	cm.Error = strings.Join(problems, "; ")
+	return cm
 }
 
 // vmMetrics reads one VM's process and disk use.

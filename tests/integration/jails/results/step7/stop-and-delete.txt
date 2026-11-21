@@ -1,0 +1,31 @@
+== while running: devfs mounts under the jail roots
+devfs			/skeptest/skep/jail/d1db6333-9b51-4dff-ac39-e469d8578b0f/dev devfs	rw		0 0
+devfs			/skeptest/skep/jail/66ed9df5-f45c-40a7-b020-0e9f567f9023/dev devfs	rw		0 0
+vtnet0 vtnet1 lo0 bridge0
+container.stop succeeded  
+container.stop succeeded  
+== after stop: jls
+== after stop: devfs mounts under the jail roots
+none
+== interfaces (before the jails: vtnet0 vtnet1 lo0 bridge0)
+vtnet0 vtnet1 lo0 bridge0
+== the jail runtime directories
+total 24
+drwx------  2 root skep 512 Nov 16 21:22 66ed9df5-f45c-40a7-b020-0e9f567f9023
+drwx------  2 root skep 512 Nov 16 21:22 d1db6333-9b51-4dff-ac39-e469d8578b0f
+drwx------  2 root skep 512 Nov 16 21:20 d3a83eb1-ec83-4f51-95f9-5cc64eb7c619
+Stopping cron.
+Waiting for PIDS: 53456.
+.
+Terminated
+== datasets under skeptest/skep/jail
+skeptest/skep/jail
+== clones of the templates
+skeptest/skep/templates/dbf4243a-81fe-4914-8f7a-fd0a768476aa@skep-base	-
+skeptest/skep/templates/f496866f-32ba-4527-bcee-5a717a2f74c0@skep-base	-
+== jail runtime directories
+(empty above means none)
+== jls
+   JID  IP Address      Hostname                      Path
+== interfaces
+vtnet0 vtnet1 lo0 bridge0

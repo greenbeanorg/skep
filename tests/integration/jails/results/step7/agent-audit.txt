@@ -1,0 +1,34 @@
+# sudo sqlite3 -readonly /var/db/skep/agent/agent.db: audit_log entries container.* (not templates), id|action|outcome|actor|resource|details (cut at 170 characters)
+532|container.create|success|s7oper|d1db6333|
+533|container.create|success|s7oper|d1db6333|{"container_id":"d1db6333-9b51-4dff-ac39-e469d8578b0f","container_name":"j1","dataset":"skeptest/skep/jail/d1db6333-9b51-4dff-ac39-e469d8578b0f","origin":"skeptest/skep/t
+534|container.start|success|s7oper|d1db6333|
+535|container.start|success|s7oper|d1db6333|
+536|container.create|denied|s7oper||{"error":"the template minimal-151 has no sshd, so an SSH key cannot be used; build a template with FreeBSD-ssh in storage.template_packages","error_code":"container_ssh_
+537|container.create|success|s7oper|d3a83eb1|
+538|container.create|success|s7oper|d3a83eb1|{"container_id":"d3a83eb1-ec83-4f51-95f9-5cc64eb7c619","container_name":"j2","dataset":"skeptest/skep/jail/d3a83eb1-ec83-4f51-95f9-5cc64eb7c619","origin":"skeptest/skep/t
+539|container.create|success|s7oper|66ed9df5|
+540|container.create|success|s7oper|66ed9df5|{"container_id":"66ed9df5-f45c-40a7-b020-0e9f567f9023","container_name":"j3","dataset":"skeptest/skep/jail/66ed9df5-f45c-40a7-b020-0e9f567f9023","origin":"skeptest/skep/t
+541|container.start|success|s7oper|d3a83eb1|
+542|container.start|success|s7oper|d3a83eb1|
+543|container.start|success|s7oper|66ed9df5|
+544|container.start|success|s7oper|66ed9df5|
+545|container.update|denied|s7oper|d3a83eb1|{"error":"the jail has started at least once, so Skep no longer writes into its tree (an SSH key change is the jail's own business now)","error_code":"container_started"}
+546|container.update|denied|s7oper|d3a83eb1|{"error":"the jail is running; stop it first","error_code":"container_not_stopped"}
+547|container.stop|success|s7oper|d3a83eb1|
+548|container.stop|success|s7oper|d3a83eb1|
+549|container.update|denied|s7oper|d3a83eb1|{"error":"the jail has started at least once, so Skep no longer writes into its tree (an SSH key change is the jail's own business now)","error_code":"container_started"}
+550|container.update|denied|s7oper|d3a83eb1|{"error":"the jail has started at least once, so Skep no longer writes into its tree (an SSH key change is the jail's own business now)","error_code":"container_started"}
+551|container.update|success|s7oper|d3a83eb1|
+552|container.update|success|s7oper|d3a83eb1|
+553|container.restart|success|s7oper|66ed9df5|
+554|container.restart|success|s7oper|66ed9df5|
+563|container.stop|success|s7oper|d1db6333|
+564|container.stop|success|s7oper|d1db6333|
+565|container.stop|success|s7oper|66ed9df5|
+566|container.stop|success|s7oper|66ed9df5|
+567|container.delete|success|s7oper|d1db6333|
+568|container.delete|success|s7oper|d1db6333|{"container_id":"d1db6333-9b51-4dff-ac39-e469d8578b0f","container_name":"j1","datasets_destroyed":[{"name":"skeptest/skep/jail/d1db6333-9b51-4dff-ac39-e469d8578b0f","type
+569|container.delete|success|s7oper|d3a83eb1|
+570|container.delete|success|s7oper|d3a83eb1|{"container_id":"d3a83eb1-ec83-4f51-95f9-5cc64eb7c619","container_name":"j2","datasets_destroyed":[{"name":"skeptest/skep/jail/d3a83eb1-ec83-4f51-95f9-5cc64eb7c619","type
+571|container.delete|success|s7oper|66ed9df5|
+572|container.delete|success|s7oper|66ed9df5|{"container_id":"66ed9df5-f45c-40a7-b020-0e9f567f9023","container_name":"j3","datasets_destroyed":[{"name":"skeptest/skep/jail/66ed9df5-f45c-40a7-b020-0e9f567f9023","type

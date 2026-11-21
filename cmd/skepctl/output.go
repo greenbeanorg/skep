@@ -7,6 +7,7 @@ import (
 	"strings"
 	"text/tabwriter"
 	"time"
+	"unicode"
 
 	"github.com/greenbeanorg/skep/pkg/models"
 )
@@ -52,11 +53,17 @@ func dash(s string) string {
 }
 
 // clean keeps a value from the server on one table cell: control
-// characters, which could also move the terminal's cursor, become spaces.
+// characters, which could also move the terminal's cursor, become spaces,
+// and format characters (category Cf, among them the bidirectional
+// overrides that can make a cell display in another order) are removed
+// (ADR 0010 amendment r).
 func clean(s string) string {
 	return strings.Map(func(r rune) rune {
 		if r < 0x20 || r == 0x7f || (r >= 0x80 && r < 0xa0) {
 			return ' '
+		}
+		if unicode.Is(unicode.Cf, r) {
+			return -1
 		}
 		return r
 	}, s)

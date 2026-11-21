@@ -51,6 +51,41 @@ var StatusForCode = map[string]int{
 	models.CodeSnapshotIncomplete:        http.StatusConflict,
 	models.CodeStorageLocked:             http.StatusConflict,
 	models.CodeStorageFeatureUnsupported: http.StatusUnprocessableEntity,
+
+	// Jail templates (ADR 0010 decision 7, step 6). Most of these end a
+	// build task; the statuses apply when a request is refused with one.
+	models.CodeReleaseUnsupported:      http.StatusUnprocessableEntity,
+	models.CodeJailParentInsecure:      http.StatusConflict,
+	models.CodeTemplateScriptUnknown:   http.StatusUnprocessableEntity,
+	models.CodeTemplateTriggerLeft:     http.StatusInternalServerError,
+	models.CodeTemplateHostChanged:     http.StatusInternalServerError,
+	models.CodeTemplateBuildFailed:     http.StatusInternalServerError,
+	models.CodeTemplateNameTaken:       http.StatusConflict,
+	models.CodeTemplateNotProvisioned:  http.StatusConflict,
+	models.CodeTemplateArchiveMismatch: http.StatusUnprocessableEntity,
+
+	// Jails (ADR 0010 decisions 8, 9, 12, and 13).
+	models.CodeContainerNameTaken:       http.StatusConflict,
+	models.CodeContainerNotStopped:      http.StatusConflict,
+	models.CodeContainerNotRunning:      http.StatusConflict,
+	models.CodeContainerNotProvisioned:  http.StatusConflict,
+	models.CodeContainerStarted:         http.StatusConflict,
+	models.CodeContainerStartFailed:     http.StatusConflict,
+	models.CodeContainerSSHUnavailable:  http.StatusUnprocessableEntity,
+	models.CodeMlockRequiresMemoryLimit: http.StatusUnprocessableEntity,
+	models.CodeEpairUnavailable:         http.StatusConflict,
+	models.CodeRctlUnavailable:          http.StatusConflict,
+	models.CodeDevfsRulesetConflict:     http.StatusConflict,
+	models.CodeCloneAddressingRequired:  http.StatusUnprocessableEntity,
+	models.CodeContainerAddressInUse:    http.StatusConflict,
+	models.CodeContainerMACInvalid:      http.StatusUnprocessableEntity,
+	models.CodeContainerMACInUse:        http.StatusConflict,
+	models.CodeContainerQuarantined:     http.StatusConflict,
+	models.CodeContainerRemoveFailed:    http.StatusConflict,
+
+	models.CodeContainerLockedMemoryAboveMax:  http.StatusUnprocessableEntity,
+	models.CodeContainerLockedMemoryExhausted: http.StatusConflict,
+	models.CodeContainerDiskQuotaBelowUsage:   http.StatusUnprocessableEntity,
 }
 
 // Fail maps a service error to an error response. Internal error text is

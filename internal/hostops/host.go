@@ -51,17 +51,32 @@ type host struct {
 	self  string
 	log   *slog.Logger
 
+	// hostFileRoots replaces HostFileRoots in tests.
+	hostFileRoots []string
+
 	// ignoredMedia remembers which entries of the media directory were
 	// already logged as ignored.
 	mediaMu      sync.Mutex
 	ignoredMedia map[string]bool
+
+	// epairMu serialises epair creation, so the epairs a failed
+	// "ifconfig epair create" left can be told from another start's.
+	epairMu sync.Mutex
+
+	// listDev lists a jail's /dev for the guard (amendment i); tests
+	// replace it.
+	listDev func(root string) ([]string, error)
+
+	// mounts reads the mount table and unmounts a leftover devfs by its
+	// fsid (amendment l); tests replace it.
+	mounts mountTable
 }
 
 func newHost(conf Confinement, run Runner, sys system, log *slog.Logger) *host {
 	if log == nil {
 		log = slog.Default()
 	}
-	return &host{conf: conf, run: run, sys: sys, log: log, ignoredMedia: map[string]bool{}}
+	return &host{conf: conf, run: run, sys: sys, log: log, ignoredMedia: map[string]bool{}, listDev: listJailDev, mounts: kernelMounts{}}
 }
 
 // NewFiles returns the Files implementation alone. It is plain file I/O

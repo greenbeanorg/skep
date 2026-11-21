@@ -15,6 +15,10 @@ const (
 	// CheckStorageLocked fails when a dataset Skep uses has its
 	// encryption key unloaded.
 	CheckStorageLocked = "storage_locked"
+	// CheckOrphanedInterfaces warns while an interface with a skep:
+	// description (a jail's epair or a VM's tap) exists whose owner is not
+	// running (ADR 0010 decision 10).
+	CheckOrphanedInterfaces = "orphaned_interfaces"
 )
 
 // Capacity states of a pool in the metrics.
@@ -36,6 +40,40 @@ type Metrics struct {
 	CapacityFailPercent int           `json:"capacity_fail_percent"`
 	Pools               []PoolMetrics `json:"pools"`
 	VMs                 []VMMetrics   `json:"vms"`
+	// Containers are the jails, with RACCT figures for the running
+	// ones.
+	Containers []ContainerMetrics `json:"containers"`
+}
+
+// ContainerMetrics is one jail's current use. The usage fields come from
+// RACCT (rctl -u) and are present only while the jail runs on a host with
+// RACCT enabled; the disk fields come from ZFS and are always present.
+type ContainerMetrics struct {
+	ID    string `json:"id"`
+	Name  string `json:"name"`
+	State string `json:"state"`
+	// CPUPercent is RACCT's pcpu, a recent average where 100 is one busy
+	// CPU; approximate, like the pcpu limit.
+	CPUPercent *int `json:"cpu_percent,omitempty"`
+	// CPUTimeSeconds is the CPU time of the jail's processes, in whole
+	// seconds.
+	CPUTimeSeconds *float64 `json:"cpu_time_seconds,omitempty"`
+	// ResidentMemoryBytes is RACCT's memoryuse.
+	ResidentMemoryBytes *int64 `json:"resident_memory_bytes,omitempty"`
+	// Processes is the number of processes in the jail.
+	Processes *int `json:"processes,omitempty"`
+	// OpenFileSlots is RACCT's openfiles: the descriptor-table slots of
+	// the jail's processes, the figure the open_files limit applies to.
+	// It is not the number of open files.
+	OpenFileSlots *int `json:"open_file_slots,omitempty"`
+	// DiskUsedBytes is the space the jail root holds, its snapshots
+	// included; DiskReferencedBytes is what the root refers to, the
+	// blocks it shares with its template included (what disk_quota
+	// applies to).
+	DiskUsedBytes       int64 `json:"disk_used_bytes"`
+	DiskReferencedBytes int64 `json:"disk_referenced_bytes"`
+	// Error says what could not be read.
+	Error string `json:"error,omitempty"`
 }
 
 // PoolMetrics is the space of one allow-listed pool.

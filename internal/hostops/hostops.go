@@ -39,6 +39,11 @@ type Ops struct {
 	VMM   VMM
 	Files Files
 	Procs Procs
+	// Templates builds jail templates (ADR 0010 decision 7).
+	Templates Templates
+	// Jails creates, runs, and destroys jails (ADR 0010 decisions 8, 9,
+	// and 13).
+	Jails Jails
 }
 
 // ZFS creates, lists, and destroys the datasets of VMs inside the
@@ -140,8 +145,10 @@ type Dataset struct {
 	VolSizeBytes    int64
 	UsedBytes       int64
 	ReferencedBytes int64
-	// RefReservationBytes is zero for a thin volume.
+	// RefReservationBytes is zero for a thin volume. RefQuotaBytes is a
+	// filesystem's refquota, zero when none (a jail's disk quota).
 	RefReservationBytes int64
+	RefQuotaBytes       int64
 	VolMode             string
 	VolBlockSize        int
 	// CreateTxg is the transaction group that created the dataset or

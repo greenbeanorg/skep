@@ -61,12 +61,7 @@ export const NAV: NavGroup[] = [
     label: "Workloads",
     items: [
       { path: "/vms", label: "Virtual machines", icon: VmIcon, permission: PERMISSIONS.vmRead },
-      {
-        path: "/containers",
-        label: "Containers",
-        icon: ContainerIcon,
-        planned: { summary: "FreeBSD jails: lifecycle, templates, resource limits.", milestone: "Milestone 7" },
-      },
+      { path: "/containers", label: "Containers", icon: ContainerIcon, permission: PERMISSIONS.containerRead },
     ],
   },
   {

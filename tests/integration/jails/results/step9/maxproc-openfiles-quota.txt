@@ -1,0 +1,27 @@
+# maxproc 40, openfiles 256, refquota 512M in the jail s9lim, 2026-11-17T20:18:47Z
+-- maxproc: start 60 background sleeps
+maxproc=39
+-- openfiles: tail -f on 300 files in one process
+/bin/sh: Cannot fork: Resource temporarily unavailable
+-- refquota: write 700 MiB of random data (compression cannot shrink it)
+/bin/sh: Cannot fork: Resource temporarily unavailable
+refquota	536870912
+referenced	81477120
+used	249344
+referenced	81477120
+
+# The 60 sleeps hit maxproc (39 processes, then "Cannot fork"), and the checks after them could not fork. Rerun after the sleeps exited:
+maxproc=1
+-- openfiles: tail -f on 300 files in one process
+open files of tail: 0
+kill: 6602: No such process
+errors: 241
+tail: f1: Too many open files
+-- refquota: write 700 MiB of random data (compression cannot shrink it)
+434+1 records out
+455213056 bytes transferred in 2.808890 secs (162061564 bytes/sec)
+file bytes: 455213056
+refquota	536870912
+referenced	536979968
+-- after rm
+referenced	81477120

@@ -306,6 +306,62 @@ Phase 7a ([ADR 0010](../decisions/0010-storage-and-jails.md)):
   serves it, and the `storage_capacity` and `storage_locked` health probes
   read it, so a health request never runs a ZFS command.
 
+## Jail templates
+
+Phase 7b, step 6 ([ADR 0010](../decisions/0010-storage-and-jails.md),
+decision 7 and the step 6 notes):
+
+```
+skep-api  /api/v1/storage/templates (storage:write to build or delete)
+   |
+skep-agent
+   internal/templates   the service, the tasks, the compiled allowlist,
+                        the build sequence and its clean-up, the start-up sweep
+   internal/hostops     Templates: datasets and work area, pkg (scripts and
+                        triggers off), the build jail (jail -c, jexec -l,
+                        jail -r), the host-file record
+```
+
+- **Order and judgement in `internal/templates`, mechanics in
+  `internal/hostops`.** hostops offers typed steps whose names and paths
+  are derived from the pool and the template ID. The builder decides the
+  order, applies the allowlist and the release rule, and compares the
+  host files.
+- **Clean-up** runs on its own context, so a cancelled or timed-out task
+  still removes its build jail and its dataset. The agent removes any
+  leftover `skep-build-*` jail at start, before it serves its socket.
+- **Development machines** simulate a whole build in `hostfake`, with the
+  real 15.1 script texts, so the allowlist and the tasks run unchanged.
+
+## Jails
+
+Phase 7b, step 7 ([ADR 0010](../decisions/0010-storage-and-jails.md),
+decisions 8, 9, and 13):
+
+```
+skep-api  /api/v1/containers (container:read, write, delete, power)
+   |
+skep-agent
+   internal/containers  the service and its tasks (create, update, delete,
+                        start, stop, restart), observation from jls
+   internal/hostops     Jails: the 0700 <root>/jail parent, zfs clone of
+                        @skep-base, the jail.conf renderer and the baseline
+                        check, jail -c / jail -r (jail -R when jail -r fails,
+                        amendment u), the O_RESOLVE_BENEATH writer
+   internal/database    ContainerStore (the containers table of agent/0001
+                        and agent/0005)
+```
+
+- **No runner process.** A jail is `persist`ent in the kernel and outlives
+  the agent; the agent observes every jail from one `jls` before it
+  serves its socket and on every read.
+- **The jail.conf** is rendered from a typed `JailSpec` into
+  `/var/run/skep/jails/<id>/` before every start and stop; the kernel's
+  view of the parameters is checked after `jail -c`.
+- **Writes into a jail** (rc.conf and root's SSH key, only before the first
+  start) go through `jailwrite_freebsd.go`; other systems have a stub, and
+  the dev fake records what would have been written.
+
 ## FreeBSD validation status
 
 Validated means it ran on FreeBSD 15.1-RELEASE-p6 (amd64, UFS-root, `hearst`)
@@ -367,6 +423,13 @@ imported, both as an unprivileged user and as root.
 
 ## Known limitations
 
+- **No anti-spoofing on guest ports yet (SR-02, a release blocker).**
+  Until the host-side enforcement of ADR 0010 amendment y lands, a
+  jail's root can forge source IPs within its subnet, take over unused
+  addresses, and change its MAC (measured on `hearst`, step 10 progress
+  log section 31); VM guests are in the same position (not measured).
+  Give jails only to trusted users on shared networks. See
+  [Jails: known limitations](../administration/jails.md#known-limitations).
 - Permissions are global: there is no per-resource scoping and no custom
   roles yet.
 - Sessions and users are per node.

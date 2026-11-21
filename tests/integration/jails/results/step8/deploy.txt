@@ -1,0 +1,59 @@
+# Deploy of 1a26e5e to hearst, 2026-11-17T14:23:36Z (undo: redeploy 57d74bb)
+scratch destroyed
+-- before:
+skep-agent 0.1.0 (commit 57d74bb, built 2026-11-17T02:16:55Z, go1.27.4 freebsd/amd64)
+Stopping skep_api.
+Waiting for PIDS: 52893.
+Stopping skep_agent.
+Waiting for PIDS: 55164.
+no skep processes
+deploy-test: hearst:/usr/local/sbin/skep-agent root:wheel 0555 13299882 bytes sha256 2e008890757d20c797009aebf04473d2646240ede0cf9235152136d6f906c7b5
+deploy-test: hearst:/usr/local/sbin/skep-api root:wheel 0555 14102698 bytes sha256 ee17eacd3e9c3a7903cfb5fbd4ebc100402b2e39968385a072f7f8875e423798
+deploy-test: synced
+deploy-test: hearst:/usr/local/bin/skepctl root:wheel 0555 7217322 bytes sha256 e1df6c10b274bbd27276f19d45f21649b5e306ce4f4bfc085b27bf691850882c
+deploy-test: synced
+Starting skep_agent.
+Starting skep_api.
+skep_agent is running as pid 63710 (supervisor pid 63708).
+skep_api is running as pid 63770 (supervisor pid 63769).
+skep-agent 0.1.0 (commit 1a26e5e, built 2026-11-17T14:22:32Z, go1.27.4 freebsd/amd64)
+-- agent log since start:
+Nov 17 09:23:40 hearst skep-agent[63708]: {"time":"2026-11-17T09:23:40.039074225-05:00","level":"INFO","msg":"starting skep-agent","version":"0.1.0","commit":"1a26e5e","dev_mode":false,"data_dir":"/var/db/skep"}
+Nov 17 09:23:40 hearst skep-agent[63708]: {"time":"2026-11-17T09:23:40.041761729-05:00","level":"INFO","msg":"database ready","path":"/var/db/skep/agent/agent.db","schema_version":5,"migrations_applied":0}
+Nov 17 09:23:40 hearst skep-agent[63708]: {"time":"2026-11-17T09:23:40.041917268-05:00","level":"INFO","msg":"host confinement","pools":["skeptest"],"dataset_root":"skep","bridges":["bridge0"],"management_interfaces":["vtnet0"],"media_dir":"/var/db/skep/media","firmware_dir":"/usr/local/share/edk2-bhyve"}
+Nov 17 09:23:40 hearst skep-agent[63708]: {"time":"2026-11-17T09:23:40.042142477-05:00","level":"INFO","msg":"task engine started","workers":4,"queue_size":64,"interrupted":0}
+Nov 17 09:23:40 hearst skep-agent[63708]: {"time":"2026-11-17T09:23:40.044026829-05:00","level":"INFO","msg":"task accepted","task_id":"fcf0c5f5-7ea9-4375-92e6-68dd796f3c50","type":"discovery.refresh","actor_id":"system","resource_type":"node","resource_id":"97fc6968-7e82-49c9-bda8-9026775ca964"} {"time":"2026-11-17T09:23:40.044040797-05:00","level":"INFO","msg":"retention configured","tasks_days"
+Nov 17 09:23:40 hearst skep-agent[63708]: {"time":"2026-11-17T09:23:40.045785057-05:00","level":"INFO","msg":"templates: build jail sweep finished","event":"build_jail_sweep","found":0,"removed":0,"failed":0}
+Nov 17 09:23:40 hearst skep-agent[63708]: {"time":"2026-11-17T09:23:40.0469947-05:00","level":"INFO","msg":"containers: observed the jails","containers":0,"running":0}
+Nov 17 09:23:40 hearst skep-agent[63708]: {"time":"2026-11-17T09:23:40.047316282-05:00","level":"INFO","msg":"task accepted","task_id":"a9bfad1a-44af-4576-b862-072bd1cee3c0","type":"maintenance.retention","actor_id":"system","resource_type":"maintenance","resource_id":"retention"}
+Nov 17 09:23:40 hearst skep-agent[63708]: {"time":"2026-11-17T09:23:40.052122721-05:00","level":"INFO","msg":"orphans: interface check finished","event":"orphaned_interface_check","found":0}
+Nov 17 09:23:40 hearst skep-agent[63708]: {"time":"2026-11-17T09:23:40.052287276-05:00","level":"INFO","msg":"retention run finished","tasks_removed":0,"events_removed":0,"audit_archive_error":null}
+Nov 17 09:23:40 hearst skep-agent[63708]: {"time":"2026-11-17T09:23:40.053987906-05:00","level":"INFO","msg":"bhyve is available","reason":"vmm is loaded, the UEFI firmware is installed, and nmdm is available","max_vcpus_per_vm":4,"guest_memory_bytes":5324079104}
+Nov 17 09:23:40 hearst skep-agent[63708]: {"time":"2026-11-17T09:23:40.054209375-05:00","level":"INFO","msg":"internal API listening","socket":"/var/run/skep/agent.sock","base_path":"/internal/v1","mode":"0660","group":"skep","allowed_uids":[0,1002]}
+Nov 17 09:23:40 hearst skep-agent[63708]: {"time":"2026-11-17T09:23:40.055512519-05:00","level":"INFO","msg":"task finished","task_id":"a9bfad1a-44af-4576-b862-072bd1cee3c0","type":"maintenance.retention","status":"succeeded","error_code":""}
+Nov 17 09:23:40 hearst skep-agent[63708]: {"time":"2026-11-17T09:23:40.056141983-05:00","level":"INFO","msg":"host discovered","node_id":"97fc6968-7e82-49c9-bda8-9026775ca964","hostname":"hearst.greenbean.org","platform":"freebsd","os":"FreeBSD","release":"15.1-RELEASE-p6","arch":"amd64","bhyve":"available","qemu":"unavailable","zfs":"available"}
+Nov 17 09:23:40 hearst skep-agent[63708]: {"time":"2026-11-17T09:23:40.057439385-05:00","level":"INFO","msg":"task finished","task_id":"fcf0c5f5-7ea9-4375-92e6-68dd796f3c50","type":"discovery.refresh","status":"succeeded","error_code":""}
+
+# Redeploy of 57d74bb (the approved undo) after the devfs finding, 2026-11-17T14:29:03Z
+Stopping skep_api.
+Waiting for PIDS: 63769.
+Stopping skep_agent.
+Waiting for PIDS: 63708.
+no skep processes
+deploy-test: hearst:/usr/local/sbin/skep-agent root:wheel 0555 13193386 bytes sha256 1ca3a75ecdf9f80b6915e7ed4a8358f062bb36652c20cbace8d9869c79e904c2
+deploy-test: hearst:/usr/local/sbin/skep-api root:wheel 0555 14102698 bytes sha256 d2fb2c33eb1ca65c9a3450d0422a5fdb65e4df6b29c1150da6f1bd175c5a7cd5
+deploy-test: synced
+deploy-test: hearst:/usr/local/bin/skepctl root:wheel 0555 7217322 bytes sha256 0e31b6d462b269de6ff423177cbe02b3c058daee5d3ce8fc0bf4122504d78bf8
+deploy-test: synced
+Starting skep_agent.
+Starting skep_api.
+skep_agent is running as pid 65240 (supervisor pid 65238).
+skep_api is running as pid 65298 (supervisor pid 65297).
+skep-agent 0.1.0 (commit 57d74bb, built 2026-11-17T14:28:54Z, go1.27.4 freebsd/amd64)
+   JID  IP Address      Hostname                      Path
+epairs: []
+	member: vtnet1 flags=143<LEARNING,DISCOVER,AUTOEDGE,AUTOPTP>
+1 2 3 4 5 
+13    1 0xffffffff8303f000     539c if_epair.ko
+NAME
+skeptest/skep/jail

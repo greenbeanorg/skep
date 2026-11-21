@@ -163,7 +163,8 @@ test("login, dashboard, every page in both themes, logout", async ({ page }) => 
   await expect(page.getByText(/sha256:[0-9a-f]{64}/)).toBeVisible();
   await shoot(page, "settings");
 
-  await nav.getByRole("link", { name: "Containers" }).click();
+  // A section still planned (Containers was built in ADR 0010 step 10).
+  await nav.getByRole("link", { name: "Networking" }).click();
   await expect(page.getByText("Not built yet")).toBeVisible();
   await shoot(page, "planned");
 
@@ -187,7 +188,7 @@ test("a viewer does not see Users and cannot open it", async ({ browser, request
   await loginAPI(request, ADMIN);
   await ensureViewer(request);
 
-  const context = await browser.newContext({ ignoreHTTPSErrors: true });
+  const context = await browser.newContext();
   const page = await context.newPage();
   const { violations } = watch(page);
   await page.goto("/users");
@@ -233,7 +234,7 @@ test("an expired session returns to the login page and back to the same address"
   const viewerID = await ensureViewer(request);
   const origin = new URL(test.info().project.use.baseURL ?? "https://127.0.0.1:8443").origin;
 
-  const context = await browser.newContext({ ignoreHTTPSErrors: true });
+  const context = await browser.newContext();
   const page = await context.newPage();
   await page.goto("/tasks");
   await login(page, VIEWER);

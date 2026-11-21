@@ -167,9 +167,55 @@ func TestPermissionMatrix(t *testing.T) {
 		{auth.RoleOperator, http.MethodGet, "/audit", http.StatusOK},
 		{auth.RoleOperator, http.MethodDelete, "/users/" + e.ids[auth.RoleViewer], http.StatusForbidden},
 		{auth.RoleAdmin, http.MethodGet, "/audit", http.StatusOK},
+		// Templates make the root agent fetch and install packages:
+		// storage:write, admin only (ADR 0010 decision 14).
+		{auth.RoleOperator, http.MethodPost, "/storage/templates", http.StatusForbidden},
+		{auth.RoleOperator, http.MethodDelete, "/storage/templates/" + e.ids[auth.RoleViewer], http.StatusForbidden},
+		{auth.RoleOperator, http.MethodGet, "/storage/templates", http.StatusOK},
+		{auth.RoleViewer, http.MethodGet, "/storage/template-sources", http.StatusOK},
+		{auth.RoleViewer, http.MethodPost, "/storage/templates", http.StatusForbidden},
 	} {
 		if got := status(tt.role, tt.method, tt.path); got != tt.want {
 			t.Errorf("%s %s as %s: %d, want %d", tt.method, tt.path, tt.role, got, tt.want)
+		}
+	}
+	// Jails (ADR 0010 decision 14): operator holds container:read, write,
+	// delete, and power; viewer only container:read. "Allowed" means the
+	// request got past authorization (whatever the backend then said).
+	ctr := "/containers/" + e.ids[auth.RoleViewer]
+	for _, tt := range []struct {
+		role, method, path string
+		allowed            bool
+	}{
+		{auth.RoleOperator, http.MethodGet, "/containers", true},
+		{auth.RoleOperator, http.MethodPost, "/containers", true},
+		{auth.RoleOperator, http.MethodPut, ctr, true},
+		{auth.RoleOperator, http.MethodDelete, ctr, true},
+		{auth.RoleOperator, http.MethodPost, ctr + "/actions", true},
+		{auth.RoleOperator, http.MethodGet, ctr + "/console-log", true},
+		{auth.RoleViewer, http.MethodGet, "/containers", true},
+		{auth.RoleViewer, http.MethodGet, ctr, true},
+		{auth.RoleViewer, http.MethodGet, ctr + "/console-log", true},
+		{auth.RoleViewer, http.MethodPost, "/containers", false},
+		{auth.RoleViewer, http.MethodPut, ctr, false},
+		{auth.RoleViewer, http.MethodDelete, ctr, false},
+		{auth.RoleViewer, http.MethodPost, ctr + "/actions", false},
+		// Snapshots: container:snapshot; a clone container:write and
+		// container:snapshot (amendment j), and a rollback the same
+		// (amendment n).
+		{auth.RoleOperator, http.MethodPost, ctr + "/snapshots", true},
+		{auth.RoleOperator, http.MethodPost, ctr + "/clone", true},
+		{auth.RoleOperator, http.MethodPost, ctr + "/snapshots/" + e.ids[auth.RoleViewer] + "/rollback", true},
+		{auth.RoleViewer, http.MethodGet, ctr + "/snapshots", true},
+		{auth.RoleViewer, http.MethodGet, ctr + "/snapshots/" + e.ids[auth.RoleViewer], true},
+		{auth.RoleViewer, http.MethodPost, ctr + "/snapshots", false},
+		{auth.RoleViewer, http.MethodDelete, ctr + "/snapshots/" + e.ids[auth.RoleViewer], false},
+		{auth.RoleViewer, http.MethodPost, ctr + "/snapshots/" + e.ids[auth.RoleViewer] + "/rollback", false},
+		{auth.RoleViewer, http.MethodPost, ctr + "/clone", false},
+	} {
+		got := status(tt.role, tt.method, tt.path)
+		if denied := got == http.StatusForbidden || got == http.StatusUnauthorized; denied == tt.allowed {
+			t.Errorf("%s %s as %s: %d, want allowed=%v", tt.method, tt.path, tt.role, got, tt.allowed)
 		}
 	}
 	// The viewer still exists: the operator's DELETE was refused before
@@ -460,6 +506,72 @@ func TestCloneNeedsBothPermissions(t *testing.T) {
 	}
 }
 
+// TestContainerCloneNeedsBothPermissions: a jail clone needs
+// container:write and container:snapshot (ADR 0010 amendment j).
+func TestContainerCloneNeedsBothPermissions(t *testing.T) {
+	e := freshEnv(t)
+	ctx := t.Context()
+	if _, err := e.db.Exec(`INSERT INTO roles (id, name, permissions) VALUES ('ctrwriter', 'ctrwriter', '["container:read","container:write"]')`); err != nil {
+		t.Fatal(err)
+	}
+	u, err := e.users.Create(ctx, auth.Actor{Name: "local:0"}, auth.NewUser{Username: "ctrwriter1", Password: testPassword, RoleID: "ctrwriter"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := e.authn.Login(ctx, auth.LoginRequest{Username: u.Username, Password: testPassword, Kind: auth.BearerSession, SourceIP: "192.0.2.201"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.tokens["ctrwriter"] = res.Token
+	h := e.handler(newBackend(), nil)
+	rec := e.serve(h, request{method: http.MethodPost, path: Prefix + "/containers/" + e.ids[auth.RoleViewer] + "/clone", role: "ctrwriter", body: `{"name":"c"}`})
+	body := wantError(t, rec, http.StatusForbidden, auth.CodeForbidden)
+	if body.Details["permission"] != auth.PermContainerSnapshot {
+		t.Errorf("details = %v", body.Details)
+	}
+	if n := e.auditCount(t, `action = 'authz.deny' AND actor_id = ? AND details LIKE '%"permission":"container:snapshot"%'`, u.ID); n != 1 {
+		t.Errorf("%d denials audited", n)
+	}
+}
+
+// TestContainerRollbackNeedsBothPermissions: a jail rollback needs
+// container:write and container:snapshot, the same as a clone (ADR 0010
+// amendment n, SR-11). A role with only container:snapshot is refused
+// with the missing container:write; one with only container:write with
+// the missing container:snapshot.
+func TestContainerRollbackNeedsBothPermissions(t *testing.T) {
+	e := freshEnv(t)
+	ctx := t.Context()
+	for i, rc := range []struct{ role, perms, missing string }{
+		{"ctrsnap", `["container:read","container:snapshot"]`, auth.PermContainerWrite},
+		{"ctrwrite", `["container:read","container:write"]`, auth.PermContainerSnapshot},
+	} {
+		if _, err := e.db.Exec(`INSERT INTO roles (id, name, permissions) VALUES (?, ?, ?)`, rc.role, rc.role, rc.perms); err != nil {
+			t.Fatal(err)
+		}
+		u, err := e.users.Create(ctx, auth.Actor{Name: "local:0"}, auth.NewUser{Username: rc.role + "1", Password: testPassword, RoleID: rc.role})
+		if err != nil {
+			t.Fatal(err)
+		}
+		res, err := e.authn.Login(ctx, auth.LoginRequest{Username: u.Username, Password: testPassword, Kind: auth.BearerSession,
+			SourceIP: fmt.Sprintf("192.0.2.%d", 210+i)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		e.tokens[rc.role] = res.Token
+		h := e.handler(newBackend(), nil)
+		path := Prefix + "/containers/" + e.ids[auth.RoleViewer] + "/snapshots/" + e.ids[auth.RoleViewer] + "/rollback"
+		rec := e.serve(h, request{method: http.MethodPost, path: path, role: rc.role, body: `{}`})
+		body := wantError(t, rec, http.StatusForbidden, auth.CodeForbidden)
+		if body.Details["permission"] != rc.missing {
+			t.Errorf("%s: details = %v, want %s", rc.role, body.Details, rc.missing)
+		}
+		if n := e.auditCount(t, `action = 'authz.deny' AND actor_id = ? AND details LIKE '%"permission":"`+rc.missing+`"%'`, u.ID); n != 1 {
+			t.Errorf("%s: %d denials audited", rc.role, n)
+		}
+	}
+}
+
 // TestRemovingADiskNeedsVMDelete: an update that removes a disk needs
 // vm:delete as well as vm:write; other updates do not (ADR 0010 decision
 // 4).
@@ -501,8 +613,9 @@ func TestRemovingADiskNeedsVMDelete(t *testing.T) {
 	}
 }
 
-// TestMetricsNeedVMAndStorageRead: the metrics name VMs and pools, so a
-// role with system:read alone is refused (ADR 0010 decision 15).
+// TestMetricsNeedVMAndStorageRead: the metrics name VMs, jails, and
+// pools, so a role with system:read alone, or without container:read, is
+// refused (ADR 0010 decision 15).
 func TestMetricsNeedVMAndStorageRead(t *testing.T) {
 	e := freshEnv(t)
 	ctx := t.Context()
@@ -521,6 +634,24 @@ func TestMetricsNeedVMAndStorageRead(t *testing.T) {
 	h := e.handler(newBackend(), nil)
 	body := wantError(t, e.serve(h, request{method: http.MethodGet, path: Prefix + "/metrics", role: "sys"}), http.StatusForbidden, auth.CodeForbidden)
 	if body.Details["permission"] != auth.PermVMRead {
+		t.Errorf("details = %v", body.Details)
+	}
+	// They name jails too: vm:read and storage:read without
+	// container:read is still refused.
+	if _, err := e.db.Exec(`INSERT INTO roles (id, name, permissions) VALUES ('sys2', 'sys2', '["system:read","vm:read","storage:read"]')`); err != nil {
+		t.Fatal(err)
+	}
+	u2, err := e.users.Create(ctx, auth.Actor{Name: "local:0"}, auth.NewUser{Username: "sys2", Password: testPassword, RoleID: "sys2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res2, err := e.authn.Login(ctx, auth.LoginRequest{Username: u2.Username, Password: testPassword, Kind: auth.BearerSession, SourceIP: "192.0.2.202"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.tokens["sys2"] = res2.Token
+	body = wantError(t, e.serve(h, request{method: http.MethodGet, path: Prefix + "/metrics", role: "sys2"}), http.StatusForbidden, auth.CodeForbidden)
+	if body.Details["permission"] != auth.PermContainerRead {
 		t.Errorf("details = %v", body.Details)
 	}
 	if rec := e.serve(h, request{method: http.MethodGet, path: Prefix + "/metrics", role: auth.RoleViewer}); rec.Code != http.StatusOK {

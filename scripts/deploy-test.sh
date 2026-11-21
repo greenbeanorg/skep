@@ -24,13 +24,66 @@
 # directory above DIR is not root's, because whoever owns it can replace
 # DIR itself.
 #
+# With HOST alone, the script then restarts skep_api and skep_agent (stop
+# the API, stop the agent, start the agent, start the API) and succeeds
+# only if each running service is the deployed build: the inode of the
+# process's text (fstat) is the inode of the installed file, and that
+# file's -version names the commit of the local checkout (git rev-parse
+# --short HEAD; a checkout with uncommitted changes is refused, because its
+# build would claim a commit it is not). A replaced binary does not change a running process, so
+# an install without the restart leaves the old build serving.
+#
 # Needs passwordless sudo on HOST.
 set -eu
 
 if [ $# -eq 1 ]; then
+	host="$1"
+	commit="$(git rev-parse --short HEAD)"
+	if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
+		echo "deploy-test: refusing: the checkout has uncommitted changes, so the build is not ${commit}; commit first" >&2
+		exit 2
+	fi
 	# The package layout, as two runs of this script.
-	"$0" "$1" /usr/local/sbin bin/freebsd-amd64/skep-agent bin/freebsd-amd64/skep-api
-	exec "$0" "$1" /usr/local/bin bin/freebsd-amd64/skepctl
+	"$0" "${host}" /usr/local/sbin bin/freebsd-amd64/skep-agent bin/freebsd-amd64/skep-api
+	"$0" "${host}" /usr/local/bin bin/freebsd-amd64/skepctl
+	echo "deploy-test: restarting skep_api and skep_agent on ${host}"
+	ssh "${host}" "set -e
+		sudo service skep_api stop
+		sudo service skep_agent stop
+		sudo service skep_agent start
+		sudo service skep_api start"
+	# Each service: wait for its pid file, let it run a few seconds, then
+	# compare the running text with the installed file and its commit.
+	ssh "${host}" "set -e
+		verify() {
+			svc=\$1; bin=\$2; pidfile=\$3
+			i=0
+			while ! sudo test -s \"\$pidfile\"; do
+				i=\$((i + 1))
+				if [ \$i -gt 20 ]; then echo \"deploy-test: \$svc wrote no pid file\" >&2; exit 1; fi
+				sleep 0.5
+			done
+			sleep 3
+			pid=\$(sudo cat \"\$pidfile\")
+			if ! sudo kill -0 \"\$pid\" 2>/dev/null; then
+				echo \"deploy-test: \$svc (pid \$pid) is not running\" >&2; exit 1
+			fi
+			running=\$(sudo fstat -p \"\$pid\" | awk '\$4 == \"text\" { print \$6 }')
+			installed=\$(stat -f %i \"\$bin\")
+			if [ \"\$running\" != \"\$installed\" ]; then
+				echo \"deploy-test: \$svc (pid \$pid) runs inode \$running, not the installed \$bin (inode \$installed)\" >&2; exit 1
+			fi
+			ver=\$(\"\$bin\" -version)
+			case \"\$ver\" in
+			*\"(commit ${commit},\"*) ;;
+			*) echo \"deploy-test: \$svc runs \$ver, not commit ${commit}\" >&2; exit 1 ;;
+			esac
+			echo \"deploy-test: \$svc pid \$pid runs \$bin: \$ver\"
+		}
+		verify skep_agent /usr/local/sbin/skep-agent /var/run/skep/agent.pid
+		verify skep_api /usr/local/sbin/skep-api /var/run/skep/api.pid"
+	echo "deploy-test: ${host} runs ${commit}"
+	exit 0
 fi
 if [ $# -lt 3 ]; then
 	echo "usage: $0 HOST | $0 HOST DIR FILE..." >&2

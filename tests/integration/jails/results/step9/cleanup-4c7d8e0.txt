@@ -1,0 +1,20 @@
+# Clean-up after the 4c7d8e0 checks, 2026-11-17T21:29:49Z
+## stop s9mem
+{"status":"succeeded","error":null,"result":{"container_id":"5554fdfd-280f-4a8c-973e-25c946141272","state":"stopped"}}
+## rules after stop:        0        0 (jail's, host's)
+## delete s9mem
+{"status":"succeeded","error":null,"result":{"container_id":"5554fdfd-280f-4a8c-973e-25c946141272","datasets_destroyed":[{"name":"skeptest/skep/jail/5554fdfd-280f-4a8c-973e-25c946141272","type":"filesystem","used_bytes":
+## containers
+0
+## hearst
+jails: 0
+rctl rules: 0
+interfaces: vtnet0 vtnet1 lo0 bridge0
+bridge0 members: 1
+jail datasets: 0
+/tmp skep leftovers: 4
+skep_agent is running as pid 7698 (supervisor pid 7697).
+skep_api is running as pid 7759 (supervisor pid 7757).
+## health
+ok
+## note: the 4 entries are old directories from 2026-11-12 to 11-14 (skep-adminprompt*, skep-api-test*, owned by aba), none from step 9; left alone.

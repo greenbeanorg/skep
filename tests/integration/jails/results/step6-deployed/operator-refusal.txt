@@ -1,0 +1,45 @@
+# POST /api/v1/storage/templates as s6oper (operator), 2026-11-16T23:49:46Z
+# body: {"name":"oper-attempt","pool":"skeptest","source":"pkgbase"}
+HTTP/2 403 
+content-type: application/json; charset=utf-8
+x-content-type-options: nosniff
+x-request-id: 005a708b0f1f561d17a078e7
+{"error":{"code":"forbidden","message":"your role does not allow this","request_id":"005a708b0f1f561d17a078e7","details":{"permission":"storage:write"}}}
+
+# The access audit log (GET /api/v1/audit as s6admin), the matching entry and the admin build's:
+{
+ "id": 278,
+ "occurred_at": "2026-11-16T23:49:46.842Z",
+ "actor_id": "4a0b5e4a-3b68-48c5-bc85-b7fffd438422",
+ "actor_name": "s6oper",
+ "action": "authz.deny",
+ "outcome": "denied",
+ "source_ip": "10.79.20.80",
+ "request_id": "005a708b0f1f561d17a078e7",
+ "details": {
+  "method": "POST",
+  "permission": "storage:write",
+  "role": "operator",
+  "route": "/api/v1/storage/templates"
+ }
+}
+{
+ "id": 276,
+ "occurred_at": "2026-11-16T23:47:00.857Z",
+ "actor_id": "f3a9776b-5719-44f5-a611-63572830526b",
+ "actor_name": "s6admin",
+ "action": "container.template.create",
+ "resource_type": "container_template",
+ "resource_id": "f496866f-32ba-4527-bcee-5a717a2f74c0",
+ "outcome": "success",
+ "source_ip": "10.79.20.80",
+ "request_id": "ca13ce3d678ce0e7fa12ac14",
+ "details": {
+  "task_id": "f81ab83f-09fe-49f0-91c0-d34324dd2914"
+ }
+}
+
+# Afterwards: templates datasets and jails on hearst
+skeptest/skep/templates
+skeptest/skep/templates/f496866f-32ba-4527-bcee-5a717a2f74c0
+   JID  IP Address      Hostname                      Path

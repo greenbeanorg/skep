@@ -88,6 +88,8 @@ tags:
       and cancelled. They are submitted by the VM endpoints, never directly.
   - name: vms
     description: Virtual machines (bhyve)
+  - name: containers
+    description: FreeBSD jails on clones of a template
   - name: storage
     description: Storage pools and install media VMs may use
 paths:
@@ -1353,23 +1355,841 @@ paths:
           $ref: "#/components/responses/VMUnprocessable"
         "503":
           $ref: "#/components/responses/Unavailable"
+  /storage/template-sources:
+    get:
+      tags: [storage]
+      operationId: getTemplateSources
+      summary: What this host can build jail templates from
+      x-skep-permission: storage:read
+      description: |
+        Requires `storage:read`. The host kernel's release
+        (`freebsd-version -k`) and whether each template source can be
+        used, with the reason when not (ADR 0010 decision 7). `pkgbase`
+        needs the host's pkg, a non-empty `storage.template_packages`, and
+        a compiled package-script allowlist for the host's major.minor;
+        `dist` needs `base.txz` and `MANIFEST` in `storage.dist_dir`.
+      parameters:
+        - $ref: "#/components/parameters/Background"
+      responses:
+        "200":
+          description: The template sources of this host.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TemplateSources"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /storage/templates:
+    get:
+      tags: [storage]
+      operationId: listTemplates
+      summary: Jail templates
+      x-skep-permission: storage:read
+      description: |
+        Requires `storage:read`. Templates by name, cursor paginated. Each
+        shows the release it was built with, the host's release now, and
+        `patch_differs` when the two share major.minor but not the patch
+        level (ADR 0010 step 6, item 6).
+      parameters:
+        - $ref: "#/components/parameters/Background"
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+        - name: cursor
+          in: query
+          schema: { type: string }
+      responses:
+        "200":
+          description: One page of templates.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TemplateList"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+    post:
+      tags: [storage]
+      operationId: createTemplate
+      summary: Build a jail template
+      x-skep-permission: storage:write
+      description: |
+        Requires `storage:write` (admin only: the root agent fetches and
+        installs packages). Submits `container.template.create`
+        (cancellable, 30 minutes), which builds the userland into
+        `<pool>/<root>/templates/<id>` and snapshots it as `@skep-base`.
+        The request names no package, URL, or path: the packages are
+        `storage.template_packages`, the archive is `base.txz` in
+        `storage.dist_dir`.
+
+        A `pkgbase` build runs pkg with package scripts and triggers off
+        and a fixed environment; checks every package script and trigger
+        file against Skep's compiled allowlist for the release
+        (`template_script_unknown`, with the script's text); checks that
+        the userland has the host's major.minor (`release_unsupported`);
+        runs the scripts' known commands in a throwaway build jail with no
+        network and every `allow.*` off; fails if pkg left a deferred
+        trigger (`template_trigger_left`); and compares every file under
+        the host's `/etc`, `/var/db/pkg`, and `/usr/share/certs` before
+        and after (`template_host_changed`, with the paths). A command that
+        fails is `template_build_failed` with its first line of stderr. Any
+        failure, cancel, or timeout removes the build jail and destroys the
+        template. Templates are built in ZFS pools only in this release.
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TemplateCreate"
+      responses:
+        "202":
+          description: The template, not yet provisioned, and its build task.
+          headers:
+            Location:
+              schema: { type: string }
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TemplateCreated"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/VMConflict"
+        "422":
+          $ref: "#/components/responses/VMUnprocessable"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /storage/templates/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [storage]
+      operationId: getTemplate
+      summary: One jail template
+      x-skep-permission: storage:read
+      description: Requires `storage:read`.
+      parameters:
+        - $ref: "#/components/parameters/Background"
+      responses:
+        "200":
+          description: The template.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Template"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+    delete:
+      tags: [storage]
+      operationId: deleteTemplate
+      summary: Delete a jail template
+      x-skep-permission: storage:write
+      description: |
+        Requires `storage:write`. Submits `container.template.delete`,
+        which destroys the template's dataset and snapshot and its work
+        area. A template with linked clones is `snapshot_has_clones`.
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "202":
+          description: The delete task.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Task"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/VMConflict"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /containers:
+    get:
+      tags: [containers]
+      operationId: listContainers
+      summary: Jails
+      x-skep-permission: container:read
+      description: |
+        Requires `container:read`. Jails by name, cursor paginated. The
+        state is what `jls` reports at the time of the request; a jail
+        that should run but does not says so in `state_detail`.
+      parameters:
+        - $ref: "#/components/parameters/Background"
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+        - name: cursor
+          in: query
+          schema: { type: string }
+      responses:
+        "200":
+          description: One page of jails.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContainerList"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+    post:
+      tags: [containers]
+      operationId: createContainer
+      summary: Create a jail from a template
+      x-skep-permission: container:write
+      description: |
+        Requires `container:write`. Submits `container.create`, which
+        clones the template's `@skep-base` to `<pool>/<root>/jail/<id>`
+        (writable; the template stays read-only) and, with an SSH key,
+        writes `/etc/rc.conf` (sshd on, root by key only) and root's
+        `authorized_keys` into the jail before it has ever run (ADR 0010
+        decision 13). The jail runs with a fixed baseline: its own network
+        stack (VNET), `enforce_statfs=2`, `children.max=0`,
+        `securelevel=2`, devfs ruleset 5 (6001, ruleset 5 plus `bpf*`, for
+        a jail with a DHCP NIC), `allow.suser` and `allow.reserved_ports`
+        on and every other `allow.*` off. Nothing in the request becomes a
+        host-side command.
+
+        The template must be built (`template_not_provisioned`) and have
+        the host's major.minor (`release_unsupported`). An SSH key needs a
+        template with sshd (`container_ssh_unavailable`); it is one
+        OpenSSH public key line without options. `mlock` needs a
+        locked-memory limit, `limits.locked_memory`, and RACCT
+        (`mlock_requires_memory_limit`). `limits.locked_memory` is at most
+        the agent's `containers.max_locked_memory_bytes`, the total of all
+        running jails (`container_locked_memory_above_max`, 422; ADR 0010
+        amendment o). A `limits.disk_quota` below the template's size,
+        which the new root references from the start, is refused with
+        `container_disk_quota_below_usage` (422; details `template_id`,
+        `disk_quota`, and `referenced_bytes`; amendment x).
+
+        Limits (ADR 0010 decision 11, amendment j; see `ContainerLimits`):
+        every limit but `disk_quota` is an RCTL rule and needs RACCT
+        (`kern.racct.enable`); without it the request is refused with
+        `rctl_unavailable` (409), and so is a later start of a jail that
+        has such a limit. `GET /system` reports `containers.rctl`.
+
+        Each NIC is an epair (ADR 0010 decision 10): its host end joins an
+        allow-listed bridge (`bridge_not_allowed`) and its jail end moves
+        into the jail, where it is named `skep<slot>` (`skep0`, `skep1`,
+        ...) in every jail (amendment k), so a clone's copied tree
+        configures its own NICs. The
+        addressing (DHCP by default, or a static IPv4 address with an
+        optional gateway, one gateway per jail) is written into the jail's
+        `/etc/rc.conf`, and `nameservers` (static addressing only) into
+        its `/etc/resolv.conf`, before the first start. After that the
+        addressing describes what Skep wrote; changing it is the jail's own
+        business. No IPv6 addressing yet.
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ContainerCreate"
+      responses:
+        "202":
+          description: The jail, not yet provisioned, and its task.
+          headers:
+            Location:
+              schema: { type: string }
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContainerCreated"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/VMConflict"
+        "422":
+          $ref: "#/components/responses/VMUnprocessable"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /containers/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [containers]
+      operationId: getContainer
+      summary: One jail
+      x-skep-permission: container:read
+      description: Requires `container:read`.
+      parameters:
+        - $ref: "#/components/parameters/Background"
+      responses:
+        "200":
+          description: The jail.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Container"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+    put:
+      tags: [containers]
+      operationId: updateContainer
+      summary: Change a stopped jail
+      x-skep-permission: container:write
+      description: |
+        Requires `container:write`. Submits `container.update`. The jail
+        must be stopped (`container_not_stopped`). The hostname and the
+        options take effect at the next start. The SSH key is written into
+        the jail's tree, so it can change only before the jail's first
+        start; afterwards a change is `container_started` (ADR 0010
+        decision 13). An empty `ssh_authorized_key` removes the key.
+        `limits` replaces every limit (absent ones are removed); the disk
+        quota changes at once, the RCTL limits at the next start. A new
+        quota below what the jail's root already references is refused
+        before any task is submitted, with
+        `container_disk_quota_below_usage` (422; details `disk_quota` and
+        `referenced_bytes`); if the root grows past it between the
+        request and the task, the task fails with the same code (ADR 0010
+        amendment w).
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ContainerUpdate"
+      responses:
+        "202":
+          description: The update task.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Task"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/VMConflict"
+        "422":
+          $ref: "#/components/responses/VMUnprocessable"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+    delete:
+      tags: [containers]
+      operationId: deleteContainer
+      summary: Delete a stopped jail and its dataset
+      x-skep-permission: container:delete
+      description: |
+        Requires `container:delete`. Submits `container.delete`, which
+        destroys the jail's dataset and snapshots and its runtime
+        directory; the task result and the audit entry list every dataset
+        destroyed. The jail must be stopped (`container_not_stopped`),
+        except a quarantined one (`state` `failed`), whose jail the task
+        first removes without running `/etc/rc.shutdown` (with `jail -R`
+        when `jail -r` fails); if that removal fails again, the task fails
+        with `container_remove_failed` (both `jail -r` and `jail -R`
+        failed) or `container_quarantined`, and the jail stays
+        quarantined (amendment u).
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "202":
+          description: The delete task.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Task"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/VMConflict"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /containers/{id}/actions:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      tags: [containers]
+      operationId: containerAction
+      summary: Start, stop, or restart a jail
+      x-skep-permission: container:power
+      description: |
+        Requires `container:power`. `start` creates the jail with jail(8),
+        which runs `/etc/rc`; the parameters the kernel reports are then
+        checked against the baseline, and a jail that does not match is
+        removed (`container_start_failed`). A jail with NICs needs the
+        `if_epair` module (`epair_unavailable`, refused before a task
+        exists); a jail with a DHCP NIC needs devfs ruleset 6001 to be
+        Skep's or absent (`devfs_ruleset_conflict`). A start is refused
+        when a running Skep jail on the same bridge holds one of the
+        jail's static IPv4 addresses (`container_address_in_use`,
+        amendment k; the addresses compared are the ones Skep wrote). An
+        epair an earlier crash left is destroyed first. A start is refused
+        with `container_mac_in_use` when a NIC's MAC address is held by a
+        Skep VM, or is already present on the target bridge: the bridge's
+        own address, a member interface's, or one in the bridge's address
+        table; and with `container_mac_invalid` for a MAC recorded before
+        those rules existed (amendment n). A start is refused with
+        `container_locked_memory_exhausted` when the jail's
+        `limits.locked_memory` plus that of the jails already running or
+        starting is more than the agent's
+        `containers.max_locked_memory_bytes` (amendment o). A start that the checks refuse
+        before any of the jail's code runs, and whose removal then fails,
+        fails with `container_quarantined` and leaves the container
+        `failed`: start, stop, and restart are then refused with that code
+        until a delete or the agent's next start removes the jail without
+        `/etc/rc.shutdown`. A stop or restart task that finds the container
+        still recorded `starting` is refused the same way. The first start marks the jail
+        as started for good: Skep never writes into its tree again. `stop`
+        runs `/etc/rc.shutdown`, then sends SIGTERM and, after `timeout`
+        seconds (default `containers.stop_timeout_seconds`), SIGKILL; a
+        jail cannot refuse, so there is no force stop. A stop destroys the
+        jail's epairs before the jail is removed, so the jail's
+        `/etc/rc.shutdown` runs without its NICs. Its output is appended to
+        the console log. If `jail -r` fails, times out, or leaves the
+        jail, the agent appends rc.shutdown's output and a `--- jail -r
+        failed: <line> ---` line (the last line of its stderr, control
+        characters and Unicode format characters (category Cf) removed,
+        at most 200 bytes; that text may come from the jail) to the
+        console log, removes the jail with `jail -R` (none of its code
+        runs), and the stop succeeds; the agent logs
+        `container_stop_forced`. If `jail -R` fails too, the task fails
+        with `container_remove_failed`, whose message gives both
+        commands' cleaned last stderr lines (amendments p, q, and u).
+        `restart` is a stop and a start.
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ContainerAction"
+      responses:
+        "202":
+          description: The power task.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Task"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/VMConflict"
+        "422":
+          $ref: "#/components/responses/VMUnprocessable"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /containers/{id}/console-log:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [containers]
+      operationId: getContainerConsoleLog
+      summary: The end of a jail's console log
+      x-skep-permission: container:read
+      description: |
+        Requires `container:read`. At most the last 64 KiB of the console
+        log of the jail's last start: what `/etc/rc` wrote, drained by
+        the agent from a pipe that is closed when the start ends (ADR 0010
+        amendment o). The file holds the first 256 KiB of rc's output
+        and, if there was more, a `skep: N bytes discarded` line and the
+        last 64 KiB. After a stop, a `--- shutdown ---` line follows, then
+        what `/etc/rc.shutdown` wrote to standard output: the first
+        32 KiB and, if there was more, the same marker and the last
+        32 KiB (amendment p). Then a `--- shutdown stderr ---` line and
+        the last 32 KiB of what it wrote to standard error, preceded by
+        the marker when there was more (amendment q). The
+        content is written by the jail. The file is kept as written, but
+        `text` is cleaned (amendment r): Unicode format characters
+        (category Cf, including the bidirectional overrides and
+        isolates) and C0 and C1 control characters (and DEL), except
+        newline and tab, are removed; a byte that is not UTF-8 becomes
+        U+FFFD. `truncated` describes the file's tail before the cleanup,
+        so `text` may be shorter than 64 KiB when it is true. The log is
+        kept in the runtime
+        directory and is gone after a host reboot.
+      parameters:
+        - $ref: "#/components/parameters/Background"
+      responses:
+        "200":
+          description: The log tail.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContainerConsoleLog"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /containers/{id}/snapshots:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [containers]
+      operationId: listContainerSnapshots
+      summary: A jail's snapshots
+      x-skep-permission: container:read
+      description: |
+        Requires `container:read`. The jail's snapshots, oldest first,
+        with what ZFS shows of each now (`observed`) and the linked
+        clones that depend on each.
+      parameters:
+        - $ref: "#/components/parameters/Background"
+      responses:
+        "200":
+          description: The snapshots.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SnapshotList"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+    post:
+      tags: [containers]
+      operationId: createContainerSnapshot
+      summary: Take a snapshot of a jail's root
+      x-skep-permission: container:snapshot
+      description: |
+        Requires `container:snapshot`. Submits
+        `container.snapshot.create`, which takes one ZFS snapshot of the
+        jail's root (ADR 0010 decision 2). Memory is not saved. Taken
+        while the jail runs, the snapshot is `crash_consistent`: what a
+        power cut would leave on disk; taken while it is stopped,
+        `consistent`. The task can be cancelled until the ZFS call.
+        Refused for a name the jail already uses (`snapshot_name_taken`),
+        beyond `storage.max_snapshots_per_resource` (`snapshot_limit`,
+        default 64), for a jail that was never provisioned
+        (`container_not_provisioned`), and when the encryption key of the
+        jail's root is not loaded (`storage_locked`).
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SnapshotCreate"
+      responses:
+        "202":
+          description: The snapshot, not yet taken, and its task.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SnapshotCreated"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/VMConflict"
+        "422":
+          $ref: "#/components/responses/VMUnprocessable"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /containers/{id}/snapshots/{sid}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+      - $ref: "#/components/parameters/SnapshotID"
+    get:
+      tags: [containers]
+      operationId: getContainerSnapshot
+      summary: One jail snapshot
+      x-skep-permission: container:read
+      parameters:
+        - $ref: "#/components/parameters/Background"
+      responses:
+        "200":
+          description: The snapshot.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Snapshot"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+    delete:
+      tags: [containers]
+      operationId: deleteContainerSnapshot
+      summary: Delete a jail snapshot
+      x-skep-permission: container:snapshot
+      description: |
+        Requires `container:snapshot`. Submits
+        `container.snapshot.delete`, which destroys the snapshot. The jail
+        may be running. Refused while a linked clone depends on the
+        snapshot (`snapshot_has_clones`, naming the clones).
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "202":
+          description: The task.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Task"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/VMConflict"
+        "422":
+          $ref: "#/components/responses/VMUnprocessable"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /containers/{id}/snapshots/{sid}/rollback:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+      - $ref: "#/components/parameters/SnapshotID"
+    post:
+      tags: [containers]
+      operationId: rollbackContainerSnapshot
+      summary: Roll a jail back to a snapshot
+      x-skep-permission: container:write
+      x-skep-also-requires: [container:snapshot]
+      description: |
+        Requires `container:write` and `container:snapshot`, the same as a
+        clone (ADR 0010 amendment n): a rollback destroys the jail's
+        current data. Submits
+        `container.snapshot.rollback`, which rolls the jail's root back.
+        Only while the jail is stopped (`container_not_stopped`). A
+        rollback to a snapshot that is not the latest destroys every newer
+        one and is refused without `"destroy_newer": true`
+        (`snapshot_not_latest`, listing them); the task result and the
+        audit entry name each snapshot destroyed. A newer snapshot with
+        linked clones refuses the rollback whatever the flag says
+        (`snapshot_has_clones`), and so does a newer snapshot Skep did not
+        take.
+
+        `started_once` stays true after any rollback, even to a snapshot
+        taken before the first start: Skep never writes into the tree of
+        a jail that has run code (ADR 0010 decision 13).
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SnapshotRollback"
+      responses:
+        "202":
+          description: The task.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Task"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/VMConflict"
+        "422":
+          $ref: "#/components/responses/VMUnprocessable"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /containers/{id}/clone:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      tags: [containers]
+      operationId: cloneContainer
+      summary: Make a linked clone of a jail
+      x-skep-permission: container:write
+      x-skep-also-requires: [container:snapshot]
+      description: |
+        Requires `container:write` and `container:snapshot` (ADR 0010
+        amendment j). Submits `container.clone`, which makes a new jail
+        whose root is a ZFS clone of one snapshot of the source's root
+        (decision 3). Without `snapshot_id`, the task takes a snapshot of
+        the source first, named after the clone, and leaves it behind.
+        The clone gets a new ID, the given name and hostname (default:
+        the name), new MAC addresses, and the source's template, options,
+        limits (the disk quota is set again), SSH key, NIC slots,
+        bridges, and addressing. Its in-jail interfaces are `skep0`,
+        `skep1`, ... as in every jail, so the copied `rc.conf` configures
+        them.
+
+        **Static addresses** (amendment k): every NIC of the source with
+        a static address needs new addressing in `nics`, or the clone
+        would hold the source's address (`clone_addressing_required`,
+        422, naming the slots). New addressing or nameservers are written
+        into the clone's `rc.conf` and `resolv.conf`, which Skep does only
+        for a tree that has never run code: a clone inherits its source's
+        `started_once`, and for a source that has started the change is
+        `container_started`. So a jail with a static address can be
+        cloned only while it has never started.
+
+        **A clone is the same guest.** Skep does not change what is inside
+        the tree: the clone's `/etc/ssh` host keys and `/etc/hostid` are
+        the source's. Regenerate the host keys inside the clone (for
+        example `rm /etc/ssh/ssh_host_*` and restart sshd) before it shares
+        a network with the source.
+
+        While the clone exists, its origin snapshot and the source jail
+        cannot be deleted (`snapshot_has_clones`). Clones stay in the
+        source's pool.
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ContainerClone"
+      responses:
+        "202":
+          description: The clone, not yet provisioned, and its task.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContainerCreated"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/VMConflict"
+        "422":
+          $ref: "#/components/responses/VMUnprocessable"
+        "503":
+          $ref: "#/components/responses/Unavailable"
   /metrics:
     get:
       tags: [storage]
       operationId: getMetrics
       summary: Current resource use of the node
       x-skep-permission: system:read
-      x-skep-also-requires: [vm:read, storage:read]
+      x-skep-also-requires: [vm:read, storage:read, container:read]
       description: |
-        Requires `system:read`, `vm:read`, and `storage:read`: the values
-        name pools and VMs. Current values only, with no history (ADR 0010
-        decision 15): the space and capacity of every allow-listed pool
-        and directory pool against the `storage_capacity` thresholds, the
-        datasets whose key is not loaded, each VM's disk use, and, while a
-        VM runs, the CPU time and resident memory of its bhyve process.
-        The agent samples every 30 seconds; a sample older than a minute
-        is replaced before answering. `observed_at` says when the values
-        were read. Per-jail values come with jails (phase 7b).
+        Requires `system:read`, `vm:read`, `storage:read`, and
+        `container:read`: the values name pools, VMs, and jails. Current
+        values only, with no history (ADR 0010 decision 15): the space and
+        capacity of every allow-listed pool and directory pool against the
+        `storage_capacity` thresholds, the datasets whose key is not
+        loaded, each VM's disk use, and, while a VM runs, the CPU time and
+        resident memory of its bhyve process; each jail's root dataset
+        space and, while it runs on a host with RACCT enabled, its CPU,
+        resident memory, process count, and descriptor-table slots as
+        `rctl -u` reports them. The agent samples every 30 seconds; a
+        sample older than a minute is replaced before answering.
+        `observed_at` says when the values were read.
       parameters:
         - $ref: "#/components/parameters/Background"
       responses:
@@ -1475,7 +2295,15 @@ components:
         `idempotency_key_conflict`, and for storage operations
         `storage_locked`, `snapshot_limit`, `snapshot_has_clones`,
         `snapshot_not_latest`, `snapshot_incomplete`, `snapshot_name_taken`,
-        `snapshot_not_provisioned`, `disk_has_snapshots`.
+        `snapshot_not_provisioned`, `disk_has_snapshots`, and for jail
+        templates `template_name_taken`, `template_not_provisioned`,
+        `jail_parent_insecure`, and for jails `container_name_taken`,
+        `container_not_stopped`, `container_not_running`,
+        `container_not_provisioned`, `container_started`,
+        `container_start_failed`, `container_address_in_use`,
+        `container_mac_in_use`, `container_quarantined`,
+        `container_remove_failed`,
+        `container_locked_memory_exhausted`, `epair_unavailable`, `rctl_unavailable`, `devfs_ruleset_conflict`.
       content:
         application/json:
           schema:
@@ -1485,7 +2313,16 @@ components:
         The request names something this host does not offer:
         `engine_unsupported`, `firmware_unsupported`, `pool_not_allowed`,
         `bridge_not_allowed`, `media_not_found`,
-        `storage_feature_unsupported`.
+        `storage_feature_unsupported`, and for jail templates
+        `release_unsupported` (no allowlist for the host's release), and
+        for jails `container_ssh_unavailable`,
+        `mlock_requires_memory_limit`, `clone_addressing_required`,
+        `container_mac_invalid`, `container_locked_memory_above_max`,
+        `container_disk_quota_below_usage`.
+        A build task can also fail with `template_script_unknown`,
+        `template_trigger_left`, `template_host_changed`,
+        `template_build_failed`, `template_archive_mismatch`, or
+        `release_unsupported`; those are in the task, not the response.
       content:
         application/json:
           schema:
@@ -1872,6 +2709,378 @@ components:
           type: string
           pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$"
         description: { type: string, maxLength: 1024 }
+    TemplateSourceState:
+      type: object
+      required: [available]
+      properties:
+        available: { type: boolean }
+        reason:
+          type: string
+          description: Why the source cannot be used.
+    TemplateSources:
+      type: object
+      required: [host_release, pkgbase, packages, dist]
+      properties:
+        host_release:
+          type: string
+          description: freebsd-version -k of the host, for example 15.1-RELEASE-p6.
+        pkgbase:
+          $ref: "#/components/schemas/TemplateSourceState"
+        packages:
+          type: array
+          items: { type: string }
+          description: storage.template_packages.
+        dist:
+          $ref: "#/components/schemas/TemplateSourceState"
+    Template:
+      type: object
+      required: [id, name, pool, source, packages, provisioned, patch_differs, has_sshd, used_bytes, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        pool: { type: string }
+        source: { type: string, enum: [pkgbase, dist] }
+        packages:
+          type: array
+          items: { type: string }
+        archive_sha256:
+          type: string
+          description: The checked SHA-256 of base.txz (dist).
+        provisioned:
+          type: boolean
+          description: False while the build runs, and after it failed or was interrupted.
+        release:
+          type: string
+          description: freebsd-version -u of the built userland, patch level included.
+        host_release:
+          type: string
+          description: The host kernel's release when the template was read.
+        patch_differs:
+          type: boolean
+          description: Same major.minor as the host, different patch level.
+        has_sshd:
+          type: boolean
+          description: |
+            Whether the built template has sshd (a regular file
+            usr/sbin/sshd), by the same check that refuses an SSH key on a
+            jail create with `container_ssh_unavailable` (ADR 0010
+            amendment m). False while the template is not built.
+        used_bytes: { type: integer, format: int64 }
+        created_at: { type: string, format: date-time }
+    TemplateList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Template"
+        next_cursor: { type: string }
+    TemplateCreate:
+      type: object
+      additionalProperties: false
+      required: [name, pool, source]
+      properties:
+        name:
+          type: string
+          pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$"
+        pool:
+          type: string
+          description: An allow-listed ZFS pool.
+        source: { type: string, enum: [pkgbase, dist] }
+    TemplateCreated:
+      type: object
+      required: [template, task]
+      properties:
+        template:
+          $ref: "#/components/schemas/Template"
+        task:
+          $ref: "#/components/schemas/Task"
+    ContainerOptions:
+      type: object
+      additionalProperties: false
+      properties:
+        sysvipc:
+          type: boolean
+          description: Its own System V shared memory, semaphores, and message queues.
+        mlock:
+          type: boolean
+          description: May lock memory (allow.mlock). Needs `limits.locked_memory` and RACCT (`mlock_requires_memory_limit`).
+    ContainerLimits:
+      type: object
+      additionalProperties: false
+      description: |
+        A jail's resource limits (ADR 0010 decision 11, amendment j);
+        absent or zero means none. All but `disk_quota` are RCTL deny
+        rules on the jail, need RACCT (`rctl_unavailable` otherwise), and
+        are added before any process runs in the jail and removed when it
+        stops. What each does on FreeBSD 15.1, as measured on the test
+        host:
+      properties:
+        memory:
+          allOf: [{ $ref: "#/components/schemas/ByteSize" }]
+          description: |
+            **Soft.** RCTL `memoryuse`, the jail's resident memory, at
+            least 16 MiB. FreeBSD does not refuse an allocation past it: a
+            jail can hold more than the limit at once. While it is over,
+            the host slowly moves its pages to the inactive queue (on the
+            test host, after about 80 s, under 1 MiB/s), so they are the
+            first memory reclaimed when the host is short of memory; they
+            are not swapped out while the host has memory free. Use it as
+            a target and for accounting, not as a cap.
+        locked_memory:
+          allOf: [{ $ref: "#/components/schemas/ByteSize" }]
+          description: |
+            RCTL `memorylocked`, the memory the jail may lock with
+            mlock(2). The `mlock` option needs it. Not more than `memory`
+            when both are set, and not more than the agent's
+            `containers.max_locked_memory_bytes` (by default a quarter of
+            physical memory), which is also the total of all running jails:
+            a start that would pass it is refused with
+            `container_locked_memory_exhausted` (ADR 0010 amendment o).
+        cpu_percent:
+          type: integer
+          minimum: 0
+          description: |
+            RCTL `pcpu`: 100 is one CPU, at most 100 per CPU of the host
+            (`containers.max_cpu_percent` in `GET /system`). Approximate:
+            RACCT samples and averages, so a busy jail swings above and
+            below the limit around it (on the test host, 50 gave samples
+            between 28 and 74).
+        max_processes:
+          type: integer
+          minimum: 0
+          maximum: 1048576
+          description: RCTL `maxproc`, the processes in the jail; a fork past it fails.
+        open_files:
+          type: integer
+          minimum: 0
+          maximum: 16777216
+          description: |
+            RCTL `openfiles`, at least 64. It counts descriptor-table
+            slots, not open files: each process is charged the size of
+            its table, which grows in steps (40, 128, 256, ... slots) and
+            does not shrink, and helper processes such as Capsicum's
+            casper count too. Size it well above the descriptors the
+            jail's programs keep open.
+        disk_quota:
+          allOf: [{ $ref: "#/components/schemas/ByteSize" }]
+          description: |
+            ZFS `refquota` on the jail's root, at least 64 MiB; works
+            without RACCT, and snapshots do not count against it. It
+            includes the data the root shares with its template (about
+            78 MiB for a minimal template), so the room left for the
+            jail's own data is the quota less that. A create with a quota
+            below the template's size, or an update to one below what the
+            root already references, is refused with
+            `container_disk_quota_below_usage`.
+    ContainerCapabilities:
+      type: object
+      required: [rctl, max_cpu_percent]
+      properties:
+        rctl:
+          type: boolean
+          description: kern.racct.enable. Without it, every limit but `disk_quota` is refused with `rctl_unavailable`, and a jail that has one does not start.
+        max_cpu_percent:
+          type: integer
+          description: 100 per CPU of the host, the bound of `cpu_percent`.
+    ContainerIPv4:
+      type: object
+      additionalProperties: false
+      required: [mode]
+      properties:
+        mode: { type: string, enum: [dhcp, static] }
+        address:
+          type: string
+          description: Static only. An IPv4 address with its prefix length, such as 192.0.2.10/24.
+        gateway:
+          type: string
+          description: Static only, optional. Another address in the prefix; the jail's default route. One NIC at most has one.
+    ContainerNIC:
+      type: object
+      required: [id, slot, bridge, mac_address, interface, ipv4]
+      properties:
+        id: { type: string, format: uuid }
+        slot: { type: integer, minimum: 0, maximum: 7 }
+        bridge: { type: string }
+        mac_address:
+          type: string
+          description: The jail end's MAC address.
+        interface:
+          type: string
+          description: The jail end's name inside the jail, skep<slot> (skep0, skep1, ...), the same for every jail and on every start; the jail's rc.conf names it.
+        ipv4:
+          $ref: "#/components/schemas/ContainerIPv4"
+        host_interface:
+          type: string
+          description: The epair's host end, while the jail runs.
+    ContainerNICSpec:
+      type: object
+      additionalProperties: false
+      required: [bridge]
+      properties:
+        bridge:
+          type: string
+          description: An allow-listed bridge (network.bridges).
+        mac_address:
+          type: string
+          description: >-
+            Generated (02:xx:xx:xx:xx:xx) when left out; on an update, the
+            slot keeps its MAC. A given address must be unicast, locally
+            administered (the 0x02 bit of the first byte set), and not all
+            zeroes (`container_mac_invalid`, 422, on create, update, and
+            clone; ADR 0010 amendment n). A malformed one is
+            `invalid_request`. One that another Skep jail or a Skep VM
+            holds is `container_mac_in_use` (409) on create, update, and
+            clone, with `held_by_kind` (`container` or `vm`),
+            `held_by_id`, and `held_by_name` in the details, as at start
+            (amendment u).
+        ipv4:
+          $ref: "#/components/schemas/ContainerIPv4"
+    Container:
+      type: object
+      required: [id, name, hostname, template_id, template_name, pool, options, limits, nics, provisioned, started_once, desired_state, state, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        hostname: { type: string }
+        template_id: { type: string, format: uuid }
+        template_name: { type: string }
+        pool: { type: string }
+        release:
+          type: string
+          description: The template's userland release.
+        options:
+          $ref: "#/components/schemas/ContainerOptions"
+        limits:
+          $ref: "#/components/schemas/ContainerLimits"
+        ssh_authorized_key:
+          type: string
+          description: Root's SSH public key, if one was given.
+        nics:
+          type: array
+          items:
+            $ref: "#/components/schemas/ContainerNIC"
+        nameservers:
+          type: array
+          items: { type: string }
+          description: Written into the jail's resolv.conf before its first start (static addressing).
+        provisioned: { type: boolean }
+        started_once:
+          type: boolean
+          description: True from the first start on; Skep then never writes into the jail's tree. A clone inherits its source's.
+        cloned_from_snapshot_id:
+          type: string
+          format: uuid
+          description: The snapshot a linked clone was made from. Deleting it, or its jail, is refused while the clone exists.
+        desired_state: { type: string, enum: [stopped, running] }
+        state:
+          type: string
+          enum: [unknown, stopped, starting, running, stopping, failed]
+          description: >-
+            `failed` is a quarantined jail (ADR 0010 amendment n): a start
+            refused it before any of its code ran (the `/dev` guard or a
+            parameter check) and removing it then failed. It stays
+            `failed` whether or not the jail still exists; start, stop,
+            and restart are refused with `container_quarantined`, and a
+            delete or the agent's next start removes it without running
+            `/etc/rc.shutdown`. `state_detail` gives both causes.
+        jid: { type: integer }
+        state_detail: { type: string }
+        observed_at: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    ContainerList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Container"
+        next_cursor: { type: string }
+    ContainerCreate:
+      type: object
+      additionalProperties: false
+      required: [name, template_id]
+      properties:
+        name:
+          type: string
+          pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$"
+        hostname:
+          type: string
+          maxLength: 253
+          description: A DNS name. Defaults to the name.
+        template_id: { type: string, format: uuid }
+        options:
+          $ref: "#/components/schemas/ContainerOptions"
+        limits:
+          $ref: "#/components/schemas/ContainerLimits"
+        ssh_authorized_key:
+          type: string
+          maxLength: 16384
+          description: One OpenSSH public key line, "type base64 [comment]", without options.
+        nics:
+          type: array
+          maxItems: 8
+          description: Slots 0, 1, ... in order. Each needs if_epair at start.
+          items:
+            $ref: "#/components/schemas/ContainerNICSpec"
+        nameservers:
+          type: array
+          maxItems: 3
+          description: IPv4 or IPv6 addresses for resolv.conf. Only when no NIC uses DHCP (dhclient writes resolv.conf).
+          items: { type: string }
+    ContainerUpdate:
+      type: object
+      additionalProperties: false
+      properties:
+        hostname: { type: string, maxLength: 253 }
+        options:
+          $ref: "#/components/schemas/ContainerOptions"
+        limits:
+          allOf: [{ $ref: "#/components/schemas/ContainerLimits" }]
+          description: Replaces every limit; absent fields are removed.
+        ssh_authorized_key:
+          type: string
+          maxLength: 16384
+          description: Empty removes the key. Only before the first start.
+        nics:
+          type: array
+          maxItems: 8
+          description: Replaces every NIC; empty removes them all. After the first start only the bridge and MAC address of existing slots may change (`container_started`).
+          items:
+            $ref: "#/components/schemas/ContainerNICSpec"
+        nameservers:
+          type: array
+          maxItems: 3
+          description: Only before the first start.
+          items: { type: string }
+    ContainerAction:
+      type: object
+      additionalProperties: false
+      required: [action]
+      properties:
+        action: { type: string, enum: [start, stop, restart] }
+        timeout:
+          type: integer
+          minimum: 1
+          maximum: 300
+          description: Seconds between SIGTERM and SIGKILL, for stop and restart.
+    ContainerCreated:
+      type: object
+      required: [container, task]
+      properties:
+        container:
+          $ref: "#/components/schemas/Container"
+        task:
+          $ref: "#/components/schemas/Task"
+    ContainerConsoleLog:
+      type: object
+      required: [text, truncated]
+      properties:
+        text: { type: string }
+        truncated: { type: boolean }
     SnapshotCreated:
       type: object
       required: [snapshot, task]
@@ -1887,6 +3096,31 @@ components:
         destroy_newer:
           type: boolean
           description: Allow a rollback to an older snapshot, which destroys every newer one.
+    ContainerClone:
+      type: object
+      required: [name]
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+          pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$"
+        hostname:
+          type: string
+          description: Defaults to the name.
+        snapshot_id:
+          type: string
+          description: The snapshot of the source to clone. Without it, the task takes one first.
+        nics:
+          type: array
+          maxItems: 8
+          description: One entry per NIC of the source, in slot order. Empty fields keep the source's bridge and addressing; the MAC address is new unless given. Every NIC with a static address on the source needs new addressing here.
+          items:
+            $ref: "#/components/schemas/ContainerNICSpec"
+        nameservers:
+          type: array
+          maxItems: 3
+          items: { type: string }
+          description: Replace the source's (static addressing only). Dropped when no NIC keeps a static address.
     VMClone:
       type: object
       required: [name]
@@ -1985,7 +3219,7 @@ components:
         compressratio: { type: string }
     Metrics:
       type: object
-      required: [node_id, observed_at, capacity_warn_percent, capacity_fail_percent, pools, vms]
+      required: [node_id, observed_at, capacity_warn_percent, capacity_fail_percent, pools, vms, containers]
       properties:
         node_id: { type: string }
         observed_at: { type: string, format: date-time }
@@ -1997,6 +3231,53 @@ components:
         vms:
           type: array
           items: { $ref: "#/components/schemas/VMMetrics" }
+        containers:
+          type: array
+          items: { $ref: "#/components/schemas/ContainerMetrics" }
+    ContainerMetrics:
+      type: object
+      description: |
+        One jail's current use. The RACCT fields are present only while
+        the jail runs on a host with RACCT enabled (`System.containers.rctl`);
+        the disk fields are always present.
+      required: [id, name, state, disk_used_bytes, disk_referenced_bytes]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        state: { type: string }
+        cpu_percent:
+          type: integer
+          description: RACCT `pcpu`, a recent average where 100 is one busy CPU; approximate.
+        cpu_time_seconds:
+          type: number
+          description: CPU time of the jail's processes (RACCT `cputime`), in whole seconds.
+        resident_memory_bytes:
+          type: integer
+          format: int64
+          description: RACCT `memoryuse`, the jail's resident memory.
+        processes:
+          type: integer
+          description: The number of processes in the jail (RACCT `maxproc`).
+        open_file_slots:
+          type: integer
+          description: |
+            RACCT `openfiles`: the descriptor-table slots of the jail's
+            processes, the figure `limits.open_files` applies to. Not the
+            number of open files: a table grows in steps (40, 128, 256
+            slots) and never shrinks.
+        disk_used_bytes:
+          type: integer
+          format: int64
+          description: Space the jail root holds, its snapshots included.
+        disk_referenced_bytes:
+          type: integer
+          format: int64
+          description: |
+            Space the jail root references, including the blocks it shares
+            with its template: what `limits.disk_quota` applies to.
+        error:
+          type: string
+          description: Which values could not be read.
     PoolMetrics:
       type: object
       required: [name, type, health, size_bytes, allocated_bytes, available_bytes, capacity_percent, capacity]
@@ -2557,6 +3838,8 @@ components:
               $ref: "#/components/schemas/Capability"
         bhyve:
           $ref: "#/components/schemas/EngineCapabilities"
+        containers:
+          $ref: "#/components/schemas/ContainerCapabilities"
         started_at:
           type: string
           format: date-time

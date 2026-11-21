@@ -1,0 +1,24 @@
+# Check 8: limits.locked_memory refuses an mlock past it (memorylocked), 2026-11-17T22:44:16Z
+test program: tests/integration/jails/mlocktest at 003a33f, sha256 76d8be5cde32183f3154d826cddaee6f97601d6f045f586f38a954b52ee4658c
+HTTP 202
+container.create succeeded  
+container.start succeeded  
+-- rules: jail:skep-d557995e-aebc-4171-be9a-b78a642dae0a:memorylocked:deny=33554432 
+-- allow.mlock: true
+-r-xr-xr-x  1 root wheel 2304137 Nov 17 17:44 /skeptest/skep/jail/d557995e-aebc-4171-be9a-b78a642dae0a/tmp/mlocktest
+76d8be5cde32183f3154d826cddaee6f97601d6f045f586f38a954b52ee4658c
+-- 16 MiB held for 6 s, rctl -u during the hold:
+mlock 16 MiB: locked
+memorylocked=16777216
+-- 64 MiB:
+mlock 64 MiB: refused: cannot allocate memory (errno 12)
+exit 1
+-- 30 MiB (under 32):
+mlock 30 MiB: locked
+exit 0
+-- 33 MiB (just over):
+mlock 33 MiB: refused: cannot allocate memory (errno 12)
+exit 1
+-- after: memorylocked=0
+-- RLIMIT_MEMLOCK of the jail's root under jexec -l (KiB): unlimited
+-- vm.max_user_wired / vm.stats.vm.v_user_wire_count: 1192382 0 

@@ -44,6 +44,9 @@ type Options struct {
 	// Bhyve reports what the bhyve engine can do on this host, for the
 	// system document. Optional.
 	Bhyve func(ctx context.Context) models.EngineCapabilities
+	// Containers reports what jails can have on this host, for the
+	// system document. Optional.
+	Containers func(ctx context.Context) (models.ContainerCapabilities, error)
 	// CacheTTL is how long a discovery result is reused. Zero disables
 	// caching.
 	CacheTTL time.Duration
@@ -63,6 +66,7 @@ type Service struct {
 	tasks    TaskReader
 	checks   map[string]models.HealthProbe
 	bhyve    func(ctx context.Context) models.EngineCapabilities
+	ctrCaps  func(ctx context.Context) (models.ContainerCapabilities, error)
 	cacheTTL time.Duration
 	log      *slog.Logger
 	now      func() time.Time
@@ -98,6 +102,7 @@ func NewService(opts Options) (*Service, error) {
 		tasks:    opts.Tasks,
 		checks:   opts.Checks,
 		bhyve:    opts.Bhyve,
+		ctrCaps:  opts.Containers,
 		cacheTTL: opts.CacheTTL,
 		log:      opts.Logger,
 		now:      opts.Now,
@@ -164,6 +169,13 @@ func (s *Service) System(ctx context.Context) (models.System, error) {
 		// against, so a client can explain a refusal before it happens.
 		caps := s.bhyve(ctx)
 		sys.Bhyve = &caps
+	}
+	if s.ctrCaps != nil {
+		if caps, err := s.ctrCaps(ctx); err != nil {
+			s.log.Warn("agent: cannot read the jail capabilities", "error", err)
+		} else {
+			sys.Containers = &caps
+		}
 	}
 	return sys, nil
 }

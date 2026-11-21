@@ -1,0 +1,85 @@
++ sudo ifconfig epair create description skep:cmdcheck:0 inet6 ifdisabled -auto_linklocal up
+ifconfig: inet6: bad value
+out=[epair0a]
++ A=epair0a
++ echo 'out=[epair0a]'
++ ifconfig epair0a
+epair0a: flags=1008842<BROADCAST,RUNNING,SIMPLEX,MULTICAST,LOWER_UP> metric 0 mtu 1500
+	description: skep:cmdcheck:0
+	options=60001b<RXCSUM,TXCSUM,VLAN_MTU,VLAN_HWTAGGING,RXCSUM_IPV6,TXCSUM_IPV6>
+	ether 58:9c:fc:10:dd:98
+	groups: epair
+	media: Ethernet 10Gbase-T (10Gbase-T <full-duplex>)
+	status: active
+	nd6 options=29<PERFORMNUD,IFDISABLED,AUTO_LINKLOCAL>
++ ifconfig epair0b
+epair0b: flags=1008842<BROADCAST,RUNNING,SIMPLEX,MULTICAST,LOWER_UP> metric 0 mtu 1500
+	options=60001b<RXCSUM,TXCSUM,VLAN_MTU,VLAN_HWTAGGING,RXCSUM_IPV6,TXCSUM_IPV6>
+	ether 58:9c:fc:10:fd:4c
+	groups: epair
+	media: Ethernet 10Gbase-T (10Gbase-T <full-duplex>)
+	status: active
+	nd6 options=29<PERFORMNUD,IFDISABLED,AUTO_LINKLOCAL>
++ sudo ifconfig bridge0 addm epair0a
++ ifconfig bridge0
++ grep member
+	member: epair0a flags=143<LEARNING,DISCOVER,AUTOEDGE,AUTOPTP>
+	member: vtnet1 flags=143<LEARNING,DISCOVER,AUTOEDGE,AUTOPTP>
++ ifconfig -g epair
+epair0b
+epair0a
++ sudo ifconfig epair0a destroy
++ ifconfig -g epair
++ ifconfig bridge0
++ grep member
+	member: vtnet1 flags=143<LEARNING,DISCOVER,AUTOEDGE,AUTOPTP>
++ sudo devfs rule -s 6001 show
+show-empty exit 0
++ echo 'show-empty exit 0'
++ sudo devfs rule showsets
+1
+2
+3
+4
+5
++ sudo devfs rule -s 6001 add 100 include 5
++ sudo devfs rule -s 6001 add 200 path 'bpf*' unhide
++ sudo devfs rule -s 6001 show
++ od -c
++ head
+0000000    1   0   0       i   n   c   l   u   d   e       5  \n   2   0
+0000020    0       p   a   t   h       b   p   f   *       u   n   h   i
+0000040    d   e  \n                                                    
+0000043
++ sudo devfs rule -s 6001 show
+100 include 5
+200 path bpf* unhide
++ sudo devfs rule showsets
+1
+2
+3
+4
+5
+6001
++ sudo devfs rule -s 6001 delset
++ sudo devfs rule showsets
+1
+2
+3
+4
+5
++ sudo devfs rule -s 6001 show
+exit 0
++ echo 'exit 0'
+== ifconfig epair inet6 create description skep:cmdcheck:1 ifdisabled -auto_linklocal up
+ifconfig: interface epair does not exist
+exit 1 out=[]
+left: []
+== ifconfig epair create inet6 description skep:cmdcheck:2 ifdisabled -auto_linklocal up
+exit 0 out=[epair0a]
+epair0b: flags=1008842<BROADCAST,RUNNING,SIMPLEX,MULTICAST,LOWER_UP> metric 0 mtu 1500
+	nd6 options=29<PERFORMNUD,IFDISABLED,AUTO_LINKLOCAL>
+epair0a: flags=1008843<UP,BROADCAST,RUNNING,SIMPLEX,MULTICAST,LOWER_UP> metric 0 mtu 1500
+	description: skep:cmdcheck:2
+	nd6 options=9<PERFORMNUD,IFDISABLED>
+left: []

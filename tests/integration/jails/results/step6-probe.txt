@@ -1,0 +1,189 @@
+ADR 0010 phase 7b, step 6: feasibility probe of the accepted pkgbase build
+specification, before building it. Recorded 2026-11-16 on hearst (FreeBSD
+15.1-RELEASE-p6, amd64, pkg 2.9.2, RACCT on). Hand-run, not a Skep task: no
+builder code exists yet. Scripts: ../step6-probe/probe1.sh to probe6.sh,
+each run as `ssh hearst 'sudo sh -s' < probeN.sh` (nothing copied to the
+host). Everything ran in the new dataset skeptest/step6-probe (162M, left
+for the next session) and in short-lived build jails named skep-build-probe*.
+skeptest/trace-7b was only read.
+
+RESULT: the specification is not buildable as written. Item 2 (every
+allow.* off) and the follow-up ruling (each command as
+`jexec -l -U root skep-build-<id> ...`, certctl and pwd_mkdb first) cannot
+both hold, and the second cannot hold on its own either. Building stopped
+here, as the run's rules require. Options are at the end.
+
+== probe1: install with scripts and triggers off ==
+
+  env -i PATH=/sbin:/bin:/usr/sbin:/usr/bin ASSUME_ALWAYS_YES=yes TMPDIR=<D>/work/tmp \
+    /usr/sbin/pkg --rootdir <D>/root -o PKG_CACHEDIR=<D>/work/cache \
+      -o PKG_DBDIR=<D>/root/var/db/pkg -o RUN_SCRIPTS=false \
+      -o PKG_TRIGGERS_ENABLE=false install -y FreeBSD-set-minimal
+
+  pkg exit 0
+  install log lines mentioning "trigger" or "script": 0
+  <root>/var/db/pkg: local.sqlite, repos/          (no triggers/ directory)
+  etc/pwd.db, etc/spwd.db, var/db/services.db, etc/login.conf.db: absent
+  etc/ssl/certs entries: 0
+  <work>/tmp after the install: empty (pkg used TMPDIR and cleaned up)
+  bin/freebsd-version: USERLAND_VERSION="15.1-RELEASE-p6"
+
+  So item 1 works as the ADR says: with both options off, no script ran and
+  no trigger was run or deferred.
+
+== probe2/probe3: the build jail and `jexec -l -U root` ==
+
+Jail: jail -c name=skep-build-probe path=<root> persist ip4=disable
+ip6=disable enforce_statfs=2 children.max=0 securelevel=2 exec.clean, every
+allow.* the kernel lists set to 0 (set_hostname, sysvipc, raw_sockets,
+chflags, mount, quotas, socket_af, mlock, reserved_ports, read_msgbuf,
+unprivileged_proc_debug, unprivileged_parent_tampering, suser, nfsd,
+extattr, adjtime, settime, routing, setaudit), no mount.devfs.
+jail -c exit 0. jail -r exit 0; jls -j afterwards: "not found" (exit 1).
+
+Before pwd.db exists:
+  jexec -l -U root J /usr/sbin/certctl rehash -> jexec: getpwnam: root: No such file or directory  (exit 1)
+  jexec -U root J ...                          -> same                                            (exit 1)
+  jexec -l J ...                               -> exit 0
+  jexec J ...                                  -> exit 0
+
+FreeBSD's "files" passwd backend reads only pwd.db/spwd.db, never
+master.passwd, and the template has no pwd.db until pwd_mkdb has run. So
+the first two commands of the fixed order cannot start as specified.
+
+After pwd_mkdb (run with `jexec -l`, no -U):
+  jexec -l -U root J <anything> -> jexec: initgroups: root: Operation not permitted  (exit 1)
+
+With allow.suser=0 (an allow.* parameter, so off under item 2) root in the
+jail has no privilege, and jexec's initgroups()/setgroups() for -U needs
+it. So -U root fails for every command, not only the first two, as long as
+every allow.* is off.
+
+`jexec -l` without -U gives, as uid 0 gid 0 (groups wheel, operator, the
+caller's), this environment (root's login class):
+  SHELL=/bin/sh HOME=/root USER=root BLOCKSIZE=K MAIL=/var/mail/root
+  MM_CHARSET=UTF-8 LANG=C.UTF-8 TERM=su
+  PATH=/sbin:/bin:/usr/sbin:/usr/bin:/usr/local/sbin:/usr/local/bin:/root/bin
+
+== probe4: the two variants that work ==
+
+(a) allow.suser=0 and every other allow.* 0, no devfs, securelevel=2,
+    every command as `jexec -l J <cmd>` (no -U):
+  [0] /usr/sbin/certctl rehash
+  [0] /usr/sbin/pwd_mkdb -i -p -d /etc /etc/master.passwd
+  [0] /usr/sbin/services_mkdb -l -q -o /var/db/services.db /etc/services
+  [0] /usr/bin/cap_mkdb -l /etc/login.conf
+  [0] /usr/bin/makewhatis /usr/share/man
+  [0] /usr/bin/makewhatis /usr/share/openssl/man
+  jail removed (jls -j exit 1)
+
+(b) allow.suser=1, pwd_mkdb first as `jexec -l J` (no -U), then all six
+    commands as `jexec -l -U root J <cmd>`: every command exit 0; jail removed.
+
+Both: no command needed devfs (/dev is empty in the jail) or a securelevel
+below 2. Outputs compared with skeptest/trace-7b (SHA-256):
+  etc/pwd.db          same
+  etc/spwd.db         same
+  etc/login.conf.db   same
+  etc/ssl/certs       identical (118 entries each)
+  var/db/services.db  DIFFERENT (same size, 2097920)
+  usr/share/man/mandoc.db (1782548) and usr/share/openssl/man/mandoc.db (7140)
+                      new (the trace deferred makewhatis and has neither)
+
+== probe5/probe6: why services.db differs ==
+
+services_mkdb is deterministic; the difference is its input.
+
+  ba71f56b...  services_mkdb ... -o x /etc/services   in the jail, twice (identical)
+  06eebad8...  services_mkdb ... -o x /               in the jail (the package form, PKG_ROOTDIR empty)
+  06eebad8...  /usr/sbin/services_mkdb ... -o x <root>/   on the host, twice (the trace's form)
+  06eebad8...  skeptest/trace-7b/root/var/db/services.db
+  06eebad8...  hearst's own /var/db/services.db (installed 2026-10-21 by pkgbase)
+  <root>/etc/services is identical to the trace's; it has 1928 service lines.
+
+  Non-zero bytes: trace's services.db 285, hearst's own 285, the /etc/services
+  build 225517. cmp: 225232 bytes differ, and the trace's byte is 0 in each
+  sampled one.
+
+The FreeBSD-runtime 15.1p6 post-install script passes `${PKG_ROOTDIR}/`, a
+directory, as services_mkdb's input file. services_mkdb reads no entries
+from it and writes an empty database (the header, preallocated). The traced
+template and hearst's own base system both have that empty services.db. The
+ADR's command (/etc/services) builds the populated one. So item 3's check
+("identical to the one the traced build produced") cannot pass, and the
+reason is a bug in the package script, not in Skep's command.
+
+== Allowlist hashes (item 4), from the probe root ==
+
+The spec's fixed command, run against the probe root:
+  env -i PATH=... TMPDIR=<D>/work/tmp /usr/sbin/pkg --rootdir <root>
+    -o PKG_DBDIR=<root>/var/db/pkg info --raw --raw-format json-compact -a
+  exit 0; 1788453 bytes; ONE JSON array of 66 objects on one line (not one
+  object per line: the parser must decode an array).
+
+  FreeBSD-caroot    15.1p6 scripts post-deinstall 5976bb9bdaf0cbb34807cdd7eb9b1b30e4913f92f4c2422c96caea0b381c8099  matches
+  FreeBSD-caroot    15.1p6 scripts post-install   5976bb9bdaf0cbb34807cdd7eb9b1b30e4913f92f4c2422c96caea0b381c8099  matches
+  FreeBSD-runtime   15.1p6 scripts post-install   900cf7d3a93efcb3e894d1517d9d1c913932041ee97ad339adeed6f4ae9ce0f9  matches
+  FreeBSD-utilities 15.1p4 scripts post-install   8620cabb4dfe8249fc0fe50ff62fc6e0cd4df957ac46b112098baa4ee63c698f  matches
+  No lua_scripts in any package.
+  usr/share/pkg/triggers/mandoc.ucl  c6cc94249864d251d0a143b62c21019d5f4ab593299c55dccdb5f0574fdb1590  matches
+  usr/local/share/pkg/triggers/: absent
+
+== Host after the probe ==
+
+jls: no jails. Nothing of the probe's in /tmp. skeptest/trace-7b and
+/var/tmp/skep-trace7b untouched. skeptest/step6-probe left in place (162M):
+its root has had the probe commands run in it, so it is not a clean
+template. Remove with `sudo zfs destroy -r skeptest/step6-probe`.
+
+== Options (for Andy) ==
+
+Problem 1 and 2: how the build commands enter the jail.
+
+  A. Every command as `/usr/sbin/jexec -l skep-build-<id> <cmd>` (no -U),
+     with every allow.* off including allow.suser, in the ADR's order.
+     Verified above (probe4 a). The command runs with the agent's own
+     credentials, uid 0 gid 0, which are what -U root would give, and gets
+     root's login-class environment from -l. In a jail with allow.suser=0
+     that root has no privilege beyond owning the files, which is all
+     these commands need. Strictest of the three, and one uniform form.
+     RECOMMENDED.
+  B. allow.suser=1 in the build jail; pwd_mkdb first as `jexec -l` (no -U),
+     then every command as `jexec -l -U root`. Verified (probe4 b). Keeps
+     -U root for most commands, but gives jail root its privileges back and
+     needs two invocation forms and a reordered or repeated pwd_mkdb.
+  C. allow.suser=1 and `jexec -l -u root` (-u looks the user up on the HOST,
+     so no pwd.db is needed in the jail). Not tested. Same privilege cost
+     as B; mixes host and jail user databases.
+
+  Related, for step 7: Decision 9's baseline says "every allow.* off" for
+  ordinary jails too. allow.suser is an allow.* parameter, and with it off
+  root inside a jail is unprivileged, so /etc/rc and most services will not
+  work. Step 7 will need allow.suser=1 (the default) stated as an exception,
+  or the baseline worded as "every allow.* that grants more than the
+  default jail confinement off".
+
+Problem 3: services.db.
+
+  i.  Keep the ADR's command (/etc/services): the template gets a populated
+      services.db; it differs from the package's (empty) output on purpose,
+      and the comparison item records why. RECOMMENDED.
+  ii. Mimic the package exactly (input "/"): the template gets the same
+      empty database pkgbase gives a host. Bug-compatible, no value.
+  Optionally, report the script bug upstream (outward action: Andy's call).
+
+== Answers (Andy, 2026-11-16) and the lookup check ==
+
+Option A; services_mkdb keeps /etc/services; Decision 9 amended (amendment
+e: ordinary jails keep allow.suser on). Recorded in ADR 0010, step 6,
+"Resolved". skeptest/step6-probe destroyed (zfs destroy exit 0).
+
+Does hearst's own empty /var/db/services.db break name lookups? (read-only)
+  getent services ssh     -> ssh                  22/tcp   (exit 0)
+  getent services domain  -> domain               53/tcp   (exit 0)
+  getent services 22      -> ssh                  22/tcp   (exit 0)
+  /etc/nsswitch.conf: services: compat / services_compat: nis
+No. In lib/libc/net/getservent.c (releng/15.1), the files and compat
+sources fopen(_PATH_SERVICES) (/etc/services text); only the db source
+dbopen()s _PATH_SERVICES_DB. With "services: compat" the db is never read.
+A host configured with "services: db" would get no answers.

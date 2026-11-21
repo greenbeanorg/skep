@@ -57,9 +57,9 @@ func (h *handler) vmRoutes() []route {
 		{http.MethodGet, "/storage/pools", auth.PermStorageRead, nil, h.listPools},
 		{http.MethodGet, "/storage/datasets", auth.PermStorageRead, nil, h.listDatasets},
 		{http.MethodGet, "/storage/media", auth.PermStorageRead, nil, h.listMedia},
-		// The metrics name VMs and pools, so they need what reading
-		// either needs (ADR 0010 decision 15).
-		{http.MethodGet, "/metrics", auth.PermSystemRead, []string{auth.PermVMRead, auth.PermStorageRead}, h.metrics},
+		// The metrics name VMs, jails, and pools, so they need what
+		// reading each needs (ADR 0010 decision 15).
+		{http.MethodGet, "/metrics", auth.PermSystemRead, []string{auth.PermVMRead, auth.PermStorageRead, auth.PermContainerRead}, h.metrics},
 	}
 }
 

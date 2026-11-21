@@ -1,0 +1,61 @@
+== case 1: renamed inside, jail -r -f conf (no rename back)
+host end: epair0a
++ ifconfig epair0b name sj6b0be00100n0
+sj6b0be00100n0
+  (exit 0)
++ jail -v -f /tmp/skep-probe-k2.conf -c probek1
+probek1: jail_set(JAIL_CREATE) name=probek1 path=/tmp/skep-probe-k2 vnet=new persist
+probek1: created
+probek1: run command: /sbin/ifconfig sj6b0be00100n0 vnet 35
+  (exit 0)
++ ifconfig -j probek1 sj6b0be00100n0 name skep0
+skep0
+  (exit 0)
++ jail -v -f /tmp/skep-probe-k2.conf -r probek1
+probek1: removed
+  (exit 0)
++ jls
+   JID  IP Address      Hostname                      Path
+  (exit 0)
++ ifconfig -l
+vtnet0 vtnet1 lo0 bridge0 epair0a skep0
+  (exit 0)
++ ifconfig epair0a destroy
+  (exit 0)
++ ifconfig -l
+vtnet0 vtnet1 lo0 bridge0
+  (exit 0)
+== case 2: renamed back first, then jail -r -f conf
+host end: epair0a
++ ifconfig epair0b name sj6b0be00100n0
+sj6b0be00100n0
+  (exit 0)
++ jail -v -f /tmp/skep-probe-k2.conf -c probek1
+probek1: jail_set(JAIL_CREATE) name=probek1 path=/tmp/skep-probe-k2 vnet=new persist
+probek1: created
+probek1: run command: /sbin/ifconfig sj6b0be00100n0 vnet 36
+  (exit 0)
++ ifconfig -j probek1 sj6b0be00100n0 name skep0
+skep0
+  (exit 0)
++ ifconfig -j probek1 skep0 name sj6b0be00100n0
+sj6b0be00100n0
+  (exit 0)
++ jail -v -f /tmp/skep-probe-k2.conf -r probek1
+probek1: removed
+  (exit 0)
++ jls
+   JID  IP Address      Hostname                      Path
+  (exit 0)
++ ifconfig -l
+vtnet0 vtnet1 lo0 bridge0 epair0a sj6b0be00100n0
+  (exit 0)
++ ifconfig epair0a destroy
+  (exit 0)
+== end
++ jls
+   JID  IP Address      Hostname                      Path
+  (exit 0)
++ ifconfig -l
+vtnet0 vtnet1 lo0 bridge0
+  (exit 0)

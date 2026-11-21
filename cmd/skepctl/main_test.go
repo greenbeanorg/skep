@@ -17,6 +17,7 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+	"unicode"
 
 	"github.com/greenbeanorg/skep/internal/api"
 	"github.com/greenbeanorg/skep/internal/apidb"
@@ -59,7 +60,7 @@ func (fakeBackend) Hardware(_ context.Context, id string) (models.Hardware, erro
 			Capability: models.Capability{Status: models.StatusAvailable},
 			Pools:      []models.ZFSPool{{Name: "skeptest", Health: "ONLINE", SizeBytes: 1 << 30, CapacityPercent: &pct}},
 		}},
-		Warnings: []string{"a warning with a \x1b[31mcontrol sequence"},
+		Warnings: []string{"a warning with a \x1b[31mcontrol sequence and a \u202ebidi override"},
 	}, nil
 }
 
@@ -294,6 +295,9 @@ func TestLoginTrustOnFirstUseAndReadCommands(t *testing.T) {
 	if strings.Contains(out, "\x1b") {
 		t.Error("a control character from the server reached the terminal")
 	}
+	if strings.Contains(out, "\u202e") || !strings.Contains(out, "a bidi override") {
+		t.Errorf("a format character from the server reached the terminal:\n%s", out)
+	}
 	if _, _, err = skepctl(stateDir, nil, "", "hardware", "--node", "node-9"); err == nil || !strings.Contains(err.Error(), "404") {
 		t.Errorf("hardware of an unknown node: %v", err)
 	}
@@ -508,5 +512,35 @@ func TestUsageErrors(t *testing.T) {
 	out, _, err := skepctl(stateDir, nil, "", "version")
 	if err != nil || !strings.HasPrefix(out, "skepctl ") {
 		t.Errorf("version: %v %q", err, out)
+	}
+}
+
+// TestClean: control characters become spaces, format characters
+// (category Cf) are removed (ADR 0010 amendment r), and other text is
+// kept.
+func TestClean(t *testing.T) {
+	for in, want := range map[string]string{
+		"plain text":                     "plain text",
+		"tab\tand\nnewline":              "tab and newline",
+		"esc\x1b[31mred":                 "esc [31mred",
+		"c1 \u009b csi":                  "c1   csi",
+		"del\x7f":                        "del ",
+		"bidi \u202egnp.exe":             "bidi gnp.exe",
+		"\u202a\u202b\u202c\u202d\u202e": "",
+		"\u2066\u2067\u2068\u2069 iso":   " iso",
+		"zw\u200bsp\u200d\ufeff\u00ad":   "zwsp",
+		"accented é and 日本":              "accented é and 日本",
+	} {
+		if got := clean(in); got != want {
+			t.Errorf("clean(%q) = %q, want %q", in, got, want)
+		}
+	}
+	for r := rune(0); r <= unicode.MaxRune; r++ {
+		if !unicode.Is(unicode.Cf, r) {
+			continue
+		}
+		if got := clean("a" + string(r) + "b"); got != "ab" {
+			t.Fatalf("clean kept %U: %q", r, got)
+		}
 	}
 }

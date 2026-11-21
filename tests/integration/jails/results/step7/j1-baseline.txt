@@ -1,0 +1,64 @@
+== jls -n (the kernel's parameters)
+devfs_ruleset=5
+enforce_statfs=2
+jid=14
+name=skep-d1db6333-9b51-4dff-ac39-e469d8578b0f
+path=/skeptest/skep/jail/d1db6333-9b51-4dff-ac39-e469d8578b0f
+securelevel=2
+sysvmsg=disable
+sysvsem=disable
+sysvshm=disable
+vnet=new
+allow.mount.nodevfs
+allow.mount.noprocfs
+allow.mount.notmpfs
+allow.mount.nozfs
+allow.reserved_ports
+allow.suser
+children.max=0
+host.hostname=j1
+(every allow.* not listed above is off: jls prints it as allow.noX)
+== inside: kernel view
+kern.securelevel=2 security.jail.jailed=1 security.jail.vnet=1
+head: illegal line count -- 0
+security.jail.suser-ish: n/a
+security.jail.reserved_ports-ish: n/a
+security.jail.raw_sockets-ish: n/a
+security.jail.set_hostname-ish: 0
+security.jail.mlock-ish: 0
+security.jail.mount-ish: 0
+security.jail.chflags-ish: 0
+security.jail.sysvipc-ish: 0
+== inside: processes
+USER COMMAND
+root /usr/sbin/syslogd -s
+root syslogd: syslogd.casper (syslogd)
+root syslogd: system.net (syslogd)
+root /usr/sbin/cron -s
+== inside: devices
+fd null pts random stderr stdin stdout urandom zero zfs 
+== inside: interfaces
+lo0
+== bind a port below 1024 (tcp/22) as the jail's root
+root nc         53535  3 tcp4  127.0.0.1:22          *:*                  
+== raw socket (recorded, not expected to fail: amendment f)
+PING 127.0.0.1 (127.0.0.1): 56 data bytes
+64 bytes from 127.0.0.1: icmp_seq=0 ttl=64 time=0.045 ms
+ping exit: 0
+== refused
+mount tmpfs: mount: tmpfs: Operation not permitted
+kldload: kldload: can't load if_epair: Operation not permitted
+sysctl kern.hostname=x: sysctl: kern.hostname=x: Operation not permitted
+hostname x: hostname: sethostname: Operation not permitted
+chflags noschg /bin/sh: (no error)
+securelevel lower: sysctl: kern.securelevel=0: Operation not permitted
+-r-xr-xr-x  1 root wheel uarch 170088 Oct 20 19:29 /skeptest/skep/jail/d1db6333-9b51-4dff-ac39-e469d8578b0f/bin/sh
+schg files: lib/libcrypt.so.5
+lib/libc.so.7
+lib/librt.so.1
+-r--r--r--  1 root wheel schg 34672 Oct 20 19:29 /skeptest/skep/jail/d1db6333-9b51-4dff-ac39-e469d8578b0f/lib/libcrypt.so.5
+-r--r--r--  1 root wheel schg 2075688 Sep 28 20:58 /skeptest/skep/jail/d1db6333-9b51-4dff-ac39-e469d8578b0f/lib/libc.so.7
+-r--r--r--  1 root wheel schg 23712 Sep 28 20:58 /skeptest/skep/jail/d1db6333-9b51-4dff-ac39-e469d8578b0f/lib/librt.so.1
+chflags: /lib/libcrypt.so.5: Operation not permitted
+chflags noschg /lib/libcrypt.so.5 exit 1
+-r--r--r--  1 root wheel schg 34672 Oct 20 19:29 /skeptest/skep/jail/d1db6333-9b51-4dff-ac39-e469d8578b0f/lib/libcrypt.so.5

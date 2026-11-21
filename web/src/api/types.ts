@@ -75,6 +75,26 @@ export type DatasetList = Schemas["DatasetList"];
 export type Metrics = Schemas["Metrics"];
 export type PoolMetrics = Schemas["PoolMetrics"];
 export type VMMetrics = Schemas["VMMetrics"];
+export type ContainerMetrics = Schemas["ContainerMetrics"];
+
+export type Template = Schemas["Template"];
+export type TemplateList = Schemas["TemplateList"];
+export type Container = Schemas["Container"];
+export type ContainerState = Container["state"];
+export type ContainerList = Schemas["ContainerList"];
+export type ContainerCreate = Schemas["ContainerCreate"];
+export type ContainerCreated = Schemas["ContainerCreated"];
+export type ContainerUpdate = Schemas["ContainerUpdate"];
+export type ContainerLimits = Schemas["ContainerLimits"];
+export type ContainerOptions = Schemas["ContainerOptions"];
+export type ContainerNIC = Schemas["ContainerNIC"];
+export type ContainerNICSpec = Schemas["ContainerNICSpec"];
+export type ContainerIPv4 = Schemas["ContainerIPv4"];
+export type ContainerAction = Schemas["ContainerAction"];
+export type ContainerActionName = ContainerAction["action"];
+export type ContainerClone = Schemas["ContainerClone"];
+export type ContainerConsoleLog = Schemas["ContainerConsoleLog"];
+export type ContainerCapabilities = Schemas["ContainerCapabilities"];
 
 export type ErrorResponse = Schemas["ErrorResponse"];
 export type ErrorCode = ErrorResponse["error"]["code"];
@@ -106,6 +126,11 @@ export const PERMISSIONS = {
   vmConsole: "vm:console",
   storageRead: "storage:read",
   vmSnapshot: "vm:snapshot",
+  containerRead: "container:read",
+  containerWrite: "container:write",
+  containerDelete: "container:delete",
+  containerPower: "container:power",
+  containerSnapshot: "container:snapshot",
   all: "*",
 } as const;
 
