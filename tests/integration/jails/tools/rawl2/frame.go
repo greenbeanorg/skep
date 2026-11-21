@@ -116,7 +116,7 @@ func dhcpDiscover(chaddr net.HardwareAddr, xid uint32) []byte {
 	binary.BigEndian.PutUint16(bootp[10:], 0x8000) // broadcast flag
 	copy(bootp[28:34], chaddr)
 	copy(bootp[236:240], []byte{99, 130, 83, 99}) // magic cookie
-	copy(bootp[240:], []byte{53, 1, 1, 255})       // DHCP DISCOVER, end
+	copy(bootp[240:], []byte{53, 1, 1, 255})      // DHCP DISCOVER, end
 	udp := make([]byte, 8+len(bootp))
 	binary.BigEndian.PutUint16(udp[0:], 68)
 	binary.BigEndian.PutUint16(udp[2:], 67)
