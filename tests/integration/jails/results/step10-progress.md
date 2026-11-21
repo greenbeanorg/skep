@@ -1413,3 +1413,19 @@ stopped on.
 `9471713` feat(jails): clean the served console log and jail-side stderr
 lines; `27a51d1` feat(skepctl): strip Unicode format characters in table
 output; and the docs commit with this section.
+
+### 20.7 Andy's answers (2026-11-21), recorded as amendment s
+
+1. **20.3:** all seven changes approved as built.
+2. **20.4 point 1:** apply `cleanStderr` (`cleanLine`) to the first
+   stderr line of the host-side `pkg install`, `pkg info --raw`, and
+   `tar -x` failures in template build errors.
+3. **20.5:** both changes approved:
+   - **Test 2:** the filter becomes
+     `-test.run 'ConsoleLog|MarkOverflow|ShutdownOutput|ShutdownLog|ShutdownStderr|DiscardAppends|StderrLastLine|StderrTail|LastStderrLine|Clean|LastLine|BuildJailExec' -test.v`.
+   - **Test 10:** checks both `console.log` on disk (`sudo cat -v`, the
+     ESC byte kept) and the API's console-log response (no ESC, no
+     U+202E).
+
+No code was written in this session; point 2 of this list is the next
+build.
