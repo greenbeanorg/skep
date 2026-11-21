@@ -78,6 +78,16 @@ show no data.
 | Settings | About this node: version and build, the API certificate, session lifetimes, the theme |
 | Account menu | Your account: identity, the session in use, change your password, log out |
 
+The Containers section was validated against a real `skep-api` and
+agent on `hearst` (FreeBSD 15.1-RELEASE-p7) on 2026-11-21, in Chromium
+trusting `skep-api`'s certificate by its key pin: the jail list, create
+(the SSH key field following the template's `has_sshd`), the edit
+dialog before and after the first start, start, the console log, the
+usage card, snapshots, the clone notices, the confirmation before a
+limit is removed, a failed start's code and hint, delete, and a viewer
+seeing no actions
+([step 10 progress, section 26](../../tests/integration/jails/results/step10-progress.md)).
+
 Entries the role cannot read are hidden. That is a convenience: the server
 decides, and a page reached by its address shows "Your role does not allow
 this" instead of calling the API.

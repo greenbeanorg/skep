@@ -12,9 +12,10 @@ networking, limits, snapshots, and clones), validated on FreeBSD 15.1
 [tests/integration/jails](../../tests/integration/jails/README.md)); what
 is pending FreeBSD validation is listed in the step 9 progress log. The
 web interface's Containers section is built in step 10 (see
-[The web interface](web-ui.md); tested with a fake API, pending
-validation against a real agent on `hearst`); `skepctl container` is
-still to come.
+[The web interface](web-ui.md)) and was validated against a real agent
+on `hearst` on 2026-11-21 (section 26 of the
+[step 10 progress log](../../tests/integration/jails/results/step10-progress.md));
+`skepctl container` is still to come.
 
 ## The API
 
@@ -284,7 +285,7 @@ What each limit does on FreeBSD 15.1, measured on the test host:
 | `cpu_percent` | RCTL `pcpu` | 100 is one CPU, up to 100 per host CPU. Throttles, approximately: RACCT samples and averages, so a busy jail swings around the limit (50 gave samples from 28 to 74; the loop ran at 61 % of its unthrottled speed). |
 | `max_processes` | RCTL `maxproc` | A fork past it fails ("Cannot fork"). |
 | `open_files` | RCTL `openfiles` (≥ 64) | Counts descriptor-table slots, not open files: see below. |
-| `disk_quota` | ZFS `refquota` on the jail root (≥ 64 MiB) | Works without RACCT; snapshots do not count. It includes the blocks the root shares with its template (about 78 MiB for a minimal template), so a 512 MiB quota left room for about 434 MiB of new data. Changed at once by an update; a quota below what the jail already references is refused. |
+| `disk_quota` | ZFS `refquota` on the jail root (≥ 64 MiB) | Works without RACCT; snapshots do not count. It includes the blocks the root shares with its template (about 78 MiB for a minimal template), so a 512 MiB quota left room for about 434 MiB of new data. Changed at once by an update; a new quota below what the jail's root already references is refused before any task is submitted, with `container_disk_quota_below_usage` (422; details `disk_quota` and `referenced_bytes`). |
 
 **`open_files` counts file-table slots, not open files.** RACCT charges
 each process of the jail the size of its descriptor table, and the
@@ -383,7 +384,11 @@ what `rctl -u jail:skep-<id>` reports: `cpu_percent` (approximate, as
 for the limit), `cpu_time_seconds`, `resident_memory_bytes`,
 `processes`, and `open_file_slots` (the figure `open_files` applies to,
 not a count of open files). The agent only reads: no rule is added or
-changed to get them.
+changed to get them. The figures are a sample the agent takes every 30
+seconds, not a reading made for the request, so they can be up to 30
+seconds old; `observed_at` in the response says when the sample was
+taken. A jail started since the last sample is missing from it, and
+one stopped since then still shows `running` with its last figures.
 
 ## The fixed baseline
 
