@@ -407,7 +407,9 @@ func (s *Service) quarantine(ctx context.Context, c models.Container, detail str
 	}
 }
 
-// ConsoleLog returns the end of a jail's console.log (decision 9).
+// ConsoleLog returns the end of a jail's console.log (decision 9), with
+// format and control characters other than newline and tab removed
+// (amendment r). The file itself is left as the jail wrote it.
 func (s *Service) ConsoleLog(ctx context.Context, id string) (models.ContainerConsoleLog, error) {
 	if _, err := s.Container(ctx, id); err != nil {
 		return models.ContainerConsoleLog{}, err
@@ -416,7 +418,8 @@ func (s *Service) ConsoleLog(ctx context.Context, id string) (models.ContainerCo
 	if err != nil {
 		return models.ContainerConsoleLog{}, err
 	}
-	return models.ContainerConsoleLog{Text: text, Truncated: len(text) == ConsoleLogMax}, nil
+	// Truncated is about the file: measured before the cleaning.
+	return models.ContainerConsoleLog{Text: hostops.CleanText(text), Truncated: len(text) == ConsoleLogMax}, nil
 }
 
 // checkRelease refuses a template whose userland is not the host's

@@ -5,14 +5,17 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"encoding/binary"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 	"time"
+	"unicode"
 
 	"github.com/greenbeanorg/skep/internal/database"
 	"github.com/greenbeanorg/skep/internal/hostops"
@@ -455,5 +458,85 @@ func TestObserveAllSweepsHalfStartedJail(t *testing.T) {
 	}
 	if got, _ := f.svc.Container(ctx, whole.ID); got.State != models.ContainerRunning {
 		t.Fatalf("the whole jail: %+v", got)
+	}
+}
+
+// fileConsoleLog is the fake host's jails with the console log read from
+// a real file, as the FreeBSD host reads it: its last maxBytes bytes.
+type fileConsoleLog struct {
+	hostops.Jails
+	path string
+}
+
+func (j fileConsoleLog) ConsoleLogTail(_ string, maxBytes int) (string, error) {
+	b, err := os.ReadFile(j.path)
+	if err != nil {
+		return "", err
+	}
+	if len(b) > maxBytes {
+		b = b[len(b)-maxBytes:]
+	}
+	return string(b), nil
+}
+
+// TestConsoleLogIsCleanedWhenServed: the console log as served has no
+// format or control characters but newline and tab, while console.log on
+// disk keeps every byte the jail wrote (amendment r).
+func TestConsoleLogIsCleanedWhenServed(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "console.log")
+	f := newFixture(t, func(o *Options) { o.Host.Jails = fileConsoleLog{Jails: o.Host.Jails, path: path} })
+	c := f.create(models.ContainerCreate{Name: "web1", TemplateID: f.minimal})
+	raw := "Starting syslogd.\r\n\x1b[31mfake \u202eok\u202c\x07\n\tindented\u2066x\u2069\u200b\n" +
+		"c1 \u009b2J here\u0085\n--- shutdown stderr ---\nlast\x7f line\ufeff\n"
+	want := "Starting syslogd.\n[31mfake ok\n\tindentedx\nc1 2J here\n--- shutdown stderr ---\nlast line\n"
+	if err := os.WriteFile(path, []byte(raw), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	log, err := f.svc.ConsoleLog(ctx, c.ID)
+	if err != nil || log.Text != want || log.Truncated {
+		t.Fatalf("console log = %+v, %v\nwant %q", log, err, want)
+	}
+	// What the API hands out is the JSON of that: no escape for a control
+	// character other than \n and \t, and no format character.
+	body, err := json.Marshal(log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var back models.ContainerConsoleLog
+	if err := json.Unmarshal(body, &back); err != nil || back.Text != want {
+		t.Fatalf("round trip = %q, %v", back.Text, err)
+	}
+	for _, r := range back.Text {
+		if r != '\n' && r != '\t' && (unicode.IsControl(r) || unicode.Is(unicode.Cf, r)) {
+			t.Fatalf("the served log kept %U", r)
+		}
+	}
+	// The file is unchanged.
+	if disk, err := os.ReadFile(path); err != nil || string(disk) != raw {
+		t.Fatalf("console.log on disk changed: %q, %v", disk, err)
+	}
+	for _, kept := range []string{"\x1b", "\u202e", "\u009b", "\r", "\ufeff"} {
+		if disk, _ := os.ReadFile(path); !strings.Contains(string(disk), kept) {
+			t.Fatalf("console.log on disk lost %q", kept)
+		}
+	}
+
+	// Truncated is about the file: a full-size tail is truncated even when
+	// the cleaning made the text shorter.
+	// The last 64 KiB hold ten U+202E (3 bytes each).
+	full := "older output\n" + strings.Repeat("x", ConsoleLogMax-30) + strings.Repeat("\u202e", 10)
+	if err := os.WriteFile(path, []byte(full), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	log, err = f.svc.ConsoleLog(ctx, c.ID)
+	if err != nil || !log.Truncated || len(log.Text) != ConsoleLogMax-30 || strings.ContainsRune(log.Text, '\u202e') {
+		t.Fatalf("full-size log: truncated %v, %d bytes, %v", log.Truncated, len(log.Text), err)
+	}
+	if err := os.WriteFile(path, []byte(strings.Repeat("\u202e", 100)+"short\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if log, err = f.svc.ConsoleLog(ctx, c.ID); err != nil || log.Truncated || log.Text != "short\n" {
+		t.Fatalf("short log = %+v, %v", log, err)
 	}
 }

@@ -127,7 +127,7 @@ func (h *host) StartBuildJail(ctx context.Context, pool, templateID string) erro
 	if err != nil {
 		return err
 	}
-	if _, err := h.run.Run(ctx, jailBinary, buildJailArgs(name, p.Root)...); err != nil {
+	if err := h.createBuildJail(ctx, name, p.Root); err != nil {
 		return err
 	}
 	params, err := h.jailParams(ctx, name)
@@ -135,6 +135,13 @@ func (h *host) StartBuildJail(ctx context.Context, pool, templateID string) erro
 		return err
 	}
 	return checkBuildJail(params, name, p.Root)
+}
+
+// createBuildJail runs jail -c for a build jail. A failure's stderr line
+// is cleaned before it reaches the build's task error (amendment r).
+func (h *host) createBuildJail(ctx context.Context, name, root string) error {
+	_, err := h.run.Run(ctx, jailBinary, buildJailArgs(name, root)...)
+	return cleanStderr(err)
 }
 
 // jailParams reads every parameter of a jail as jls reports it in JSON:
@@ -226,7 +233,9 @@ func (h *host) BuildJailExec(ctx context.Context, pool, templateID string, cmd B
 	args := append([]string{"-l", name}, spec.argv...)
 	_, err = er.RunEnv(ctx, EnvCommand{Path: jexecBinary, Args: args,
 		Env: []string{"PATH=/sbin:/bin:/usr/sbin:/usr/bin", "LC_ALL=C"}, Timeout: buildCommandTimeout})
-	return err == nil, err
+	// The command runs in the jail's userland: its stderr is cleaned
+	// before it reaches the build's task error (amendment r).
+	return err == nil, cleanStderr(err)
 }
 
 // RemoveBuildJail implements Templates.

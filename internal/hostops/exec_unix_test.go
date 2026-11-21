@@ -726,3 +726,26 @@ func killPIDFile(path string) {
 }
 
 func mkfifo(path string) error { return syscall.Mkfifo(path, 0o600) }
+
+// TestCleanLineFirstStderrLine: a failed command run without the
+// last-line mode reports its first stderr line; cleanStderr, as jail -c
+// and a build jail's command use it (amendment r), removes the control
+// and format characters the shell wrote, on real pipes.
+func TestCleanLineFirstStderrLine(t *testing.T) {
+	o := runOpts{env: testEnv, timeout: 10 * time.Second, limit: maxOutput}
+	sh := `printf '\033[31mfake \342\200\256ok\342\200\254\302\233x\r\nsecond line\n' >&2; exit 3`
+	_, err := runCommand(context.Background(), o, testShell, "-c", sh)
+	var ce *CommandError
+	if !errors.As(err, &ce) || ce.ExitCode != 3 || !strings.Contains(ce.Stderr, "\u202e") {
+		t.Fatalf("runCommand = %v (stderr %q)", err, ce.Stderr)
+	}
+	err = cleanStderr(err)
+	if ce.Stderr != "[31mfake okx" {
+		t.Fatalf("cleaned first line = %q", ce.Stderr)
+	}
+	for _, r := range err.Error() {
+		if unsafeRune(r) {
+			t.Fatalf("the error kept %U: %q", r, err.Error())
+		}
+	}
+}

@@ -476,8 +476,7 @@ func (h *host) StartJail(ctx context.Context, spec JailSpec) (JailState, error) 
 	}
 	// The jail.conf has no exec.start: jail -c creates the jail, mounts
 	// its devfs, and moves its interfaces in, and nothing runs in it.
-	if _, err := er.RunEnv(ctx, EnvCommand{Path: jailBinary, Args: []string{"-f", conf, "-c", name},
-		Env: jailEnv, Timeout: jailCommandSlack}); err != nil {
+	if err := createJail(ctx, er, conf, name); err != nil {
 		if rerr := h.discardAfterFailedStart(spec, root); rerr != nil {
 			return JailState{}, quarantined(spec, "jail(8) could not create the jail: "+err.Error(), rerr)
 		}
@@ -488,6 +487,14 @@ func (h *host) StartJail(ctx context.Context, spec JailSpec) (JailState, error) 
 		return JailState{}, err
 	}
 	return JailState{JID: jid, Name: name, Path: root, Epairs: epairs}, nil
+}
+
+// createJail runs jail -c on a rendered jail.conf. A failure's stderr
+// line is cleaned before it reaches the task error (amendment r).
+func createJail(ctx context.Context, er EnvRunner, conf, name string) error {
+	_, err := er.RunEnv(ctx, EnvCommand{Path: jailBinary, Args: []string{"-f", conf, "-c", name},
+		Env: jailEnv, Timeout: jailCommandSlack})
+	return cleanStderr(err)
 }
 
 // startFailed is container_start_failed; a refusal that already is one

@@ -34,7 +34,9 @@ type CommandError struct {
 	ExitCode int
 	// Stderr is the first line of what the command wrote to stderr, or
 	// the last, cleaned by cleanLine, for a command run with
-	// EnvCommand.StderrLastLine.
+	// EnvCommand.StderrLastLine. The first line of jail -c and of a
+	// command in a template build jail is cleaned too (cleanStderr,
+	// amendment r).
 	Stderr string
 	Err    error
 }
@@ -81,7 +83,7 @@ func cleanLine(s string, limit int) string {
 	for len(s) > 0 {
 		r, size := utf8.DecodeRuneInString(s)
 		s = s[size:]
-		if (r == utf8.RuneError && size <= 1) || unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
+		if (r == utf8.RuneError && size <= 1) || unsafeRune(r) {
 			continue
 		}
 		b.WriteRune(r)
@@ -95,4 +97,38 @@ func cleanLine(s string, limit int) string {
 		out = out[:cut]
 	}
 	return out
+}
+
+// unsafeRune reports whether r is a control character (C0, DEL, or C1)
+// or a format character (category Cf): the characters Skep removes from
+// jail output it reports (amendments q and r).
+func unsafeRune(r rune) bool {
+	return unicode.IsControl(r) || unicode.Is(unicode.Cf, r)
+}
+
+// cleanStderr runs the stderr line of a failed command through cleanLine
+// (amendment r): for commands whose stderr the jail's side can write, a
+// command in a template build jail, or jail(8) creating a jail, reported
+// in a task error. Any other error is returned as it is.
+func cleanStderr(err error) error {
+	var ce *CommandError
+	if errors.As(err, &ce) {
+		ce.Stderr = cleanLine(ce.Stderr, maxStderrLine)
+	}
+	return err
+}
+
+// CleanText removes format characters (category Cf) and control
+// characters (C0, DEL, and C1) from text a jail wrote, keeping newlines
+// and tabs, so that a client that shows it, a browser's <pre> or a
+// terminal, cannot be made to reorder it or move the cursor (amendment
+// r). A byte that is not UTF-8 becomes U+FFFD, as JSON encoding would
+// make it anyway. The text is not trimmed or cut.
+func CleanText(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r != '\n' && r != '\t' && unsafeRune(r) {
+			return -1
+		}
+		return r
+	}, s)
 }
