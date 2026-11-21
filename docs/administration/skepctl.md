@@ -52,7 +52,10 @@ skepctl vm snapshot delete VM SNAPSHOT [--wait] [--json]
   login is used.
 - Text output is for people. `--json` prints the API's response unchanged,
   for scripts. Paged lists print the command for the next page on standard
-  error, so standard output stays clean.
+  error, so standard output stays clean. In text output, control
+  characters in values from the server become spaces and Unicode format
+  characters (such as the bidirectional overrides) are removed; `--json`
+  is not changed.
 - What a user may read is decided by the server: a `viewer` gets `403` from
   `audit list`, for example.
 - `VM` is a VM's ID or its name. A write prints the task it started;

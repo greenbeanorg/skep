@@ -1052,8 +1052,14 @@ export interface paths {
          *     32 KiB (amendment p). Then a `--- shutdown stderr ---` line and
          *     the last 32 KiB of what it wrote to standard error, preceded by
          *     the marker when there was more (amendment q). The
-         *     content is written by the jail and is not cleaned: it may hold
-         *     control and format characters. The log is kept in the runtime
+         *     content is written by the jail. The file is kept as written, but
+         *     `text` is cleaned (amendment r): Unicode format characters
+         *     (category Cf, including the bidirectional overrides and
+         *     isolates) and C0 and C1 control characters (and DEL), except
+         *     newline and tab, are removed; a byte that is not UTF-8 becomes
+         *     U+FFFD. `truncated` describes the file's tail before the cleanup,
+         *     so `text` may be shorter than 64 KiB when it is true. The log is
+         *     kept in the runtime
          *     directory and is gone after a host reboot.
          */
         get: operations["getContainerConsoleLog"];

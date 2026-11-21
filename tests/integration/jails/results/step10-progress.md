@@ -1276,3 +1276,140 @@ jail's console log; and the docs commit with this section.
 
 No code was written in this session; points 2–4 of this list are the
 next build.
+
+## 20. Amendment r built (2026-11-21, merrick only)
+
+Points 2–4 of section 19.7, as decided in amendment r. Nothing ran on
+hearst; no API calls against it; no deploy; no PR. The code fitted the
+amendment, with one naming difference (20.1 point 2); nothing was
+stopped on.
+
+### 20.1 Built
+
+1. **The console log is cleaned when served** (`9471713`). New
+   `hostops.CleanText`: removes category Cf and C0, DEL, and C1 controls
+   (`unicode.IsControl`) except `\n` and `\t`; not trimmed or cut; a
+   byte that is not UTF-8 becomes U+FFFD (`strings.Map`; JSON encoding
+   would do the same). `containers.Service.ConsoleLog`, in the agent,
+   applies it, so the agent's internal API, `skep-api`'s
+   `GET /containers/{id}/console-log`, the web UI, and any client get the
+   cleaned text. `console.log` itself is untouched (rc's output, both
+   shutdown sections). `truncated` is still measured on the file's
+   bytes, before the cleanup. `cleanLine` and `CleanText` share one rune
+   test, `unsafeRune`.
+2. **The other reports of jail-side output** (`9471713`). The code has no
+   `RunBuildCommand`: the command a template build runs in its jail is
+   `BuildJailExec` (`jexec -l skep-build-<id> ...`), whose
+   `CommandError.Stderr` (the first stderr line) feeds `templates`'
+   `template_build_failed` message and its `stderr` detail. New
+   `cleanStderr` runs that line through `cleanLine` (control and Cf
+   characters and non-UTF-8 bytes removed, trimmed, cut to 200 bytes).
+   It is applied to `BuildJailExec` and to both `jail -c` calls: a
+   container start's, now in `createJail`, and a template build jail's,
+   now in `createBuildJail`. Other commands' first stderr lines (zfs,
+   ifconfig, pkg and tar on the host, and so on) are unchanged.
+3. **`skepctl`'s `clean`** (`27a51d1`) also removes category Cf (removed,
+   not turned into a space); C0, DEL, and C1 still become spaces.
+4. **Docs** (this commit): jails.md (the console log section, the
+   `jail -c` error), jail-templates.md (`template_build_failed`),
+   skepctl.md (text output), the security overview, the OpenAPI
+   console-log description (web types regenerated), and an
+   implementation note in ADR 0010.
+
+### 20.2 Tests (merrick)
+
+- New, hostops (`clean_test.go`): `TestCleanText` (14 cases: CR, ANSI,
+  other C0 and DEL, C1, bidi overrides and isolates, other Cf, an RLO
+  file name, no trim or cut, other scripts kept, non-UTF-8 to U+FFFD,
+  empty); `TestCleanTextEveryRune` (every rune: control and Cf removed
+  except `\n` and `\t`, every other rune kept); `TestCleanStderr` (nil,
+  a non-command error, a dirty line, a wrapped command error cut to 200
+  bytes on a character boundary); `TestCreateJailCleansStderr` (the
+  `jail -c` command line, environment and timeout unchanged; the
+  cleaned line also in `startFailed`'s error); `TestCreateBuildJailCleansStderr`;
+  `TestBuildJailExecCleansStderr`.
+- New, hostops (`exec_unix_test.go`, real `/bin/sh`):
+  `TestCleanLineFirstStderrLine`: a failing shell writes ESC, U+202E,
+  U+202C, a C1 CSI, and CR on its first stderr line; `runCommand` reports
+  it raw, `cleanStderr` leaves `[31mfake okx`, and the error has no
+  control or Cf character.
+- New, containers (`service_test.go`): `TestConsoleLogIsCleanedWhenServed`:
+  the fake host's jails read the console log from a real file; with CR,
+  ESC, BEL, U+202E, U+202C, U+2066/U+2069, U+200B, a C1 CSI, NEL, DEL,
+  and U+FEFF in it, the response (and its JSON round trip) is exactly
+  the expected text with tabs and newlines kept, **and the file on disk
+  still holds every byte**; a full-size tail whose last bytes are
+  U+202E is `truncated` with 30 bytes fewer text; a short one is not.
+- New and changed, skepctl (`main_test.go`): `TestClean` (cases and every
+  Cf rune); the hardware warning of the login test now has U+202E too,
+  and the text output must have neither ESC nor U+202E.
+- Mutation checks run by hand (files restored from a scratch copy each
+  time): serving the raw text fails `TestConsoleLogIsCleanedWhenServed`;
+  measuring `truncated` after the cleanup fails it too (after a fix to
+  the test: its first full-size case had the U+202E outside the tail and
+  missed this); dropping `cleanStderr` from `createJail`,
+  `createBuildJail`, or `BuildJailExec` fails the matching test; dropping
+  tab from `CleanText`'s exceptions fails both `CleanText` tests; dropping Cf from `unsafeRune` fails eight tests;
+  dropping Cf from `skepctl`'s `clean` fails `TestClean` and the login
+  test.
+- Results: `go test ./... -count=1` passed (40 packages with tests);
+  `make lint` passed (gofmt, go vet for Linux and FreeBSD, staticcheck
+  for both); `GOOS=freebsd GOARCH=amd64 go test -c ./internal/hostops/`
+  compiled; `make web-check` passed three times in a row (15 files, 112
+  tests each).
+
+### 20.3 Changes not in the request (for approval)
+
+1. `jail -c` moved into two helpers, `createJail` (container start) and
+   `createBuildJail` (template build jail), so the cleanup is testable
+   without root: both `jail -c` call sites sit behind the root-owned
+   parent check, which refuses as an unprivileged user before `jail -c`
+   runs. Same arguments, environment, and timeout.
+2. The **build jail's** `jail -c` is cleaned too: amendment r says
+   "`jail -c`'s first stderr line", and section 19.4 named the container
+   start's; both are applied.
+3. `cleanStderr` uses `cleanLine` as decided, so these lines are now also
+   trimmed and cut to 200 bytes (they were uncut first lines before), and
+   non-UTF-8 bytes are removed.
+4. `CleanText` also removes DEL (U+007F), which is neither C0 nor C1 but
+   is a control character to `unicode.IsControl` and to `cleanLine`.
+5. Non-UTF-8 bytes in the served console log become U+FFFD in `text`
+   (the JSON response would carry U+FFFD for them anyway).
+6. The cleanup is in the agent's containers service, not in `skep-api`'s
+   handler: one place, and the agent's internal API never hands the raw
+   bytes out either.
+7. skepctl.md now says how text output treats control and format
+   characters (it did not mention it before).
+
+### 20.4 Open points (not built; for a decision)
+
+1. Nothing new from the amendment. Noted only: the first stderr lines of
+   the build's host-side `pkg install`, `pkg info --raw`, and `tar -x`
+   (`stepFailed`) are still raw. They are host commands reading
+   downloaded or repository data, not text the jail writes; cleaning them
+   too would be a one-line change in `stepFailed`. Low priority.
+
+### 20.5 Changes to the hearst list (17.5, 19.5, and test 12; for approval)
+
+- **Test 2:** the new hostops tests `TestCleanText`,
+  `TestCleanTextEveryRune`, `TestCleanStderr`, `TestCreateJailCleansStderr`,
+  `TestCreateBuildJailCleansStderr`, and `TestBuildJailExecCleansStderr`
+  do not match the filter (only `TestCleanLineFirstStderrLine` does,
+  through `CleanLine`). Proposed: replace `CleanLine` with `Clean` and
+  add `BuildJailExec`:
+  `-test.run 'ConsoleLog|MarkOverflow|ShutdownOutput|ShutdownLog|ShutdownStderr|DiscardAppends|StderrLastLine|StderrTail|LastStderrLine|Clean|LastLine|BuildJailExec' -test.v`.
+  None needs root.
+- **Test 10:** the "raw, with its ESC byte" expectation now holds for
+  `console.log` on disk (`sudo cat -v`) only; `GET .../console-log`
+  shows `[31mfake ok` with no ESC and no U+202E. Proposed: check both.
+- **Tests 5–9:** unchanged. They read ASCII text, which the cleanup keeps
+  (test 7's `skep: N bytes discarded` lines included); if read through
+  the API, carriage returns are gone.
+- **Test 12:** unchanged; this build is what it checks.
+- **Test 11:** unchanged.
+
+### 20.6 Commits
+
+`9471713` feat(jails): clean the served console log and jail-side stderr
+lines; `27a51d1` feat(skepctl): strip Unicode format characters in table
+output; and the docs commit with this section.

@@ -508,7 +508,13 @@ Skep fixes and nobody can change through the API
   (amendment p), followed by a `--- shutdown stderr ---` line and the
   last 32 KiB of its stderr (amendment q); neither their size nor a
   failed write makes a removal fail. The console log keeps the jail's
-  bytes as written. When `jail -r` fails, the error and the log carry
+  bytes as written on disk, but `GET /containers/{id}/console-log`
+  removes Unicode format characters and C0 and C1 control characters
+  except newline and tab from what it returns (amendment r), so neither
+  the web UI's `<pre>` nor a terminal can be made to reorder the text or
+  move the cursor. The first stderr line of a failed `jail -c` and of a
+  failed command in a template build jail, which reach task errors, are
+  cleaned the same way as `jail -r`'s line below. When `jail -r` fails, the error and the log carry
   only the last line of its stderr, with control characters and Unicode
   format characters (category Cf, including the bidirectional overrides
   U+202A–U+202E and U+2066–U+2069) removed, at most 200 bytes,

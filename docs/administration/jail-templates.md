@@ -136,7 +136,7 @@ already built.
 | `release_unsupported` | The userland's major.minor is not the host's, or Skep has no allowlist for the host's release | Build on a host of a supported release |
 | `template_host_changed` | Host files changed during the build (listed) | Investigate the listed files; something besides the build may have changed them |
 | `template_trigger_left` | pkg saved a deferred trigger although triggers were off | Report it: the pkg version behaves differently from the one Skep was built against |
-| `template_build_failed` | pkg, tar, or a build-jail command failed; the message has its first line of stderr | Read the message. A name-resolution error from pkg is usually DNS blocking `pkg.FreeBSD.org` |
+| `template_build_failed` | pkg, tar, or a build-jail command failed; the message has its first line of stderr (for a command in the build jail, and for the build jail's `jail -c`, with control and Unicode format characters removed and cut to 200 bytes, since the template's userland can write it; amendment r) | Read the message. A name-resolution error from pkg is usually DNS blocking `pkg.FreeBSD.org` |
 | `template_archive_mismatch` | `base.txz` does not match `MANIFEST` | Replace both from the same release |
 | `jail_parent_insecure` | The templates directory is not root:wheel 0700 | `chown root:wheel` and `chmod 0700` it |
 | `template_name_taken` | Another template has the name | Choose another |

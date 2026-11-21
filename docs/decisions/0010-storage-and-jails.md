@@ -2043,3 +2043,22 @@ no bidi overrides or isolates. The console log itself is not cleaned:
 both of its shutdown sections keep the jail's bytes, like rc's output
 before them. Details in section 19 of
 [step10-progress.md](../../tests/integration/jails/results/step10-progress.md).
+
+**Amendment r, built (2026-11-21, merrick only).** The agent's
+containers service runs the console-log tail through the new
+`hostops.CleanText` before `GET /containers/{id}/console-log` returns
+it: category Cf and C0, DEL, and C1 controls are removed except newline
+and tab, and a byte that is not UTF-8 becomes U+FFFD (as JSON would make
+it). The cleanup is done in the agent, so `skep-api` and every client get
+the cleaned text; `console.log` on disk is untouched, and `truncated`
+is measured on the file's bytes, before the cleanup. There is no
+`RunBuildCommand` in the code: the command a build jail runs is
+`BuildJailExec` (`jexec -l`), and its failure's first stderr line now
+goes through `cleanLine` (via the new `cleanStderr`, also cut to 200
+bytes) before `templates` puts it into `template_build_failed`. Both
+`jail -c` calls are cleaned the same way: a container start's (moved
+into `createJail`) and a template build jail's (moved into
+`createBuildJail`), so both can be tested without root. `skepctl`'s
+`clean` removes category Cf; control characters still become spaces.
+Details in section 20 of
+[step10-progress.md](../../tests/integration/jails/results/step10-progress.md).

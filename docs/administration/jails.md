@@ -132,7 +132,9 @@ run the jail's `/etc/rc` itself, as `jexec -l -U root skep-<id> /bin/sh
 /etc/rc`, bounded by `containers.start_timeout_seconds` (default 120). If
 `/etc/rc` fails or outlasts the timeout, the jail is stopped as below
 (`/etc/rc.shutdown` runs) and removed, and the start fails with
-`container_start_failed`. rc's output goes to
+`container_start_failed`. If `jail -c` itself fails, the error carries
+the first line of its standard error with control and format characters
+removed and cut to 200 bytes (amendment r). rc's output goes to
 `/var/run/skep/jails/<id>/console.log` (below), which `GET
 .../console-log` serves; it is gone after a host reboot.
 
@@ -172,7 +174,16 @@ are written even when their part is empty. The two streams are kept
 apart, so how their lines interleaved is lost. A console log therefore
 holds at most about 416 KiB. The shutdown output is written as the jail
 produced it: control and format characters are not removed from the
-console log, so view it with that in mind. Its size never makes a stop
+file. **`GET .../console-log` cleans what it returns** (amendment r):
+Unicode format characters (category Cf, among them the bidirectional
+overrides and isolates U+202A–U+202E and U+2066–U+2069, and zero-width
+characters) and C0 and C1 control characters (and DEL) are removed,
+except newline and tab, so carriage returns go too and ANSI escape
+sequences lose their ESC byte. A byte that is not UTF-8 is shown as
+U+FFFD. The web UI and any other client therefore see the cleaned text;
+read the file itself (`/var/run/skep/jails/<id>/console.log`, root only)
+for the raw bytes. `truncated` still describes the file's tail, before
+the cleanup. Its size never makes a stop
 fail, and neither does a failure to write it (the agent logs
 `jail_shutdown_log_failed`). A removal that runs none of the jail's code
 (a refused or quarantined jail, or a start interrupted by the agent's
