@@ -567,7 +567,13 @@ Skep fixes and nobody can change through the API
   enforces, on the host per guest port (epair host end, tap), the MAC
   recorded by the API and, for static NICs, the configured IP and ARP
   sender; DHCP NICs get MAC pinning only. It is built right after
-  Milestone 7b, with its own ADR, and blocks any public release.
+  Milestone 7b, with its own ADR, and blocks any public release. The
+  mechanism is proposed, not yet accepted, in
+  [ADR 0011](../decisions/0011-guest-port-anti-spoofing.md) (netgraph
+  `ng_bpf` on the host end plus bridge VLAN filtering), from the `hearst`
+  probes in `tests/integration/jails/results/m7c-probe*.md`. Note from
+  those probes: an ARP cache can also be poisoned by a jail with no bpf,
+  through `arp -s ... pub`.
 - **Host users never reach a jail's tree.** The directory that holds the
   jail roots, like the templates directory, is `root:wheel 0700` and
   checked before every start: a jail controls setuid binaries in its tree,
