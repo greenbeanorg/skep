@@ -2490,3 +2490,17 @@ Recommendation: **(c)**. It is the only option with no
 with 422; `f06511b` docs(jails): /metrics is a 30 s sample; UI validated
 on hearst; quota code; and the commit with this section and ADR 0010's
 note.
+
+### 27.8 Andy's answers (2026-11-21), recorded as amendment x
+
+1. **The changes outside the request (27.5, items 1–5) are approved.**
+2. **Point 9: option (c)** of 27.4. If Node rejects skep-api's
+   self-signed certificate as a trust anchor, fall back to option (b)
+   and report.
+3. **The open point of 27.6:** a create whose `limits.disk_quota` is
+   below the template's size is refused at submission with 422
+   `container_disk_quota_below_usage`; the details carry `disk_quota` and
+   the template's referenced bytes.
+
+Only the answers were recorded in this commit; the build follows in
+section 28.

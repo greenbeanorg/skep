@@ -1324,6 +1324,23 @@ Amendments made at acceptance, worked into the text:
     two JSON log records once seen on one `daemon.log` line; the cosmetic
     `route: ... File exists` loopback lines at every jail start.
 
+- **x. Decisions on the amendment w build** (Andy, 2026-11-21, from
+  section 27 of
+  [step10-progress.md](../../tests/integration/jails/results/step10-progress.md)).
+  - **Approved:** the five changes outside the request (section 27.5).
+  - **Point 9 uses option (c)** of section 27.4: a wrapper fetches
+    skep-api's certificate, refuses it unless its SPKI hash equals the
+    pin, and starts Playwright with `NODE_EXTRA_CA_CERTS` pointing at it;
+    Chromium is pinned with `--ignore-certificate-errors-spki-list`; no
+    `ignoreHTTPSErrors` is left. If Node rejects skep-api's self-signed
+    certificate as a trust anchor, fall back to option (b) (browser
+    pinned, a pin check before the run, `ignoreHTTPSErrors` for the Node
+    client only) and report.
+  - **A create whose `limits.disk_quota` is below the template's size**
+    is refused at submission with 422
+    `container_disk_quota_below_usage`; the details carry `disk_quota`
+    and the template's referenced bytes.
+
 ## Implementation notes
 
 Recorded during the build of 7a (from 2026-11-14). The decisions above
