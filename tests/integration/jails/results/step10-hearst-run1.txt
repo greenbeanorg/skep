@@ -1,0 +1,1163 @@
+# M7b step 10 (ADR 0010), hearst validation run 1 of 3, 2026-11-21
+# Branch feat/m7b-templates. Baseline on b5b0546, then deploy of 8c81e35.
+# API calls: merrick -> https://10.79.20.170:8443/api/v1 as s7oper, one
+# bearer login for the run (logged out at the end), curl with
+# --pinnedpubkey sha256//d5zF7I2qOwTO/RTcbcbJrB7ZiaQJgxVhpH7H0FzAad0=
+# (= 779cc5ec... from `skep-api tls fingerprint`), never -k. Each api
+# call prints "HTTP nnn" then the body; tokens and passwords are never
+# printed. Hearst commands ran over ssh, traced with `set -x`.
+# Shell lines on hearst are shown by their `+` trace; merrick-side
+# helper calls (api, wait_task) are summarised by their output.
+
+######## Pre-check (b5b0546). The first curl line (000) is a throwaway curl on hearst with no CA; the pinned check from merrick is the last two lines.
++ date -u
+Sat Nov 21 14:26:33 UTC 2026
++ /usr/local/sbin/skep-agent -version
+skep-agent 0.1.0 (commit b5b0546, built 2026-11-17T23:20:04Z, go1.27.4 freebsd/amd64)
++ /usr/local/sbin/skep-api -version
+skep-api 0.1.0 (commit b5b0546, built 2026-11-17T23:20:04Z, go1.27.4 freebsd/amd64)
++ sudo service skep_agent status
+skep_agent is running as pid 1510 (supervisor pid 1509).
++ sudo service skep_api status
+skep_api is running as pid 1551 (supervisor pid 1550).
++ curl -sS --cacert /dev/null -o /dev/null -w '%{http_code}\n' https://10.79.20.170:8443/api/v1/health
++ tail -1
+000
++ sysctl hw.vmm.vmx.cap.virtual_interrupt_delivery
+hw.vmm.vmx.cap.virtual_interrupt_delivery: 0
++ kldstat -q -m if_epair
+if_epair loaded: exit 0
++ echo 'if_epair loaded: exit 0'
++ jls
+   JID  IP Address      Hostname                      Path
++ ifconfig -l
+vtnet0 vtnet1 lo0 bridge0
++ ifconfig -g epair
++ sudo rctl
++ mount -t devfs
+devfs on /dev (devfs)
++ df -h /
+Filesystem     Size    Used   Avail Capacity  Mounted on
+/dev/da0s1a    120G     19G     91G    17%    /
++ sysctl -n hw.physmem
+6397820928
++ ls /var/run/skep/jails
+ls: /var/run/skep/jails: Permission denied
+{"status":"ok"}
+
+HTTP 200
++ freebsd-version -kru
+15.1-RELEASE-p7
+15.1-RELEASE-p7
+15.1-RELEASE-p7
++ uname -a
+FreeBSD hearst.greenbean.org 15.1-RELEASE-p7 FreeBSD 15.1-RELEASE-p7 releng/15.1-n283696-bb03631fe3b7 GENERIC amd64
+
+######## if_epair (approved: kldload live only), with uptime, last reboot, and the vmm check first
++ date -u
+Sat Nov 21 14:23:57 UTC 2026
++ uptime
+ 9:23AM  up 1 day, 21:57, 5 users, load averages: 0.16, 0.22, 0.18
++ last reboot
++ head -3
+boot time                                  Thu Nov 19 11:27
+shutdown time                              Thu Nov 19 11:26
+boot time                                  Mon Nov 16 14:04
++ sysctl hw.vmm.vmx.cap.virtual_interrupt_delivery
+hw.vmm.vmx.cap.virtual_interrupt_delivery: 0
++ kldstat -q -m if_epair
+kldstat -m if_epair exit 1
++ echo 'kldstat -m if_epair exit 1'
++ sudo kldload if_epair
+kldload exit 0
++ echo 'kldload exit 0'
++ kldstat -q -m if_epair
+kldstat -m if_epair exit 0
++ echo 'kldstat -m if_epair exit 0'
++ kldstat
++ grep epair
+13    1 0xffffffff8303f000     539c if_epair.ko
++ ifconfig -l
+vtnet0 vtnet1 lo0 bridge0
++ ifconfig -g epair
+
+########
+# SR-01 test 1: baseline proof on b5b0546 (13.9), 2026-11-21T14:26:44Z
+HTTP 202
+container 168efd83-fefe-49e8-a622-2414bc2f3b9e
+task c52985b3-e4ac-46b6-bb3f-669f918bb236 (container.create): succeeded 
+ls: /skeptest/skep/jail/168efd83-fefe-49e8-a622-2414bc2f3b9e/etc/rc.local: No such file or directory
+( dd if=/dev/zero bs=1m count=50 2>/dev/null; sleep 600 ) &
+
+/dev/da0s1a 125923740 20097436 95752408    17%    /
+HTTP 202
+task 9cf2cdba-8ff0-4fe9-9935-ef998073057e (container.start): succeeded 
++ sudo ls -l /var/run/skep/jails/168efd83-fefe-49e8-a622-2414bc2f3b9e/
+total 102536
+-rw-------  1 root skep 52429725 Nov 21 09:26 console.log
+-rw-------  1 root skep     1046 Nov 21 09:26 jail.conf
++ sudo grep consolelog /var/run/skep/jails/168efd83-fefe-49e8-a622-2414bc2f3b9e/jail.conf
+	exec.consolelog = "/var/run/skep/jails/168efd83-fefe-49e8-a622-2414bc2f3b9e/console.log";
++ jls
+   JID  IP Address      Hostname                      Path
+     1                  r1-t1-base                    /skeptest/skep/jail/168efd83-fefe-49e8-a622-2414bc2f3b9e
++ jls -j skep-168efd83-fefe-49e8-a622-2414bc2f3b9e jid
++ J=1
++ ps -J 1 -o pid,command
+  PID COMMAND
+70633 /usr/sbin/syslogd -s
+70636 syslogd: syslogd.casper (syslogd)
+70637 syslogd: system.net (syslogd)
+70653 sleep 600
+70672 /usr/sbin/cron -s
++ pgrep -j 1 sleep
++ pgrep -j 1 -f sh
++ sudo procstat -f 70653
++ grep -E 'PID| [012] '
+  PID COMM                FD T V FLAGS    REF  OFFSET PRO NAME        
+70653 sleep                0 v c r-------   1       0 -   /skeptest/skep/jail/168efd83-fefe-49e8-a622-2414bc2f3b9e/dev/null
+70653 sleep                1 v r -wa-----   2 52429725 -   /var/run/skep/jails/168efd83-fefe-49e8-a622-2414bc2f3b9e/console.log
+70653 sleep                2 v r -wa-----   2 52429725 -   /var/run/skep/jails/168efd83-fefe-49e8-a622-2414bc2f3b9e/console.log
++ df /
++ tail -1
+/dev/da0s1a 125923740 20149528 95700316    17%    /
++ sleep 10
++ sudo ls -l /var/run/skep/jails/168efd83-fefe-49e8-a622-2414bc2f3b9e/console.log
+-rw-------  1 root skep 52429725 Nov 21 09:26 /var/run/skep/jails/168efd83-fefe-49e8-a622-2414bc2f3b9e/console.log
+-- cleanup
+HTTP 202
+task 793353f9-b546-402b-8fe5-e447915633f9 (container.stop): succeeded 
+total 102536
+-rw-------  1 root skep 52429778 Nov 21 09:27 console.log
+-rw-------  1 root skep     1046 Nov 21 09:27 jail.conf
+HTTP 202
+task b4917583-c0a8-4965-baaf-4b938aad4c75 (container.delete): succeeded 
++ sudo ls -la /var/run/skep/jails/
+total 16
+drwx------  2 root skep 512 Nov 21 09:27 .
+drwxr-x---  4 root skep 512 Nov 19 11:27 ..
++ sudo ls -l /var/run/skep/jails/168efd83-fefe-49e8-a622-2414bc2f3b9e
+ls: /var/run/skep/jails/168efd83-fefe-49e8-a622-2414bc2f3b9e: No such file or directory
++ jls
+   JID  IP Address      Hostname                      Path
++ df /
++ tail -1
+/dev/da0s1a 125923740 20099504 95750340    17%    /
++ zfs list -r skeptest/skep/jail
+NAME                 USED  AVAIL  REFER  MOUNTPOINT
+skeptest/skep/jail    24K  14.8G    24K  /skeptest/skep/jail
+
+########
+# Deploy of 8c81e35, 2026-11-21T14:27:40Z
+deploy-test: hearst:/usr/local/sbin/skep-agent root:wheel 0555 13570218 bytes sha256 648728afef4446d9a3c3ae687c4a5033f66b0726963effcffba1fe67735185f3
+deploy-test: hearst:/usr/local/sbin/skep-api root:wheel 0555 14180522 bytes sha256 05e8e3632c5092001fc67a7ec59d7d6c0c16ebb5b9bc991141e6d5dce0e5d107
+deploy-test: synced
+deploy-test: hearst:/usr/local/bin/skepctl root:wheel 0555 7217322 bytes sha256 aaa314ec5a1a755673e6321d2a1c8caa5cbdae6eddf08d4e616a046f50e0275a
+deploy-test: synced
+deploy-test: restarting skep_api and skep_agent on hearst
+Stopping skep_api.
+Waiting for PIDS: 1550.
+Stopping skep_agent.
+Waiting for PIDS: 1509.
+Starting skep_agent.
+Starting skep_api.
+deploy-test: skep_agent pid 71205 runs /usr/local/sbin/skep-agent: skep-agent 0.1.0 (commit 8c81e35, built 2026-11-21T14:27:32Z, go1.27.4 freebsd/amd64)
+deploy-test: skep_api pid 71264 runs /usr/local/sbin/skep-api: skep-api 0.1.0 (commit 8c81e35, built 2026-11-21T14:27:32Z, go1.27.4 freebsd/amd64)
+deploy-test: hearst runs 8c81e35
+exit 0
++ ls -i /usr/local/sbin/skep-agent /usr/local/sbin/skep-api
+3044883 /usr/local/sbin/skep-agent
+3044885 /usr/local/sbin/skep-api
++ sudo cat /var/run/skep/agent.pid
++ p=71205
++ sudo fstat -p 71205
++ awk '$4=="text"'
+root     skep-agent 71205 text /        3044883 -r-xr-xr-x  13570218  r
++ sudo cat /var/run/skep/api.pid
++ p=71264
++ sudo fstat -p 71264
++ awk '$4=="text"'
+skep     skep-api   71264 text /        3044885 -r-xr-xr-x  14180522  r
++ /usr/local/sbin/skep-agent -version
+skep-agent 0.1.0 (commit 8c81e35, built 2026-11-21T14:27:32Z, go1.27.4 freebsd/amd64)
++ /usr/local/sbin/skep-api -version
+skep-api 0.1.0 (commit 8c81e35, built 2026-11-21T14:27:32Z, go1.27.4 freebsd/amd64)
++ /usr/local/bin/skepctl -version
+skepctl 0.1.0 (commit 8c81e35, built 2026-11-21T14:27:32Z, go1.27.4 freebsd/amd64)
+{"status":"ok"}
+
+HTTP 200
+
+########
+# SR-04 S1, 2026-11-21T14:27:55Z
+6397820928
+physmem/4 = 1599455232
+Nov 21 09:27:43 hearst skep-agent[71203]: {"time":"2026-11-21T09:27:43.344831234-05:00","level":"INFO","msg":"jail locked-memory total","max_locked_memory_bytes":1599455232,"physical_memory_bytes":6397820928,"configured":false}
+
+########
+# SR-01 test 2, hostops test binary at 8c81e35 as unprivileged aba, 2026-11-21T14:28:09Z
+828d1fbaecc61e4754c458a2f75ee89b25c9f05ec6a41f8d0038b1a0697a3edd
+uid=1001(aba) gid=1001(aba) groups=0(wheel),1001(aba)
+=== RUN   TestCleanText
+=== RUN   TestCleanText/plain
+=== RUN   TestCleanText/newline_and_tab_kept
+=== RUN   TestCleanText/carriage_return_removed
+=== RUN   TestCleanText/ANSI_sequence
+=== RUN   TestCleanText/other_C0_and_DEL
+=== RUN   TestCleanText/C1
+=== RUN   TestCleanText/bidi_overrides
+=== RUN   TestCleanText/bidi_isolates
+=== RUN   TestCleanText/other_Cf
+=== RUN   TestCleanText/RLO_filename
+=== RUN   TestCleanText/not_trimmed_or_cut
+=== RUN   TestCleanText/other_scripts_kept
+=== RUN   TestCleanText/invalid_UTF-8_becomes_U+FFFD
+=== RUN   TestCleanText/empty
+--- PASS: TestCleanText (0.00s)
+    --- PASS: TestCleanText/plain (0.00s)
+    --- PASS: TestCleanText/newline_and_tab_kept (0.00s)
+    --- PASS: TestCleanText/carriage_return_removed (0.00s)
+    --- PASS: TestCleanText/ANSI_sequence (0.00s)
+    --- PASS: TestCleanText/other_C0_and_DEL (0.00s)
+    --- PASS: TestCleanText/C1 (0.00s)
+    --- PASS: TestCleanText/bidi_overrides (0.00s)
+    --- PASS: TestCleanText/bidi_isolates (0.00s)
+    --- PASS: TestCleanText/other_Cf (0.00s)
+    --- PASS: TestCleanText/RLO_filename (0.00s)
+    --- PASS: TestCleanText/not_trimmed_or_cut (0.00s)
+    --- PASS: TestCleanText/other_scripts_kept (0.00s)
+    --- PASS: TestCleanText/invalid_UTF-8_becomes_U+FFFD (0.00s)
+    --- PASS: TestCleanText/empty (0.00s)
+=== RUN   TestCleanTextEveryRune
+--- PASS: TestCleanTextEveryRune (0.08s)
+=== RUN   TestCleanStderr
+--- PASS: TestCleanStderr (0.00s)
+=== RUN   TestCreateJailCleansStderr
+--- PASS: TestCreateJailCleansStderr (0.00s)
+=== RUN   TestCreateBuildJailCleansStderr
+--- PASS: TestCreateBuildJailCleansStderr (0.00s)
+=== RUN   TestBuildJailExecCleansStderr
+--- PASS: TestBuildJailExecCleansStderr (0.00s)
+=== RUN   TestPkgInstallCleansStderr
+--- PASS: TestPkgInstallCleansStderr (0.00s)
+=== RUN   TestPkgScriptsCleansStderr
+--- PASS: TestPkgScriptsCleansStderr (0.00s)
+=== RUN   TestExtractArchiveCleansStderr
+--- PASS: TestExtractArchiveCleansStderr (0.00s)
+=== RUN   TestConsoleLogLayout
+=== RUN   TestConsoleLogLayout/empty
+=== RUN   TestConsoleLogLayout/exactly_the_head
+=== RUN   TestConsoleLogLayout/head_and_a_little
+=== RUN   TestConsoleLogLayout/head_and_the_tail
+=== RUN   TestConsoleLogLayout/one_byte_dropped
+=== RUN   TestConsoleLogLayout/many_small_writes
+=== RUN   TestConsoleLogLayout/large_then_small
+=== RUN   TestConsoleLogLayout/under_the_head
+=== RUN   TestConsoleLogLayout/one_large_write
+--- PASS: TestConsoleLogLayout (0.00s)
+    --- PASS: TestConsoleLogLayout/empty (0.00s)
+    --- PASS: TestConsoleLogLayout/exactly_the_head (0.00s)
+    --- PASS: TestConsoleLogLayout/head_and_a_little (0.00s)
+    --- PASS: TestConsoleLogLayout/head_and_the_tail (0.00s)
+    --- PASS: TestConsoleLogLayout/one_byte_dropped (0.00s)
+    --- PASS: TestConsoleLogLayout/many_small_writes (0.00s)
+    --- PASS: TestConsoleLogLayout/large_then_small (0.00s)
+    --- PASS: TestConsoleLogLayout/under_the_head (0.00s)
+    --- PASS: TestConsoleLogLayout/one_large_write (0.00s)
+=== RUN   TestConsoleLogWriteFailureKeepsDraining
+--- PASS: TestConsoleLogWriteFailureKeepsDraining (0.00s)
+=== RUN   TestRunToConsoleLogCapHitDuringStart
+--- PASS: TestRunToConsoleLogCapHitDuringStart (0.01s)
+=== RUN   TestRunToConsoleLogTruncatesAndKeepsShortOutput
+--- PASS: TestRunToConsoleLogTruncatesAndKeepsShortOutput (0.00s)
+=== RUN   TestRunToConsoleLogRefusesLink
+--- PASS: TestRunToConsoleLogRefusesLink (0.00s)
+=== RUN   TestRunToConsoleLogPipeClosedAfterStart
+--- PASS: TestRunToConsoleLogPipeClosedAfterStart (0.11s)
+=== RUN   TestRunToConsoleLogWriteAfterStart
+=== RUN   TestRunToConsoleLogWriteAfterStart/default_SIGPIPE_kills_the_writer
+=== RUN   TestRunToConsoleLogWriteAfterStart/ignored_SIGPIPE_gives_EPIPE
+--- PASS: TestRunToConsoleLogWriteAfterStart (1.74s)
+    --- PASS: TestRunToConsoleLogWriteAfterStart/default_SIGPIPE_kills_the_writer (1.62s)
+    --- PASS: TestRunToConsoleLogWriteAfterStart/ignored_SIGPIPE_gives_EPIPE (0.12s)
+=== RUN   TestRunToConsoleLogTimeout
+--- PASS: TestRunToConsoleLogTimeout (0.51s)
+=== RUN   TestRunToConsoleLogFailure
+--- PASS: TestRunToConsoleLogFailure (0.00s)
+=== RUN   TestRunCommandMarkOverflow
+--- PASS: TestRunCommandMarkOverflow (0.01s)
+=== RUN   TestStopJailShutdownOutputPastTheBudget
+--- PASS: TestStopJailShutdownOutputPastTheBudget (0.01s)
+=== RUN   TestStopJailShutdownStderrPastTheBudget
+--- PASS: TestStopJailShutdownStderrPastTheBudget (0.01s)
+=== RUN   TestStopJailShutdownOutputUnderTheBudget
+=== RUN   TestStopJailShutdownOutputUnderTheBudget/newline
+=== RUN   TestStopJailShutdownOutputUnderTheBudget/no_newline
+=== RUN   TestStopJailShutdownOutputUnderTheBudget/empty_log
+=== RUN   TestStopJailShutdownOutputUnderTheBudget/silent
+=== RUN   TestStopJailShutdownOutputUnderTheBudget/stderr
+=== RUN   TestStopJailShutdownOutputUnderTheBudget/stdout_without_newline
+=== RUN   TestStopJailShutdownOutputUnderTheBudget/only_stderr
+=== RUN   TestStopJailShutdownOutputUnderTheBudget/stderr_kept_raw
+--- PASS: TestStopJailShutdownOutputUnderTheBudget (0.03s)
+    --- PASS: TestStopJailShutdownOutputUnderTheBudget/newline (0.00s)
+    --- PASS: TestStopJailShutdownOutputUnderTheBudget/no_newline (0.00s)
+    --- PASS: TestStopJailShutdownOutputUnderTheBudget/empty_log (0.00s)
+    --- PASS: TestStopJailShutdownOutputUnderTheBudget/silent (0.00s)
+    --- PASS: TestStopJailShutdownOutputUnderTheBudget/stderr (0.00s)
+    --- PASS: TestStopJailShutdownOutputUnderTheBudget/stdout_without_newline (0.00s)
+    --- PASS: TestStopJailShutdownOutputUnderTheBudget/only_stderr (0.00s)
+    --- PASS: TestStopJailShutdownOutputUnderTheBudget/stderr_kept_raw (0.00s)
+=== RUN   TestDiscardAppendsNoShutdownOutput
+--- PASS: TestDiscardAppendsNoShutdownOutput (0.00s)
+=== RUN   TestShutdownLogWriteFailureStillRemoves
+=== RUN   TestShutdownLogWriteFailureStillRemoves/symlink
+=== RUN   TestShutdownLogWriteFailureStillRemoves/directory
+=== RUN   TestShutdownLogWriteFailureStillRemoves/fifo
+=== RUN   TestShutdownLogWriteFailureStillRemoves/no_runtime_directory
+--- PASS: TestShutdownLogWriteFailureStillRemoves (0.02s)
+    --- PASS: TestShutdownLogWriteFailureStillRemoves/symlink (0.00s)
+    --- PASS: TestShutdownLogWriteFailureStillRemoves/directory (0.00s)
+    --- PASS: TestShutdownLogWriteFailureStillRemoves/fifo (0.00s)
+    --- PASS: TestShutdownLogWriteFailureStillRemoves/no_runtime_directory (0.00s)
+=== RUN   TestRunCommandStderrTail
+--- PASS: TestRunCommandStderrTail (0.01s)
+=== RUN   TestRunCommandStderrLastLine
+=== RUN   TestRunCommandStderrLastLine/last_line
+=== RUN   TestRunCommandStderrLastLine/trailing_blank_lines
+=== RUN   TestRunCommandStderrLastLine/control_characters
+=== RUN   TestRunCommandStderrLastLine/over-long_line
+=== RUN   TestRunCommandStderrLastLine/bidi_override
+=== RUN   TestRunCommandStderrLastLine/past_the_kept_tail
+=== RUN   TestRunCommandStderrLastLine/empty_stderr
+--- PASS: TestRunCommandStderrLastLine (0.01s)
+    --- PASS: TestRunCommandStderrLastLine/last_line (0.00s)
+    --- PASS: TestRunCommandStderrLastLine/trailing_blank_lines (0.00s)
+    --- PASS: TestRunCommandStderrLastLine/control_characters (0.00s)
+    --- PASS: TestRunCommandStderrLastLine/over-long_line (0.00s)
+    --- PASS: TestRunCommandStderrLastLine/bidi_override (0.00s)
+    --- PASS: TestRunCommandStderrLastLine/past_the_kept_tail (0.01s)
+    --- PASS: TestRunCommandStderrLastLine/empty_stderr (0.00s)
+=== RUN   TestRemoveJailFailureReportsLastStderrLine
+=== RUN   TestRemoveJailFailureReportsLastStderrLine/control_characters
+=== RUN   TestRemoveJailFailureReportsLastStderrLine/over-long_line
+=== RUN   TestRemoveJailFailureReportsLastStderrLine/bidi_override
+=== RUN   TestRemoveJailFailureReportsLastStderrLine/empty_stderr
+--- PASS: TestRemoveJailFailureReportsLastStderrLine (0.02s)
+    --- PASS: TestRemoveJailFailureReportsLastStderrLine/control_characters (0.00s)
+    --- PASS: TestRemoveJailFailureReportsLastStderrLine/over-long_line (0.00s)
+    --- PASS: TestRemoveJailFailureReportsLastStderrLine/bidi_override (0.00s)
+    --- PASS: TestRemoveJailFailureReportsLastStderrLine/empty_stderr (0.00s)
+=== RUN   TestCleanLineFirstStderrLine
+--- PASS: TestCleanLineFirstStderrLine (0.00s)
+=== RUN   TestCleanLine
+=== RUN   TestCleanLine/plain
+=== RUN   TestCleanLine/escape_sequence
+=== RUN   TestCleanLine/carriage_return
+=== RUN   TestCleanLine/tab_nul_del_bell
+=== RUN   TestCleanLine/C1_as_UTF-8
+=== RUN   TestCleanLine/C1_as_a_raw_byte
+=== RUN   TestCleanLine/surrounding_spaces
+=== RUN   TestCleanLine/over-long
+=== RUN   TestCleanLine/over-long_multibyte
+=== RUN   TestCleanLine/cut_before_a_split_character
+=== RUN   TestCleanLine/exactly_200
+=== RUN   TestCleanLine/empty
+=== RUN   TestCleanLine/only_controls
+=== RUN   TestCleanLine/printable_unicode_kept
+=== RUN   TestCleanLine/right-to-left_override
+=== RUN   TestCleanLine/bidi_embeddings_and_overrides
+=== RUN   TestCleanLine/bidi_isolates
+=== RUN   TestCleanLine/other_format_characters
+=== RUN   TestCleanLine/format_characters_around_spaces
+=== RUN   TestCleanLine/only_format_characters
+=== RUN   TestCleanLine/cut_after_format_characters_removed
+--- PASS: TestCleanLine (0.00s)
+    --- PASS: TestCleanLine/plain (0.00s)
+    --- PASS: TestCleanLine/escape_sequence (0.00s)
+    --- PASS: TestCleanLine/carriage_return (0.00s)
+    --- PASS: TestCleanLine/tab_nul_del_bell (0.00s)
+    --- PASS: TestCleanLine/C1_as_UTF-8 (0.00s)
+    --- PASS: TestCleanLine/C1_as_a_raw_byte (0.00s)
+    --- PASS: TestCleanLine/surrounding_spaces (0.00s)
+    --- PASS: TestCleanLine/over-long (0.00s)
+    --- PASS: TestCleanLine/over-long_multibyte (0.00s)
+    --- PASS: TestCleanLine/cut_before_a_split_character (0.00s)
+    --- PASS: TestCleanLine/exactly_200 (0.00s)
+    --- PASS: TestCleanLine/empty (0.00s)
+    --- PASS: TestCleanLine/only_controls (0.00s)
+    --- PASS: TestCleanLine/printable_unicode_kept (0.00s)
+    --- PASS: TestCleanLine/right-to-left_override (0.00s)
+    --- PASS: TestCleanLine/bidi_embeddings_and_overrides (0.00s)
+    --- PASS: TestCleanLine/bidi_isolates (0.00s)
+    --- PASS: TestCleanLine/other_format_characters (0.00s)
+    --- PASS: TestCleanLine/format_characters_around_spaces (0.00s)
+    --- PASS: TestCleanLine/only_format_characters (0.00s)
+    --- PASS: TestCleanLine/cut_after_format_characters_removed (0.00s)
+=== RUN   TestCleanLineRemovesAllFormatCharacters
+--- PASS: TestCleanLineRemovesAllFormatCharacters (0.00s)
+=== RUN   TestLastLine
+--- PASS: TestLastLine (0.00s)
+=== RUN   TestConsoleLogTail
+--- PASS: TestConsoleLogTail (0.00s)
+=== RUN   TestBuildJailExec
+--- PASS: TestBuildJailExec (0.00s)
+PASS
+exit 0
+
+########
+# SR-01 tests 3 and 4 on 8c81e35, 2026-11-21T14:28:28Z
+HTTP 200
+HTTP 202
+container 2f5b692b-037c-4003-b9c6-addc101719fd
+task c40ccc06-327d-44db-add3-efcc4fef7b98 (container.create): succeeded 
+( dd if=/dev/zero bs=1m count=50 2>/dev/null; sleep 600 ) &
+/dev/da0s1a 125923740 20095900 95753944    17%    /
+HTTP 202
+task 10c72868-bc70-4387-a793-07f3eee459eb (container.start): succeeded 
++ sudo ls -l /var/run/skep/jails/2f5b692b-037c-4003-b9c6-addc101719fd/
+total 656
+-rw-------  1 root skep 327712 Nov 21 09:28 console.log
+-rw-------  1 root skep    953 Nov 21 09:28 jail.conf
++ sudo cat /var/run/skep/jails/2f5b692b-037c-4003-b9c6-addc101719fd/jail.conf
+# Generated by Skep (ADR 0010 decisions 8 and 9). Do not edit: it is
+# rewritten before every start and stop.
+skep-2f5b692b-037c-4003-b9c6-addc101719fd {
+	path = "/skeptest/skep/jail/2f5b692b-037c-4003-b9c6-addc101719fd";
+	host.hostname = "r1-t4-dd";
+	vnet;
+	persist;
+	enforce_statfs = 2;
+	children.max = 0;
+	securelevel = 2;
+	mount.devfs;
+	devfs_ruleset = 5;
+	allow.adjtime = 0;
+	allow.chflags = 0;
+	allow.extattr = 0;
+	allow.mlock = 0;
+	allow.mount = 0;
+	allow.nfsd = 0;
+	allow.quotas = 0;
+	allow.raw_sockets = 0;
+	allow.read_msgbuf = 0;
+	allow.reserved_ports = 1;
+	allow.routing = 0;
+	allow.set_hostname = 0;
+	allow.setaudit = 0;
+	allow.settime = 0;
+	allow.socket_af = 0;
+	allow.suser = 1;
+	allow.sysvipc = 0;
+	allow.unprivileged_parent_tampering = 0;
+	allow.unprivileged_proc_debug = 0;
+	sysvshm = disable;
+	sysvsem = disable;
+	sysvmsg = disable;
+	exec.clean;
+	exec.stop = "/bin/sh /etc/rc.shutdown jail";
+	exec.timeout = 120;
+	stop.timeout = 10;
+}
++ sudo grep -c consolelog /var/run/skep/jails/2f5b692b-037c-4003-b9c6-addc101719fd/jail.conf
+0
++ jls -j skep-2f5b692b-037c-4003-b9c6-addc101719fd jid
++ J=2
++ ps -J 2 -o pid,command
+  PID COMMAND
+71825 /usr/sbin/syslogd -s
+71828 syslogd: syslogd.casper (syslogd)
+71829 syslogd: system.net (syslogd)
+71845 sleep 600
+71864 /usr/sbin/cron -s
++ pgrep -j 2
++ grep -E 'console|pipe| [012] v|PID'
++ sort -u
++ sudo procstat -f 71845
++ sudo procstat -f 71825
++ sudo procstat -f 71828
++ sudo procstat -f 71829
++ sudo procstat -f 71864
+  PID COMM                FD T V FLAGS    REF  OFFSET PRO NAME        
+71825 syslogd              0 v c rw------   7       0 -   /skeptest/skep/jail/2f5b692b-037c-4003-b9c6-addc101719fd/dev/null
+71825 syslogd              1 v c rw------   7       0 -   /skeptest/skep/jail/2f5b692b-037c-4003-b9c6-addc101719fd/dev/null
+71825 syslogd              2 v c rw------   7       0 -   /skeptest/skep/jail/2f5b692b-037c-4003-b9c6-addc101719fd/dev/null
+71828 syslogd              0 v c rw------   7       0 -   /skeptest/skep/jail/2f5b692b-037c-4003-b9c6-addc101719fd/dev/null
+71828 syslogd              1 v c rw------   7       0 -   /skeptest/skep/jail/2f5b692b-037c-4003-b9c6-addc101719fd/dev/null
+71828 syslogd              2 v c rw------   7       0 -   /skeptest/skep/jail/2f5b692b-037c-4003-b9c6-addc101719fd/dev/null
+71829 syslogd              0 v c rw------   3       0 -   /skeptest/skep/jail/2f5b692b-037c-4003-b9c6-addc101719fd/dev/null
+71829 syslogd              1 v c rw------   3       0 -   /skeptest/skep/jail/2f5b692b-037c-4003-b9c6-addc101719fd/dev/null
+71829 syslogd              2 v c rw------   3       0 -   /skeptest/skep/jail/2f5b692b-037c-4003-b9c6-addc101719fd/dev/null
+71845 sleep                0 v c r-------   1       0 -   /skeptest/skep/jail/2f5b692b-037c-4003-b9c6-addc101719fd/dev/null
+71864 cron                 0 v c rw------   3       0 -   /skeptest/skep/jail/2f5b692b-037c-4003-b9c6-addc101719fd/dev/null
+71864 cron                 1 v c rw------   3       0 -   /skeptest/skep/jail/2f5b692b-037c-4003-b9c6-addc101719fd/dev/null
+71864 cron                 2 v c rw------   3       0 -   /skeptest/skep/jail/2f5b692b-037c-4003-b9c6-addc101719fd/dev/null
++ df /
++ tail -1
+/dev/da0s1a 125923740 20097084 95752760    17%    /
++ sudo tail -c 400 /var/run/skep/jails/2f5b692b-037c-4003-b9c6-addc101719fd/console.log
++ od -c
++ tail -8
+0000000   \0  \0  \0  \0  \0  \0  \0  \0  \0  \0  \0  \0  \0  \0  \0  \0
+*
+0000560   \0  \0  \n   S   a   t       N   o   v       2   1       1   4
+0000600    :   2   8   :   2   9       U   T   C       2   0   2   6  \n
+0000620
++ sleep 20
++ sudo ls -l /var/run/skep/jails/2f5b692b-037c-4003-b9c6-addc101719fd/console.log
+-rw-------  1 root skep 327712 Nov 21 09:28 /var/run/skep/jails/2f5b692b-037c-4003-b9c6-addc101719fd/console.log
++ df /
++ tail -1
+/dev/da0s1a 125923740 20097420 95752424    17%    /
++ pgrep -j skep-2f5b692b-037c-4003-b9c6-addc101719fd sleep
++ sudo procstat -f 71845
+  PID COMM                FD T V FLAGS    REF  OFFSET PRO NAME        
+71845 sleep             text v r r-------   -       - -   /skeptest/skep/jail/2f5b692b-037c-4003-b9c6-addc101719fd/bin/sleep
+71845 sleep              cwd v d r-------   -       - -   /skeptest/skep/jail/2f5b692b-037c-4003-b9c6-addc101719fd/root
+71845 sleep             root v d r-------   -       - -   /skeptest/skep/jail/2f5b692b-037c-4003-b9c6-addc101719fd
+71845 sleep             jail v d r-------   -       - -   /skeptest/skep/jail/2f5b692b-037c-4003-b9c6-addc101719fd
+71845 sleep                0 v c r-------   1       0 -   /skeptest/skep/jail/2f5b692b-037c-4003-b9c6-addc101719fd/dev/null
+71845 sleep                1 p - rw------   2       0 -   -                 
+71845 sleep                2 p - rw------   2       0 -   -                 
++ pgrep -j skep-2f5b692b-037c-4003-b9c6-addc101719fd sleep
++ sudo fstat -p 71845
+USER     CMD          PID   FD MOUNT      INUM MODE         SZ|DV R/W
+root     sleep      71845 text /skeptest/skep/jail/2f5b692b-037c-4003-b9c6-addc101719fd   4373 -r-xr-xr-x    7928  r
+root     sleep      71845   wd /skeptest/skep/jail/2f5b692b-037c-4003-b9c6-addc101719fd   4425 drwxr-x---       5  r
+root     sleep      71845 root /skeptest/skep/jail/2f5b692b-037c-4003-b9c6-addc101719fd     34 drwxr-xr-x      18  r
+root     sleep      71845 jail /skeptest/skep/jail/2f5b692b-037c-4003-b9c6-addc101719fd     34 drwxr-xr-x      18  r
+root     sleep      71845    0 /skeptest/skep/jail/2f5b692b-037c-4003-b9c6-addc101719fd/dev     21 crw-rw-rw-    null  r
+root     sleep      71845    1* pipe fffffe00a02f99f8 <-> fffffe00a02f98a0      0 rw
+root     sleep      71845    2* pipe fffffe00a02f99f8 <-> fffffe00a02f98a0      0 rw
++ sudo grep -a -n skep: /var/run/skep/jails/2f5b692b-037c-4003-b9c6-addc101719fd/console.log
+26:skep: 52102045 bytes discarded
++ sudo fstat /var/run/skep/jails/2f5b692b-037c-4003-b9c6-addc101719fd/console.log
+USER     CMD          PID   FD MOUNT      INUM MODE         SZ|DV R/W NAME
++ sudo head -c 300 /var/run/skep/jails/2f5b692b-037c-4003-b9c6-addc101719fd/console.log
+ELF ldconfig path: /lib /usr/lib
+32-bit compatibility ldconfig path:
+Starting Network: lo0.
+lo0: flags=1008049<UP,LOOPBACK,RUNNING,MULTICAST,LOWER_UP> metric 0 mtu 16384
+	options=680003<RXCSUM,TXCSUM,LINKSTATE,RXCSUM_IPV6,TXCSUM_IPV6>
+	inet 127.0.0.1 netmask 0xff000000
+	inet6 ::1 prefixlen 128
+	inet-- test 4: stop
+HTTP 202
+task de126e86-af01-427e-ac7a-8b83bb14345f (container.stop): succeeded 
++ jls
+   JID  IP Address      Hostname                      Path
++ sudo ls -l /var/run/skep/jails/2f5b692b-037c-4003-b9c6-addc101719fd/console.log
+-rw-------  1 root skep 327857 Nov 21 09:29 /var/run/skep/jails/2f5b692b-037c-4003-b9c6-addc101719fd/console.log
++ sudo grep -a -n -e '^--- shutdown' -e ^skep: /var/run/skep/jails/2f5b692b-037c-4003-b9c6-addc101719fd/console.log
+26:skep: 52102045 bytes discarded
+29:--- shutdown ---
+34:--- shutdown stderr ---
++ sudo tail -c +327713 /var/run/skep/jails/2f5b692b-037c-4003-b9c6-addc101719fd/console.log
+--- shutdown ---
+Stopping cron.
+Waiting for PIDS: 71864.
+.
+skep-2f5b692b-037c-4003-b9c6-addc101719fd: removed
+--- shutdown stderr ---
+Terminated
+
++ echo
++ sudo stat -f %z /var/run/skep/jails/2f5b692b-037c-4003-b9c6-addc101719fd/console.log
+growth bytes: 145
++ echo 'growth bytes:' 145
++ df /
++ tail -1
+/dev/da0s1a 125923740 20097820 95752024    17%    /
+-- test 4: remove test lines
+ls: /skeptest/skep/jail/2f5b692b-037c-4003-b9c6-addc101719fd/etc/rc.local: No such file or directory
+
+########
+# SR-01 test 5 (same jail r1-t4-dd, 2f5b692b-037c-4003-b9c6-addc101719fd), 2026-11-21T14:29:23Z
+i=0
+while [ $i -lt 16384 ]; do echo "r1t5 line $i 01234567890123456789012345678901234567890123456789"; i=$((i+1)); done
+echo 'r1t5 LAST rc.local line'
+HTTP 202
+task 80b031f2-3431-413a-b4f3-78bb022eae00 (container.start): succeeded 
++ sudo ls -l /var/run/skep/jails/2f5b692b-037c-4003-b9c6-addc101719fd/console.log
+-rw-------  1 root skep 327710 Nov 21 09:29 /var/run/skep/jails/2f5b692b-037c-4003-b9c6-addc101719fd/console.log
++ sudo grep -a -c '^r1t5 line' /var/run/skep/jails/2f5b692b-037c-4003-b9c6-addc101719fd/console.log
+4952
++ sudo grep -a -n -e ^skep: -e '^--- shutdown' /var/run/skep/jails/2f5b692b-037c-4003-b9c6-addc101719fd/console.log
+4000:skep: 759887 bytes discarded
++ sudo head -c 262144 /var/run/skep/jails/2f5b692b-037c-4003-b9c6-addc101719fd/console.log
++ tail -2
+r1t5 line 3974 01234567890123456789012345678901234567890123456789
+r1t5 line 3975 01234567890+ sudo tail -4 /var/run/skep/jails/2f5b692b-037c-4003-b9c6-addc101719fd/console.log
+.
+Starting cron.
+
+Sat Nov 21 14:29:24 UTC 2026
+HTTP 200
+truncated: True, text bytes: 65536
+API text, last 3 lines:
+Starting cron.
+
+Sat Nov 21 14:29:24 UTC 2026
+4979:r1t5 LAST rc.local line
+1
+-- cleanup r1-t4-dd
+HTTP 202
+task 0b225e96-05cb-4ff2-b41b-e2428d9cd1f7 (container.stop): succeeded 
+HTTP 202
+task f915655d-f48d-43fc-96d0-eb1ea73e2e71 (container.delete): succeeded 
+   JID  IP Address      Hostname                      Path
+skeptest/skep/jail
+
+########
+# SR-01 test 6, minimal-ssh-151 with a DHCP NIC, 2026-11-21T14:29:54Z
+HTTP 202
+container 5258d54c-a335-422f-862c-a563cdb51e8f
+task e7416c50-354b-45c5-b05f-0572a4cb7ee2 (container.create): succeeded 
+HTTP 202
+task 102d54d2-6c72-469a-982e-57d05a949259 (container.start): succeeded 
++ sudo grep -c consolelog /var/run/skep/jails/5258d54c-a335-422f-862c-a563cdb51e8f/jail.conf
+0
++ sudo jexec skep-5258d54c-a335-422f-862c-a563cdb51e8f ps ax -o pid,command
+  PID COMMAND
+73069 dhclient: system.syslog (dhclient)
+73072 dhclient: skep0 [priv] (dhclient)
+73185 dhclient: skep0 (dhclient)
+73314 /usr/sbin/syslogd -s
+73317 syslogd: syslogd.casper (syslogd)
+73318 syslogd: system.net (syslogd)
+73373 sshd: /usr/sbin/sshd -o PermitRootLogin=prohibit-password [listener] 0 of 10-100 startups (sshd)
+73405 /usr/sbin/cron -s
+73418 ps ax -o pid,command
++ sudo jexec skep-5258d54c-a335-422f-862c-a563cdb51e8f ifconfig skep0 inet
+skep0: flags=1008843<UP,BROADCAST,RUNNING,SIMPLEX,MULTICAST,LOWER_UP> metric 0 mtu 1500
+	options=60001b<RXCSUM,TXCSUM,VLAN_MTU,VLAN_HWTAGGING,RXCSUM_IPV6,TXCSUM_IPV6>
+	inet 10.79.60.108 netmask 0xffffff00 broadcast 10.79.60.255
++ ifconfig -g epair
+epair0a
+-- 60 s after the start (14:30:05)
+14:31:05
+73314 /usr/sbin/syslogd -s
+73317 syslogd: syslogd.casper (syslogd)
+73318 syslogd: system.net (syslogd)
+73373 sshd: /usr/sbin/sshd -o PermitRootLogin=prohibit-password [listener] 0 of 10-100 startups (sshd)
+73405 /usr/sbin/cron -s
+-- SSH from merrick to 10.79.60.108
+Warning: Permanently added '10.79.60.108' (ED25519) to the list of known hosts.
+uid=0(root) gid=0(wheel) groups=0(wheel),5(operator)
+r1-t6-ssh
+15.1-RELEASE-p7
+ssh exit 0
+-- test 6: stop
+HTTP 202
+task 7ddd1674-c970-43a9-a3b5-597d86324136 (container.stop): succeeded 
+   JID  IP Address      Hostname                      Path
+--- shutdown ---
+Stopping sshd.
+Waiting for PIDS: 73373.
+Stopping cron.
+Waiting for PIDS: 73405.
+.
+skep-5258d54c-a335-422f-862c-a563cdb51e8f: removed
+--- shutdown stderr ---
+Terminated
+-- delete
+HTTP 202
+task 5fa7edab-0ca9-444e-be68-149c71787a55 (container.delete): succeeded 
+   JID  IP Address      Hostname                      Path
+skeptest/skep/jail
+
+########
+# SR-01 test 7, 2026-11-21T14:31:30Z
+HTTP 202
+container 543c99ae-b710-4e08-a9c2-813bc9e6f6c0
+task ed0d92e3-8687-4a44-b9d2-eac6de4e6d96 (container.create): succeeded 
+yes 'r1t7 stdout 0123456789012345678901234567890123456789012345678' | head -n 131072
+echo 'r1t7 LAST stdout line'
+HTTP 202
+task dff4fb7c-f333-4840-a855-e7a73c65cf30 (container.start): succeeded 
+console.log after start: 900 bytes
+HTTP 202
+task 8ec83ec6-32d7-4a50-aa70-84f2c8db7283 (container.stop): succeeded 
++ jls
+   JID  IP Address      Hostname                      Path
++ sudo ls -l /var/run/skep/jails/543c99ae-b710-4e08-a9c2-813bc9e6f6c0/console.log
+-rw-------  1 root skep 66519 Nov 21 09:31 /var/run/skep/jails/543c99ae-b710-4e08-a9c2-813bc9e6f6c0/console.log
++ L=/var/run/skep/jails/543c99ae-b710-4e08-a9c2-813bc9e6f6c0/console.log
++ sudo grep -a -n -e '^--- shutdown' -e ^skep: /var/run/skep/jails/543c99ae-b710-4e08-a9c2-813bc9e6f6c0/console.log
+27:--- shutdown ---
+558:skep: 8061073 bytes discarded
+1091:--- shutdown stderr ---
++ sudo grep -a -c '^r1t7 stdout' /var/run/skep/jails/543c99ae-b710-4e08-a9c2-813bc9e6f6c0/console.log
+1054
++ sudo grep -a -b '^--- shutdown ---' /var/run/skep/jails/543c99ae-b710-4e08-a9c2-813bc9e6f6c0/console.log
++ cut -d: -f1
++ S=900
++ sudo grep -a -b ^skep: /var/run/skep/jails/543c99ae-b710-4e08-a9c2-813bc9e6f6c0/console.log
++ tail -1
++ cut -d: -f1
++ D=33686
++ sudo grep -a -b '^--- shutdown stderr ---' /var/run/skep/jails/543c99ae-b710-4e08-a9c2-813bc9e6f6c0/console.log
++ cut -d: -f1
+offsets: shutdown=900 discarded=33686 stderr=66484
+head part bytes: 32769
++ E=66484
++ echo 'offsets: shutdown=900 discarded=33686 stderr=66484'
++ echo 'head part bytes: 32769'
++ sudo tail -c +66284 /var/run/skep/jails/543c99ae-b710-4e08-a9c2-813bc9e6f6c0/console.log
++ od -c
++ tail -20
+0000000    r   1   t   7       s   t   d   o   u   t       0   1   2   3
+0000020    4   5   6   7   8   9   0   1   2   3   4   5   6   7   8   9
+0000040    0   1   2   3   4   5   6   7   8   9   0   1   2   3   4   5
+0000060    6   7   8   9   0   1   2   3   4   5   6   7   8  \n   r   1
+0000100    t   7       s   t   d   o   u   t       0   1   2   3   4   5
+0000120    6   7   8   9   0   1   2   3   4   5   6   7   8   9   0   1
+0000140    2   3   4   5   6   7   8   9   0   1   2   3   4   5   6   7
+0000160    8   9   0   1   2   3   4   5   6   7   8  \n   r   1   t   7
+0000200        L   A   S   T       s   t   d   o   u   t       l   i   n
+0000220    e  \n   .  \n   .  \n   s   k   e   p   -   5   4   3   c   9
+0000240    9   a   e   -   b   7   1   0   -   4   e   0   8   -   a   9
+0000260    c   2   -   8   1   3   b   c   9   e   6   f   6   c   0   :
+0000300        r   e   m   o   v   e   d  \n   -   -   -       s   h   u
+0000320    t   d   o   w   n       s   t   d   e   r   r       -   -   -
+0000340   \n   T   e   r   m   i   n   a   t   e   d  \n                
+0000354
+
+########
+# SR-01 tests 9 and 8 (same jail r1-t7-shut, 543c99ae-b710-4e08-a9c2-813bc9e6f6c0), 2026-11-21T14:31:55Z
+echo 'r1t8 one stdout line'
+echo 'r1t8 one stderr line' >&2
+console.log before the second start: 66519 bytes
+-- test 9: second start
+HTTP 202
+task 61d79f6b-9c96-4afd-a535-2c79cc73478a (container.start): succeeded 
+console.log after the second start: 900 bytes
+shutdown markers / skep lines / r1t7 lines: 0 / 0
+ELF ldconfig path: /lib /usr/lib
+32-bit compatibility ldconfig path:
+Starting Network: lo0.
+-- test 8: stop
+HTTP 202
+task 4d5f217d-2fa1-457e-8c19-930cdc60ebe2 (container.stop): succeeded 
+   JID  IP Address      Hostname                      Path
+--- shutdown ---
+Stopping cron.
+Waiting for PIDS: 74608.
+Shutting down local daemons:r1t8 one stdout line
+.
+.
+skep-543c99ae-b710-4e08-a9c2-813bc9e6f6c0: removed
+--- shutdown stderr ---
+r1t8 one stderr line
+Terminated
+
+########
+# SR-01 test 10 probe (same jail r1-t7-shut, 543c99ae-b710-4e08-a9c2-813bc9e6f6c0), 2026-11-21T14:32:13Z
+echo 'r1t10 stdout before the failure'
+printf '\033[31mfake \342\200\256ok\n' >&2; exit 1
+HTTP 202
+task 2e29994c-f62d-4057-96ff-4f80ccf92653 (container.start): succeeded 
+HTTP 202
+task 701bd361-5b03-473b-a6a6-715ee76428e8 (container.stop): succeeded 
+task record:
+HTTP 200
+{"id":"701bd361-5b03-473b-a6a6-715ee76428e8","node_id":"97fc6968-7e82-49c9-bda8-9026775ca964","type":"container.stop","status":"succeeded","resource_type":"container","resource_id":"543c99ae-b710-4e08-a9c2-813bc9e6f6c0","actor":{"id":"f3b71fbe-2e24-4539-9ec2-8be0fcde53ed","name":"s7oper"},"request_id":"43f6786e47ef1213c225ebba","cancellable":false,"result":{"container_id":"543c99ae-b710-4e08-a9c2-813bc9e6f6c0","state":"stopped"},"created_at":"2026-11-21T14:32:15.918Z","started_at":"2026-11-21T14:32:15.918Z","finished_at":"2026-11-21T14:32:16.552Z","events":[{"id":2804,"kind":"state","level":"info","message":"task is pending","data":{"from":"","to":"pending"},"created_at":"2026-11-21T14:32:15.918Z"},{"id":2805,"kind":"state","level":"info","message":"task is running","data":{"from":"pending","to":"running"},"created_at":"2026-11-21T14:32:15.918Z"},{"id":2806,"kind":"progress","level":"info","message":"stopping the jail (/etc/rc.shutdown, then SIGTERM and SIGKILL)","created_at":"2026-11-21T14:32:15.921Z"},{"id":2807,"kind":"state","level":"info","message":"task is succeeded","data":{"from":"running","to":"succeeded"},"created_at":"2026-11-21T14:32:16.552Z"}]}
+
+-- jail gone?
+   JID  IP Address      Hostname                      Path
+jls: jail "skep-543c99ae-b710-4e08-a9c2-813bc9e6f6c0" not found
+jls -j exit 1
+-- console.log on disk after the stop (sudo cat -v)
+--- shutdown ---
+Stopping cron.
+Waiting for PIDS: 75121.
+Shutting down local daemons:r1t10 stdout before the failure
+.
+skep-543c99ae-b710-4e08-a9c2-813bc9e6f6c0: removed
+--- shutdown stderr ---
+^[[31mfake M-.ok
+Terminated
+-- agent log for the stop
+Nov 21 09:31:32 hearst skep-agent[71203]: {"time":"2026-11-21T09:31:32.426249361-05:00","level":"INFO","msg":"hostops: the jail's /dev holds only the allow-list","event":"jail_devfs_checked","container_id":"543c99ae-b710-4e08-a9c2-813bc9e6f6c0","ruleset":5,"entries":"fd null pts random stderr stdin stdout urandom zero zfs"}
+Nov 21 09:31:34 hearst skep-agent[71203]: {"time":"2026-11-21T09:31:34.178264912-05:00","level":"INFO","msg":"task accepted","task_id":"8ec83ec6-32d7-4a50-aa70-84f2c8db7283","type":"container.stop","actor_id":"f3b71fbe-2e24-4539-9ec2-8be0fcde53ed","resource_type":"container","resource_id":"543c99ae-b710-4e08-a9c2-813bc9e6f6c0"}
+Nov 21 09:31:55 hearst skep-agent[71203]: {"time":"2026-11-21T09:31:55.919109745-05:00","level":"INFO","msg":"hostops: the jail's /dev holds only the allow-list","event":"jail_devfs_checked","container_id":"543c99ae-b710-4e08-a9c2-813bc9e6f6c0","ruleset":5,"entries":"fd null pts random stderr stdin stdout urandom zero zfs"}
+Nov 21 09:31:57 hearst skep-agent[71203]: {"time":"2026-11-21T09:31:57.824164485-05:00","level":"INFO","msg":"task accepted","task_id":"4d5f217d-2fa1-457e-8c19-930cdc60ebe2","type":"container.stop","actor_id":"f3b71fbe-2e24-4539-9ec2-8be0fcde53ed","resource_type":"container","resource_id":"543c99ae-b710-4e08-a9c2-813bc9e6f6c0"}
+Nov 21 09:32:14 hearst skep-agent[71203]: {"time":"2026-11-21T09:32:14.13865046-05:00","level":"INFO","msg":"hostops: the jail's /dev holds only the allow-list","event":"jail_devfs_checked","container_id":"543c99ae-b710-4e08-a9c2-813bc9e6f6c0","ruleset":5,"entries":"fd null pts random stderr stdin stdout urandom zero zfs"}
+Nov 21 09:32:15 hearst skep-agent[71203]: {"time":"2026-11-21T09:32:15.918777645-05:00","level":"INFO","msg":"task accepted","task_id":"701bd361-5b03-473b-a6a6-715ee76428e8","type":"container.stop","actor_id":"f3b71fbe-2e24-4539-9ec2-8be0fcde53ed","resource_type":"container","resource_id":"543c99ae-b710-4e08-a9c2-813bc9e6f6c0"}
+HTTP 200
+-- API console-log, from --- shutdown ---, repr():
+'--- shutdown ---\nStopping cron.\nWaiting for PIDS: 75121.\nShutting down local daemons:r1t10 stdout before the failure\n.\nskep-543c99ae-b710-4e08-a9c2-813bc9e6f6c0: removed\n--- shutdown stderr ---\n[31mfake ok\nTerminated\n'
+ESC in API text: False; U+202E in API text: False
+HTTP 200
+state: stopped
+-- raw bytes of the fake line on disk (od -An -tx1 -c)
+           1b  5b  33  31  6d  66  61  6b  65  20  e2  80  ae  6f  6b  0a
+         033   [   3   1   m   f   a   k   e     342 200 256   o   k  \n
+
+########
+# SR-01 test 11 (same jail r1-t7-shut, 543c99ae-b710-4e08-a9c2-813bc9e6f6c0), 2026-11-21T14:32:37Z
+yes 'r1t11 stderr 012345678901234567890123456789012345678901234567890' | head -n 16384 >&2
+echo 'r1t11 LAST stderr line' >&2
+line bytes:       65
+HTTP 202
+task c4ef3b4e-09a2-49a9-9faa-9d30aefbb82d (container.start): succeeded 
+HTTP 202
+task 259ec480-1a51-4433-8759-de329916ba67 (container.stop): succeeded 
++ jls
+   JID  IP Address      Hostname                      Path
++ L=/var/run/skep/jails/543c99ae-b710-4e08-a9c2-813bc9e6f6c0/console.log
++ sudo ls -l /var/run/skep/jails/543c99ae-b710-4e08-a9c2-813bc9e6f6c0/console.log
+-rw-------  1 root skep 33862 Nov 21 09:32 /var/run/skep/jails/543c99ae-b710-4e08-a9c2-813bc9e6f6c0/console.log
++ sudo grep -a -n -e '^--- shutdown' -e ^skep: /var/run/skep/jails/543c99ae-b710-4e08-a9c2-813bc9e6f6c0/console.log
+27:--- shutdown ---
+33:--- shutdown stderr ---
+34:skep: 1032226 bytes discarded
++ sudo grep -a -b '^--- shutdown stderr ---' /var/run/skep/jails/543c99ae-b710-4e08-a9c2-813bc9e6f6c0/console.log
++ cut -d: -f1
++ E=1040
++ sudo grep -a -b ^skep: /var/run/skep/jails/543c99ae-b710-4e08-a9c2-813bc9e6f6c0/console.log
++ tail -1
++ cut -d: -f1
++ D=1064
++ sudo grep -a ^skep: /var/run/skep/jails/543c99ae-b710-4e08-a9c2-813bc9e6f6c0/console.log
++ tail -1
++ wc -c
++ DL='      30'
++ sudo stat -f %z /var/run/skep/jails/543c99ae-b710-4e08-a9c2-813bc9e6f6c0/console.log
+stderr marker at 1040, discarded line at 1064 (      30 bytes), tail bytes: 32768
++ echo 'stderr marker at 1040, discarded line at 1064 (      30 bytes), tail bytes: 32768'
++ sudo tail -3 /var/run/skep/jails/543c99ae-b710-4e08-a9c2-813bc9e6f6c0/console.log
+r1t11 stderr 012345678901234567890123456789012345678901234567890
+r1t11 LAST stderr line
+Terminated
+
+########
+-- cleanup r1-t7-shut
+HTTP 202
+task acb3942f-8aee-4a1a-9ea5-05def74af0c3 (container.delete): succeeded 
+# SR-01 test 12, 2026-11-21T14:32:56Z
+HTTP 202
+container 929b52c9-910e-4c19-b852-6fb6e6ef5a57
+task 61b40519-38f5-4d20-9406-0387af7d1aea (container.create): succeeded 
+printf 'r1t12 rlo[\342\200\256] c1csi[\302\233] end\n'
+printf 'r1t12 stderr rlo[\342\200\256] c1csi[\302\233] end\n' >&2
+HTTP 202
+task 863d6410-425d-4ffb-92bf-c1d1c3519ab1 (container.start): succeeded 
+-- on disk (od)
+           53  74  61  72  74  69  6e  67  20  6c  6f  63  61  6c  20  64
+           S   t   a   r   t   i   n   g       l   o   c   a   l       d
+           61  65  6d  6f  6e  73  3a  72  31  74  31  32  20  72  6c  6f
+           a   e   m   o   n   s   :   r   1   t   1   2       r   l   o
+           5b  e2  80  ae  5d  20  63  31  63  73  69  5b  c2  9b  5d  20
+           [ 342 200 256   ]       c   1   c   s   i   [ 302 233   ]    
+           65  6e  64  0a  72  31  74  31  32  20  73  74  64  65  72  72
+           e   n   d  \n   r   1   t   1   2       s   t   d   e   r   r
+           20  72  6c  6f  5b  e2  80  ae  5d  20  63  31  63  73  69  5b
+               r   l   o   [ 342 200 256   ]       c   1   c   s   i   [
+           c2  9b  5d  20  65  6e  64  0a                                
+         302 233   ]       e   n   d  \n                                
+HTTP 200
+-- API lines, repr() and UTF-8 hex:
+'Starting local daemons:r1t12 rlo[] c1csi[] end'  53 74 61 72 74 69 6e 67 20 6c 6f 63 61 6c 20 64 61 65 6d 6f 6e 73 3a 72 31 74 31 32 20 72 6c 6f 5b 5d 20 63 31 63 73 69 5b 5d 20 65 6e 64
+'r1t12 stderr rlo[] c1csi[] end'  72 31 74 31 32 20 73 74 64 65 72 72 20 72 6c 6f 5b 5d 20 63 31 63 73 69 5b 5d 20 65 6e 64
+U+202E in API text: False; U+009B in API text: False
+-- cleanup r1-t12-cf
+HTTP 202
+task 1c3feb7f-8637-4077-ac74-3e8e708a0c52 (container.stop): succeeded 
+HTTP 202
+task a2d18ef6-05e0-4fe4-b0b3-941b48eccf70 (container.delete): succeeded 
+   JID  IP Address      Hostname                      Path
+skeptest/skep/jail
+
+########
+# SR-04 S2, 2026-11-21T14:33:19Z
+HTTP 422
+{"error":{"code":"container_locked_memory_above_max","message":"limits.locked_memory is at most 1599455232 bytes on this host: containers.max_locked_memory_bytes, the total locked memory of all running jails (by default a quarter of physical memory)","request_id":"e31e992f7fd92f1e1a7db4c6","details":{"locked_memory":1599455233,"max_locked_memory_bytes":1599455232}}}
+
+HTTP 200
+containers: 0
+# SR-04 S3, 2026-11-21T14:33:19Z
+HTTP 202
+A 91a6d86f-e2af-4596-b7c9-67eb778372b6
+task c4c5f97e-7604-4654-87ee-d336467600a1 (container.create): succeeded 
+HTTP 202
+B 9bbb2460-a2a5-4067-8179-8c8eabbdc815
+task a8264db6-df71-46fa-8d10-0c92dc7b589c (container.create): succeeded 
+-- start A
+HTTP 202
+task dcf0fb91-d8a4-42a0-b7a2-11cce4703e9d (container.start): succeeded 
++ jls
+   JID  IP Address      Hostname                      Path
+    10                  r1-s3-a                       /skeptest/skep/jail/91a6d86f-e2af-4596-b7c9-67eb778372b6
++ sudo rctl
+jail:skep-91a6d86f-e2af-4596-b7c9-67eb778372b6:memorylocked:deny=1073741824
++ sudo rctl jail:skep-91a6d86f-e2af-4596-b7c9-67eb778372b6
+jail:skep-91a6d86f-e2af-4596-b7c9-67eb778372b6:memorylocked:deny=1073741824
++ jls -j skep-91a6d86f-e2af-4596-b7c9-67eb778372b6 allow.mlock
+true
+-- start B while A runs
+HTTP 409
+{"error":{"code":"container_locked_memory_exhausted","message":"the running jails may lock 1073741824 bytes and this one 805306368; containers.max_locked_memory_bytes allows 1599455232 in total. Stop a jail with locked memory, or lower this jail's limits.locked_memory","request_id":"2ab717c29f9daa2128d8d100","details":{"container_id":"9bbb2460-a2a5-4067-8179-8c8eabbdc815","max_locked_memory_bytes":1599455232,"required_bytes":805306368,"running_bytes":1073741824}}}
+
+   JID  IP Address      Hostname                      Path
+    10                  r1-s3-a                       /skeptest/skep/jail/91a6d86f-e2af-4596-b7c9-67eb778372b6
+jls: jail "skep-9bbb2460-a2a5-4067-8179-8c8eabbdc815" not found
+jail:skep-91a6d86f-e2af-4596-b7c9-67eb778372b6:memorylocked:deny=1073741824
+-- S3: stop A, then start B
+HTTP 202
+task 3cc4dd9b-18eb-48e7-b423-8e1eb11129e4 (container.stop): succeeded 
+vm.stats.vm.v_wire_count: 236186
+HTTP 202
+task c043f0a4-a009-46b6-ba42-9c11e9f698ec (container.start): succeeded 
+   JID  IP Address      Hostname                      Path
+    11                  r1-s3-b                       /skeptest/skep/jail/9bbb2460-a2a5-4067-8179-8c8eabbdc815
+jail:skep-9bbb2460-a2a5-4067-8179-8c8eabbdc815:memorylocked:deny=805306368
+-- S3 cleanup: stop B, delete both
+HTTP 202
+task 5bb6491a-0186-4b54-a6f3-d09439b5fb0d (container.stop): succeeded 
+HTTP 202
+task ae580845-666b-4479-8e98-720c05ad7e53 (container.delete): succeeded 
+HTTP 202
+task 81d0309d-2d1c-43b4-831a-6c3f9f7374a6 (container.delete): succeeded 
+HTTP 200
+{"items":[]}
+
+   JID  IP Address      Hostname                      Path
+vm.stats.vm.v_wire_count: 236451
+skeptest/skep/jail
+
+########
+# SR-04 S4 in r1-s3-a (91a6d86f-e2af-4596-b7c9-67eb778372b6), 2026-11-21T14:33:34Z
+mlocktest at 8c81e35, sha256 7126376e3539c7e870b980cb179d5081d589438f5f1f262721c90a7e4e107255
++ sudo install -o root -g wheel -m 0555 /tmp/r1-mlocktest /skeptest/skep/jail/91a6d86f-e2af-4596-b7c9-67eb778372b6/tmp/mlocktest
++ rm /tmp/r1-mlocktest
++ sha256 -q /skeptest/skep/jail/91a6d86f-e2af-4596-b7c9-67eb778372b6/tmp/mlocktest
++ sudo sha256 -q /skeptest/skep/jail/91a6d86f-e2af-4596-b7c9-67eb778372b6/tmp/mlocktest
+7126376e3539c7e870b980cb179d5081d589438f5f1f262721c90a7e4e107255
++ sysctl vm.stats.vm.v_wire_count vm.stats.vm.v_free_count hw.pagesize
+vm.stats.vm.v_wire_count: 235597
+vm.stats.vm.v_free_count: 1208533
+hw.pagesize: 4096
++ sleep 2
++ sudo jexec skep-91a6d86f-e2af-4596-b7c9-67eb778372b6 /tmp/mlocktest 1000 3
+mlock 1000 MiB: refused: cannot allocate memory (errno 12)
++ sudo rctl -u jail:skep-91a6d86f-e2af-4596-b7c9-67eb778372b6
++ grep memorylocked
+memorylocked=0
++ sysctl vm.stats.vm.v_wire_count
+vm.stats.vm.v_wire_count: 236239
+-- 1030 MiB (over 1024):
++ wait
++ echo '-- 1030 MiB (over 1024):'
++ sudo jexec skep-91a6d86f-e2af-4596-b7c9-67eb778372b6 /tmp/mlocktest 1030
+mlock 1030 MiB: refused: cannot allocate memory (errno 12)
+exit 1
+-- 1024 MiB:
++ echo exit 1
++ echo '-- 1024 MiB:'
++ sudo jexec skep-91a6d86f-e2af-4596-b7c9-67eb778372b6 /tmp/mlocktest 1024
+mlock 1024 MiB: refused: cannot allocate memory (errno 12)
+exit 1
++ echo exit 1
++ sudo rctl -u jail:skep-91a6d86f-e2af-4596-b7c9-67eb778372b6
++ grep memorylocked
+memorylocked=0
++ sysctl vm.stats.vm.v_wire_count
+vm.stats.vm.v_wire_count: 237062
+-- S4 diagnosis
++ sysctl vm.max_user_wired vm.stats.vm.v_user_wire_count vm.stats.vm.v_wire_count vm.stats.vm.v_free_count
+vm.max_user_wired: 1192456
+vm.stats.vm.v_user_wire_count: 0
+vm.stats.vm.v_wire_count: 236904
+vm.stats.vm.v_free_count: 1206515
++ sudo jexec skep-91a6d86f-e2af-4596-b7c9-67eb778372b6 sh -c 'ulimit -l'
+64
++ sudo jexec -l skep-91a6d86f-e2af-4596-b7c9-67eb778372b6 sh -c 'ulimit -l'
+64
++ sudo jexec skep-91a6d86f-e2af-4596-b7c9-67eb778372b6 /tmp/mlocktest 16
+mlock 16 MiB: refused: cannot allocate memory (errno 12)
++ sudo jexec skep-91a6d86f-e2af-4596-b7c9-67eb778372b6 /tmp/mlocktest 64
+mlock 64 MiB: refused: cannot allocate memory (errno 12)
++ sudo jexec skep-91a6d86f-e2af-4596-b7c9-67eb778372b6 /tmp/mlocktest 256
+mlock 256 MiB: refused: cannot allocate memory (errno 12)
++ sudo jexec skep-91a6d86f-e2af-4596-b7c9-67eb778372b6 /tmp/mlocktest 512
+mlock 512 MiB: refused: cannot allocate memory (errno 12)
++ sudo jexec skep-91a6d86f-e2af-4596-b7c9-67eb778372b6 /tmp/mlocktest 768
+mlock 768 MiB: refused: cannot allocate memory (errno 12)
++ sudo jexec skep-91a6d86f-e2af-4596-b7c9-67eb778372b6 /tmp/mlocktest 900
+mlock 900 MiB: refused: cannot allocate memory (errno 12)
++ sudo jexec -l skep-91a6d86f-e2af-4596-b7c9-67eb778372b6 /tmp/mlocktest 512
+mlock 512 MiB: refused: cannot allocate memory (errno 12)
++ sudo jexec -l skep-91a6d86f-e2af-4596-b7c9-67eb778372b6 /tmp/mlocktest 1000
+mlock 1000 MiB: refused: cannot allocate memory (errno 12)
++ sudo jexec -l skep-91a6d86f-e2af-4596-b7c9-67eb778372b6 /tmp/mlocktest 1023
+mlock 1023 MiB: refused: cannot allocate memory (errno 12)
++ sudo rctl -u jail:skep-91a6d86f-e2af-4596-b7c9-67eb778372b6
++ grep memorylocked
+memorylocked=0
++ sysctl vm.stats.vm.v_wire_count
+vm.stats.vm.v_wire_count: 236886
+-- S4 diagnosis: where the 64 KiB comes from (read-only)
+64
++ ulimit -l
++ sudo sh -c 'ulimit -l'
+64
++ grep -n memorylocked /etc/login.conf
+35:	:memorylocked=64K:\
+72:	:memorylocked=128M:\
+86:	:memorylocked=unlimited:\
+114:#	:memorylocked-cur=10M:\
+141:#	:memorylocked=4M:\
+190:#	:memorylocked=infinity:\
+216:#	:memorylocked-cur=64M:\
+235:#	:memorylocked=32M:\
+254:#	:memorylocked=1M:\
++ ls -l /etc/login.conf /etc/login.conf.db
+-rw-r--r--  1 root wheel  7051 Nov 16 17:27 /etc/login.conf
+-rw-r--r--  1 root wheel 16384 Sep 29 19:34 /etc/login.conf.db
++ sudo grep -n memorylocked /skeptest/skep/jail/91a6d86f-e2af-4596-b7c9-67eb778372b6/etc/login.conf
+35:	:memorylocked=64K:\
+72:	:memorylocked=128M:\
+86:	:memorylocked=unlimited:\
+114:#	:memorylocked-cur=10M:\
+141:#	:memorylocked=4M:\
+190:#	:memorylocked=infinity:\
+216:#	:memorylocked-cur=64M:\
+235:#	:memorylocked=32M:\
+254:#	:memorylocked=1M:\
++ grep -E 'PID|memorylocked'
++ cat /dev/null
++ sudo cat /var/run/skep/agent.pid
++ sudo procstat -l 71205
+  PID COMM             RLIMIT                  SOFT             HARD     
+71205 skep-agent       memorylocked          131072 KB        131072 KB  
++ pgrep -j skep-91a6d86f-e2af-4596-b7c9-67eb778372b6 cron
++ grep -E 'PID|memorylocked'
++ sudo procstat -l 76771
+  PID COMM             RLIMIT                  SOFT             HARD     
+76771 cron             memorylocked          131072 KB        131072 KB  
++ sudo procstat -l 1
++ grep memorylocked
+    1 init             memorylocked         2013535 KB       6040604 KB  
++ grep memorylocked
++ pgrep -x sshd
++ head -1
++ sudo procstat -l
+usage: procstat [--libxo] [-h] [-M core] [-N system] [-w interval] command
+                [pid ... | core ...]
+       procstat [--libxo] -a [-h] [-M core] [-N system]  [-w interval] command
+       procstat [--libxo] [-h] [-M core] [-N system] [-w interval]
+                [-S | -b | -c | -e | -f [-C] | -i [-n] | -j [-n] | -k [-k] |
+                 -l | -r [-H] | -s | -t | -v | -x] [pid ... | core ...]
+       procstat [--libxo] -a [-h] [-M core] [-N system] [-w interval]
+                [-S | -b | -c | -e | -f [-C] | -i [-n] | -j [-n] | -k [-k] |
+                 -l | -r [-H] | -s | -t | -v | -x]
+       procstat [--libxo] -L [-h] [-M core] [-N system] core ...
+Available commands:
+       advlock(s)
+       argument(s)
+       auxv
+       basic
+       binary
+       [cpuset | cs]
+       credential(s)
+       environment
+       [fd(s) | file(s)] [-C]
+       kqueue(s)
+       kstack [-v]
+       pargs
+       penv
+       ptlwpinfo
+       pwdx
+       rlimit
+       rlimitusage
+       rusage [-Ht]
+       sigfastblock
+       signal(s) [-n]
+       thread(s)
+       tsignal(s) [-n]
+       vm
++ pkg query '%n %v %t' sudo FreeBSD-runtime
+sudo 1.9.17p2_2 1794429267
+FreeBSD-runtime 15.1p7 1795096568
++ sudo grep -n 'login.conf\|upgrade' /var/log/messages
++ tail -3
+5648:Nov 19 08:56:52 hearst pkg[34421]: FreeBSD-zfs-lib32 upgraded: 15.1p1 -> 15.1p7 
+5649:Nov 19 08:56:52 hearst pkg[34421]: FreeBSD-zfs-dev-lib32 upgraded: 15.1p1 -> 15.1p7 
+5650:Nov 19 08:56:53 hearst pkg[34421]: FreeBSD-zoneinfo upgraded: 15.1p5 -> 15.1p7 
+-- S4 with the test process's own RLIMIT_MEMLOCK raised inside the jail (ulimit -l unlimited)
++ sysctl vm.stats.vm.v_wire_count
+vm.stats.vm.v_wire_count: 236935
++ sleep 2.5
++ sudo jexec skep-91a6d86f-e2af-4596-b7c9-67eb778372b6 sh -c 'ulimit -l unlimited; ulimit -l; /tmp/mlocktest 1000 4'
+unlimited
+mlock 1000 MiB: locked
++ sudo rctl -u jail:skep-91a6d86f-e2af-4596-b7c9-67eb778372b6
++ grep memorylocked
+memorylocked=1048576000
++ sysctl vm.stats.vm.v_wire_count
+vm.stats.vm.v_wire_count: 493527
++ wait
++ sudo jexec skep-91a6d86f-e2af-4596-b7c9-67eb778372b6 sh -c 'ulimit -l unlimited; /tmp/mlocktest 1024; echo exit $?; /tmp/mlocktest 1025; echo exit $?; /tmp/mlocktest 1030; echo exit $?'
+mlock 1024 MiB: locked
+exit 0
+mlock 1025 MiB: refused: cannot allocate memory (errno 12)
+exit 1
+mlock 1030 MiB: refused: cannot allocate memory (errno 12)
+exit 1
++ grep memorylocked
++ sudo rctl -u jail:skep-91a6d86f-e2af-4596-b7c9-67eb778372b6
+memorylocked=0
++ sysctl vm.stats.vm.v_wire_count
+vm.stats.vm.v_wire_count: 236923
+
+########
+# Cleanup and final state, 2026-11-21T14:34:57Z
+HTTP 200
+{"items":[]}
+HTTP 204
++ /usr/local/sbin/skep-agent -version
+skep-agent 0.1.0 (commit 8c81e35, built 2026-11-21T14:27:32Z, go1.27.4 freebsd/amd64)
++ sudo service skep_agent status
+skep_agent is running as pid 71205 (supervisor pid 71203).
++ sudo service skep_api status
+skep_api is running as pid 71264 (supervisor pid 71263).
++ sysctl hw.vmm.vmx.cap.virtual_interrupt_delivery
+hw.vmm.vmx.cap.virtual_interrupt_delivery: 0
++ kldstat -q -m if_epair
+if_epair loaded: exit 0
++ echo 'if_epair loaded: exit 0'
++ jls
+   JID  IP Address      Hostname                      Path
++ ifconfig -l
+vtnet0 vtnet1 lo0 bridge0
++ ifconfig -g epair
++ sudo rctl
++ mount -t devfs
+devfs on /dev (devfs)
++ df -h /
+Filesystem     Size    Used   Avail Capacity  Mounted on
+/dev/da0s1a    120G     19G     91G    17%    /
++ ls -la /tmp
++ grep -i -e r1- -e mlock
++ sudo ls -la /var/run/skep/jails/
+total 16
+drwx------  2 root skep 512 Nov 21 09:34 .
+drwxr-x---  4 root skep 512 Nov 21 09:28 ..
++ zfs list -H -t all -o name -r skeptest/skep/jail skeptest/skep/templates
+skeptest/skep/jail
+skeptest/skep/templates
+skeptest/skep/templates/dbf4243a-81fe-4914-8f7a-fd0a768476aa
+skeptest/skep/templates/dbf4243a-81fe-4914-8f7a-fd0a768476aa@skep-base
+skeptest/skep/templates/f496866f-32ba-4527-bcee-5a717a2f74c0
+skeptest/skep/templates/f496866f-32ba-4527-bcee-5a717a2f74c0@skep-base
++ ls /skeptest/skep/jail
+ls: /skeptest/skep/jail: Permission denied
+{"status":"ok"}
+
+HTTP 200
+
+######## WARN/ERROR lines in daemon.log during the run
+Nov 21 09:33:19 hearst skep-agent[71203]: {"time":"2026-11-21T09:33:19.622656674-05:00","level":"WARN","msg":"task refused","type":"container.create","actor_id":"f3b71fbe-2e24-4539-9ec2-8be0fcde53ed","error_code":"container_locked_memory_above_max"}
+Nov 21 09:33:23 hearst skep-agent[71203]: {"time":"2026-11-21T09:33:23.366797691-05:00","level":"WARN","msg":"task refused","type":"container.start","actor_id":"f3b71fbe-2e24-4539-9ec2-8be0fcde53ed","error_code":"container_locked_memory_exhausted"}
+

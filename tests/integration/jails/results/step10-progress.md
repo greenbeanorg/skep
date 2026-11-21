@@ -1549,3 +1549,88 @@ heading was demoted one level to fit this section.
 - S4. Optional: `mlocktest` in the first jail locks up to its limit and fails past it; `vm.stats.vm.v_wire_count` returns to its baseline after the stop.
 
 Conditions (amendment o): after Andy's Proxmox snapshot; `skep-api` stopped during the `sqlite3` edit; the epair and all test data removed afterwards; every change on hearst recorded in the progress log.
+
+## 23. Run 1 results (hearst, 2026-11-21)
+
+Hearst validation run 1 of 3. Baseline on `b5b0546`, then `8c81e35`
+(the head of `feat/m7b-templates` after section 22) deployed with
+`scripts/deploy-test.sh`. All API calls as `s7oper` from merrick, curl
+pinned to hearst's key (`779cc5ec…`, equal to `skep-api tls
+fingerprint`), no `-k`; one login for the run. Record (commands and
+output): [step10-hearst-run1.txt](step10-hearst-run1.txt).
+
+### 23.1 Pre-check and host changes
+
+- `b5b0546` deployed and running, `/health` ok, `virtual_interrupt_delivery`
+  0, no jails, epairs, or RCTL rules, only the host's devfs, `/` 17 %.
+- **Differences from the expected state:** `if_epair` was **not loaded**.
+  Hearst was rebooted on 2026-11-19 at 11:27 by Andy for pkg upgrades
+  (`last reboot`; it was loaded live only at step 8, never persisted). The
+  M7 reserve reboot is now used. Hearst runs **15.1-RELEASE-p7**
+  (`freebsd-version -kru`: p7, p7, p7), not p6 as the status doc says.
+- **Host change, approved by Andy during the run:** `sudo kldload if_epair`
+  (live only, no loader.conf or rc.conf change), after recording uptime,
+  `last reboot`, and `virtual_interrupt_delivery` = 0. It is still loaded.
+- The test credentials' layout was settled with Andy before the first
+  successful login (two refused logins as `s7oper` from merrick at
+  09:21 and 09:22 local time will show in the API log).
+
+### 23.2 Results
+
+| Test | Result | Notes |
+|---|---|---|
+| Pre-check | Done | See 23.1 |
+| SR-01 1 (baseline, `b5b0546`) | **Reproduced** | `console.log` 52,429,725 bytes after the start; jailed `sleep 600` held fd 1 and 2 on the host's `console.log` (`procstat -f`); `df /` used +51 MiB; jail.conf had `exec.consolelog`. Jail deleted, run directory gone, `df /` back |
+| Deploy `8c81e35` | Pass | Running inodes = installed (agent 3044883, API 3044885); `-version` of agent, API, skepctl = `8c81e35`; `/health` ok |
+| SR-04 S1 | Pass | `jail locked-memory total`: `max_locked_memory_bytes` 1599455232 = `hw.physmem` 6397820928 / 4, `configured: false` |
+| SR-01 2 | Pass | hostops test binary at `8c81e35` as unprivileged `aba`: 33 of 33 matched tests passed (`-test.list` = 33), none skipped |
+| SR-01 3 | Pass | Rendered jail.conf has no `exec.consolelog` (`grep -c` 0) |
+| SR-01 4 | Pass | After the start `console.log` 327,712 bytes (320 KiB + 32) with `skep: 52102045 bytes discarded`; `sleep` holds fd 1/2 on a pipe; `fstat` finds no process on `console.log`; `df /` used +1.5 MiB (logs), not 50 MiB. The stop added 145 bytes (`--- shutdown ---` … `--- shutdown stderr ---`, `Terminated`) |
+| SR-01 5 | Pass | 256 KiB head + `skep: 759887 bytes discarded` + tail with rc.local's last line; `GET .../console-log` (64 KiB, `truncated: true`) ends with rc's last line (the date line) |
+| SR-01 6 | Pass | `minimal-ssh-151`, DHCP NIC on bridge0 (10.79.60.108): `sshd`, `cron`, `syslogd` running after the start and 60 s later; SSH from merrick with the test key: `uid=0`, `r1-t6-ssh`. After the stop: `--- shutdown ---`, `Stopping sshd.`, `Stopping cron.`, …, `--- shutdown stderr ---`, `Terminated`; epair gone |
+| SR-01 7 | Pass | Stop succeeded, jail gone. Log: rc's 900 bytes, `--- shutdown ---`, 32 KiB, `skep: 8061073 bytes discarded`, 32,768 bytes ending with the last line printed, `--- shutdown stderr ---`. The lines were 62 bytes, so the output was 7.75 MiB; N is exactly the total less 65,536 |
+| SR-01 8 | Pass | The stdout line follows `--- shutdown ---`; the stderr line follows `--- shutdown stderr ---` |
+| SR-01 9 | Pass | The second start truncated the log from 66,519 to 900 bytes; no shutdown markers, no `skep:` lines, no test 7 lines left |
+| SR-01 10 (probe) | Stop **succeeds** | **`jail -r` exited 0 and the jail was gone**: the stop task succeeded with no error, `jls -j` finds no jail, state `stopped`. `/etc/rc.d/local` runs `rc.shutdown.local` in its own shell, so its `exit 1` does not reach jail(8). On disk the line after `--- shutdown stderr ---` keeps ESC (`1b`) and U+202E (`e2 80 ae`) (`od`; `cat -v` shows `^[[31mfake M-.ok`); `GET .../console-log` shows `[31mfake ok` with no ESC and no U+202E. The failing-stop branch (task error, `jail_remove_failed`) could not be reached this way |
+| SR-01 11 | Pass | Stop succeeded; the stderr section is `skep: 1032226 bytes discarded` + exactly 32,768 bytes, ending with the last line written (the test's last line, then the shell's `Terminated`); N + 32,768 = the 1,064,994 bytes written |
+| SR-01 12 | Pass | U+202E (`e2 80 ae`) and C1 CSI U+009B (`c2 9b`) kept on disk for stdout and stderr; the API's text has both removed |
+| SR-04 S2 | Pass | `locked_memory` 1599455233: 422 `container_locked_memory_above_max`, details 1599455233 / 1599455232; nothing created |
+| SR-04 S3 | Pass | A (1 GiB) started with exactly `memorylocked:deny=1073741824` and `allow.mlock` true; B (768 MiB) start 409 `container_locked_memory_exhausted` (running 1073741824 + 805306368 > 1599455232), no jail made; after A stopped, B started with exactly `memorylocked:deny=805306368`; both stopped and deleted |
+| SR-04 S4 | **Pass, with a finding** | See 23.3. As run (`sudo jexec … mlocktest`): every size, even 16 MiB, refused (RLIMIT_MEMLOCK 64 KiB). With the test process's own limit raised in the jail (`ulimit -l unlimited`): 1000 and 1024 MiB locked (`memorylocked=1048576000` during the hold), 1025 and 1030 MiB refused (ENOMEM); `v_wire_count` 236935 before, 236923 after, 236451 after the stops |
+| Cleanup | Done | No containers, jails, epairs, RCTL rules, snapshots, or clones; only the host devfs; `/var/run/skep/jails` empty; no test files in `/tmp`; templates and their `@skep-base` unchanged; `/` 17 %; `/health` ok. Differences from the pre-check: the deploy and `if_epair` loaded |
+
+No security property failed. Agent and API logs during the run: only the
+two expected refusals (S2, S3) at WARN; no ERROR.
+
+### 23.3 Finding: RLIMIT_MEMLOCK caps a jail's locked memory below `limits.locked_memory`
+
+Read-only diagnosis on hearst: `/etc/login.conf` (and the template's)
+gives the `default` class `memorylocked=64K` and the `daemon` class
+`memorylocked=128M`. The running agent has RLIMIT_MEMLOCK 131072 KB soft
+and hard (`procstat -l`), and processes the jail's `/etc/rc` starts
+inherit it (the jail's `cron`: 131072 KB). `sudo` and `jexec` (with or
+without `-l`) give 64 KiB. FreeBSD's mlock(2) checks RLIMIT_MEMLOCK before
+RCTL, so a jail service that does not raise its own limit can lock at
+most 128 MiB per process whatever `limits.locked_memory` says; jailed root
+can raise its own limit (shown above), which is what the RCTL rule then
+bounds. Step 9 recorded "unlimited" under `jexec -l`; this differs now
+(the 2026-11-19 pkg upgrade is a possible cause; not established).
+`/etc/login.conf` is dated 2026-11-16 and `/etc/login.conf.db`
+2026-09-29. Nothing was changed. For a decision: document it, have the
+agent set the jail's RLIMIT_MEMLOCK to its `locked_memory` (or unlimited)
+when it starts `/etc/rc`, or leave it.
+
+### 23.4 Affects runs 2 and 3
+
+- `if_epair` is loaded live only; another reboot unloads it again.
+- `sudo jexec` gives a 64 KiB RLIMIT_MEMLOCK; any mlock test must raise
+  the process's own limit in the jail, or be decided after 23.3.
+- Test 10's failing-stop branch did not occur on 15.1-p7; provoking a
+  failing `jail -r` needs another method, if wanted.
+- DHCP gave the test jail 10.79.60.108 (lease on the VLAN 60 DHCP
+  server; nothing static used).
+
+### 23.5 Commits
+
+`8c81e35` (section 22, deployed) and the commit with this section and the
+record.
