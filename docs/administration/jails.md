@@ -285,7 +285,7 @@ What each limit does on FreeBSD 15.1, measured on the test host:
 | `cpu_percent` | RCTL `pcpu` | 100 is one CPU, up to 100 per host CPU. Throttles, approximately: RACCT samples and averages, so a busy jail swings around the limit (50 gave samples from 28 to 74; the loop ran at 61 % of its unthrottled speed). |
 | `max_processes` | RCTL `maxproc` | A fork past it fails ("Cannot fork"). |
 | `open_files` | RCTL `openfiles` (≥ 64) | Counts descriptor-table slots, not open files: see below. |
-| `disk_quota` | ZFS `refquota` on the jail root (≥ 64 MiB) | Works without RACCT; snapshots do not count. It includes the blocks the root shares with its template (about 78 MiB for a minimal template), so a 512 MiB quota left room for about 434 MiB of new data. Changed at once by an update; a new quota below what the jail's root already references is refused before any task is submitted, with `container_disk_quota_below_usage` (422; details `disk_quota` and `referenced_bytes`). |
+| `disk_quota` | ZFS `refquota` on the jail root (≥ 64 MiB) | Works without RACCT; snapshots do not count. It includes the blocks the root shares with its template (about 78 MiB for a minimal template), so a 512 MiB quota left room for about 434 MiB of new data. Changed at once by an update. A quota below what the root would reference is refused before any task is submitted, with `container_disk_quota_below_usage` (422; details `disk_quota` and `referenced_bytes`): at create, the template's size, which a new root references from the start; at update, what the root already references. |
 
 **`open_files` counts file-table slots, not open files.** RACCT charges
 each process of the jail the size of its descriptor table, and the
