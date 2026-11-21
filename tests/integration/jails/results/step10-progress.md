@@ -2814,3 +2814,107 @@ nothing else changed. `jexec icmptest-1929 ping -c 3 10.79.60.1` from
 that window should show which rule, if any, matched the three echo
 requests. Log: `~/skep-test-logs/20261121T193326Z-hearst-icmp-rule-06-test1-rerun.log`
 (appended to the record).
+
+## 31. SR-02 anti-spoofing measurements (hearst, 2026-11-21)
+
+Measure only; nothing was fixed. Andy watched OPNsense (capture on LAB and
+the live log) and reports what it saw separately. Test jail
+`icmptest-1929` (`d892fa70-5e6a-402a-82f7-d9d0f5d3a623`, DHCP
+10.79.60.115, MAC `02:17:fb:89:a2:1a`, `epair0a` on `bridge0`, uplink
+`vtnet1`, LAB VLAN 60), reused from §30. Unused LAB address
+**10.79.60.50** (Andy left the choice; ARP probe from the jail stayed
+incomplete). Forged MAC `02:5e:00:00:00:01`, forged off-subnet source
+192.0.2.10. Observation: `tcpdump -n -e` on `vtnet1`. hearst stayed at
+`b61e578`. Record: [step10-hearst-spoofing.txt](step10-hearst-spoofing.txt).
+
+### 31.1 Step 0: source and jail facts
+
+- **VNET jails get `PRIV_NETINET_RAW` regardless of `allow.raw_sockets`.**
+  `/usr/src/sys/kern/kern_jail.c` on hearst (`REVISION="15.1"`,
+  `BRANCH="RELEASE-p7"`, matching the running kernel),
+  `prison_priv_check()` at line 4171: under `#ifdef VIMAGE` (kernel has
+  `kern.features.vimage`), `case PRIV_NETINET_RAW:` at line 4282 falls
+  through to `if (cred->cr_prison->pr_flags & PR_VNET) return (0);` at
+  lines 4306–4307. The `allow.raw_sockets` check (`PR_ALLOW_RAW_SOCKETS`,
+  lines 4531–4535) is only reached by non-VNET jails. The same VNET block
+  grants `PRIV_NET_BPF` (4213), `PRIV_NET_RAW` (4214), `PRIV_NET_SETLLADDR`
+  (4229), and `PRIV_NET_ADDIFADDR` (4234).
+- The jail: `vnet` new, `allow.raw_sockets` false, `devfs_ruleset` 6001.
+- **`/dev/bpf` (and the `bpf0` link) is visible in the jail**: ruleset
+  6001 is include 1–4, `path pf unhide`, `path bpf* unhide` (bpf is there
+  for dhclient). `/usr/sbin/tcpdump`, `/usr/bin/nc` and setuid `/sbin/ping`
+  are in the minimal-151 template.
+
+### 31.2 Tool
+
+`tests/integration/jails/tools/rawping` (new, `skep_testtasks` tag, not in
+any shipped binary): builds an IPv4 + ICMP echo packet with both checksums
+and sends it on `socket(AF_INET, SOCK_RAW, IPPROTO_RAW)` with
+`IP_HDRINCL`. Unit tests of the packet builder: 3 passed
+(`~/skep-test-logs/20261121T194300Z-go-test-rawping.log`); FreeBSD
+cross-vet clean. Copied into the jail as `/root/rawping` (sha256
+`05e0a53e…`), deleted with the jail.
+
+### 31.3 Results
+
+Timestamps UTC; gaps of 20 s between tests. In every test the jail's
+send succeeded and every frame was seen leaving on `vtnet1`.
+
+| Test | Window | Sent | tcpdump on vtnet1 (src MAC / src IP) | Reply seen |
+|---|---|---|---|---|
+| T1: echo to 10.79.60.1, src 10.79.60.50 | 19:47:01–:04 | Yes, 3/3, no error | `02:17:fb:89:a2:1a` (jail's real MAC) / 10.79.60.50 → 10.79.60.1, ×3 | No echo reply. After each request the gateway broadcast `who-has 10.79.60.50 tell 10.79.60.1`; nobody answered |
+| T2: echo to 10.79.60.1, src 192.0.2.10 | 19:47:24–:26 | Yes, 3/3 | jail's real MAC / 192.0.2.10 → 10.79.60.1, ×3 | Nothing on LAB (no reply, no ARP) |
+| T3: echo to 1.1.1.1, src 192.0.2.10 | 19:47:46–:48 | Yes, 3/3 | jail's real MAC / 192.0.2.10 → 1.1.1.1 (to the gateway's MAC), ×3 | Nothing on LAB |
+| T4: `ifconfig skep0 ether 02:5e:00:00:00:01`, ping 10.79.60.1 | 19:48:08–:11 | Change allowed (exit 0) | Gratuitous ARP `who-has 10.79.60.115 tell 10.79.60.115` from `02:5e:00:00:00:01`, then 3 echo requests from the forged MAC | 3/3 replies, sent by the gateway to `02:5e:00:00:00:01`. Restored to `02:17:fb:89:a2:1a` (exit 0; `ifconfig` shows it; gratuitous ARP from the real MAC; 2/2 replies to the real MAC) |
+| T5: `ifconfig skep0 inet 10.79.60.50/32 alias`, `ping -S 10.79.60.50` | 19:48:31–:33 | Alias allowed (exit 0) | Gratuitous ARP for 10.79.60.50 from the jail's MAC; echo requests 10.79.60.50 → 10.79.60.1 | 3/3 replies. The gateway asked `who-has 10.79.60.50`, the jail answered `10.79.60.50 is-at 02:17:fb:89:a2:1a`, the replies went to the jail. Alias removed at :33 (exit 0); `ifconfig` shows only 10.79.60.115; routes as before |
+
+The bridge (`bridge0`, `vtnet1`, the epair) passed every forged frame:
+forged IPv4 sources on- and off-subnet, a changed source MAC, and an
+address claim with ARP. Whether OPNsense passed or dropped T2 and T3, and
+what it logged, is in Andy's report, not here. After T5, OPNsense's ARP
+table may hold 10.79.60.50 → `02:17:fb:89:a2:1a` until it expires.
+
+### 31.4 Cleanup
+
+- Alias removed and MAC restored (above), checked again just before the
+  delete.
+- The first `DELETE /containers/{id}` returned 409
+  `container_not_stopped` ("the jail is running; stop it first"), as
+  designed; my script then polled with an empty task ID (kept in the
+  record). Repeat: `stop` (task succeeded), `DELETE` (task succeeded),
+  `GET` 404, container list empty.
+- Afterwards: no jails, no epairs, `bridge0` members `vtnet1` only, no
+  datasets under `skeptest/skep/jail`, `/var/run/skep/jails` empty, no
+  RCTL rules, no jail devfs, no `sr02` files in `/tmp`, `agent.json`
+  sha256 `490bc087…` (unchanged), `/` 17 %. API session logged out (204).
+- Changes on hearst during the run, all gone: the test jail (and
+  `/root/rawping` inside it), the T4 MAC change and the T5 alias inside
+  the jail. No `agent.json`, bridge, sqlite, kld, sysctl, pf, user or
+  role change. The T5 static alias was Andy's one-off exception, for this
+  test only.
+
+### 31.5 Questions the SR-02 decision has to answer
+
+1. Does Skep rely on `allow.raw_sockets=false` anywhere, given that it
+   has no effect on VNET jails (31.1)? Is root in a jail trusted to send
+   arbitrary IPv4 packets, or not?
+2. Should jails see `/dev/bpf` (needed by dhclient; also gives a
+   jailed root raw L2 send and capture on its own interface)?
+3. Where should source-address enforcement live: on the host (the bridge
+   or the epair host end, e.g. pf or `bridge` filtering on the member),
+   at OPNsense, or both? Which addresses count as allowed for a DHCP NIC,
+   whose address is only known after the lease?
+4. Should a jail be able to change its MAC (T4)? If not, how is a change
+   detected or blocked, and is the API's recorded MAC then authoritative?
+5. Should a jail be able to add addresses (T5), including claiming an
+   unused address on a shared VLAN with gratuitous ARP?
+6. Does the answer differ for static and DHCP NICs, and for VMs (the same
+   bridges)?
+7. What test proves the chosen control, and does it run on hearst
+   without OPNsense changes?
+
+### 31.6 Commits
+
+`tests/integration/jails/tools/rawping` (tool and unit tests), the jails
+README's tool note, this section and the run record. Self-approved as
+test tooling and docs; no code, API, security, or schema change.

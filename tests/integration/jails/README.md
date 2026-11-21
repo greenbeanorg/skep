@@ -60,3 +60,17 @@ shape is not).
 `skeptest/trace-7b`, `/var/tmp/skep-trace7b`, `skeptest/step6` and
 `skeptest/step6-scratch` were destroyed on 2026-11-16 with Andy's approval
 ([results/step6-progress.md](results/step6-progress.md), sections 8 and 11).
+
+## Test tools
+
+`tools/rawping` sends ICMP echo requests with a chosen IPv4 source over a
+raw socket (`IPPROTO_RAW`, `IP_HDRINCL`). It is the sender for the SR-02
+anti-spoofing measurements ([results/step10-progress.md](results/step10-progress.md),
+section 31). It builds only with the `skep_testtasks` tag, is copied into a
+test jail by hand, and is never part of a shipped binary:
+
+```sh
+GOOS=freebsd GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -tags skep_testtasks \
+    -o rawping ./tests/integration/jails/tools/rawping
+go test -tags skep_testtasks ./tests/integration/jails/tools/...   # packet builder
+```
