@@ -1508,3 +1508,44 @@ Conditions (amendment o): after Andy's Proxmox snapshot; `skep-api` stopped duri
 
 `b97480b` feat(hostops): clean the stderr line of the build's pkg and tar
 failures; and the docs commit with this section.
+
+### 21.6 Andy's answer (2026-11-21)
+
+1. **21.3 point 1:** approved as built (the `extractArchive` helper, and
+   `ExtractDist` refusing a dist directory not owned by root before `tar`
+   runs).
+
+## 22. Run 1 plan
+
+Hearst validation run 1 of 3 (M7b step 10, ADR 0010). The section below
+is copied verbatim from the "Hearst list for run 1" section of
+`~/stop-report.md` (the amendment s stop report, 2026-11-21); only its
+heading was demoted one level to fit this section.
+
+### Hearst list for run 1 (current)
+
+§17.5 with §19.5, §20.5 and amendment s applied. Amendment s adds nothing: its tests match `Clean` in test 2's filter (checked with `go test -list`).
+
+**SR-01:**
+
+1. Before the deploy, on the current build: the review's baseline proof (13.9), for the before/after comparison.
+2. The cross-compiled hostops test binary as an unprivileged user: `-test.run 'ConsoleLog|MarkOverflow|ShutdownOutput|ShutdownLog|ShutdownStderr|DiscardAppends|StderrLastLine|StderrTail|LastStderrLine|Clean|LastLine|BuildJailExec' -test.v`.
+3. After the deploy, a test jail's rendered `jail.conf` has no `exec.consolelog`.
+4. `( dd if=/dev/zero bs=1m count=50 2>/dev/null; sleep 600 ) &` in `/etc/rc.local`: after the start `console.log` stays at most about 320 KiB, `sudo procstat -f` shows no descriptor on it, `df /` is unchanged; at the stop it grows by at most about 96 KiB plus markers; remove the test lines.
+5. `rc.local` prints about 1 MiB in the foreground: the console log is head + `skep: N bytes discarded` + tail, and `GET .../console-log` ends with rc's last line.
+6. A minimal jail with sshd: `sshd`, `cron`, and `syslogd` still run after the start and a minute later, and SSH works; after a stop the log has `--- shutdown ---`, the base shutdown lines, then `--- shutdown stderr ---` (and anything rc.shutdown wrote to stderr).
+7. `/etc/rc.shutdown.local` prints about 8 MiB to stdout: the stop succeeds, the jail is gone, and the log is rc's output + `--- shutdown ---` + 32 KiB + `skep: N bytes discarded` (N about 8 MiB less 64 KiB) + 32 KiB ending with the last line + `--- shutdown stderr ---`.
+8. `/etc/rc.shutdown.local` writes one line to stdout and one to stderr: after a stop the stdout line follows `--- shutdown ---` and the stderr line follows `--- shutdown stderr ---`.
+9. A second start of the same jail truncates its console log (the shutdown sections are gone).
+10. Probe: `/etc/rc.shutdown.local` ends with `printf '\033[31mfake \342\200\256ok\n' >&2; exit 1`; record whether `jail -r` exits non-zero and the jail is gone. If the stop fails: the task error ends with `jail output, last line of stderr: "..."` with no ESC or U+202E, and the agent log has `jail_remove_failed` with `jail_output`. If it succeeds: `sudo cat -v` of `console.log` shows the `fake ok` line after `--- shutdown stderr ---` with its ESC and U+202E bytes, and `GET .../console-log` shows it with no ESC and no U+202E. Clean up afterwards.
+11. `/etc/rc.shutdown.local` writes about 1 MiB to stderr: the stop succeeds, and the stderr section is `skep: N bytes discarded` (N about 1 MiB less 32 KiB) + the last 32 KiB, ending with the last line written.
+12. A test jail whose rc writes U+202E and a C1 character to its output: `console.log` on disk keeps them, and the API's console-log response has them stripped.
+
+**SR-04 (unchanged):**
+
+- S1. The agent's start log shows `max_locked_memory_bytes` equal to `sysctl -n hw.physmem` / 4 (about 1.5 GiB).
+- S2. A create with `limits.locked_memory` above that is 422 `container_locked_memory_above_max`.
+- S3. Two `mlock` jails with 1 GiB and 768 MiB: the first starts with exactly the `memorylocked` rule in `rctl`; the second start is 409 `container_locked_memory_exhausted` and never creates its jail; after the first stops, the second starts; stop and delete both.
+- S4. Optional: `mlocktest` in the first jail locks up to its limit and fails past it; `vm.stats.vm.v_wire_count` returns to its baseline after the stop.
+
+Conditions (amendment o): after Andy's Proxmox snapshot; `skep-api` stopped during the `sqlite3` edit; the epair and all test data removed afterwards; every change on hearst recorded in the progress log.
