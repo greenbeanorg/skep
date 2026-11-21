@@ -2228,3 +2228,19 @@ and return `container_mac_in_use` (409) with `held_by_kind`, `held_by_id`,
 and `held_by_name`, for a VM or another jail; the store's in-transaction
 check returns the same code. Details in section 25 of
 [step10-progress.md](../../tests/integration/jails/results/step10-progress.md).
+
+**Amendment w, built (2026-11-21, merrick only).** (1) `normalizeUpdate`
+refuses a new, non-zero `limits.disk_quota` below the jail root's
+`referenced` with `container_disk_quota_below_usage` (422; details
+`container_id`, `disk_quota`, `referenced_bytes`) before the task is
+submitted, after the not-stopped check; the refusal is audited as
+denied. The value comes from `zfs.Inventory`, the listing monitoring
+already makes, so no new host operation was added. `SetJailQuota` maps
+ZFS's refusal to the same code, for a root that grew between the request
+and the task. The UI hint names the code. (5) and (8) are in jails.md and
+web-ui.md. (9) is not built: Chromium can take the pin
+(`--ignore-certificate-errors-spki-list`), but the e2e tests also use
+Playwright's Node-side `request` client, which has `ignoreHTTPSErrors`
+and no CA or pin option, so the pin cannot replace it in the
+configuration alone; the options are in section 27.4 of
+[step10-progress.md](../../tests/integration/jails/results/step10-progress.md).
