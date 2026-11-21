@@ -207,3 +207,29 @@ Don't build speculative features just because they appear in a later milestone.
 Don't rewrite working components without reason. Preserve backward compatibility where possible. When an architectural choice is uncertain, present the alternatives and recommend one. When something is incomplete, state its limits plainly.
 
 **Guiding principle:** correctness, reliability, security, and architectural clarity come before speed. Build it properly, one tested subsystem at a time.
+
+## Autonomy and standing approvals (adopted 2026-11-21)
+
+### Pre-approved on hearst — no need to ask
+Conditions for all: test objects only; back up anything you change first; restore it and verify (sha256 for files) before the run ends; record every change in the progress log.
+- Deploying the pushed branch head with scripts/deploy-test.sh (inode, -version and /health verified).
+- Temporary edits to /usr/local/etc/skep/agent.json (e.g. a test bridge in network.bridges); restarting skep_agent / skep_api only with no test jails running, verified the same way as a deploy.
+- sqlite3 on agent.db / api.db after a .backup: with the service stopped, or with .timeout 5000 for a single-row edit of the live agent.db. Backups deleted at cleanup.
+- Temporary test roles and users: random passwords generated in the script, never printed or stored; deleted at cleanup.
+- Test bridges (bridge1, 192.0.2.0/24, no uplink), hand-made epairs, kldload if_epair (live only).
+- Anything inside Skep test jails (rc.conf, rc.local, rc.shutdown, rc.shutdown.local, login.conf, dd, test binaries); jail -r / jail -R on Skep test jails.
+- Cross-compiled test binaries; Playwright against hearst using the TLS pin.
+
+### Still requires Andy
+Reboots; persistent loader.conf / sysctl / kld changes; pf; host login.conf; static addresses on VLAN 60; OPNsense or Proxmox; changing or deleting permanent users, roles, templates, VMs, pools or backups; anything touching ~/.skep-test-creds beyond the silent loader; skipping or narrowing any security test; ADR acceptance; merging to main.
+Stop immediately if any security property fails.
+
+### Unrequested changes
+- Self-approve, and list under "Self-approved" in the stop report: tests, docs, refactors with no behavior change, UI text and hints, test tooling.
+- Ask first: changes to security behavior, permissions, API contracts, error codes or HTTP statuses, persisted data or schema, config format.
+
+### Workflow
+- Small amendments: record the decisions and build in the same session if /context is under ~120k; otherwise record, push, /clear, build.
+- In questions to Andy, never recommend skipping or reducing a security test to keep a run moving; say plainly what coverage would be lost.
+- Hearst runs may run unattended once Andy has taken a Proxmox snapshot for that run; the prompt names the snapshot.
+- Stop reports also go to ~/stop-report.md; tee all test output to ~/skep-test-logs/.
