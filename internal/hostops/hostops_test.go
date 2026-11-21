@@ -12,6 +12,7 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/greenbeanorg/skep/pkg/models"
@@ -548,9 +549,9 @@ func firstCreate(calls []string) string {
 	return ""
 }
 
-// A failed jail -r's stderr line (amendment p): control characters and
-// bytes that are not UTF-8 removed, at most 200 bytes on a character
-// boundary.
+// A failed jail -r's stderr line (amendments p and q): control
+// characters, format characters (Cf), and bytes that are not UTF-8
+// removed, at most 200 bytes on a character boundary.
 func TestCleanLine(t *testing.T) {
 	long := strings.Repeat("a", 300)
 	accents := strings.Repeat("é", 150) // 300 bytes
@@ -569,16 +570,53 @@ func TestCleanLine(t *testing.T) {
 		{"empty", "", ""},
 		{"only controls", "\x1b\r\x00", ""},
 		{"printable unicode kept", "jail: ünïcödé ✓", "jail: ünïcödé ✓"},
+		{"right-to-left override", "jail: \u202eko ekaf", "jail: ko ekaf"},
+		{"bidi embeddings and overrides", "a\u202ab\u202bc\u202cd\u202de\u202ef", "abcdef"},
+		{"bidi isolates", "a\u2066b\u2067c\u2068d\u2069e", "abcde"},
+		{"other format characters", "a\u200bb\u200dc\u200ed\u00ade\ufefff\u2060g", "abcdefg"},
+		{"format characters around spaces", "\u202e jail: x \u2069", "jail: x"},
+		{"only format characters", "\u202e\u2066\ufeff", ""},
+		{"cut after format characters removed", strings.Repeat("\u202e", 100) + long, long[:200]},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := cleanLine(tc.in, maxStderrLine)
 			if got != tc.want {
 				t.Fatalf("cleanLine(%q) = %q, want %q", tc.in, got, tc.want)
 			}
+			for _, r := range got {
+				if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
+					t.Fatalf("cleanLine(%q) kept %U", tc.in, r)
+				}
+			}
 			if len(got) > maxStderrLine || !utf8.ValidString(got) {
 				t.Fatalf("cleanLine(%q) = %d bytes, valid %v", tc.in, len(got), utf8.ValidString(got))
 			}
 		})
+	}
+}
+
+// Every character of category Cf is removed, not only the bidi ones
+// (amendment q).
+func TestCleanLineRemovesAllFormatCharacters(t *testing.T) {
+	var n int
+	for _, rt := range unicode.Cf.R16 {
+		for r := rune(rt.Lo); r <= rune(rt.Hi); r += rune(rt.Stride) {
+			if got := cleanLine("a"+string(r)+"b", maxStderrLine); got != "ab" {
+				t.Errorf("cleanLine kept %U: %q", r, got)
+			}
+			n++
+		}
+	}
+	for _, rt := range unicode.Cf.R32 {
+		for r := rune(rt.Lo); r <= rune(rt.Hi); r += rune(rt.Stride) {
+			if got := cleanLine("a"+string(r)+"b", maxStderrLine); got != "ab" {
+				t.Errorf("cleanLine kept %U: %q", r, got)
+			}
+			n++
+		}
+	}
+	if n < 100 {
+		t.Fatalf("only %d format characters checked", n)
 	}
 }
 

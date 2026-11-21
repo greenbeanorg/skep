@@ -69,16 +69,19 @@ func lastLine(b []byte) string {
 }
 
 // cleanLine makes text a process wrote safe to put in an error and a log
-// line: control characters (C0, DEL, and C1) and bytes that are not
-// UTF-8 (which a terminal may read as C1 controls) are removed, the
-// surrounding spaces trimmed, and the result cut to at most limit bytes
-// on a character boundary.
+// line: control characters (C0, DEL, and C1), format characters
+// (category Cf, among them the bidirectional overrides and isolates
+// U+202A–U+202E and U+2066–U+2069, which can make a line display in an
+// order other than its own; amendment q), and bytes that are not UTF-8
+// (which a terminal may read as C1 controls) are removed, the surrounding
+// spaces trimmed, and the result cut to at most limit bytes on a
+// character boundary.
 func cleanLine(s string, limit int) string {
 	var b strings.Builder
 	for len(s) > 0 {
 		r, size := utf8.DecodeRuneInString(s)
 		s = s[size:]
-		if (r == utf8.RuneError && size <= 1) || unicode.IsControl(r) {
+		if (r == utf8.RuneError && size <= 1) || unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
 			continue
 		}
 		b.WriteRune(r)
