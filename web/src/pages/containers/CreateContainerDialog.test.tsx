@@ -134,7 +134,7 @@ describe("CreateContainerDialog", () => {
     await screen.findByText(/Packages:/);
     await user.type(screen.getByLabelText("Name"), "web1");
     await user.click(screen.getByRole("button", { name: "Create" }));
-    expect(await screen.findByText(/for a new jail, the template's size/)).toBeInTheDocument();
+    expect(await screen.findByText(/below the template's size, which a new jail's root holds/)).toBeInTheDocument();
     expect(screen.getByText(/81788928 bytes/)).toBeInTheDocument();
   });
 
