@@ -2119,5 +2119,13 @@ classes; and the commit with this section.
    open.
 3. **25.6:** u1 to u7 and the `-test.run` addition are approved for run 3;
    u4 stays merrick-only.
+4. **Test logs** (after the race investigation, `42d69b9`): CLAUDE.md now
+   requires every `make test` or `go test` run to tee its full output to
+   `~/skep-test-logs/<UTC timestamp>-<target>.log`, outside the repo, so an
+   intermittent failure keeps its package and test name.
+5. **25.5 point 4** (the `Vlan1` comment nit): fixed as a comment-only
+   change; `learntMACs`' comment now shows 15.1's `Vlan0` and says the
+   field is not read. The test fixtures' `Vlan1` lines are unchanged (the
+   parser ignores the field).
 
 Only the answers were recorded in this session; no code was written.

@@ -146,6 +146,7 @@ Adjust the layout when implementation shows a better boundary, and record substa
 - **Never claim a test passed unless you ran it and saw it pass.**
 - **Never claim bhyve, ZFS, jails, or any FreeBSD feature works because it compiled on Linux.** Cross-compilation proves compilation, not runtime behavior. Mark such items "pending FreeBSD validation."
 - Don't substitute Linux functionality for FreeBSD functionality without saying so.
+- Whenever `make test` or `go test` runs, tee the full output to `~/skep-test-logs/<UTC timestamp>-<target>.log` (outside the repo; for example `~/skep-test-logs/20261121T104900Z-make-test.log`), so an intermittent failure keeps its package and test name. Report the log path with the result.
 
 **Docs:** update the README, architecture docs, API docs, install and dev instructions, security docs, and ADRs whenever behavior or architecture changes.
 

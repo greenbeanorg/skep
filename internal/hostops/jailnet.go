@@ -332,8 +332,9 @@ func interfaceMACs(out []byte) []string {
 }
 
 // learntMACs reads ifconfig <bridge> addr: one line per learnt address,
-// "58:9c:fc:10:ff:d8 Vlan1 vtnet1 1199 flags=0<>", by MAC and the member
-// it was learnt on.
+// "58:9c:fc:10:ff:d8 Vlan0 vtnet1 1199 flags=0<>" on 15.1 (step 10 run
+// 2), by MAC and the member it was learnt on. Only fields 1 and 3 are
+// read; the VLAN field is not.
 func learntMACs(out []byte) map[string]string {
 	macs := map[string]string{}
 	for _, line := range strings.Split(string(out), "\n") {
