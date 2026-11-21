@@ -273,6 +273,19 @@ start-up line now carries `half_started_removed`.
   second create returned the first container ("a") instead of a refusal.
   The create path, untouched by this work; it also failed 0 of 200 runs
   with and without the amendment i diff. Not fixed (Andy).
+  **Explained 2026-11-21:** the failing assertion was not the
+  duplicate-MAC check but the fixture's create helper, called for "a":
+  it asserted `created.Container.Provisioned == false` on the create
+  reply, which is read from the store after `Submit` and can already
+  see the fake create task finished (the dump showed `Name:a …
+  Provisioned:true`). Reproduced at `79620ef` (3 of 6 parallel workers
+  of 250 `-race` runs each failed); the assertion was removed in
+  `ec86060` (2026-11-17, "stop asserting a snapshot's provisioned flag in
+  the create helper"). On `main` (`3c04b40`): 0 of 1000 runs, and 0 of
+  1500 under `-race` with 6 parallel workers. Logs:
+  `~/skep-test-logs/20261121T221050Z-go-test-networkrefusals-x1000.log`,
+  `…T221237Z-go-test-networkrefusals-race-load.log`,
+  `…T221722Z-go-test-networkrefusals-79620ef-race-load.log`.
 - NTP answers to a hand-made query were intermittent for 10.79.60.1 and
   a public server alike (likely rate limiting of back-to-back queries).
 

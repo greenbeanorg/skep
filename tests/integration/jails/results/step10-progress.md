@@ -2037,7 +2037,17 @@ run failed and I did not keep its output** (only the last three lines,
 `FAIL`, were shown); the next `make test` and three full
 `go test -race -count=1 ./...` runs passed, and the new and touched
 tests passed 15 times in a row under `-race`. The failing package is
-unknown.
+unknown. **Follow-up 2026-11-21 (unattended run): not reproduced, still
+unexplained.** `make test` passed 10 times on `main` (`3c04b40`) and 10
+times on `2bbc2f9` itself, the build where it failed (logs
+`~/skep-test-logs/20261121T22*-make-test-race-repro-*.log`). Ruled out:
+the `TestNetworkRefusals` flake (its cause, a create-helper assertion,
+was removed in `ec86060` on 2026-11-17, before `2bbc2f9`; see
+step8-progress section 7), and timing windows in the tests that fail
+on slowness (the only sub-second window, in `internalapi`, passes when
+slow). With the output gone, the package cannot be named. Since
+`42d69b9` every `make test` is teed to `~/skep-test-logs/`, so a
+recurrence will keep its package and test name.
 
 ### 25.4 Changes not in the request (for approval)
 
