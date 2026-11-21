@@ -2047,7 +2047,13 @@ step8-progress section 7), and timing windows in the tests that fail
 on slowness (the only sub-second window, in `internalapi`, passes when
 slow). With the output gone, the package cannot be named. Since
 `42d69b9` every `make test` is teed to `~/skep-test-logs/`, so a
-recurrence will keep its package and test name.
+recurrence will keep its package and test name. **Follow-up 2026-11-21 (second unattended
+run):** `main` CI failed in `internal/apitls`
+`TestConcurrentReadsNeverSeeAMismatch` (run 44960295215). That race was
+reproduced under `-race` with CPU pressure (26 of 480 runs) and fixed on
+`fix/apitls-swap`. It is a plausible candidate for the lost `make test`
+failure, which also ran under `-race`, but without its output that
+cannot be confirmed.
 
 ### 25.4 Changes not in the request (for approval)
 
