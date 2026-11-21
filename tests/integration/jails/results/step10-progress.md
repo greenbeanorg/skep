@@ -2804,3 +2804,13 @@ no jail parameter or Skep default was changed.
 `epair0a`, on `bridge0`). `agent.json` sha256 `490bc087…` before and
 after. No `agent.json`, bridge, sqlite, kld, sysctl, pf or user change.
 The API session was logged out (204).
+
+### 30.5 Test 1 re-run with OPNsense logging (2026-11-21T19:33Z)
+
+Andy turned on logging for the LAB ICMP rule and the 10/8 block rule;
+nothing else changed. `jexec icmptest-1929 ping -c 3 10.79.60.1` from
+10.79.60.115, sent between 19:33:26 and 19:33:39 UTC: **3 transmitted,
+0 received, 100 % loss** (exit 2). Still failing. The OPNsense log for
+that window should show which rule, if any, matched the three echo
+requests. Log: `~/skep-test-logs/20261121T193326Z-hearst-icmp-rule-06-test1-rerun.log`
+(appended to the record).

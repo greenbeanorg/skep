@@ -183,3 +183,22 @@ new false 6001
 + ls /var/log/skep
 ls: /var/log/skep: No such file or directory
 
+
+######## Test 1 re-run (OPNsense logging on for LAB ICMP and 10/8 block rules), 2026-11-21T19:33:26Z
++ date -u
+Sat Nov 21 19:33:26 UTC 2026
++ jls -j skep-d892fa70-5e6a-402a-82f7-d9d0f5d3a623 jid host.hostname
+49 icmptest-1929
++ sudo jexec skep-d892fa70-5e6a-402a-82f7-d9d0f5d3a623 ifconfig skep0 inet
+skep0: flags=1008843<UP,BROADCAST,RUNNING,SIMPLEX,MULTICAST,LOWER_UP> metric 0 mtu 1500
+	options=60001b<RXCSUM,TXCSUM,VLAN_MTU,VLAN_HWTAGGING,RXCSUM_IPV6,TXCSUM_IPV6>
+	inet 10.79.60.115 netmask 0xffffff00 broadcast 10.79.60.255
++ sudo jexec skep-d892fa70-5e6a-402a-82f7-d9d0f5d3a623 ping -c 3 10.79.60.1
+PING 10.79.60.1 (10.79.60.1): 56 data bytes
+
+--- 10.79.60.1 ping statistics ---
+3 packets transmitted, 0 packets received, 100.0% packet loss
+exit 2
++ echo 'exit 2'
++ date -u
+Sat Nov 21 19:33:39 UTC 2026
