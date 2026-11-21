@@ -306,3 +306,45 @@ func TestUpdateQuotaBelowUsage(t *testing.T) {
 	// Removing the quota needs no check.
 	f.succeed(f.svc.UpdateContainer(ctx, c.ID, models.ContainerUpdate{Limits: &models.ContainerLimits{}}, f.sub))
 }
+
+// A create whose disk quota is below the template's size is refused at
+// submission with container_disk_quota_below_usage, before any container
+// or task exists (amendment x); the template's size is accepted. The fake
+// template references 132 MiB.
+func TestCreateQuotaBelowTemplate(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	const referenced = int64(132 << 20)
+	containersBefore := f.count(`SELECT COUNT(*) FROM containers`)
+	tasksBefore := f.count(`SELECT COUNT(*) FROM tasks WHERE type = ?`, models.TaskContainerCreate)
+	for _, quota := range []int64{64 << 20, referenced - 1} {
+		_, err := f.svc.CreateContainer(ctx, models.ContainerCreate{Name: "small", TemplateID: f.minimal,
+			Limits: &models.ContainerLimits{DiskQuota: models.ByteSize(quota)}}, f.sub)
+		wantCode(t, err, models.CodeContainerDiskQuotaBelowUsage)
+		var me *models.Error
+		errors.As(err, &me)
+		if me.Details["referenced_bytes"] != referenced || me.Details["disk_quota"] != quota || me.Details["template_id"] != f.minimal {
+			t.Fatalf("details = %v", me.Details)
+		}
+	}
+	if n := f.count(`SELECT COUNT(*) FROM containers`); n != containersBefore {
+		t.Fatalf("%d containers, want %d", n, containersBefore)
+	}
+	if n := f.count(`SELECT COUNT(*) FROM tasks WHERE type = ?`, models.TaskContainerCreate); n != tasksBefore {
+		t.Fatalf("%d create tasks, want %d", n, tasksBefore)
+	}
+	if n := f.count(`SELECT COUNT(*) FROM audit_log WHERE outcome = 'denied' AND action = ? AND details LIKE '%' || ? || '%'`,
+		models.TaskContainerCreate, models.CodeContainerDiskQuotaBelowUsage); n != 2 {
+		t.Fatalf("%d denied audit entries, want 2", n)
+	}
+	for _, call := range f.fake.Calls() {
+		if strings.HasPrefix(call, "zfs clone ") {
+			t.Fatalf("a refused create reached the host: %s", call)
+		}
+	}
+	c := f.create(models.ContainerCreate{Name: "exact", TemplateID: f.minimal,
+		Limits: &models.ContainerLimits{DiskQuota: models.ByteSize(referenced)}})
+	if c.Limits.DiskQuota != models.ByteSize(referenced) {
+		t.Fatalf("quota = %d", c.Limits.DiskQuota)
+	}
+}

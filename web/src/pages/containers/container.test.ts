@@ -189,6 +189,6 @@ describe("containerErrorHint for the security review codes", () => {
     expect(containerErrorHint("container_locked_memory_exhausted")).toMatch(/Stop a jail with locked memory/);
   });
   it("explains a disk quota below usage (amendment w)", () => {
-    expect(containerErrorHint("container_disk_quota_below_usage")).toMatch(/already holds more than this quota/);
+    expect(containerErrorHint("container_disk_quota_below_usage")).toMatch(/below what the jail's root holds/);
   });
 });

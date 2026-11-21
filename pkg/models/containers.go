@@ -119,10 +119,10 @@ const (
 	// SR-04).
 	CodeContainerLockedMemoryExhausted = "container_locked_memory_exhausted"
 	// CodeContainerDiskQuotaBelowUsage: an update's limits.disk_quota is
-	// below what the jail's root already references, so ZFS would refuse
-	// the refquota (amendment w). Refused at submission; a task that
-	// meets it (the root grew after the request was accepted) fails with
-	// it too.
+	// below what the jail's root already references, or a create's is
+	// below the template's size, so ZFS would refuse the refquota
+	// (amendments w and x). Refused at submission; a task that meets it
+	// (the root grew after the request was accepted) fails with it too.
 	CodeContainerDiskQuotaBelowUsage = "container_disk_quota_below_usage"
 )
 
@@ -134,6 +134,16 @@ func DiskQuotaBelowUsage(containerID string, quota, referenced int64) *Error {
 	return &Error{Code: CodeContainerDiskQuotaBelowUsage,
 		Message: fmt.Sprintf("limits.disk_quota (%d bytes) is below what the jail's root already references (%d bytes); give at least that much, or remove data inside the jail first", quota, referenced),
 		Details: map[string]any{"container_id": containerID, "disk_quota": quota, "referenced_bytes": referenced}}
+}
+
+// DiskQuotaBelowTemplate is the container_disk_quota_below_usage refusal
+// of a create whose disk quota is below the template's size: a new jail's
+// root references the template's data from the start (ADR 0010
+// amendment x).
+func DiskQuotaBelowTemplate(templateID string, quota, referenced int64) *Error {
+	return &Error{Code: CodeContainerDiskQuotaBelowUsage,
+		Message: fmt.Sprintf("limits.disk_quota (%d bytes) is below the template's size (%d bytes), which a new jail's root references from the start; give at least that much", quota, referenced),
+		Details: map[string]any{"template_id": templateID, "disk_quota": quota, "referenced_bytes": referenced}}
 }
 
 // IPv4 addressing modes of a jail NIC (decision 10).

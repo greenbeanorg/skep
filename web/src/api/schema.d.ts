@@ -899,7 +899,10 @@ export interface paths {
          *     (`mlock_requires_memory_limit`). `limits.locked_memory` is at most
          *     the agent's `containers.max_locked_memory_bytes`, the total of all
          *     running jails (`container_locked_memory_above_max`, 422; ADR 0010
-         *     amendment o).
+         *     amendment o). A `limits.disk_quota` below the template's size,
+         *     which the new root references from the start, is refused with
+         *     `container_disk_quota_below_usage` (422; details `template_id`,
+         *     `disk_quota`, and `referenced_bytes`; amendment x).
          *
          *     Limits (ADR 0010 decision 11, amendment j; see `ContainerLimits`):
          *     every limit but `disk_quota` is an RCTL rule and needs RACCT
@@ -1611,8 +1614,9 @@ export interface components {
              *     without RACCT, and snapshots do not count against it. It
              *     includes the data the root shares with its template (about
              *     78 MiB for a minimal template), so the room left for the
-             *     jail's own data is the quota less that. An update to a quota
-             *     below what the root already references is refused with
+             *     jail's own data is the quota less that. A create with a quota
+             *     below the template's size, or an update to one below what the
+             *     root already references, is refused with
              *     `container_disk_quota_below_usage`.
              */
             disk_quota?: components["schemas"]["ByteSize"];

@@ -113,6 +113,11 @@ func (s *Service) normalizeCreate(ctx context.Context, req models.ContainerCreat
 	if err := s.checkMACsFree(ctx, "", c.NICs); err != nil {
 		return c, t, err
 	}
+	if q := int64(c.Limits.DiskQuota); q > 0 {
+		if err := s.checkTemplateQuota(ctx, t, q); err != nil {
+			return c, t, err
+		}
+	}
 	c.TemplateName, c.Pool, c.Release = t.Name, t.Pool, t.Release
 	return c, t, nil
 }

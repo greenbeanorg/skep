@@ -95,6 +95,33 @@ func (s *Service) checkQuotaUsage(ctx context.Context, c models.Container, quota
 	return nil
 }
 
+// checkTemplateQuota refuses a create whose disk quota is below the
+// template's size with container_disk_quota_below_usage (422), before the
+// create task is accepted (amendment x): the new root is a clone of the
+// template's @skep-base and references its data from the start. The
+// template's dataset is read-only after its build, so its referenced is
+// that of @skep-base. A template missing from the inventory is left to
+// the task.
+func (s *Service) checkTemplateQuota(ctx context.Context, t models.Template, quota int64) error {
+	ds, err := s.conf.TemplateDataset(t.Pool, t.ID)
+	if err != nil {
+		return err
+	}
+	list, err := s.zfs.Inventory(ctx, t.Pool)
+	if err != nil {
+		return err
+	}
+	for _, d := range list {
+		if d.Name == ds && !d.IsSnapshot() && d.TemplateID == t.ID {
+			if quota < d.ReferencedBytes {
+				return models.DiskQuotaBelowTemplate(t.ID, quota, d.ReferencedBytes)
+			}
+			return nil
+		}
+	}
+	return nil
+}
+
 // MaxLockedMemory is the total locked_memory of all running jails
 // (amendment o, SR-04): containers.max_locked_memory_bytes when it is
 // set, otherwise a quarter of physical memory. Physical memory the agent

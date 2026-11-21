@@ -305,7 +305,7 @@ export function containerErrorHint(code: string): string | undefined {
     case "container_locked_memory_exhausted":
       return "The jails already running hold the host's locked-memory total (containers.max_locked_memory_bytes). Stop a jail with locked memory, or lower this jail's limit.";
     case "container_disk_quota_below_usage":
-      return "The jail's root already holds more than this quota (the message gives the amount; snapshots do not count). Give a larger quota, or remove data inside the jail first.";
+      return "The quota is below what the jail's root holds: for a new jail, the template's size (the message gives the amount; snapshots do not count). Give a larger quota, or remove data inside the jail first.";
     case "clone_addressing_required":
       return "Every interface with a static address needs new addressing for the clone.";
     case "epair_unavailable":

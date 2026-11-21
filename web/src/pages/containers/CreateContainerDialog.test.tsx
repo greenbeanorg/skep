@@ -120,6 +120,24 @@ describe("CreateContainerDialog", () => {
     expect(await screen.findByText(/Choose a template built with FreeBSD-ssh/)).toBeInTheDocument();
   });
 
+  it("shows a quota below the template's size with its message and hint (amendment x)", async () => {
+    const message = "limits.disk_quota (67108864 bytes) is below the template's size (81788928 bytes)";
+    fakeApi(ALL, {
+      "GET /api/v1/storage/templates?limit=200": templates,
+      "POST /api/v1/containers": {
+        status: 422,
+        body: { error: { code: "container_disk_quota_below_usage", message, details: { disk_quota: 67108864, referenced_bytes: 81788928 } } },
+      },
+    });
+    renderDialog();
+    const user = userEvent.setup();
+    await screen.findByText(/Packages:/);
+    await user.type(screen.getByLabelText("Name"), "web1");
+    await user.click(screen.getByRole("button", { name: "Create" }));
+    expect(await screen.findByText(/for a new jail, the template's size/)).toBeInTheDocument();
+    expect(screen.getByText(/81788928 bytes/)).toBeInTheDocument();
+  });
+
   it("shows the SSH key field only for a template with sshd", async () => {
     const calls = fakeApi(ALL, {
       "GET /api/v1/storage/templates?limit=200": {
