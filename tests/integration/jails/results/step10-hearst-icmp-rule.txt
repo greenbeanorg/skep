@@ -1,0 +1,185 @@
+# M7b step 10 (ADR 0010), deferred item from step 8: re-test of the OPNsense
+# LAB (opt5) "ICMP" pass rule from a DHCP test jail on hearst, 2026-11-21.
+# Andy changed the rule's destination from "*" to "LAB address" (10.79.60.1);
+# it sits above the three RFC1918 block rules. OPNsense was not touched.
+# hearst at b61e578 (run 4's deploy; nothing deployed in this session).
+# API calls: merrick -> https://10.79.20.170:8443/api/v1 as s7admin, bearer
+# session, curl with --cacert (certificate written by e2e-trust.mjs only on a
+# pin match) AND --pinnedpubkey (779cc5ec..., = `skep-api tls fingerprint`),
+# never -k. Credentials loaded from ~/.skep-test-creds with the shell's read
+# builtin, never printed; one login, logged out (204).
+# Hearst commands ran over ssh, traced with `set -x`.
+# Full logs: ~/skep-test-logs/20261121T192946Z-hearst-icmp-rule-0{1..5}-*.log
+
+######## Pre-check, 2026-11-21T19:29:46Z
++ date -u
+Sat Nov 21 19:29:46 UTC 2026
++ /usr/local/sbin/skep-agent -version
+skep-agent 0.1.0 (commit b61e578, built 2026-11-21T18:49:45Z, go1.27.4 freebsd/amd64)
++ sudo service skep_agent status
+skep_agent is running as pid 30301 (supervisor pid 30299).
++ sudo service skep_api status
+skep_api is running as pid 30361 (supervisor pid 30359).
++ kldstat -q -m if_epair
+if_epair loaded
++ echo 'if_epair loaded'
++ jls
+   JID  IP Address      Hostname                      Path
++ ifconfig -l
+vtnet0 vtnet1 lo0 bridge0
++ ifconfig -g epair
++ ifconfig bridge0
++ grep -E 'ether|member|inet'
+	ether 58:9c:fc:10:9f:32
+	member: vtnet1 flags=143<LEARNING,DISCOVER,AUTOEDGE,AUTOPTP>
++ sudo sha256 /usr/local/etc/skep/agent.json
+SHA256 (/usr/local/etc/skep/agent.json) = 490bc08738a2dd835952e19c4f59e869857fd15a1a6ce8e8c0b9df1d1f3cb134
++ sudo /usr/local/sbin/skep-api tls fingerprint -data-dir /var/db/skep
+source:       self-signed
+public key:   sha256:779cc5ec8daa3b04cefd14dc6dc6c9ac1ed989a409831561a47ec7d05cc069dd
+certificate:  sha256:f573e54e4de2c94f30a04be45911d832d02a838ae534bf95fb4ae3eef5883653
+valid until:  2027-12-15T17:39:13Z
+names:        hearst.greenbean.org, hearst, localhost, 127.0.0.1, ::1, 10.79.20.170
++ sysctl security.jail.param.allow.raw_sockets security.jail.allow_raw_sockets
+security.jail.param.allow.raw_sockets: 0
+security.jail.allow_raw_sockets: 0
++ df -h /
+Filesystem     Size    Used   Avail Capacity  Mounted on
+/dev/da0s1a    120G     19G     91G    17%    /
+
+######## Create and start icmptest-1929 (minimal-151, NIC on bridge0, DHCP), 2026-11-21T19:29:55Z, as s7admin
+login s7admin: HTTP 200
+HTTP 200
+minimal-151 = f496866f-32ba-4527-bcee-5a717a2f74c0
+HTTP 202
+container d892fa70-5e6a-402a-82f7-d9d0f5d3a623 icmptest-1929 nics [{'id': 'e143eb28-7ede-4644-8a64-1f51d032eaef', 'slot': 0, 'bridge': 'bridge0', 'mac_address': '02:17:fb:89:a2:1a', 'interface': 'skep0', 'ipv4': {'mode': 'dhcp'}}]
+task 480be5e2-1e45-4e4a-98a1-45c222fc359e (container.create): succeeded 
+HTTP 202
+{'id': '0b90f10a-ca03-4e1a-b566-38a1980a62f0', 'node_id': '97fc6968-7e82-49c9-bda8-9026775ca964', 'type': 'container.start', 'status': 'pending', 'resource_type': 'container', 'resource_id': 'd892fa70-5e6a-402a-82f7-d9d0f5d3a623', 'actor': {'id': 'af143ddd-2c62-4eeb-803a-2081c4fd0088', 'name': 's7admin'}, 'request_id': 'f62b6de514a9d7564af7c6f8', 'cancellable': False, 'created_at': '2026-11-21T19:29:56.738Z'}
+task 0b90f10a-ca03-4e1a-b566-38a1980a62f0 (container.start): succeeded 
+HTTP 200
+state: running | jid: 49 | detail: None | nics: [{'id': 'e143eb28-7ede-4644-8a64-1f51d032eaef', 'slot': 0, 'bridge': 'bridge0', 'mac_address': '02:17:fb:89:a2:1a', 'interface': 'skep0', 'ipv4': {'mode': 'dhcp'}, 'host_interface': 'epair0a'}]
+logout s7admin: HTTP 204
+
+######## Lease and ICMP tests in skep-d892fa70-5e6a-402a-82f7-d9d0f5d3a623, 2026-11-21T19:30:04Z
++ jls -j skep-d892fa70-5e6a-402a-82f7-d9d0f5d3a623 jid name host.hostname
+49 skep-d892fa70-5e6a-402a-82f7-d9d0f5d3a623 icmptest-1929
++ sudo jexec skep-d892fa70-5e6a-402a-82f7-d9d0f5d3a623 ifconfig skep0
+skep0: flags=1008843<UP,BROADCAST,RUNNING,SIMPLEX,MULTICAST,LOWER_UP> metric 0 mtu 1500
+	options=60001b<RXCSUM,TXCSUM,VLAN_MTU,VLAN_HWTAGGING,RXCSUM_IPV6,TXCSUM_IPV6>
+	ether 02:17:fb:89:a2:1a
+	hwaddr 58:9c:fc:10:fd:4c
+	inet 10.79.60.115 netmask 0xffffff00 broadcast 10.79.60.255
+	groups: epair
+	media: Ethernet 10Gbase-T (10Gbase-T <full-duplex>)
+	status: active
+	nd6 options=29<PERFORMNUD,IFDISABLED,AUTO_LINKLOCAL>
++ sudo jexec skep-d892fa70-5e6a-402a-82f7-d9d0f5d3a623 netstat -rn -f inet
+Routing tables
+
+Internet:
+Destination        Gateway            Flags         Netif Expire
+default            10.79.60.1         UGS           skep0
+10.79.60.0/24      link#6             U             skep0
+10.79.60.115       link#7             UHS             lo0
+127.0.0.1          link#7             UH              lo0
++ sudo jexec skep-d892fa70-5e6a-402a-82f7-d9d0f5d3a623 cat /var/db/dhclient.leases.skep0
+lease {
+  interface "skep0";
+  fixed-address 10.79.60.115;
+  option subnet-mask 255.255.255.0;
+  option routers 10.79.60.1;
+  option domain-name-servers 10.79.10.250,10.79.10.249;
+  option host-name "icmptest-1929";
+  option domain-name "greenbean.org";
+  option dhcp-lease-time 4000;
+  option dhcp-message-type 5;
+  option dhcp-server-identifier 10.79.60.1;
+  option dhcp-client-identifier 1:2:17:fb:89:a2:1a;
+  renew 6 2026/11/21 20:03:17;
+  rebind 6 2026/11/21 20:28:17;
+  expire 6 2026/11/21 20:36:37;
+}
++ sudo jexec skep-d892fa70-5e6a-402a-82f7-d9d0f5d3a623 cat /etc/resolv.conf
+# Generated by resolvconf
+search greenbean.org
+nameserver 10.79.10.250
+nameserver 10.79.10.249
+
++ sudo jls -j skep-d892fa70-5e6a-402a-82f7-d9d0f5d3a623 allow.raw_sockets
+false
++ date -u
+Sat Nov 21 19:30:04 UTC 2026
++ sudo jexec skep-d892fa70-5e6a-402a-82f7-d9d0f5d3a623 ping -c 3 10.79.60.1
+PING 10.79.60.1 (10.79.60.1): 56 data bytes
+
+--- 10.79.60.1 ping statistics ---
+3 packets transmitted, 0 packets received, 100.0% packet loss
+exit 2
++ echo 'exit 2'
++ sudo jexec skep-d892fa70-5e6a-402a-82f7-d9d0f5d3a623 ping -c 3 10.79.20.80
+PING 10.79.20.80 (10.79.20.80): 56 data bytes
+
+--- 10.79.20.80 ping statistics ---
+3 packets transmitted, 0 packets received, 100.0% packet loss
+exit 2
++ echo 'exit 2'
++ sudo jexec skep-d892fa70-5e6a-402a-82f7-d9d0f5d3a623 ping -c 3 1.1.1.1
+PING 1.1.1.1 (1.1.1.1): 56 data bytes
+64 bytes from 1.1.1.1: icmp_seq=0 ttl=54 time=14.347 ms
+64 bytes from 1.1.1.1: icmp_seq=1 ttl=54 time=12.762 ms
+64 bytes from 1.1.1.1: icmp_seq=2 ttl=54 time=13.090 ms
+
+--- 1.1.1.1 ping statistics ---
+3 packets transmitted, 3 packets received, 0.0% packet loss
+round-trip min/avg/max/stddev = 12.762/13.400/14.347/0.683 ms
+exit 0
++ echo 'exit 0'
++ date -u
+Sat Nov 21 19:30:33 UTC 2026
+
+######## Test 1 repeat and L2 check, 2026-11-21T19:30:46Z
++ sudo jexec skep-d892fa70-5e6a-402a-82f7-d9d0f5d3a623 arp -an
+? (10.79.60.115) at 02:17:fb:89:a2:1a on skep0 permanent [ethernet]
+? (10.79.60.1) at bc:24:11:65:45:98 on skep0 expires in 1158 seconds [ethernet]
++ sudo jexec skep-d892fa70-5e6a-402a-82f7-d9d0f5d3a623 ping -c 5 -W 2000 10.79.60.1
+PING 10.79.60.1 (10.79.60.1): 56 data bytes
+
+--- 10.79.60.1 ping statistics ---
+5 packets transmitted, 0 packets received, 100.0% packet loss
+exit 2
++ echo 'exit 2'
++ sudo jexec skep-d892fa70-5e6a-402a-82f7-d9d0f5d3a623 arp -an
+? (10.79.60.115) at 02:17:fb:89:a2:1a on skep0 permanent [ethernet]
+? (10.79.60.1) at bc:24:11:65:45:98 on skep0 expires in 1151 seconds [ethernet]
++ sudo jexec skep-d892fa70-5e6a-402a-82f7-d9d0f5d3a623 ping -c 2 1.1.1.1
+PING 1.1.1.1 (1.1.1.1): 56 data bytes
+64 bytes from 1.1.1.1: icmp_seq=0 ttl=54 time=13.072 ms
+64 bytes from 1.1.1.1: icmp_seq=1 ttl=54 time=13.827 ms
+
+--- 1.1.1.1 ping statistics ---
+2 packets transmitted, 2 packets received, 0.0% packet loss
+round-trip min/avg/max/stddev = 13.072/13.449/13.827/0.378 ms
+exit 0
++ echo 'exit 0'
+
+######## Post-check, 2026-11-21T19:31:06Z
++ sudo sha256 /usr/local/etc/skep/agent.json
+SHA256 (/usr/local/etc/skep/agent.json) = 490bc08738a2dd835952e19c4f59e869857fd15a1a6ce8e8c0b9df1d1f3cb134
++ jls
+   JID  IP Address      Hostname                      Path
+    49                  icmptest-1929                 /skeptest/skep/jail/d892fa70-5e6a-402a-82f7-d9d0f5d3a623
++ ifconfig -g epair
+epair0a
++ ifconfig bridge0
++ grep member
+	member: epair0a flags=143<LEARNING,DISCOVER,AUTOEDGE,AUTOPTP>
+	member: vtnet1 flags=143<LEARNING,DISCOVER,AUTOEDGE,AUTOPTP>
++ sudo jls -j skep-d892fa70-5e6a-402a-82f7-d9d0f5d3a623 vnet allow.raw_sockets devfs_ruleset
+new false 6001
++ sudo tail -n 40 /var/log/skep/agent.log
++ grep -c -E 'level=(ERROR|WARN)'
+0
++ ls /var/log/skep
+ls: /var/log/skep: No such file or directory
+

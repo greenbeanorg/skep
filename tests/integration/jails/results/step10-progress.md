@@ -2741,3 +2741,66 @@ is a backlog candidate.
 
 The commit with this section, the run record, web/README.md, and ADR
 0010's note.
+
+## 30. LAB ICMP rule re-test (hearst, 2026-11-21)
+
+The item deferred from step 8 (7b step 8 state; 29.6): Andy changed the
+OPNsense LAB (opt5) "ICMP" pass rule so its destination is "LAB address"
+(10.79.60.1) instead of "*". It still sits above the three RFC1918 block
+rules. This run tested it from a DHCP test jail on hearst only; OPNsense
+was not touched. Attended, under CLAUDE.md "Autonomy and standing
+approvals"; hearst stayed at `b61e578` (run 4's deploy). API calls as
+`s7admin` with `--cacert` and `--pinnedpubkey` (`779cc5ec…`), no `-k`.
+Record: [step10-hearst-icmp-rule.txt](step10-hearst-icmp-rule.txt).
+
+### 30.1 Setup
+
+- Pre-check: services running, `if_epair` loaded, no jails or epairs,
+  `bridge0` with only `vtnet1`, `agent.json` sha256 `490bc087…`, key pin
+  `779cc5ec…`.
+- Test jail created through the API: **`icmptest-1929`**, UUID
+  **`d892fa70-5e6a-402a-82f7-d9d0f5d3a623`** (jail
+  `skep-d892fa70-…`, JID 49), template minimal-151, one NIC on `bridge0`
+  (slot 0, `skep0`, MAC `02:17:fb:89:a2:1a`, host end `epair0a`), DHCP.
+  Create and start tasks succeeded.
+- Lease from 10.79.60.1: **10.79.60.115/24**, router 10.79.60.1,
+  nameservers 10.79.10.250 and .249, 4000 s. Default route `10.79.60.1`
+  on `skep0`. No static address used.
+- Jail parameters (unchanged): `vnet` new, `allow.raw_sockets` false,
+  `devfs_ruleset` 6001.
+
+### 30.2 Results
+
+| Test | Expected | Result |
+|---|---|---|
+| 1. `ping -c 3 10.79.60.1` | replies | **Fail: 100 % loss** (3/0). Repeated with `-c 5 -W 2000`: 5/0. The jail's ARP entry for 10.79.60.1 resolves (`bc:24:11:65:45:98`) before and after, so L2 is fine |
+| 2. `ping -c 3 10.79.20.80` | 100 % loss | Pass: 3/0 |
+| 3. `ping -c 3 1.1.1.1` | replies | Pass: 3/3, ~13 ms, TTL 54 (and 2/2 on the repeat) |
+
+The gateway answers DHCP and forwards the jail's echo to the internet,
+but does not answer echo addressed to its own LAB address. The changed
+rule does not yet pass ICMP to 10.79.60.1. Test 2 shows ICMP into
+10.79.20.0/24 is now dropped, which closes the step 8 finding (echo
+from VLAN 60 reached hearst at 10.79.20.170 and was answered); whether
+that is the block rules or merrick not replying is not distinguishable
+from the jail alone. Diagnosis of test 1 needs the OPNsense side (for
+example the live firewall log for 10.79.60.115 → 10.79.60.1, the rule's
+direction, protocol and ICMP type, and what "LAB address" resolves to);
+not done here.
+
+### 30.3 Observation for review (not changed)
+
+Ping worked inside the jail although `allow.raw_sockets` is false. The
+jail is a VNET jail; my unverified reading is that FreeBSD grants raw
+IP sockets to VNET jails regardless of `allow.raw_sockets`. If so, a
+root process in any Skep VNET jail can send raw packets, which is what
+the coming spoofing tests should measure (the bridge, not the jail
+parameter, is then the control). Not checked against the kernel source;
+no jail parameter or Skep default was changed.
+
+### 30.4 State left on hearst
+
+`icmptest-1929` stays running for the spoofing tests (one epair,
+`epair0a`, on `bridge0`). `agent.json` sha256 `490bc087…` before and
+after. No `agent.json`, bridge, sqlite, kld, sysctl, pf or user change.
+The API session was logged out (204).
