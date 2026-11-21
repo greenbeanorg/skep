@@ -104,11 +104,11 @@ func (n Node) Hook(local string) (Hook, bool) {
 
 // ParseShow reads the output of "ngctl show <path>" on FreeBSD 15.1:
 //
-//	  Name: epair0a         Type: ether           ID: 00000005   Num hooks: 2
-//	  Local hook      Peer name       Peer type    Peer ID         Peer hook
-//	  ----------      ---------       ---------    -------         ---------
-//	  upper           skf_epair0a     bpf          00000019        bridge
-//	  lower           skf_epair0a     bpf          00000019        jail
+//	Name: epair0a         Type: ether           ID: 00000005   Num hooks: 2
+//	Local hook      Peer name       Peer type    Peer ID         Peer hook
+//	----------      ---------       ---------    -------         ---------
+//	upper           skf_epair0a     bpf          00000019        bridge
+//	lower           skf_epair0a     bpf          00000019        jail
 func ParseShow(out []byte) (Node, error) {
 	var n Node
 	lines := strings.Split(string(out), "\n")
