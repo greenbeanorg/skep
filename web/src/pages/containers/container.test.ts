@@ -176,6 +176,15 @@ describe("edit helpers", () => {
 });
 
 describe("containerErrorHint for the security review codes", () => {
+  it("words the disk quota refusal for a create and for an existing jail", () => {
+    const create = containerErrorHint("container_disk_quota_below_usage", "create");
+    const existing = containerErrorHint("container_disk_quota_below_usage", "existing");
+    expect(create).toMatch(/template's size/);
+    expect(create).not.toMatch(/remove data inside the jail/);
+    expect(existing).toMatch(/already holds/);
+    expect(existing).not.toMatch(/new jail|template/);
+    expect(containerErrorHint("container_disk_quota_below_usage")).toBe(existing);
+  });
   it("explains the MAC refusals of amendment n", () => {
     expect(containerErrorHint("container_mac_invalid")).toMatch(/locally administered/);
     expect(containerErrorHint("container_mac_in_use")).toMatch(/already on the bridge/);
@@ -189,6 +198,6 @@ describe("containerErrorHint for the security review codes", () => {
     expect(containerErrorHint("container_locked_memory_exhausted")).toMatch(/Stop a jail with locked memory/);
   });
   it("explains a disk quota below usage (amendment w)", () => {
-    expect(containerErrorHint("container_disk_quota_below_usage")).toMatch(/below what the jail's root holds/);
+    expect(containerErrorHint("container_disk_quota_below_usage")).toMatch(/below what the jail's root already holds/);
   });
 });

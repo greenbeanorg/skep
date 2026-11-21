@@ -141,8 +141,9 @@ describe("EditContainerDialog", () => {
     await screen.findByRole("dialog");
     const user = userEvent.setup();
     await user.click(await screen.findByRole("button", { name: "Save" }));
-    expect(await screen.findByText(/below what the jail's root holds/)).toBeInTheDocument();
+    expect(await screen.findByText(/below what the jail's root already holds/)).toBeInTheDocument();
     expect(screen.getByText(/138412032 bytes/)).toBeInTheDocument();
+    expect(screen.queryByText(/new jail/)).not.toBeInTheDocument();
   });
 });
 

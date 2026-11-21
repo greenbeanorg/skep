@@ -272,7 +272,12 @@ export function limitNumber(v: ContainerLimits[keyof ContainerLimits]): number |
 }
 
 /** The message for a container refusal, when the API's own is not the clearest. */
-export function containerErrorHint(code: string): string | undefined {
+/**
+ * A hint for an API error code, shown after the API's message. `context`
+ * picks the wording where a code means something different on create than
+ * on an existing jail; without it, the existing-jail wording is used.
+ */
+export function containerErrorHint(code: string, context: "create" | "existing" = "existing"): string | undefined {
   switch (code) {
     case "rctl_unavailable":
       return "RACCT is off on this host (kern.racct.enable), so only the disk quota can be set. An administrator enables it in loader.conf and reboots.";
@@ -305,7 +310,9 @@ export function containerErrorHint(code: string): string | undefined {
     case "container_locked_memory_exhausted":
       return "The jails already running hold the host's locked-memory total (containers.max_locked_memory_bytes). Stop a jail with locked memory, or lower this jail's limit.";
     case "container_disk_quota_below_usage":
-      return "The quota is below what the jail's root holds: for a new jail, the template's size (the message gives the amount; snapshots do not count). Give a larger quota, or remove data inside the jail first.";
+      return context === "create"
+        ? "The quota is below the template's size, which a new jail's root holds from the start (the message gives the amount). Give a larger quota."
+        : "The quota is below what the jail's root already holds (the message gives the amount; snapshots do not count). Give a larger quota, or remove data inside the jail first.";
     case "clone_addressing_required":
       return "Every interface with a static address needs new addressing for the clone.";
     case "epair_unavailable":
