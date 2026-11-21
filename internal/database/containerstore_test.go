@@ -132,3 +132,67 @@ func TestContainerStore(t *testing.T) {
 		t.Fatalf("an unused template: %v", err)
 	}
 }
+
+// TestContainerStoreMACHeld: the store's own check, in the writing
+// transaction, refuses a NIC whose MAC a VM or another jail holds with
+// container_mac_in_use and held_by_kind (amendment u, finding 2), on insert
+// and on update; the jail's own address is not a conflict.
+func TestContainerStoreMACHeld(t *testing.T) {
+	ctx := context.Background()
+	db := openTestDB(t)
+	if _, err := Migrate(ctx, db, migrations.Agent()); err != nil {
+		t.Fatal(err)
+	}
+	mustExec(t, db, `INSERT INTO nodes (id, name, is_local) VALUES ('n1', 'node1', 1)`)
+	at := time.Date(2026, 11, 21, 12, 0, 0, 0, time.UTC)
+	tpls := NewTemplateStore(db)
+	tpl := models.Template{ID: "3f2a9c1e-7b4d-4e8f-9a01-23456789abcd", Name: "minimal-151", Pool: "skeptest",
+		Source: models.TemplateSourcePkgbase, Packages: []string{"FreeBSD-set-minimal"}, CreatedAt: at}
+	tx, _ := db.BeginTx(ctx, nil)
+	if err := tpls.InsertTx(ctx, tx, "n1", tpl); err != nil {
+		t.Fatal(err)
+	}
+	tx.Commit()
+	mustExec(t, db, `INSERT INTO virtual_machines (id, node_id, name, engine, cpu_count, memory_bytes)
+		VALUES ('aaaaaaaa-0000-4000-8000-000000000001', 'n1', 'vm1', 'bhyve', 1, 268435456)`)
+	mustExec(t, db, `INSERT INTO vm_networks (id, vm_id, slot, mac_address, bridge)
+		VALUES ('aaaaaaaa-0000-4000-8000-000000000002', 'aaaaaaaa-0000-4000-8000-000000000001', 0, '02:1e:08:e9:9d:7c', 'bridge0')`)
+	s := NewContainerStore(db)
+	insert := func(c models.Container) error {
+		tx, err := db.BeginTx(ctx, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer tx.Rollback()
+		if err := s.InsertTx(ctx, tx, "n1", c); err != nil {
+			return err
+		}
+		return tx.Commit()
+	}
+	nic := func(id, mac string) []models.ContainerNIC {
+		return []models.ContainerNIC{{ID: id, Slot: 0, MACAddress: mac, Bridge: "bridge0", IPv4: models.ContainerIPv4{Mode: models.IPv4DHCP}}}
+	}
+	held := func(err error, kind string) {
+		t.Helper()
+		var me *models.Error
+		if !errors.As(err, &me) || me.Code != models.CodeContainerMACInUse || me.Details["held_by_kind"] != kind {
+			t.Fatalf("err = %v (%+v), want container_mac_in_use held by a %s", err, me, kind)
+		}
+	}
+	a := models.Container{ID: "a1a1a1a1-1111-4222-8333-444455556666", Name: "web1", Hostname: "web1", TemplateID: tpl.ID, CreatedAt: at,
+		NICs: nic("a2a2a2a2-1111-4222-8333-444455556666", "02:1e:08:e9:9d:7c")}
+	held(insert(a), "vm")
+	a.NICs = nic("a2a2a2a2-1111-4222-8333-444455556666", "02:00:00:00:00:0a")
+	if err := insert(a); err != nil {
+		t.Fatal(err)
+	}
+	b := models.Container{ID: "b1b1b1b1-1111-4222-8333-444455556666", Name: "db1", Hostname: "db1", TemplateID: tpl.ID, CreatedAt: at,
+		NICs: nic("b2b2b2b2-1111-4222-8333-444455556666", "02:00:00:00:00:0a")}
+	held(insert(b), "container")
+	a.NICs = nic("a2a2a2a2-1111-4222-8333-444455556666", "02:1e:08:e9:9d:7c")
+	held(s.UpdateConfig(ctx, a, at), "vm")
+	a.NICs = nic("a2a2a2a2-1111-4222-8333-444455556666", "02:00:00:00:00:0a")
+	if err := s.UpdateConfig(ctx, a, at); err != nil {
+		t.Fatalf("the jail's own MAC: %v", err)
+	}
+}

@@ -40,16 +40,21 @@ func configJSON(c models.Container) (string, error) {
 }
 
 // insertNICs stores a container's NICs. A MAC address another jail or VM
-// already uses is refused.
+// already uses is refused with container_mac_in_use, as the containers
+// service refuses it before (amendment u, finding 2); this check, in the
+// writing transaction, is the last word.
 func insertNICs(ctx context.Context, tx *sql.Tx, c models.Container, at string) error {
 	for _, nic := range c.NICs {
-		var n int
-		if err := tx.QueryRowContext(ctx, `SELECT (SELECT COUNT(*) FROM container_networks WHERE mac_address = ? AND container_id <> ?)
-			+ (SELECT COUNT(*) FROM vm_networks WHERE mac_address = ?)`, nic.MACAddress, c.ID, nic.MACAddress).Scan(&n); err != nil {
+		var kind string
+		err := tx.QueryRowContext(ctx, `SELECT 'container' FROM container_networks WHERE mac_address = ? AND container_id <> ?
+			UNION ALL SELECT 'vm' FROM vm_networks WHERE mac_address = ? LIMIT 1`, nic.MACAddress, c.ID, nic.MACAddress).Scan(&kind)
+		switch {
+		case err == nil:
+			return &models.Error{Code: models.CodeContainerMACInUse,
+				Message: fmt.Sprintf("the MAC address %s of NIC slot %d is already held by a %s; give the NIC another address", nic.MACAddress, nic.Slot, kind),
+				Details: map[string]any{"slot": nic.Slot, "mac_address": nic.MACAddress, "held_by_kind": kind}}
+		case !errors.Is(err, sql.ErrNoRows):
 			return fmt.Errorf("database: check MAC address: %w", err)
-		}
-		if n > 0 {
-			return models.Invalid("the MAC address " + nic.MACAddress + " is already used by another network interface")
 		}
 		var addr, gw any
 		if nic.IPv4.Address != "" {

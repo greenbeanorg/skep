@@ -654,6 +654,9 @@ func (s *Service) cloneOf(ctx context.Context, src models.Container, req models.
 	if err != nil {
 		return c, err
 	}
+	if err := s.checkMACsFree(ctx, "", nics); err != nil {
+		return c, err
+	}
 	var keep []int
 	for i, n := range src.NICs {
 		if n.IPv4.Mode == models.IPv4Static && nics[i].IPv4.Mode == models.IPv4Static &&

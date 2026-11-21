@@ -4,11 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
+	"log/slog"
+	"net/http/httptest"
 	"slices"
 	"strings"
 	"testing"
 
 	"github.com/greenbeanorg/skep/internal/hostops/hostfake"
+	"github.com/greenbeanorg/skep/internal/httpkit"
 	"github.com/greenbeanorg/skep/pkg/models"
 )
 
@@ -313,4 +317,57 @@ func TestMACStartRefusals(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.succeed(f.svc.Action(ctx, c.ID, models.ContainerAction{Action: "start"}, f.sub))
+}
+
+// TestMACHeldRefusedAtCreateUpdateClone: a MAC address a Skep VM holds is
+// refused at create, update, and clone with 409 container_mac_in_use and
+// held_by_kind vm, as the start refuses it, not 400 invalid_request
+// (amendment u, finding 2); one another jail holds gets the same code with
+// held_by_kind container. Nothing is created or changed.
+func TestMACHeldRefusedAtCreateUpdateClone(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	if _, err := f.db.Exec(`INSERT INTO virtual_machines (id, node_id, name, engine, cpu_count, memory_bytes)
+		SELECT 'aaaaaaaa-0000-4000-8000-000000000001', id, 'vm1', 'bhyve', 1, 268435456 FROM nodes LIMIT 1`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.db.Exec(`INSERT INTO vm_networks (id, vm_id, slot, mac_address, bridge)
+		VALUES ('aaaaaaaa-0000-4000-8000-000000000002', 'aaaaaaaa-0000-4000-8000-000000000001', 0, '02:1e:08:e9:9d:7c', 'bridge0')`); err != nil {
+		t.Fatal(err)
+	}
+	c := f.create(models.ContainerCreate{Name: "h1", TemplateID: f.minimal,
+		NICs: []models.ContainerNICSpec{{Bridge: "bridge0", MACAddress: "02:00:00:00:02:01"}}})
+	held := func(err error, kind, name string) {
+		t.Helper()
+		wantCode(t, err, models.CodeContainerMACInUse)
+		var me *models.Error
+		errors.As(err, &me)
+		if me.Details["held_by_kind"] != kind || me.Details["held_by_name"] != name {
+			t.Fatalf("details = %v, want held by the %s %s", me.Details, kind, name)
+		}
+		rec := httptest.NewRecorder()
+		httpkit.Fail(slog.New(slog.NewTextHandler(io.Discard, nil)), rec, httptest.NewRequest("POST", "/api/v1/containers", nil), err)
+		if rec.Code != 409 || !strings.Contains(rec.Body.String(), `"held_by_kind":"`+kind+`"`) {
+			t.Fatalf("API reply %d %s", rec.Code, rec.Body)
+		}
+	}
+	before := f.count(`SELECT COUNT(*) FROM containers`)
+	vmMAC := []models.ContainerNICSpec{{Bridge: "bridge0", MACAddress: "02:1E:08:E9:9D:7C"}}
+	_, err := f.svc.CreateContainer(ctx, models.ContainerCreate{Name: "h2", TemplateID: f.minimal, NICs: vmMAC}, f.sub)
+	held(err, "vm", "vm1")
+	_, err = f.svc.UpdateContainer(ctx, c.ID, models.ContainerUpdate{NICs: &vmMAC}, f.sub)
+	held(err, "vm", "vm1")
+	_, err = f.svc.CloneContainer(ctx, c.ID, models.ContainerClone{Name: "h3", NICs: vmMAC}, f.sub)
+	held(err, "vm", "vm1")
+	jailMAC := []models.ContainerNICSpec{{Bridge: "bridge0", MACAddress: "02:00:00:00:02:01"}}
+	_, err = f.svc.CreateContainer(ctx, models.ContainerCreate{Name: "h4", TemplateID: f.minimal, NICs: jailMAC}, f.sub)
+	held(err, "container", "h1")
+	if n := f.count(`SELECT COUNT(*) FROM containers`); n != before {
+		t.Fatalf("containers: %d, want %d", n, before)
+	}
+	if got, _ := f.svc.Container(ctx, c.ID); got.NICs[0].MACAddress != "02:00:00:00:02:01" {
+		t.Fatalf("the NIC changed: %s", got.NICs[0].MACAddress)
+	}
+	// The jail's own address is not held by anyone else.
+	f.succeed(f.svc.UpdateContainer(ctx, c.ID, models.ContainerUpdate{NICs: &jailMAC}, f.sub))
 }

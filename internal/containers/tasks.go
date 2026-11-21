@@ -110,6 +110,9 @@ func (s *Service) normalizeCreate(ctx context.Context, req models.ContainerCreat
 	if c.NICs, c.Nameservers, err = s.normalizeNICs(req.NICs, req.Nameservers, nil); err != nil {
 		return c, t, err
 	}
+	if err := s.checkMACsFree(ctx, "", c.NICs); err != nil {
+		return c, t, err
+	}
 	c.TemplateName, c.Pool, c.Release = t.Name, t.Pool, t.Release
 	return c, t, nil
 }
@@ -432,6 +435,9 @@ func (s *Service) normalizeUpdate(ctx context.Context, id string, req models.Con
 		}
 		nics, nameservers, err := s.normalizeNICs(specs, ns, c.NICs)
 		if err != nil {
+			return p, err
+		}
+		if err := s.checkMACsFree(ctx, c.ID, nics); err != nil {
 			return p, err
 		}
 		if !sameAddressing(nics, c.NICs) || !slices.Equal(nameservers, c.Nameservers) {

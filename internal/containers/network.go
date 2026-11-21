@@ -179,20 +179,47 @@ func (s *Service) checkMACs(ctx context.Context, c models.Container) error {
 		if _, err := normalizeMAC(field, n.MACAddress); err != nil {
 			return err
 		}
-		holders, err := s.store.MACHolders(ctx, n.MACAddress, c.ID)
-		if err != nil {
+		if err := s.macHeld(ctx, c.ID, n); err != nil {
 			return err
-		}
-		if len(holders) > 0 {
-			h := holders[0]
-			return &models.Error{Code: models.CodeContainerMACInUse,
-				Message: fmt.Sprintf("the MAC address %s of NIC slot %d is also held by the %s %s (slot %d); give the NIC another address",
-					n.MACAddress, n.Slot, h.Kind, h.Name, h.Slot),
-				Details: map[string]any{"container_id": c.ID, "slot": n.Slot, "mac_address": n.MACAddress,
-					"held_by_kind": h.Kind, "held_by_id": h.ID, "held_by_name": h.Name}}
 		}
 	}
 	return nil
+}
+
+// checkMACsFree refuses a create, an update, or a clone whose NIC has a
+// MAC address another Skep jail or VM holds, with the start's
+// container_mac_in_use (409) and its held_by details, before anything is
+// stored (amendment u, finding 2). containerID is "" for a new jail. The
+// store refuses the same again when it writes the NICs.
+func (s *Service) checkMACsFree(ctx context.Context, containerID string, nics []models.ContainerNIC) error {
+	for _, n := range nics {
+		if err := s.macHeld(ctx, containerID, n); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// macHeld is container_mac_in_use when a Skep jail other than containerID,
+// or a Skep VM, holds the NIC's MAC address.
+func (s *Service) macHeld(ctx context.Context, containerID string, n models.ContainerNIC) error {
+	holders, err := s.store.MACHolders(ctx, n.MACAddress, containerID)
+	if err != nil {
+		return err
+	}
+	if len(holders) == 0 {
+		return nil
+	}
+	h := holders[0]
+	details := map[string]any{"slot": n.Slot, "mac_address": n.MACAddress,
+		"held_by_kind": h.Kind, "held_by_id": h.ID, "held_by_name": h.Name}
+	if containerID != "" {
+		details["container_id"] = containerID
+	}
+	return &models.Error{Code: models.CodeContainerMACInUse,
+		Message: fmt.Sprintf("the MAC address %s of NIC slot %d is also held by the %s %s (slot %d); give the NIC another address",
+			n.MACAddress, n.Slot, h.Kind, h.Name, h.Slot),
+		Details: details}
 }
 
 // newMAC generates a locally administered unicast address: 02 and five
