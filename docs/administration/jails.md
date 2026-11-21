@@ -165,9 +165,15 @@ failed rc) is appended to the console log after a line `--- shutdown ---`
 `jail -r`'s own standard output, of which the agent keeps the first
 32 KiB and the last 32 KiB in memory, with a `skep: N bytes discarded`
 line between them when there was more, and writes it after `jail -r`
-returns. A console log therefore holds at most about 384 KiB. What
-`/etc/rc.shutdown` writes to standard error is not kept. Its size never
-makes a stop fail, and neither does a failure to write it (the agent logs
+returns. What `/etc/rc.shutdown` writes to standard error follows after a
+line `--- shutdown stderr ---` (amendment q): its last 32 KiB, preceded by
+a `skep: N bytes discarded` line when there was more. Both marker lines
+are written even when their part is empty. The two streams are kept
+apart, so how their lines interleaved is lost. A console log therefore
+holds at most about 416 KiB. The shutdown output is written as the jail
+produced it: control and format characters are not removed from the
+console log, so view it with that in mind. Its size never makes a stop
+fail, and neither does a failure to write it (the agent logs
 `jail_shutdown_log_failed`). A removal that runs none of the jail's code
 (a refused or quarantined jail, or a start interrupted by the agent's
 restart) appends nothing. Since the next start truncates the log, after a
@@ -180,7 +186,9 @@ host; the jail's `/etc/rc.shutdown` therefore runs without its NICs. Then
 left, and after the stop timeout SIGKILL; the kernel then removes the
 jail and its devfs mount. A jail cannot refuse to stop, so there is no
 force stop. If `jail -r` fails, the task's error gives its exit status and
-the last line of its standard error, labelled
+the last line of its standard error, with control characters and Unicode
+format characters (category Cf, such as the bidirectional overrides)
+removed, labelled
 `jail output, last line of stderr: "..."` (or `no jail output on stderr`):
 that stream begins with what the jail's `/etc/rc.shutdown` wrote, so even
 its last line may be the jail's text. Control characters are removed and

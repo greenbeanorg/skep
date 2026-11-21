@@ -2007,3 +2007,19 @@ non-UTF-8 bytes removed, cut to 200 bytes on a character boundary;
 the error with the line as `jail output, last line of stderr: "..."`, or
 `no jail output on stderr`. Details in section 17 of
 [step10-progress.md](../../tests/integration/jails/results/step10-progress.md).
+
+**Amendment q, built (2026-11-21, merrick only).** `jail -r` also runs
+with the new `EnvCommand.StderrTail`: on success the runner writes the
+last `MaxOutput` (32 KiB) bytes of stderr to it, preceded by `skep: N
+bytes discarded` (as the first line, without the leading empty line) when
+more was written; nothing on a failure, and a failed write to it is not
+an error. `removeJail` appends, after the stdout section, `--- shutdown
+stderr ---` (on a line of its own) and that tail, in the same single
+write and under the same failure rules; both marker lines are written
+even when their part is empty. A failed `jail -r` still appends nothing.
+`cleanLine` also removes category Cf (`unicode.Cf`), so the stderr line
+of a failed `jail -r` in the task error and in `jail_remove_failed` has
+no bidi overrides or isolates. The console log itself is not cleaned:
+both of its shutdown sections keep the jail's bytes, like rc's output
+before them. Details in section 19 of
+[step10-progress.md](../../tests/integration/jails/results/step10-progress.md).

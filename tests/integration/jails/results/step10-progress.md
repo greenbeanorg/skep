@@ -1100,3 +1100,159 @@ log and the jail -r error line; and this section.
 
 No code was written in this session; points 2 and 4 of this list are the
 next build.
+
+## 19. Amendment q built (2026-11-21, merrick only)
+
+Points 2 and 4 of section 18, as decided in amendment q. Nothing ran on
+hearst; no API calls against it; no deploy; no PR. The code fitted the
+amendment; nothing was stopped on.
+
+### 19.1 Built
+
+1. **rc.shutdown's stderr in the console log** (`a1f4f2b`).
+   - New `EnvCommand.StderrTail` (an `io.Writer`, set only by
+     `removeJail`): after a **successful** run the runner writes to it
+     the last `MaxOutput` bytes of stderr (32 KiB, `ShutdownLogPart`, for
+     `jail -r`), preceded by `skep: N bytes discarded` when more was
+     written. The same `consoleLog` layout with a head of 0; with no head
+     the marker is the first line, without the leading empty line. It is
+     kept next to the 64 KiB stderr tail of the last-line mode (an
+     `io.MultiWriter`), so the failure line is unchanged. A failure writes
+     nothing to it, and a failed write to it is not an error.
+   - `removeJail` passes a buffer and appends, after the stdout section,
+     `--- shutdown stderr ---\n` and that tail, in the same single write
+     to `console.log` and under the same rules (`O_APPEND|O_CREATE|
+     O_NOFOLLOW|O_NONBLOCK`, 0600, regular files only; a failure logged as
+     `jail_shutdown_log_failed`, now with `stderr_bytes`, and never a
+     failed removal). The stderr marker starts on a line of its own (a
+     newline is added when the stdout section does not end with one) and
+     is written even when stderr was empty. Nothing is appended for a
+     discard or a failed `jail -r` (section 18 point 3).
+   - `RunEnv`'s options are built by a new `envRunOpts`, shared by the
+     FreeBSD runner and the tests' `shutdownRunner`.
+2. **Unicode format characters stripped** (`7335875`). `cleanLine` also
+   removes category Cf (`unicode.Is(unicode.Cf, r)`), among them
+   U+202A–U+202E, U+2066–U+2069, U+200B–U+200F, U+2060, U+FEFF, U+00AD.
+   It is the only place Skep cleans jail output for an error or a log
+   (the stderr line of a failed `jail -r`, in the task error and in
+   `jail_remove_failed`); see 19.4 for the places that have no cleanup at
+   all.
+3. **Docs** (this commit): jails.md (the console log and stop sections;
+   the log's maximum is now about 416 KiB), the security overview, the
+   OpenAPI stop and console-log descriptions (web types regenerated), and
+   an implementation note in ADR 0010.
+
+### 19.2 Tests (merrick)
+
+- New, hostops (`exec_unix_test.go`, real `/bin/sh` through
+  `runCommand`):
+  - `TestRunCommandStderrTail`: with and without the last-line mode:
+    short stderr whole; past the limit, the marker as the first line with
+    the right count and exactly the last 1000 bytes; under the limit, no
+    marker; exactly the limit, no marker; one byte over, `skep: 1 bytes
+    discarded`; a failure writes nothing and still reports its first or
+    last line; a failing writer does not fail the command; stdout
+    unchanged.
+  - `TestStopJailShutdownStderrPastTheBudget`: about 124 KiB on each
+    stream through `removeJail`: `console.log` is exactly rc's output +
+    `--- shutdown ---` + 32 KiB + marker + 32 KiB + `--- shutdown
+    stderr ---` + `skep: N bytes discarded` + the last 32 KiB; `jail -r`
+    run with `StderrTail` and a 32 KiB cap.
+- Changed: `TestStopJailShutdownOutputUnderTheBudget` (the stderr marker
+  in every case, plus four new cases: stdout and stderr, stdout without a
+  final newline, only stderr, and stderr with ESC and U+202E kept raw in
+  the console log); `TestStopJailShutdownOutputPastTheBudget` (ends with
+  the stderr marker); `TestShutdownLogWriteFailureStillRemoves` (the
+  shutdown writes to stderr too); `TestRunCommandStderrLastLine` (a bidi
+  case); `TestRemoveJailFailureReportsLastStderrLine` (a U+202E/U+202C
+  case, no ESC, CR, or bidi character in the error or the log,
+  `StderrTail` set, still nothing appended).
+- New or changed, hostops (`hostops_test.go`): `TestCleanLine` (seven Cf
+  cases: U+202E, U+202A–U+202E, U+2066–U+2069, other Cf, Cf around
+  spaces, only Cf, a cut measured after removal; and a check that no
+  control or Cf character survives any case);
+  `TestCleanLineRemovesAllFormatCharacters` (every rune of `unicode.Cf`).
+- Mutation checks run by hand (files restored from a scratch copy each
+  time): dropping the Cf test fails `TestCleanLine`,
+  `TestCleanLineRemovesAllFormatCharacters`, `TestRunCommandStderrLastLine`
+  and `TestRemoveJailFailureReportsLastStderrLine`; dropping `StderrTail`
+  from `jail -r` fails three tests; dropping the newline before the stderr
+  marker fails the "stdout without newline" case; keeping the marker's
+  leading newline with no head fails two tests; skipping the final write
+  of the stderr tail fails three tests.
+- Results: `go test ./... -count=1` passed (40 packages with tests);
+  `make lint` passed (gofmt, go vet for Linux and FreeBSD, staticcheck for
+  both); `GOOS=freebsd GOARCH=amd64 go test -c ./internal/hostops/`
+  compiled; `make web-check` passed three times in a row (15 files, 112
+  tests each).
+
+### 19.3 Changes not in the request (for approval)
+
+1. `envRunOpts` builds `RunEnv`'s options in `exec_unix.go`, used by the
+   FreeBSD runner and the tests' runner (the tests duplicated it before).
+2. The `--- shutdown stderr ---` line is written even when stderr was
+   empty (as the stdout marker is, 17.3 point 4).
+3. A newline is added before the stderr marker when the stdout section
+   does not end with one.
+4. With no head, `consoleLog` writes the discarded marker without its
+   leading empty line (only the stderr tail and the last-line buffer,
+   which goes to `io.Discard`, have no head).
+5. A failed write to `StderrTail` is ignored by the runner: the command
+   succeeded.
+6. `stderr_bytes` added to the `jail -r done` debug line and to
+   `jail_shutdown_log_failed`.
+7. Both sections go out in one write.
+8. The docs now say the console log is not cleaned (control and format
+   characters stay), and its maximum is about 416 KiB (was 384).
+
+### 19.4 Open points (not built; for a decision)
+
+1. **The console log keeps format characters** (and control characters,
+   as before). Amendment q's "alongside the existing control-character
+   cleanup" was read as `cleanLine`, the only cleanup of jail output; the
+   console log has none, and stripping only Cf from it would be
+   inconsistent. But the UI shows it in a `<pre>`, where the browser
+   applies bidi overrides, and `GET .../console-log` hands it to any
+   client. Options: (a) keep (documented); (b) strip Cf (and perhaps C0
+   but tab and newline, and C1) when the API serves it, leaving the file
+   raw; (c) only in the UI. I recommend (b).
+2. **Two other reports of jail-side output have no cleanup at all.** A
+   failed command in a template build jail (`RunBuildCommand`,
+   `jexec -l` running e.g. pkg inside the build jail) reports the first
+   line of its stderr raw in the error; `jail -c`'s first stderr line is
+   raw too (jail(8)'s own text, low risk). Option: run both through
+   `cleanLine`. I recommend it for the build jail at least.
+3. **`skepctl`'s `clean`** maps C0 and C1 to spaces but keeps Cf. Jail
+   output reaches it already cleaned; other server text does not.
+   Option: map Cf there as well. Low priority.
+
+### 19.5 Changes to the 17.5 hearst list (for approval)
+
+The list was approved under amendment q, but amendment q changes the
+expected results of some tests:
+
+- **Test 2:** add the new tests to the filter:
+  `-test.run 'ConsoleLog|MarkOverflow|ShutdownOutput|ShutdownLog|ShutdownStderr|DiscardAppends|StderrLastLine|StderrTail|LastStderrLine|CleanLine|LastLine' -test.v`.
+- **Test 4:** at the stop the log grows by at most about 96 KiB plus
+  markers (was 64 KiB).
+- **Test 6:** after a stop the console log has `--- shutdown ---`, the
+  base system's shutdown lines, then `--- shutdown stderr ---` (and
+  whatever rc.shutdown wrote to stderr).
+- **Test 7:** the layout ends with the `--- shutdown stderr ---` line.
+- **Test 8:** the expectation flips: the stderr line follows `---
+  shutdown stderr ---`.
+- **Test 10:** if the stop succeeds, the `fake ok` line appears after
+  `--- shutdown stderr ---`, raw (with its ESC byte; the console log is
+  not cleaned). Proposed: make the line `printf '\033[31mfake
+  \342\200\256ok\n' >&2` so a failing stop also shows U+202E removed from
+  the task error and from `jail_remove_failed` on FreeBSD.
+- **Proposed new test 11:** a test jail whose `/etc/rc.shutdown.local`
+  writes about 1 MiB to stderr: the stop succeeds, and the stderr section
+  is `skep: N bytes discarded` (N about 1 MiB less 32 KiB) and the last
+  32 KiB, ending with the last line written.
+
+### 19.6 Commits
+
+`7335875` feat(hostops): strip Unicode format characters from reported
+jail output; `a1f4f2b` feat(hostops): append rc.shutdown's stderr to the
+jail's console log; and the docs commit with this section.

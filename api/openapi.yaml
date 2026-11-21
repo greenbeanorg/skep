@@ -1799,8 +1799,9 @@ paths:
         `/etc/rc.shutdown` runs without its NICs. Its output is appended to
         the console log. If `jail -r` fails, the task error ends with the
         last line of its stderr, labelled `jail output, last line of
-        stderr: "..."`, control characters removed and at most 200 bytes;
-        that text may come from the jail (amendment p). `restart` is a stop
+        stderr: "..."`, control characters and Unicode format characters
+        (category Cf) removed and at most 200 bytes; that text may come
+        from the jail (amendments p and q). `restart` is a stop
         and a start.
       parameters:
         - $ref: "#/components/parameters/IdempotencyKey"
@@ -1851,8 +1852,11 @@ paths:
         last 64 KiB. After a stop, a `--- shutdown ---` line follows, then
         what `/etc/rc.shutdown` wrote to standard output: the first
         32 KiB and, if there was more, the same marker and the last
-        32 KiB (amendment p). The
-        content is written by the jail. The log is kept in the runtime
+        32 KiB (amendment p). Then a `--- shutdown stderr ---` line and
+        the last 32 KiB of what it wrote to standard error, preceded by
+        the marker when there was more (amendment q). The
+        content is written by the jail and is not cleaned: it may hold
+        control and format characters. The log is kept in the runtime
         directory and is gone after a host reboot.
       parameters:
         - $ref: "#/components/parameters/Background"
