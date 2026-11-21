@@ -80,6 +80,15 @@ async function shoot(page: Page, name: string) {
 
 test.describe.configure({ mode: "serial" });
 
+// Against a real host (SKEP_E2E_EXTERNAL=1) only the header check is safe:
+// the other tests expect the local stack's fixtures and create the viewer
+// "vera" with a fixed password. e2e/host.spec.ts is the read-only pass for
+// a real host.
+const HOST_SAFE = new Set(["the interface is served with its headers and the API stays JSON"]);
+test.beforeEach(({}, testInfo) => {
+  testInfo.skip(process.env.SKEP_E2E_EXTERNAL === "1" && !HOST_SAFE.has(testInfo.title), "needs the local stack; see e2e/host.spec.ts");
+});
+
 test("the interface is served with its headers and the API stays JSON", async ({ request }) => {
   const root = await request.get("/nodes/node-1");
   expect(root.status()).toBe(200);

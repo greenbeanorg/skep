@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { lazy, useEffect } from "react";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router";
 
 import { PERMISSIONS } from "@/api/types";
@@ -8,22 +8,26 @@ import { SessionProvider, useSession } from "@/app/session";
 import { SystemProvider } from "@/app/system";
 import { ThemeProvider } from "@/app/theme";
 import { AppShell } from "@/layouts/AppShell";
-import { AccountPage } from "@/pages/AccountPage";
-import { ContainerDetailPage } from "@/pages/containers/ContainerDetailPage";
-import { ContainersPage } from "@/pages/containers/ContainersPage";
-import { DashboardPage } from "@/pages/DashboardPage";
 import { ForbiddenPage } from "@/pages/ForbiddenPage";
 import { LoginPage } from "@/pages/LoginPage";
-import { NodesPage } from "@/pages/NodesPage";
 import { NotFoundPage } from "@/pages/NotFoundPage";
 import { PlannedPage } from "@/pages/PlannedPage";
-import { SettingsPage } from "@/pages/SettingsPage";
-import { StoragePage } from "@/pages/StoragePage";
-import { TaskDetailPage } from "@/pages/TaskDetailPage";
-import { TasksPage } from "@/pages/TasksPage";
-import { UsersPage } from "@/pages/UsersPage";
-import { VMDetailPage } from "@/pages/vms/VMDetailPage";
-import { VMsPage } from "@/pages/vms/VMsPage";
+
+// Pages are split by route: each is fetched the first time it is shown
+// (AppShell's PageBoundary shows a placeholder meanwhile). The shell, the
+// login page and the small fallback pages stay in the main bundle.
+const AccountPage = lazy(() => import("@/pages/AccountPage").then((m) => ({ default: m.AccountPage })));
+const ContainerDetailPage = lazy(() => import("@/pages/containers/ContainerDetailPage").then((m) => ({ default: m.ContainerDetailPage })));
+const ContainersPage = lazy(() => import("@/pages/containers/ContainersPage").then((m) => ({ default: m.ContainersPage })));
+const DashboardPage = lazy(() => import("@/pages/DashboardPage").then((m) => ({ default: m.DashboardPage })));
+const NodesPage = lazy(() => import("@/pages/NodesPage").then((m) => ({ default: m.NodesPage })));
+const SettingsPage = lazy(() => import("@/pages/SettingsPage").then((m) => ({ default: m.SettingsPage })));
+const StoragePage = lazy(() => import("@/pages/StoragePage").then((m) => ({ default: m.StoragePage })));
+const TaskDetailPage = lazy(() => import("@/pages/TaskDetailPage").then((m) => ({ default: m.TaskDetailPage })));
+const TasksPage = lazy(() => import("@/pages/TasksPage").then((m) => ({ default: m.TasksPage })));
+const UsersPage = lazy(() => import("@/pages/UsersPage").then((m) => ({ default: m.UsersPage })));
+const VMDetailPage = lazy(() => import("@/pages/vms/VMDetailPage").then((m) => ({ default: m.VMDetailPage })));
+const VMsPage = lazy(() => import("@/pages/vms/VMsPage").then((m) => ({ default: m.VMsPage })));
 
 /** Renders a page only when the role allows it; the server still decides. */
 function Guarded({ permission, children }: { permission: string; children: React.ReactNode }) {

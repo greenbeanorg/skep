@@ -32,8 +32,8 @@ import {
 import { LimitsFields } from "./LimitsFields";
 import { NICFields } from "./NICFields";
 
-export function withHint(err: ApiError): ApiError {
-  const hint = containerErrorHint(err.code);
+export function withHint(err: ApiError, context: "create" | "existing" = "existing"): ApiError {
+  const hint = containerErrorHint(err.code, context);
   return hint ? Object.assign(err, { message: `${err.message} ${hint}` }) : err;
 }
 
@@ -97,7 +97,7 @@ export function CreateContainerDialog({ onClose, onCreated }: { onClose: () => v
     try {
       onCreated(await api.createContainer(req));
     } catch (err) {
-      setError(withHint(toApiError(err)));
+      setError(withHint(toApiError(err), "create"));
     } finally {
       setBusy(false);
     }

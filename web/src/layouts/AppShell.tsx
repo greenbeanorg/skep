@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, NavLink, Outlet, useLocation } from "react-router";
 
+import { PageBoundary } from "@/components/page-boundary";
+
 import { useConnectivity } from "@/app/connectivity";
 import { visibleNav } from "@/app/navigation";
 import { sessionWarning, useIdentity, useSession, type SessionWarning } from "@/app/session";
@@ -308,7 +310,9 @@ export function AppShell() {
         <SessionNotice />
         <main className="flex-1 overflow-y-auto">
           <div className="mx-auto w-full max-w-6xl px-4 py-6 sm:px-6">
-            <Outlet />
+            <PageBoundary resetKey={location.pathname}>
+              <Outlet />
+            </PageBoundary>
           </div>
         </main>
       </div>
