@@ -1193,6 +1193,20 @@ Amendments made at acceptance, worked into the text:
     `printf`, and the new test 11. Added, test 12: a test jail whose rc
     writes U+202E and a C1 character to its output; `console.log` on disk
     keeps them, and the API's console-log response has them stripped.
+- **s. Decisions on the amendment r build** (Andy, 2026-11-21, from
+  section 20 of
+  [step10-progress.md](../../tests/integration/jails/results/step10-progress.md)).
+  - **Approved as built:** the seven changes outside the request (section
+    20.3).
+  - **The host-side build steps' stderr is cleaned too** (20.4 point 1):
+    `cleanStderr` (`cleanLine`) is applied to the first stderr line of a
+    failed `pkg install`, `pkg info --raw`, and `tar -x` in template
+    build errors.
+  - **The changes to the hearst list are approved** (section 20.5): test
+    2's `-test.run` filter replaces `CleanLine` with `Clean` and adds
+    `BuildJailExec`; test 10 checks both `console.log` on disk (`sudo cat
+    -v`, the ESC byte kept) and the API's console-log response (no ESC,
+    no U+202E).
 
 ## Implementation notes
 
