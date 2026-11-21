@@ -162,12 +162,13 @@ jobs:
           make build-freebsd
 
       # The browser tests drive a real skep-api with the interface embedded
-      # and the agent's test build (scripts/e2e-stack.sh).
+      # and the agent's test build (scripts/e2e-stack.sh), trusting it by
+      # its key pin (scripts/web-e2e.sh; ADR 0010 amendment x).
       - name: Install Playwright's browser
         run: cd web && npx playwright install --with-deps chromium
 
       - name: Browser tests
-        run: cd web && npm run test:e2e
+        run: ./scripts/web-e2e.sh
 
       - name: Upload the browser test report
         if: failure()

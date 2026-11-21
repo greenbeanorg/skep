@@ -117,8 +117,8 @@ web-build: ## Build the web interface and copy it to $(WEBUI_DIST) for embedding
 	rm -rf $(WEBUI_DIST)
 	cp -R web/dist $(WEBUI_DIST)
 
-web-e2e: build ## Run the browser tests against skep-api with the interface embedded (needs Playwright's browsers)
-	cd web && npm run test:e2e
+web-e2e: build ## Run the browser tests against skep-api with the interface embedded, trusting it by its key pin (needs Playwright's browsers)
+	./scripts/web-e2e.sh
 
 clean: ## Remove build output, the embedded interface copy, and the development data directory
 	rm -rf $(BIN_DIR) .skep-dev web/dist $(WEBUI_DIST)

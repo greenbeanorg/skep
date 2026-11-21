@@ -7,12 +7,13 @@
 # the local command, as an operator would.
 #
 # Playwright starts this script (web/playwright.config.ts) and waits for
-# the health endpoint. It is a development tool on a development machine
+# the health endpoint; scripts/web-e2e.sh starts Playwright. It is a development tool on a development machine
 # and proves nothing about FreeBSD.
 #
 #   SKEP_E2E_LISTEN    skep-api's listen address (default 127.0.0.1:8443)
 #   SKEP_E2E_PASSWORD  the administrator's password (default below)
 #   SKEP_BIN_DIR       where the binaries are (default bin)
+#   SKEP_E2E_DIR       the state directory to use (default: a new one)
 set -eu
 
 cd "$(dirname "$0")/.."
@@ -36,7 +37,16 @@ if [ ! -x "${bin}/skep-agent-testbuild" ]; then
 fi
 
 # A short directory: the socket path is limited to about 104 bytes.
-dir="$(mktemp -d /tmp/skep-e2e.XXXXXX)"
+# scripts/web-e2e.sh passes its own (SKEP_E2E_DIR), with skep-api's key
+# already made so that the tests can pin it; that directory is its to
+# remove.
+if [ -n "${SKEP_E2E_DIR:-}" ]; then
+	dir="${SKEP_E2E_DIR}"
+	own_dir=""
+else
+	dir="$(mktemp -d /tmp/skep-e2e.XXXXXX)"
+	own_dir=1
+fi
 agent_pid=""
 api_pid=""
 cleanup() {
@@ -44,7 +54,7 @@ cleanup() {
 	[ -n "${api_pid}" ] && kill "${api_pid}" 2>/dev/null || true
 	[ -n "${agent_pid}" ] && kill "${agent_pid}" 2>/dev/null || true
 	wait 2>/dev/null || true
-	rm -rf "${dir}"
+	if [ -n "${own_dir}" ]; then rm -rf "${dir}"; fi
 }
 trap cleanup INT TERM EXIT
 

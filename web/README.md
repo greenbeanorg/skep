@@ -92,6 +92,29 @@ end a session underneath an open page, and assert that the CSP produces no
 violation. Screenshots of every page in both themes land in
 `test-results/screens/`.
 
+`skep-api`'s certificate is trusted by its public key pin, never by
+ignoring certificate errors (ADR 0010 amendment x). `make web-e2e` runs
+`scripts/web-e2e.sh`, which makes the stack's key first (`skep-api tls
+regenerate`), takes the pin from `skep-api tls fingerprint`, and starts
+Playwright with `SKEP_E2E_PIN` (Chromium gets
+`--ignore-certificate-errors-spki-list`) and `NODE_EXTRA_CA_CERTS` set to
+the certificate carrying that key (Playwright's Node-side `request`
+client verifies against it). `npx playwright test` on its own refuses to
+start. `e2e/tls-pin.spec.ts` checks that Chromium refuses the server
+without the pin and with another key's pin.
+
+Against a `skep-api` that already runs (for example on `hearst`, with the
+agent's test build behind it):
+
+```sh
+SKEP_E2E_EXTERNAL=1 SKEP_E2E_LISTEN=10.79.20.170:8443 \
+  SKEP_E2E_PIN=sha256:<from skep-api tls fingerprint on that host> \
+  ./scripts/web-e2e.sh
+```
+
+The wrapper fetches the served certificate, refuses it unless its key
+matches the pin (`scripts/e2e-trust.mjs`), and only then trusts it.
+
 ## Dependency audit
 
 `npm audit` on 2026-11-13, with the committed lockfile: **0
