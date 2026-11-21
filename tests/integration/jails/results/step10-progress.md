@@ -593,6 +593,19 @@ anything.
 - SR-I5: the kernel attack surface of a default jail (`/dev/zfs`,
   `/dev/fuse`, `/dev/pf`, raw sockets, BPF for DHCP).
 - SR-I6: the build jail can read the host routing table.
+- Run 3 (26.4 item 2, amendment w): cloning a started static jail without
+  addressing gets 422 `clone_addressing_required`; check
+  `container_started` first.
+- Run 3 (26.4 item 3, amendment w): the API accepts nameservers on a jail
+  with no NIC; the UI offers them only with all-static NICs.
+- Run 3 (26.4 item 4, amendment w): API design, PUT replace versus merge
+  semantics (an omitted `nameservers` is kept).
+- Run 3 (26.4 item 6, amendment w): the forced-removal failure line is
+  always jail(8)'s own on 15.1; its cleaning is covered only by unit tests.
+- Run 3 (26.4 item 7, amendment w): two JSON log records seen once on one
+  `daemon.log` line; cause not established.
+- Run 3 (26.4 item 10, amendment w): cosmetic `route: ... File exists`
+  loopback lines at every jail start.
 - SR-02 is deferred to the OPNsense spoofing tests, not backlog.
 
 ### 13.9 Hearst validation list, added (each needs Andy's approval)
@@ -2275,3 +2288,28 @@ the jail's `/etc/rc.shutdown`).
 ### 26.5 Commits
 
 The commit with this section and the record.
+
+### 26.6 Andy's answers (2026-11-21), recorded as amendment w
+
+1. **Run 3's changes outside the request** are approved: the temporary
+   `bridge1` entry in `agent.json`, u5 reusing the SR-06 approval of
+   run 2, and the extra test jails.
+2. **Fixed before merge:** items 1, 5, 8, 9 (below).
+3. **Backlog:** items 2, 3, 4, 6, 7, 10, added to the backlog list in 13.8.
+
+Status of the 26.4 items:
+
+| Item | Decision | Status |
+|---|---|---|
+| 1. `disk_quota` below usage: 202, then generic `invalid_request` | Fix before merge: refused at submission, 422, coded (`container_disk_quota_below_usage` or similar) | Open |
+| 2. Started static clone without addressing: 422 `clone_addressing_required` | Backlog | Backlog (13.8) |
+| 3. Nameservers on a jail with no NIC: API accepts, UI hides | Backlog | Backlog (13.8) |
+| 4. Omitted `nameservers` kept on PUT | Backlog (API design: PUT vs merge semantics) | Backlog (13.8) |
+| 5. `/metrics` is a sample up to 30 s old | Fix before merge: say so in jails.md | Open |
+| 6. Failure line is always jail(8)'s on 15.1 | Backlog | Backlog (13.8) |
+| 7. Two JSON records on one `daemon.log` line | Backlog | Backlog (13.8) |
+| 8. Docs say the UI is pending validation | Fix before merge: jails.md and web-ui.md state the hearst validation (2026-11-21, §26) | Open |
+| 9. Playwright config uses `ignoreHTTPSErrors` | Fix before merge: trust by the TLS key pin | Open |
+| 10. `route: ... File exists` loopback lines | Backlog | Backlog (13.8) |
+
+Only the answers were recorded in this session; no code was written.

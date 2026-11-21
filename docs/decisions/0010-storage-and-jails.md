@@ -1293,6 +1293,37 @@ Amendments made at acceptance, worked into the text:
     addition to the unprivileged hostops test binary; u4
     (`container_remove_failed`) stays merrick-only.
 
+- **w. Decisions on hearst validation run 3** (Andy, 2026-11-21, from
+  section 26 of
+  [step10-progress.md](../../tests/integration/jails/results/step10-progress.md)).
+  - **Approved:** run 3's changes outside the request (section 26.1 and
+    the stop report): the temporary `bridge1` entry in `agent.json`'s
+    `network.bridges` (approved during the run, restored with the same
+    sha256); u5 run with run 2's SR-06 method (`skep_api` stopped, a
+    one-row `agent.db` update) under the u5 approval; the extra test jails
+    made to repeat checks after script mistakes.
+  - **Fixed before the merge of 7b** (26.4 items 1, 5, 8, 9):
+    - (1) An update whose `limits.disk_quota` is below what the jail's
+      root already references is refused at submission with 422 and a
+      coded error (`container_disk_quota_below_usage` or similar), instead
+      of 202 and a task that fails with the generic `invalid_request`.
+    - (5) jails.md says `/metrics` values are a sample and can be up to
+      30 seconds old.
+    - (8) jails.md and web-ui.md no longer say the web UI is pending
+      validation against a real agent: it was validated on `hearst` on
+      2026-11-21 (section 26).
+    - (9) The repository's Playwright configuration trusts skep-api's
+      certificate by its TLS key pin (SPKI), not `ignoreHTTPSErrors`.
+  - **Backlog** (26.4 items 2, 3, 4, 6, 7, 10): cloning a started static
+    jail without addressing reports `clone_addressing_required` rather
+    than `container_started`; nameservers accepted by the API on a jail
+    with no NIC while the UI offers them only with all-static NICs; PUT
+    replace-versus-merge semantics (an omitted `nameservers` is kept), an
+    API design question; the forced-removal failure line is always
+    jail(8)'s own on 15.1, so its cleaning is covered only by unit tests;
+    two JSON log records once seen on one `daemon.log` line; the cosmetic
+    `route: ... File exists` loopback lines at every jail start.
+
 ## Implementation notes
 
 Recorded during the build of 7a (from 2026-11-14). The decisions above
