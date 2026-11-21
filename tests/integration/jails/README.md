@@ -29,7 +29,7 @@ run is **pending FreeBSD validation**, whatever CI says.
 | Symlink rule: a started jail cannot be updated in a way that writes into its tree; `O_RESOLVE_BENEATH` with planted links fails safely (natively) | **passed** (2026-11-16) | [step7-validation.txt](results/step7-validation.txt) §0, 9 |
 | Permissions (jails): operator allowed `container:*`, refused `storage:write`; viewer reads and is refused every write; refusals audited | **passed** (2026-11-16) | [step7-validation.txt](results/step7-validation.txt) §11 |
 | Jail networking (including epair clean-up and spoofing), orphaned epairs, `started_once` after a rollback, limits, clone identity, monitoring | pending (steps 8 to 10) | |
-| Spoofing from a jail (SR-02): forged source IPs on and off the subnet, a changed MAC, an address claim with ARP | **measured** (2026-11-21): every forged frame passed the host bridge. Decided in ADR 0010 amendment y: host-side enforcement per port, built after M7b (release blocker); its proof re-runs T1 to T5 on `bridge1` | [step10-progress.md](results/step10-progress.md) §31, §32 |
+| Spoofing from a jail (SR-02): forged source IPs on and off the subnet, a changed MAC, an address claim with ARP | **measured** (2026-11-21): every forged frame passed the host bridge. Decided in ADR 0010 amendment y: host-side enforcement per port, built after M7b (release blocker); its proof re-runs T1 to T5 on `bridge1`. **M7c probe** (2026-11-21): ipfw layer 2 on the bridge enforces MAC, IPv4 source and IPv6 drop per port; neither pf nor ipfw can check ARP payloads | [step10-progress.md](results/step10-progress.md) §31, §32; [m7c-probe.md](results/m7c-probe.md) |
 
 Not verifiable on this host and pending regardless: a ZFS-root host; a host
 installed from distribution sets (the `dist` source is checked, the host
@@ -74,4 +74,17 @@ test jail by hand, and is never part of a shipped binary:
 GOOS=freebsd GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -tags skep_testtasks \
     -o rawping ./tests/integration/jails/tools/rawping
 go test -tags skep_testtasks ./tests/integration/jails/tools/...   # packet builder
+```
+
+`tools/rawl2` writes hand-built Ethernet frames through `/dev/bpf`: ARP
+with any sender address in the payload, IPv4 ICMP and a DHCP DISCOVER from
+0.0.0.0 with any source MAC, and an ICMPv6 echo to ff02::1. It is the
+layer-2 sender for the M7c anti-spoofing probe
+([results/m7c-probe.md](results/m7c-probe.md)). It needs bpf in the jail.
+DHCP jails have it (devfs ruleset 6001); static jails do not (ruleset 5).
+Same build tag and rules as `rawping`:
+
+```sh
+GOOS=freebsd GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -tags skep_testtasks \
+    -o rawl2 ./tests/integration/jails/tools/rawl2
 ```
