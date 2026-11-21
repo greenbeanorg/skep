@@ -961,9 +961,11 @@ export interface paths {
          *     directory; the task result and the audit entry list every dataset
          *     destroyed. The jail must be stopped (`container_not_stopped`),
          *     except a quarantined one (`state` `failed`), whose jail the task
-         *     first removes without running `/etc/rc.shutdown`; if that removal
-         *     fails again, the task fails with `container_quarantined` and the
-         *     jail stays quarantined.
+         *     first removes without running `/etc/rc.shutdown` (with `jail -R`
+         *     when `jail -r` fails); if that removal fails again, the task fails
+         *     with `container_remove_failed` (both `jail -r` and `jail -R`
+         *     failed) or `container_quarantined`, and the jail stays
+         *     quarantined (amendment u).
          */
         delete: operations["deleteContainer"];
         options?: never;
@@ -1016,12 +1018,17 @@ export interface paths {
          *     jail cannot refuse, so there is no force stop. A stop destroys the
          *     jail's epairs before the jail is removed, so the jail's
          *     `/etc/rc.shutdown` runs without its NICs. Its output is appended to
-         *     the console log. If `jail -r` fails, the task error ends with the
-         *     last line of its stderr, labelled `jail output, last line of
-         *     stderr: "..."`, control characters and Unicode format characters
-         *     (category Cf) removed and at most 200 bytes; that text may come
-         *     from the jail (amendments p and q). `restart` is a stop
-         *     and a start.
+         *     the console log. If `jail -r` fails, times out, or leaves the
+         *     jail, the agent appends rc.shutdown's output and a `--- jail -r
+         *     failed: <line> ---` line (the last line of its stderr, control
+         *     characters and Unicode format characters (category Cf) removed,
+         *     at most 200 bytes; that text may come from the jail) to the
+         *     console log, removes the jail with `jail -R` (none of its code
+         *     runs), and the stop succeeds; the agent logs
+         *     `container_stop_forced`. If `jail -R` fails too, the task fails
+         *     with `container_remove_failed`, whose message gives both
+         *     commands' cleaned last stderr lines (amendments p, q, and u).
+         *     `restart` is a stop and a start.
          */
         post: operations["containerAction"];
         delete?: never;
@@ -1633,7 +1640,7 @@ export interface components {
         ContainerNICSpec: {
             /** @description An allow-listed bridge (network.bridges). */
             bridge: string;
-            /** @description Generated (02:xx:xx:xx:xx:xx) when left out; on an update, the slot keeps its MAC. A given address must be unicast, locally administered (the 0x02 bit of the first byte set), and not all zeroes (`container_mac_invalid`, 422, on create, update, and clone; ADR 0010 amendment n). A malformed one is `invalid_request`. */
+            /** @description Generated (02:xx:xx:xx:xx:xx) when left out; on an update, the slot keeps its MAC. A given address must be unicast, locally administered (the 0x02 bit of the first byte set), and not all zeroes (`container_mac_invalid`, 422, on create, update, and clone; ADR 0010 amendment n). A malformed one is `invalid_request`. One that another Skep jail or a Skep VM holds is `container_mac_in_use` (409) on create, update, and clone, with `held_by_kind` (`container` or `vm`), `held_by_id`, and `held_by_name` in the details, as at start (amendment u). */
             mac_address?: string;
             ipv4?: components["schemas"]["ContainerIPv4"];
         };
@@ -2410,6 +2417,7 @@ export interface components {
          *     `container_not_provisioned`, `container_started`,
          *     `container_start_failed`, `container_address_in_use`,
          *     `container_mac_in_use`, `container_quarantined`,
+         *     `container_remove_failed`,
          *     `container_locked_memory_exhausted`, `epair_unavailable`, `rctl_unavailable`, `devfs_ruleset_conflict`.
          */
         VMConflict: {

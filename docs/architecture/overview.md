@@ -346,7 +346,8 @@ skep-agent
                         start, stop, restart), observation from jls
    internal/hostops     Jails: the 0700 <root>/jail parent, zfs clone of
                         @skep-base, the jail.conf renderer and the baseline
-                        check, jail -c / jail -r, the O_RESOLVE_BENEATH writer
+                        check, jail -c / jail -r (jail -R when jail -r fails,
+                        amendment u), the O_RESOLVE_BENEATH writer
    internal/database    ContainerStore (the containers table of agent/0001
                         and agent/0005)
 ```

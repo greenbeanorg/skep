@@ -521,6 +521,16 @@ Skep fixes and nobody can change through the API
   U+202A–U+202E and U+2066–U+2069) removed, at most 200 bytes,
   and labelled as jail output, since the jail writes the start of that
   stream.
+- **A jail cannot make itself unremovable (amendment u).** The jail's
+  root controls `/etc/rc.shutdown`; one that exits non-zero or hangs
+  makes `jail -r` fail and leaves the jail. The agent then removes it with
+  `jail -R`, which runs none of the jail's code and no `exec.*` command,
+  unmounts its devfs by fsid, and destroys its epairs and RCTL rules; the
+  stop succeeds and is logged as `container_stop_forced`. The
+  `--- jail -r failed: ... ---` line the agent appends to the console log
+  carries the cleaned stderr line, so the jail cannot use it to inject
+  lines or control characters. Only when `jail -R` also fails does the
+  stop or delete fail, with `container_remove_failed`.
 - **Locked memory has a host total (amendment o, SR-04).** `mlock` needs
   `limits.locked_memory`, and the sum of `locked_memory` over the running
   jails is bounded by `containers.max_locked_memory_bytes` (a quarter of

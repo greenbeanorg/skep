@@ -2152,3 +2152,30 @@ stderr line that `templates` puts into `template_build_failed` has no
 control or format characters and is at most 200 bytes. Other host
 commands' stderr lines are unchanged. Details in section 21 of
 [step10-progress.md](../../tests/integration/jails/results/step10-progress.md).
+
+**Amendment u, built (2026-11-21, merrick only).** `removeJail` runs
+`jail -r` with the new `EnvCommand.OutputOnFailure`, so a failed or
+timed-out run still returns rc.shutdown's marked stdout and writes its
+stderr tail; a runner timeout is now a `*TimeoutError` (same message)
+carrying the cleaned last stderr line. When `jail -r` fails, times out,
+or exits 0 but leaves the jail, both shutdown sections are appended (for
+a removal with `exec.stop`) followed by `--- jail -r failed: <line> ---`
+in the same write, and `forceRemove` runs `jail -R <name>` (own 30 s
+context, detached from the caller's cancellation), confirms the jail is
+gone, unmounts the devfs on `<root>/dev` by fsid, destroys the epairs,
+removes the RCTL rules, and logs `container_stop_forced`; the console log
+and run directory stay. A caller's cancellation is not forced. If `jail
+-R` fails or leaves the jail, the removal returns `container_remove_failed`
+(409 when a request is refused with it) with both cleaned lines; the
+delete of a quarantined jail keeps that code. The fallback applies to
+every removal (stop, the removal after a failed rc, and discards, which
+append nothing), so a jail is quarantined only when `jail -R` fails too.
+Probe (d): `exec.timeout` (the start timeout, 120 s by default) already
+bounds `exec.stop`, and the runner kills `jail -r` after start + stop +
+30 s; no new timeout was added. The task model has no warnings, so a
+forced stop shows in the agent log and the console log only. Finding 2:
+create, update, and clone check `MACHolders` before anything is stored
+and return `container_mac_in_use` (409) with `held_by_kind`, `held_by_id`,
+and `held_by_name`, for a VM or another jail; the store's in-transaction
+check returns the same code. Details in section 25 of
+[step10-progress.md](../../tests/integration/jails/results/step10-progress.md).

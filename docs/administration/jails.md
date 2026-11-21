@@ -81,7 +81,11 @@ there fails the task instead of blocking it (ADR 0010 amendment n, SR-09).
 or a clone, must be unicast, locally administered (the `0x02` bit of the
 first byte set: the second hex digit is 2, 6, A, or E), and not all
 zeroes; anything else is refused with `container_mac_invalid` (422).
-Left out, Skep generates `02:` and five random bytes. At every start,
+Left out, Skep generates `02:` and five random bytes. A MAC address
+that another Skep jail or a Skep VM already holds is refused at create,
+update, and clone with `container_mac_in_use` (409), whose details name
+the holder (`held_by_kind` `container` or `vm`, `held_by_id`,
+`held_by_name`), as at start (amendment u). At every start,
 before any epair is created, the agent also refuses
 (`container_mac_in_use`) a MAC address that a Skep VM holds, or that is
 already present on the NIC's bridge: the bridge's own address, a member
@@ -196,18 +200,48 @@ host; the jail's `/etc/rc.shutdown` therefore runs without its NICs. Then
 `jail -r` runs `/etc/rc.shutdown`, sends SIGTERM to what is
 left, and after the stop timeout SIGKILL; the kernel then removes the
 jail and its devfs mount. A jail cannot refuse to stop, so there is no
-force stop. If `jail -r` fails, the task's error gives its exit status and
-the last line of its standard error, with control characters and Unicode
-format characters (category Cf, such as the bidirectional overrides)
-removed, labelled
-`jail output, last line of stderr: "..."` (or `no jail output on stderr`):
-that stream begins with what the jail's `/etc/rc.shutdown` wrote, so even
-its last line may be the jail's text. Control characters are removed and
-the line is cut to 200 bytes; the agent logs it as `jail_output` in a
-`jail_remove_failed` line (amendment p). The timeout is `containers.stop_timeout_seconds` (default 10)
-or the request's `timeout` (1 to 300).
+force stop. The timeout is `containers.stop_timeout_seconds` (default 10)
+or the request's `timeout` (1 to 300). `/etc/rc.shutdown` itself is
+bounded by `exec.timeout`, which is `containers.start_timeout_seconds`
+(default 120), and the agent kills `jail -r` after the start timeout plus
+the stop timeout plus 30 seconds.
 
-**Delete.** The jail must be stopped, or quarantined (above). Skep unmounts a devfs a removal
+**Skep can always remove its jails** (amendment u). The jail's root
+controls its `/etc/rc.shutdown`, and one that exits non-zero, or hangs,
+makes `jail -r` fail without removing the jail. When `jail -r` fails,
+times out, or exits 0 but leaves the jail, the agent:
+
+1. appends `/etc/rc.shutdown`'s output to the console log as for a
+   successful stop (the `--- shutdown ---` and `--- shutdown stderr ---`
+   sections, with what it wrote until it failed or was killed), then the
+   line `--- jail -r failed: <line> ---`, where `<line>` is the last line
+   of `jail -r`'s standard error (`no jail output on stderr` when there
+   was none; `timed out after <duration>, ...` for a timeout);
+2. removes the jail with `jail -R`, which runs no `exec.*` command and none
+   of the jail's code: the kernel kills every process left in the jail;
+3. does the cleanup `jail -r` would have done: the devfs left on
+   `<root>/dev` is unmounted by its fsid, the epairs are destroyed, and
+   the RCTL rules removed. The console log and the runtime directory stay.
+
+The stop then succeeds. The agent logs `jail_remove_failed` (with
+`jail_output`, the line) and then `container_stop_forced` at WARN; the
+task result does not carry a warning (tasks have none in this release),
+so the agent log and the console log are where a forced stop shows. The
+line has control characters and Unicode format characters (category Cf,
+such as the bidirectional overrides) removed and is cut to 200 bytes:
+`jail -r`'s standard error begins with what the jail's `/etc/rc.shutdown`
+wrote, so even its last line may be the jail's text. If `jail -R` fails
+too, or leaves the jail, the stop (or restart) fails with
+`container_remove_failed`, whose message gives both commands' last stderr
+lines, cleaned the same way; the agent logs `container_remove_failed` at
+ERROR. The same fallback applies to every removal Skep makes: the removal
+after a failed `/etc/rc`, and the removals without `exec.stop` of a
+refused, quarantined, or half-started jail (which append nothing to the
+console log). A jail is quarantined only when `jail -R` fails as well.
+
+**Delete.** The jail must be stopped, or quarantined (above); when
+the removal of a quarantined jail fails even with `jail -R`, the delete
+fails with `container_remove_failed` and the jail stays quarantined. Skep unmounts a devfs a removal
 outside Skep left on its `<root>/dev` (below), then destroys its dataset
 and snapshots and its runtime directory. A template with jails cloned from it
 cannot be deleted.
@@ -322,6 +356,25 @@ everything else on the host, **bhyve VMs included**: a VM whose guest
 memory is wired (`bhyve -S`, `memory.wired`) draws from the same pool.
 Skep's VMs do not wire their memory in this release, but leave room for
 VMs and other wired memory when you raise the setting.
+
+**One process locks at most its login class's limit** (amendments t and
+u). Before the RCTL `memorylocked` rule, mlock(2) checks the process's
+own RLIMIT_MEMLOCK, which comes from the jail's login classes
+(`/etc/login.conf` in the jail; the defaults on 15.1):
+
+- `/etc/rc`, which Skep starts with `jexec -l -U root`, `rc.local`, and
+  their children, and `jexec -U root`, get the `root` class: unlimited.
+- rc.d services started through rc.subr get the `daemon` class, 128 MiB:
+  rc.subr applies it (`limits -C daemon`) to every service it starts. The
+  jail's administrator raises it per service in the jail's `rc.conf`, with
+  `<name>_limits="-l <size>"` (for example `postgresql_limits="-l 2g"`) or
+  `<name>_login_class=<class>`.
+- Other logins, and `jexec` without `-U`, get `default`, 64 KiB.
+
+So a service that locks more than 128 MiB needs that setting in its jail
+even when `limits.locked_memory` is higher. `limits.locked_memory` stays
+the bound for the whole jail. Skep does not change these classes: after
+the first start the jail's tree is its administrator's.
 
 **Usage.** `GET /api/v1/metrics` lists every jail with the space of its
 root (`disk_used_bytes`, snapshots included, and `disk_referenced_bytes`,
