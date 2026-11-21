@@ -2616,3 +2616,128 @@ fix(containers): refuse a create whose disk quota is below the
 template's size; `9059cf9` test(web): trust skep-api by its key pin in
 the browser tests; `dedcc2d` docs(jails): name the create-time disk quota
 refusal; and the commit with this section.
+
+## 29. Run 4 results (hearst, 2026-11-21)
+
+Hearst validation run 4: the quota steps of 27.6 (1–8: update path,
+create path, API and UI) and the browser tests against hearst through
+`scripts/web-e2e.sh` in external mode (amendment x, option c), with its
+trust controls. `b61e578`, the pushed head of `feat/m7b-templates`,
+deployed with `scripts/deploy-test.sh`. Run under CLAUDE.md "Autonomy and
+standing approvals"; the prompt named no Proxmox snapshot, and the run
+was attended. API calls from merrick as `s7admin` (quota) and `s7viewer`
+(reads), at most one login per user per script, curl with `--cacert` (the
+certificate `e2e-trust.mjs fetch` accepted only because its key matched
+the pin) and `--pinnedpubkey` (`779cc5ec…`, equal to `skep-api tls
+fingerprint`), no `-k` (29.4, item 1). Record (commands and output):
+[step10-hearst-run4.txt](step10-hearst-run4.txt).
+
+### 29.1 Pre-check and host changes
+
+- Pre-check as expected: `8d65b9f` (agent, API, skepctl; run 3's deploy),
+  `/health` ok, `virtual_interrupt_delivery` 0, `if_epair` loaded, no
+  jails, epairs, RCTL rules, or jail devfs, `/var/run/skep/jails` empty,
+  no test files in `/tmp` (four old `skep-*test*` directories from
+  2026-11-12 to 14, unchanged), `/` 17 %, `freebsd-version -kru`
+  15.1-RELEASE-p7 ×3, last boot 2026-11-19 11:27, `agent.json` sha256
+  `490bc087…`, 25 ZFS entries under `skeptest`, templates minimal-151
+  (81452032 bytes referenced) and minimal-ssh-151 (84792832).
+- **Changes on hearst, all reverted but the deploy:** the deploy (kept;
+  `skep_api` and `skep_agent` restarted once by the script); test
+  containers `r4-q` and `r4-q2` (created and deleted); the VM clone
+  `r4-clone-note` of `fbsd1` at snapshot `pre-add`, made and deleted by
+  `clone-note.spec.ts`; rows that the run added to the task, audit, and
+  session tables. No `agent.json`, bridge, sqlite edit, kld, sysctl,
+  loader.conf, pf, login.conf, or user/role change; no reboot.
+
+### 29.2 Results
+
+| Test | Result | Notes |
+|---|---|---|
+| Pre-check | Done | See 29.1 |
+| Deploy `b61e578` | Pass | Running inodes = installed (deploy-test.sh's check); `-version` of agent, API, skepctl = `b61e578`; `/health` ok over the pinned connection; a wrong `--pinnedpubkey` refused (curl 90) |
+| 27.6 step 1: create `r4-q` (no NIC, no quota) | Pass | Task succeeded; R = `referenced` = 81452032 (77 MiB), `refquota` 0 |
+| Step 2: PUT `disk_quota` 64M | Pass | 422 `container_disk_quota_below_usage`; details `container_id`, `disk_quota` 67108864, `referenced_bytes` = R; no new task (newest unchanged); agent audit `container.update denied` with the code; `refquota` still 0 |
+| Step 3: PUT `disk_quota` = R, then R − 1 | Pass | R: 202, `container.update` succeeded, `refquota` = R. R − 1: 422 with `disk_quota` 81452031, audited `denied`, `refquota` still R |
+| Step 4: PUT `limits {}` | Pass | 202, task succeeded, `refquota` 0, `limits {}` |
+| Step 5: UI edit dialog, 64M, Save | Pass | The API's message with 81452032 bytes and the hint shown, dialog stayed open; Cancel; afterwards `refquota` 0, no update task, audit `denied` |
+| Step 6: delete `r4-q` | Pass | Task succeeded; nothing left under `skeptest/skep/jail` |
+| Step 7: create with 64M, then with T | Pass | T = template `referenced` = 81452032 (`skep:template_id` = minimal-151's ID). 64M: 422 with `disk_quota` 67108864, `referenced_bytes` = T, `template_id`; no new task, no container, no dataset; audit `container.create denied`. T: 202, create succeeded, `refquota` = T. `r4-q2` deleted, no dataset left |
+| Step 8: UI create dialog, minimal-151, 64M | Pass (on the repeat) | The message "… below the template's size (81452032 bytes) …" and the hint ("for a new jail, the template's size") shown, nothing created (`r4-q3` absent in the UI and API; audit `container.create denied`). First attempt: my spec's `getByLabel("Name")` also matched Hostname (script mistake); repeated with `exact` |
+| e2e control: no pin | Pass | `scripts/web-e2e.sh` external mode without `SKEP_E2E_PIN`: refused, exit 2. `npx playwright test` without the wrapper: the config throws ("trust skep-api only by its key pin"). Neither started a test (no "Running N tests") |
+| e2e control: wrong pin | Pass | `SKEP_E2E_PIN` of 32 zero bytes: `e2e-trust` "serves the key sha256:779cc5ec…, not the pinned …; refusing it", exit 1, Playwright never started. A malformed pin (curl's base64 form) refused the same way |
+| e2e pinned run (external mode) | Pass | `tls-pin.spec.ts` (Chromium without the pin and with another key's pin: `ERR_CERT_*`; pinned page and `request` client 200), `clone-note.spec.ts` (as `s7oper`; form note and clone page note shown; clone deleted), `ui.spec.ts`'s headers test, and the temporary quota spec (steps 5 and 8): all passed, none skipped. Logs `~/skep-test-logs/20261121T185947Z-hearst-web-e2e-run4.log`, `20261121T190021Z-hearst-web-e2e-run4-repeat.log` |
+| Cleanup | Done | No containers, jails, epairs, RCTL rules, or jail devfs; `/var/run/skep/jails` empty; ZFS list and template sizes equal to the pre-check (25 entries); `agent.json` sha256 `490bc087…`; `/` 17 %; `/health` ok; API sessions logged out (29.4, item 2); temporary spec removed. Differences from the pre-check: the deploy |
+
+No security property failed. Agent and API logs since the deploy: 0
+ERROR, 6 WARN, all `task refused` (the six `denied` refusals: steps 2,
+3, 5 twice, 7, 8).
+
+### 29.3 The browser suite against hearst: what ran
+
+`ui.spec.ts` was written for the local stack (`scripts/e2e-stack.sh`):
+it expects the agent's test build (a `test.sleep` task to cancel), the
+pool `devpool`, the administrator `andy`, and it creates the user `vera`
+with a password fixed in the source. On hearst, with the packaged agent,
+those tests cannot pass, and running them would put a fixed-password user
+on the host, which the standing approvals do not allow (test users get
+random passwords and are deleted). So the run used the host-safe specs:
+`tls-pin.spec.ts`, `clone-note.spec.ts` (the documented hearst check from
+7a), and `ui.spec.ts -g 'served with its headers'` (read-only). The local
+stack runs the whole suite (28.2: 8 passed, 1 skipped). web/README.md
+now says this (self-approved docs, 29.5). Coverage that `make web-e2e`
+has and this run did not: login and every page in both themes, the
+viewer, the expired session, task cancel, and the VM create/console/
+snapshot tests. All of those ran against the local stack in 28.2, and the
+Containers UI ran against hearst in run 3 (26.2, 5j).
+
+### 29.4 Findings (not security)
+
+1. **curl `--pinnedpubkey` alone cannot reach hearst.** curl still checks
+   the chain, so with only the pin it fails "self-signed certificate"
+   (exit 60). The 27.6 steps said "`--pinnedpubkey`, no `-k`". This run
+   added `--cacert` with the certificate `e2e-trust.mjs fetch` wrote
+   (written only on a pin match), so both the chain and the pin are
+   checked. A wrong pin gives curl exit 90. Nothing was weakened, but
+   future run prompts should name both flags.
+2. **One browser session was not logged out.** The first temporary UI
+   spec failed (the script mistake in step 8) before its logout, so that
+   `s7admin` cookie session (login 18:59:5x Z) stayed. The browser closed
+   with it, and it ends at the 30-minute idle timeout (the API default).
+   The repeat's session was logged out (204), and the bearer sessions of
+   all scripts were logged out (204). For later temporary specs, log out
+   in `test.afterEach`.
+3. **The update dialog's hint mentions "for a new jail".** Amendment x's
+   single hint text covers create and update, so the edit dialog shows
+   "for a new jail, the template's size" as well. It reads correctly but
+   is less exact on an update. Backlog candidate, no change made.
+4. Script mistakes (kept in the record): quota-a's task wait read
+   `task_id` instead of `task.id` and polled `GET /tasks/` 120 times per
+   wait with an empty ID (reads only); the task results came from the
+   next script's task list (`container.update` ×2 succeeded) and the ZFS
+   values. Control 1's bare `npx playwright test` line prints "exit 0",
+   which is `head`'s status in the pipeline; the config's error is shown.
+
+### 29.5 Self-approved (CLAUDE.md, "Unrequested changes")
+
+1. web/README.md: which specs apply against a real host (29.3).
+2. ADR 0010: an implementation note on the run 4 validation.
+3. The run's tooling stayed in the scratchpad (helper, scripts, the
+   temporary spec, whose source is in the record's appendix); nothing
+   new was committed in `web/e2e`.
+
+Nothing needs approval: no code, API, security, or schema change.
+
+### 29.6 State of M7b
+
+Amendments w and x are validated on hearst: points 1, 5, 8, 9 of
+amendment w and both points of amendment x (26.6, 27.8). The fixes
+before merge listed in 26.6 are done. Open before the PR: the items
+already deferred to before the step 10 merge (spoofing and ICMP rule
+re-test, 7b step 8 state) are for the OPNsense session; 29.4 item 3
+is a backlog candidate.
+
+### 29.7 Commits
+
+The commit with this section, the run record, web/README.md, and ADR
+0010's note.

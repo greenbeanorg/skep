@@ -115,6 +115,16 @@ SKEP_E2E_EXTERNAL=1 SKEP_E2E_LISTEN=10.79.20.170:8443 \
 The wrapper fetches the served certificate, refuses it unless its key
 matches the pin (`scripts/e2e-trust.mjs`), and only then trusts it.
 
+Against a host that runs the packaged agent (not its test build), only
+some specs apply: `e2e/tls-pin.spec.ts`, `e2e/clone-note.spec.ts` (with
+its `SKEP_E2E_CLONE_*` variables), and the read-only headers test of
+`e2e/ui.spec.ts` (`-g 'served with its headers'`). The rest of
+`ui.spec.ts` needs the local stack: the `test.sleep` task, the pool
+`devpool`, the administrator `andy`, and it creates the user `vera` with
+a fixed password, so it is not pointed at a real host. This is how
+hearst ran it on 2026-11-21 (run 4, section 29 of
+`tests/integration/jails/results/step10-progress.md`).
+
 ## Dependency audit
 
 `npm audit` on 2026-11-13, with the committed lockfile: **0

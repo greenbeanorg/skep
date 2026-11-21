@@ -2276,3 +2276,13 @@ Chromium is pinned with `--ignore-certificate-errors-spki-list`, and no
 `ignoreHTTPSErrors` is left. Details in section 28 of
 [step10-progress.md](../../tests/integration/jails/results/step10-progress.md).
 
+**Amendments w and x, validated on hearst (2026-11-21, run 4, `b61e578`).**
+Against real ZFS, both quota refusals answer 422
+`container_disk_quota_below_usage` with the root's or the template's
+`referenced` (81452032 bytes for minimal-151) before any task, audited
+`denied`, and a quota equal to it is accepted; the edit and create
+dialogs show the message and the hint. `scripts/web-e2e.sh` in external
+mode refused a missing and a wrong pin before any test and ran the
+host-safe specs pinned. Details in section 29 of
+[step10-progress.md](../../tests/integration/jails/results/step10-progress.md).
+

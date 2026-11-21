@@ -1,0 +1,631 @@
+# M7b step 10 (ADR 0010), hearst validation run 4, 2026-11-21
+# Branch feat/m7b-templates. Pre-check on 8d65b9f, then b61e578 (the pushed
+# head) deployed with scripts/deploy-test.sh. Tests: step10-progress.md
+# 27.6 steps 1-8 (disk quota below usage on update, below the template's
+# size on create, API and UI) and the browser tests against hearst through
+# scripts/web-e2e.sh (external mode), with its trust controls.
+# API calls: merrick -> https://10.79.20.170:8443/api/v1, bearer sessions,
+# curl with --cacert <the certificate e2e-trust.mjs fetched and accepted only
+# because its key matched the pin> AND
+# --pinnedpubkey sha256//d5zF7I2qOwTO/RTcbcbJrB7ZiaQJgxVhpH7H0FzAad0=
+# (= 779cc5ec... from `skep-api tls fingerprint`), never -k. (--pinnedpubkey
+# alone fails here: curl still checks the chain, "self-signed certificate";
+# shown in the deploy section with a wrong-pin control.) Each api call
+# prints "HTTP nnn" then the body; tokens and passwords are never printed
+# (credentials loaded from ~/.skep-test-creds with the shell's read builtin;
+# the token is passed to curl from a 0600 header file, not argv). At most
+# one login per user per script.
+# Browser: Playwright 1.65.0 / Chromium on merrick through scripts/web-e2e.sh
+# (SKEP_E2E_EXTERNAL=1): Chromium pinned with
+# --ignore-certificate-errors-spki-list, the Node request client trusting
+# only the fetched certificate (NODE_EXTRA_CA_CERTS); no ignoreHTTPSErrors.
+# Specs run against hearst: tls-pin.spec.ts, clone-note.spec.ts (as s7oper,
+# fbsd1 @ pre-add, clone r4-clone-note made and deleted), ui.spec.ts's
+# read-only headers test, and a temporary spec for 27.6 steps 5 and 8 (not
+# committed; removed after the run). The rest of ui.spec.ts needs the local
+# stack (agent test build with test.sleep, pool devpool, admin "andy", and
+# it creates the user "vera" with a fixed password), so it was not pointed
+# at hearst (step10-progress.md 29.3).
+# Hearst commands ran over ssh, traced with `set -x`.
+# Script mistakes are kept in the record, each followed by its repeat or
+# its evidence: quota-a's task wait read `task_id` instead of `task.id`, so
+# its wait loops polled /tasks/ with an empty ID and printed tracebacks
+# (trimmed below to one line each); the tasks' results are in the next
+# script's task list and the ZFS values. The first temporary UI spec used
+# getByLabel("Name"), which also matched "Hostname"; repeated with exact.
+# In control 1 the bare `npx playwright test` line prints "exit 0": that is
+# the exit status of `head` in a subshell pipeline, not Playwright's; the
+# config threw before any test ran (no "Running N tests" line).
+
+######## Pre-check, 2026-11-21T18:49:34Z
++ date -u
+Sat Nov 21 18:49:34 UTC 2026
++ /usr/local/sbin/skep-agent -version
+skep-agent 0.1.0 (commit 8d65b9f, built 2026-11-21T16:34:15Z, go1.27.4 freebsd/amd64)
++ /usr/local/sbin/skep-api -version
+skep-api 0.1.0 (commit 8d65b9f, built 2026-11-21T16:34:15Z, go1.27.4 freebsd/amd64)
++ /usr/local/bin/skepctl -version
+skepctl 0.1.0 (commit 8d65b9f, built 2026-11-21T16:34:15Z, go1.27.4 freebsd/amd64)
++ sudo service skep_agent status
+skep_agent is running as pid 24795 (supervisor pid 24793).
++ sudo service skep_api status
+skep_api is running as pid 24856 (supervisor pid 24854).
++ sysctl hw.vmm.vmx.cap.virtual_interrupt_delivery
+hw.vmm.vmx.cap.virtual_interrupt_delivery: 0
++ kldstat -q -m if_epair
+if_epair loaded: exit 0
++ echo 'if_epair loaded: exit 0'
++ jls
+   JID  IP Address      Hostname                      Path
++ ifconfig -l
+vtnet0 vtnet1 lo0 bridge0
++ ifconfig -g epair
++ ifconfig bridge0
++ grep -E 'ether|member'
+	ether 58:9c:fc:10:9f:32
+	member: vtnet1 flags=143<LEARNING,DISCOVER,AUTOEDGE,AUTOPTP>
++ sudo rctl
++ mount -t devfs
+devfs on /dev (devfs)
++ df -h /
+Filesystem     Size    Used   Avail Capacity  Mounted on
+/dev/da0s1a    120G     19G     91G    17%    /
++ freebsd-version -kru
+15.1-RELEASE-p7
+15.1-RELEASE-p7
+15.1-RELEASE-p7
++ uptime
+ 1:49PM  up 2 days,  2:23, 5 users, load averages: 0.11, 0.16, 0.20
++ last reboot
++ head -2
+boot time                                  Thu Nov 19 11:27
+shutdown time                              Thu Nov 19 11:26
++ sudo ls -la /var/run/skep/jails/
+total 16
+drwx------  2 root skep 512 Nov 21 12:59 .
+drwxr-x---  4 root skep 512 Nov 21 12:59 ..
++ zfs list -H -t all -o name -r skeptest
+skeptest
+skeptest/skep
+skeptest/skep-enc
+skeptest/skep-enc/vm
+skeptest/skep/handmade
+skeptest/skep/jail
+skeptest/skep/templates
+skeptest/skep/templates/dbf4243a-81fe-4914-8f7a-fd0a768476aa
+skeptest/skep/templates/dbf4243a-81fe-4914-8f7a-fd0a768476aa@skep-base
+skeptest/skep/templates/f496866f-32ba-4527-bcee-5a717a2f74c0
+skeptest/skep/templates/f496866f-32ba-4527-bcee-5a717a2f74c0@skep-base
+skeptest/skep/vm
+skeptest/skep/vm/c0e23174-3dc0-4503-a691-9af23f657078
+skeptest/skep/vm/c0e23174-3dc0-4503-a691-9af23f657078@skep-ec1f5086-b697-45bf-bc36-d0e729afc06f
+skeptest/skep/vm/c0e23174-3dc0-4503-a691-9af23f657078/disk0
+skeptest/skep/vm/c0e23174-3dc0-4503-a691-9af23f657078/disk0@skep-ec1f5086-b697-45bf-bc36-d0e729afc06f
+skeptest/skep/vm/fc8640f3-205c-404d-855b-1376c792d86e
+skeptest/skep/vm/fc8640f3-205c-404d-855b-1376c792d86e@skep-b4b27599-01fb-46a8-b87a-d53ec3407c23
+skeptest/skep/vm/fc8640f3-205c-404d-855b-1376c792d86e@skep-8d347601-c546-41ce-a078-650a21438fca
+skeptest/skep/vm/fc8640f3-205c-404d-855b-1376c792d86e/disk0
+skeptest/skep/vm/fc8640f3-205c-404d-855b-1376c792d86e/disk0@skep-b4b27599-01fb-46a8-b87a-d53ec3407c23
+skeptest/skep/vm/fc8640f3-205c-404d-855b-1376c792d86e/disk0@skep-8d347601-c546-41ce-a078-650a21438fca
+skeptest/skep/vm/fc8640f3-205c-404d-855b-1376c792d86e/disk1
+skeptest/skep/vm/fc8640f3-205c-404d-855b-1376c792d86e/disk1@skep-b4b27599-01fb-46a8-b87a-d53ec3407c23
+skeptest/skep/vm/fc8640f3-205c-404d-855b-1376c792d86e/disk1@skep-8d347601-c546-41ce-a078-650a21438fca
++ zfs list -H -p -o name,referenced,skep:template_id -r skeptest/skep/templates
+skeptest/skep/templates	26624	-
+skeptest/skep/templates/dbf4243a-81fe-4914-8f7a-fd0a768476aa	84792832	dbf4243a-81fe-4914-8f7a-fd0a768476aa
+skeptest/skep/templates/f496866f-32ba-4527-bcee-5a717a2f74c0	81452032	f496866f-32ba-4527-bcee-5a717a2f74c0
++ sudo /usr/local/sbin/skep-api tls fingerprint -data-dir /var/db/skep
+source:       self-signed
+public key:   sha256:779cc5ec8daa3b04cefd14dc6dc6c9ac1ed989a409831561a47ec7d05cc069dd
+certificate:  sha256:f573e54e4de2c94f30a04be45911d832d02a838ae534bf95fb4ae3eef5883653
+valid until:  2027-12-15T17:39:13Z
+names:        hearst.greenbean.org, hearst, localhost, 127.0.0.1, ::1, 10.79.20.170
++ ls -la /tmp
++ grep -i -e r1- -e r2- -e r3- -e r4- -e mlock -e hostops -e skep
+drwx------    3 aba  wheel  512 Nov 12 08:20 skep-adminprompt357462820
+drwx------    3 aba  wheel  512 Nov 14 17:06 skep-api-test1335281604
+drwx------    3 aba  wheel  512 Nov 12 12:57 skep-api-test136171948
+drwx------    3 aba  wheel  512 Nov 12 19:01 skep-api-test3659600225
++ sudo ls -la /var/db/skep/agent/ /var/db/skep/api/
+/var/db/skep/agent/:
+total 12184
+drwx------  3 root wheel     512 Nov 21 12:59 .
+drwxr-xr-x  6 root wheel     512 Nov 16 14:03 ..
+-rw-------  1 root wheel 1982464 Nov 21 13:48 agent.db
+-rw-------  1 root wheel   32768 Nov 21 13:49 agent.db-shm
+-rw-------  1 root wheel 4120032 Nov 21 13:49 agent.db-wal
+drwx------  4 root wheel     512 Nov 15 06:59 vm
+
+/var/db/skep/api/:
+total 968
+drwx------  3 skep skep     512 Nov 21 12:59 .
+drwxr-xr-x  6 root wheel    512 Nov 16 14:03 ..
+-rw-------  1 skep skep  331776 Nov 21 12:59 api.db
+-rw-------  1 skep skep   32768 Nov 21 13:34 api.db-shm
+-rw-------  1 skep skep  115392 Nov 21 13:30 api.db-wal
+drwx------  2 skep skep     512 Nov 13 12:39 tls
++ sha256 /usr/local/etc/skep/agent.json
++ sudo sha256 /usr/local/etc/skep/agent.json
+SHA256 (/usr/local/etc/skep/agent.json) = 490bc08738a2dd835952e19c4f59e869857fd15a1a6ce8e8c0b9df1d1f3cb134
++ fetch -qo - --no-verify-peer https://10.79.20.170:8443/api/v1/health
+{"status":"ok"}
+
+######## Deploy, 2026-11-21T18:49:54Z
++ git rev-parse --short HEAD; git rev-parse --short origin/feat/m7b-templates
+b61e578
+b61e578
++ scripts/deploy-test.sh hearst
+deploy-test: hearst:/usr/local/sbin/skep-agent root:wheel 0555 13590698 bytes sha256 0922e4c58bec6108f491078e321232e9213f4000beb9d957e28738cd725fe8e4
+deploy-test: hearst:/usr/local/sbin/skep-api root:wheel 0555 14180522 bytes sha256 9eb4e162cbd5e99ee2b2561464eec856c0e3004630cfae1b9041932451cfd29b
+deploy-test: synced
+deploy-test: hearst:/usr/local/bin/skepctl root:wheel 0555 7217322 bytes sha256 b630568755e52abf7b85a59724227d68360b839135eaf0f100b273a7e2d22d9e
+deploy-test: synced
+deploy-test: restarting skep_api and skep_agent on hearst
+Stopping skep_api.
+Waiting for PIDS: 24854.
+Stopping skep_agent.
+Waiting for PIDS: 24793.
+Starting skep_agent.
+Starting skep_api.
+deploy-test: skep_agent pid 30301 runs /usr/local/sbin/skep-agent: skep-agent 0.1.0 (commit b61e578, built 2026-11-21T18:49:45Z, go1.27.4 freebsd/amd64)
+deploy-test: skep_api pid 30361 runs /usr/local/sbin/skep-api: skep-api 0.1.0 (commit b61e578, built 2026-11-21T18:49:45Z, go1.27.4 freebsd/amd64)
+deploy-test: hearst runs b61e578
+exit 0
++ /usr/local/sbin/skep-agent -version
+skep-agent 0.1.0 (commit b61e578, built 2026-11-21T18:49:45Z, go1.27.4 freebsd/amd64)
++ /usr/local/sbin/skep-api -version
+skep-api 0.1.0 (commit b61e578, built 2026-11-21T18:49:45Z, go1.27.4 freebsd/amd64)
++ /usr/local/bin/skepctl -version
+skepctl 0.1.0 (commit b61e578, built 2026-11-21T18:49:45Z, go1.27.4 freebsd/amd64)
++ curl --pinnedpubkey ... /api/v1/health
+curl: (60) SSL certificate problem: self-signed certificate
+More details here: https://curl.se/docs/sslcerts.html
+
+curl failed to verify the legitimacy of the server and therefore could not
+establish a secure connection to it. To learn more about this situation and
+how to fix it, please visit the webpage mentioned above.
+
++ node scripts/e2e-trust.mjs fetch 10.79.20.170:8443 sha256:779cc5ec8daa3b04cefd14dc6dc6c9ac1ed989a409831561a47ec7d05cc069dd $S/hearst-cert.pem
+exit 0
++ curl -sS --cacert hearst-cert.pem --pinnedpubkey sha256//d5zF7I2... /api/v1/health
+{"status":"ok"}
+
++ control: same with a wrong pin (32 zero bytes)
+curl: (90) SSL: public key does not match pinned public key
+exit 90
+
+######## Quota steps 1-4 (update path), 2026-11-21T18:51:55Z, as s7admin
+login s7admin: HTTP 200
+HTTP 200
+[('minimal-151', 'f496866f-32ba-4527-bcee-5a717a2f74c0', None), ('minimal-ssh-151', 'dbf4243a-81fe-4914-8f7a-fd0a768476aa', None)]
+minimal-151 = f496866f-32ba-4527-bcee-5a717a2f74c0
+-- step 1: create r4-q (no NIC, no quota)
+HTTP 202
+{'container': {'id': 'c98bea59-27a3-4b7e-bdd3-e7254ba38d49', 'name': 'r4-q', 'hostname': 'r4-q', 'template_id': 'f496866f-32ba-4527-bcee-5a717a2f74c0', 'template_name': 'minimal-151', 'pool': 'skeptest', 'release': '15.1-RELEASE-p6', 'options': {'sysvipc': False, 'mlock': False}, 'limits': {}, 'nics': [], 'provisioned': False, 'started_once': False, 'desired_state': 'stopped', 'state': 'unknown', 'created_at': '2026-11-21T18:51:55.503Z', 'updated_at': '2026-11-21T18:51:55.503Z'}, 'task': {'id': '38f270ee-9dc1-4ab6-abdd-2f623b1a75cb', 'node_id': '97fc6968-7e82-49c9-bda8-9026775ca964', 'type': 'container.create', 'status': 'pending', 'resource_type': 'container', 'resource_id': 'c98bea59-27a3-4b7e-bdd3-e7254ba38d49', 'actor': {'id': 'af143ddd-2c62-4eeb-803a-2081c4fd0088', 'name': 's7admin'}, 'request_id': 'cb4493a43cb3ce073db2f6ae', 'cancellable': False, 'created_at': '2026-11-21T18:51:55.503Z'}}
+[the broken task wait, trimmed: 122 Python tracebacks (KeyError 'task_id'; then 120 polls of GET /tasks/ with an empty ID, whose body has no 'status', KeyError 'status'; then KeyError 'id')]
+HTTP 200
+container r4-q c98bea59-27a3-4b7e-bdd3-e7254ba38d49
++ zfs get -Hp referenced,refquota skeptest/skep/jail/c98bea59-27a3-4b7e-bdd3-e7254ba38d49
+skeptest/skep/jail/c98bea59-27a3-4b7e-bdd3-e7254ba38d49	referenced	81452032	-
+skeptest/skep/jail/c98bea59-27a3-4b7e-bdd3-e7254ba38d49	refquota	0	default
+R = 81452032 bytes (77 MiB)
+HTTP 200
+newest tasks: [('38f270ee', 'container.create', 'succeeded'), ('4c4c4bda', 'maintenance.retention', 'succeeded'), ('37e6686f', 'discovery.refresh', 'succeeded')]
+-- step 2: PUT disk_quota 64M
+HTTP 422
+container_disk_quota_below_usage | limits.disk_quota (67108864 bytes) is below what the jail's root already references (81452032 bytes); give at least that much, or remove data inside the jail first | details {'container_id': 'c98bea59-27a3-4b7e-bdd3-e7254ba38d49', 'disk_quota': 67108864, 'referenced_bytes': 81452032}
+check referenced_bytes == R: True ; disk_quota == 67108864: True ; container_id: True
+HTTP 200
+newest tasks: [('38f270ee', 'container.create', 'succeeded'), ('4c4c4bda', 'maintenance.retention', 'succeeded'), ('37e6686f', 'discovery.refresh', 'succeeded')]
+no new task: True
++ zfs get -Hp refquota skeptest/skep/jail/c98bea59-27a3-4b7e-bdd3-e7254ba38d49
+skeptest/skep/jail/c98bea59-27a3-4b7e-bdd3-e7254ba38d49	refquota	0	default
+-- agent audit (newest 3)
+1230|2026-11-21T18:54:01.555Z|s7admin|container.update|c98bea59-27a3-4b7e-bdd3-e7254ba38d49|denied|{"error":"limits.disk_quota (67108864 bytes) is below what the jail's root already references (81452032 bytes); give at least that much, or remove data inside the jail first","error_code":"container_disk_quota_below_usage"}
+1229|2026-11-21T18:51:55.558Z|s7admin|container.create|c98bea59-27a3-4b7e-bdd3-e7254ba38d49|success|{"container_id":"c98bea59-27a3-4b7e-bdd3-e7254ba38d49","container_name":"r4-q","dataset":"skeptest/skep/jail/c98bea59-27a3-4b7e-bdd3-e7254ba38d49","nics":0,"origin":"skeptest/skep/templates/f496866f-32ba-4527-bcee-5a717a2f74c0@skep-base","ssh_key_installed":false,"template_id":"f496866f-32ba-4527-bcee-5a717a2f74c0"}
+1228|2026-11-21T18:51:55.503Z|s7admin|container.create|c98bea59-27a3-4b7e-bdd3-e7254ba38d49|success|
+-- step 3: PUT disk_quota = R bytes
+HTTP 202
+[the broken task wait, trimmed: 122 Python tracebacks (KeyError 'task_id'; then 120 polls of GET /tasks/ with an empty ID, whose body has no 'status', KeyError 'status'; then KeyError 'id')]
++ zfs get -Hp refquota,referenced skeptest/skep/jail/c98bea59-27a3-4b7e-bdd3-e7254ba38d49
+skeptest/skep/jail/c98bea59-27a3-4b7e-bdd3-e7254ba38d49	refquota	81452032	local
+skeptest/skep/jail/c98bea59-27a3-4b7e-bdd3-e7254ba38d49	referenced	81452032	-
+-- step 3b: PUT disk_quota = R - 1
+HTTP 422
+container_disk_quota_below_usage | limits.disk_quota (81452031 bytes) is below what the jail's root already references (81452032 bytes); give at least that much, or remove data inside the jail first | details {'container_id': 'c98bea59-27a3-4b7e-bdd3-e7254ba38d49', 'disk_quota': 81452031, 'referenced_bytes': 81452032}
++ zfs get -Hp refquota skeptest/skep/jail/c98bea59-27a3-4b7e-bdd3-e7254ba38d49
+skeptest/skep/jail/c98bea59-27a3-4b7e-bdd3-e7254ba38d49	refquota	81452032	local
+-- step 4: PUT limits {}
+HTTP 202
+[the broken task wait, trimmed: 122 Python tracebacks (KeyError 'task_id'; then 120 polls of GET /tasks/ with an empty ID, whose body has no 'status', KeyError 'status'; then KeyError 'id')]
++ zfs get -Hp refquota skeptest/skep/jail/c98bea59-27a3-4b7e-bdd3-e7254ba38d49
+skeptest/skep/jail/c98bea59-27a3-4b7e-bdd3-e7254ba38d49	refquota	0	local
+HTTP 200
+limits after: {} state: stopped
+-- agent audit (newest 6)
+1235|2026-11-21T18:56:08.414Z|s7admin|container.update|c98bea59-27a3-4b7e-bdd3-e7254ba38d49|success|
+1234|2026-11-21T18:56:08.396Z|s7admin|container.update|c98bea59-27a3-4b7e-bdd3-e7254ba38d49|success|
+1233|2026-11-21T18:56:08.229Z|s7admin|container.update|c98bea59-27a3-4b7e-bdd3-e7254ba38d49|denied|{"error":"limits.disk_quota (81452031 bytes) is below what the jail's root already references (81452032 bytes); give at least that much, or remove data inside the jail first","error_code":"container_disk_quota_below_usage"}
+1232|2026-11-21T18:54:01.968Z|s7admin|container.update|c98bea59-27a3-4b7e-bdd3-e7254ba38d49|success|
+1231|2026-11-21T18:54:01.955Z|s7admin|container.update|c98bea59-27a3-4b7e-bdd3-e7254ba38d49|success|
+1230|2026-11-21T18:54:01.555Z|s7admin|container.update|c98bea59-27a3-4b7e-bdd3-e7254ba38d49|denied|{"error":"limits.disk_quota (67108864 bytes) is below what the jail's root already references (81452032 bytes); give at least that much, or remove data inside the jail first","error_code":"container_disk_quota_below_usage"}
+logout s7admin: HTTP 204
+
+######## Reads before the browser run, 2026-11-21T18:59:47Z, as s7viewer
+login s7viewer: HTTP 200
+HTTP 200
+3a724047 container.update succeeded c98bea59-27a3-4b7e-bdd3-e7254ba38d49
+0cf43703 container.update succeeded c98bea59-27a3-4b7e-bdd3-e7254ba38d49
+38f270ee container.create succeeded c98bea59-27a3-4b7e-bdd3-e7254ba38d49
+4c4c4bda maintenance.retention succeeded retention
+37e6686f discovery.refresh succeeded 97fc6968-7e82-49c9-bda8-9026775ca964
+d881fa8d maintenance.retention succeeded retention
+HTTP 200
+[('fbsd1', 'c0e23174', None), ('snaptest', 'fc8640f3', None)]
+c0e23174 snapshots: ['pre-add']
+fc8640f3 snapshots: ['s1', 'snaptest-c2']
+clone source: fbsd1, snapshot pre-add
+T (minimal-151 template referenced) = 81452032; R (r4-q referenced) = 81452032
+logout s7viewer: HTTP 204
+
+######## Control 1: external mode with no pin, 2026-11-21T18:59:48Z
++ SKEP_E2E_EXTERNAL=1 SKEP_E2E_LISTEN=10.79.20.170:8443 scripts/web-e2e.sh   (no SKEP_E2E_PIN)
+scripts/web-e2e.sh: 32: SKEP_E2E_PIN: SKEP_E2E_PIN (skep-api tls fingerprint on that host) is required in external mode
+exit 2
++ (cd web && SKEP_E2E_EXTERNAL=1 SKEP_E2E_LISTEN=10.79.20.170:8443 npx playwright test)   (no wrapper: no pin, no NODE_EXTRA_CA_CERTS)
+Error: the browser tests trust skep-api only by its key pin: run them with `make web-e2e` or scripts/web-e2e.sh, which set SKEP_E2E_PIN (sha256:<hex> from `skep-api tls fingerprint`) and NODE_EXTRA_CA_CERTS
+    at file:///home/aba/git/skep/web/playwright.config.ts:24:9
+    at ModuleJob.run (node:internal/modules/esm/module_job:569:25)
+    at processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at node:internal/modules/esm/loader:650:26
+    at requireOrImport (/home/aba/git/skep/web/node_modules/playwright/lib/common/index.js:1155:12)
+    at loadUserConfig (/home/aba/git/skep/web/node_modules/playwright/lib/common/index.js:1360:46)
+    at loadConfig (/home/aba/git/skep/web/node_modules/playwright/lib/common/index.js:1367:22)
+exit 0
+
+######## Control 2: external mode with a wrong pin (32 zero bytes), 2026-11-21T18:59:49Z
++ SKEP_E2E_EXTERNAL=1 SKEP_E2E_LISTEN=10.79.20.170:8443 SKEP_E2E_PIN=sha256:0000...0000 scripts/web-e2e.sh
+e2e-trust: 10.79.20.170:8443 serves the key sha256:779cc5ec8daa3b04cefd14dc6dc6c9ac1ed989a409831561a47ec7d05cc069dd, not the pinned sha256:0000000000000000000000000000000000000000000000000000000000000000; refusing it
+exit 1
++ same with a malformed pin (the base64 form curl uses)
+e2e-trust: the pin must be sha256:<64 hex digits>, as skep-api tls fingerprint prints it; got "sha256//d5zF7I2qOwTO/RTcbcbJrB7ZiaQJgxVhpH7H0FzAad0="
+exit 1
+
+######## Pinned run: tls-pin, clone-note (as s7oper), r4-quota (temporary, as s7admin), 2026-11-21T18:59:49Z
++ SKEP_E2E_EXTERNAL=1 SKEP_E2E_LISTEN=10.79.20.170:8443 SKEP_E2E_PIN=sha256:779cc5ec8daa3b04cefd14dc6dc6c9ac1ed989a409831561a47ec7d05cc069dd SKEP_E2E_CLONE_USER=s7oper SKEP_E2E_CLONE_VM=fbsd1 SKEP_E2E_CLONE_SNAPSHOT=pre-add SKEP_E2E_CLONE_NAME=r4-clone-note R4_USER=s7admin R4_CID=c98bea59-27a3-4b7e-bdd3-e7254ba38d49 R4_REF=81452032 R4_TPL=f496866f-... R4_TREF=81452032 scripts/web-e2e.sh e2e/tls-pin.spec.ts e2e/clone-note.spec.ts e2e/r4-quota.spec.ts   (passwords from ~/.skep-test-creds via read, not shown)
+web-e2e: trusting skep-api's key sha256:779cc5ec8daa3b04cefd14dc6dc6c9ac1ed989a409831561a47ec7d05cc069dd
+
+Running 3 tests using 1 worker
+
+form note: The clone is the same guest
+A clone is the same guest as its source. Skep gives it a new ID, name, and MAC addresses, but its hostname, SSH host keys, and machine ID (/etc/hostid, /etc/machine-id, or the Windows SID) are the source's until you change them inside the clone.
+clone page: https://10.79.20.170:8443/vms/5aa7ee89-5302-45ee-8e9d-2638a2fbdce4
+page note: A linked clone
+A clone is the same guest as its source. Skep gives it a new ID, name, and MAC addresses, but its hostname, SSH host keys, and machine ID (/etc/hostid, /etc/machine-id, or the Windows SID) are the source's until you change them inside the clone.
+  ✓  1 [chromium] › e2e/clone-note.spec.ts:18:1 › the clone form and the clone's page carry the clone identity note (4.6s)
+step 5 message: limits.disk_quota (67108864 bytes) is below what the jail's root already references (81452032 bytes); give at least that much, or remove data inside the jail first The quota is below what the jail's root holds: for a new jail, the template's size (the message gives the amount; snapshots do not count). Give a larger quota, or remove data inside the jail first.
+step 5 hint: limits.disk_quota (67108864 bytes) is below what the jail's root already references (81452032 bytes); give at least that much, or remove data inside the jail first The quota is below what the jail's root holds: for a new jail, the template's size (the message gives the amount; snapshots do not count). Give a larger quota, or remove data inside the jail first.
+  ✘  2 [chromium] › e2e/r4-quota.spec.ts:8:1 › quota below usage and below the template's size, in the edit and create dialogs (1.2s)
+  ✓  3 [chromium] › e2e/tls-pin.spec.ts:9:1 › Chromium trusts skep-api only by its key pin (433ms)
+
+
+  1) [chromium] › e2e/r4-quota.spec.ts:8:1 › quota below usage and below the template's size, in the edit and create dialogs 
+
+    Error: locator.fill: Error: strict mode violation: getByRole('dialog').getByLabel('Name') resolved to 2 elements:
+        1) <input value="" required="" type="text" id="ct-name" class="flex h-9 w-full rounded-md border bg-surface px-3 py-1 text-sm shadow-xs transition-colors placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50 aria-invalid:border-bad"/> aka getByRole('textbox', { name: 'Name', exact: true })
+        2) <input value="" type="text" id="ct-hostname" placeholder="the name" class="flex h-9 w-full rounded-md border bg-surface px-3 py-1 text-sm shadow-xs transition-colors placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50 aria-invalid:border-bad"/> aka getByRole('textbox', { name: 'Hostname' })
+
+    Call log:
+      - waiting for getByRole('dialog').getByLabel('Name')
+
+
+      36 |   await page.getByRole("button", { name: "Create container" }).click();
+      37 |   const create = page.getByRole("dialog");
+    > 38 |   await create.getByLabel("Name").fill("r4-q3");
+         |                                   ^
+      39 |   await create.getByLabel("Template").selectOption(env.R4_TPL!);
+      40 |   await create.getByLabel("Disk quota").fill("64M");
+      41 |   await create.getByRole("button", { name: "Create" }).click();
+        at /home/aba/git/skep/web/e2e/r4-quota.spec.ts:38:35
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    test-results/r4-quota-quota-below-usage-41015-the-edit-and-create-dialogs-chromium/test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Error Context: test-results/r4-quota-quota-below-usage-41015-the-edit-and-create-dialogs-chromium/error-context.md
+
+    attachment #3: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results/r4-quota-quota-below-usage-41015-the-edit-and-create-dialogs-chromium/trace.zip
+    Usage:
+
+        npx playwright show-trace test-results/r4-quota-quota-below-usage-41015-the-edit-and-create-dialogs-chromium/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  1 failed
+    [chromium] › e2e/r4-quota.spec.ts:8:1 › quota below usage and below the template's size, in the edit and create dialogs 
+  2 passed (7.7s)
+exit 1
+
+######## Pinned run: ui.spec.ts, the host-safe test only (headers; read-only), 2026-11-21T18:59:58Z
++ SKEP_E2E_EXTERNAL=1 SKEP_E2E_LISTEN=10.79.20.170:8443 SKEP_E2E_PIN=sha256:779cc5ec8daa3b04cefd14dc6dc6c9ac1ed989a409831561a47ec7d05cc069dd scripts/web-e2e.sh e2e/ui.spec.ts -g 'served with its headers'
+web-e2e: trusting skep-api's key sha256:779cc5ec8daa3b04cefd14dc6dc6c9ac1ed989a409831561a47ec7d05cc069dd
+
+Running 1 test using 1 worker
+
+  ✓  1 [chromium] › e2e/ui.spec.ts:83:1 › the interface is served with its headers and the API stays JSON (43ms)
+
+  1 passed (476ms)
+exit 0
+
+######## Repeat of the temporary UI spec (steps 5 and 8), selector fixed (Name, exact), 2026-11-21T19:00:21Z; T=81452032 R=81452032
++ SKEP_E2E_EXTERNAL=1 SKEP_E2E_LISTEN=10.79.20.170:8443 SKEP_E2E_PIN=sha256:779cc5ec8daa3b04cefd14dc6dc6c9ac1ed989a409831561a47ec7d05cc069dd R4_USER=s7admin R4_CID=c98bea59-27a3-4b7e-bdd3-e7254ba38d49 R4_REF=81452032 R4_TPL=f496866f-... R4_TREF=81452032 scripts/web-e2e.sh e2e/r4-quota.spec.ts
+web-e2e: trusting skep-api's key sha256:779cc5ec8daa3b04cefd14dc6dc6c9ac1ed989a409831561a47ec7d05cc069dd
+
+Running 1 test using 1 worker
+
+step 5 message: limits.disk_quota (67108864 bytes) is below what the jail's root already references (81452032 bytes); give at least that much, or remove data inside the jail first The quota is below what the jail's root holds: for a new jail, the template's size (the message gives the amount; snapshots do not count). Give a larger quota, or remove data inside the jail first.
+step 5 hint: limits.disk_quota (67108864 bytes) is below what the jail's root already references (81452032 bytes); give at least that much, or remove data inside the jail first The quota is below what the jail's root holds: for a new jail, the template's size (the message gives the amount; snapshots do not count). Give a larger quota, or remove data inside the jail first.
+step 8 message: limits.disk_quota (67108864 bytes) is below the template's size (81452032 bytes), which a new jail's root references from the start; give at least that much The quota is below what the jail's root holds: for a new jail, the template's size (the message gives the amount; snapshots do not count). Give a larger quota, or remove data inside the jail first.
+step 8 hint: limits.disk_quota (67108864 bytes) is below the template's size (81452032 bytes), which a new jail's root references from the start; give at least that much The quota is below what the jail's root holds: for a new jail, the template's size (the message gives the amount; snapshots do not count). Give a larger quota, or remove data inside the jail first.
+logout: 204
+  ✓  1 [chromium] › e2e/r4-quota.spec.ts:8:1 › quota below usage and below the template's size, in the edit and create dialogs (1.8s)
+
+  1 passed (2.5s)
+exit 0
+
+######## After the UI steps; quota steps 6 and 7, 2026-11-21T19:00:40Z, as s7admin
+login s7admin: HTTP 200
+-- after UI step 5: r4-q's quota unchanged, no update task; after UI step 8: no r4-q3
++ zfs get -Hp refquota skeptest/skep/jail/c98bea59-27a3-4b7e-bdd3-e7254ba38d49
+skeptest/skep/jail/c98bea59-27a3-4b7e-bdd3-e7254ba38d49	refquota	0	local
+HTTP 200
+42f7e682 vm.delete succeeded 5aa7ee89-5302-45ee-8e9d-2638a2fbdce4
+8b2dc997 vm.clone succeeded c0e23174-3dc0-4503-a691-9af23f657078
+3a724047 container.update succeeded c98bea59-27a3-4b7e-bdd3-e7254ba38d49
+0cf43703 container.update succeeded c98bea59-27a3-4b7e-bdd3-e7254ba38d49
+HTTP 200
+containers: ['r4-q']
+-- agent audit (newest 4)
+1242|2026-11-21T19:00:24.973Z|s7admin|container.create||denied|{"error":"limits.disk_quota (67108864 bytes) is below the template's size (81452032 bytes), which a new jail's root references from the start; give at least that much","error_code":"container_disk_quota_below_usage"}
+1241|2026-11-21T19:00:24.372Z|s7admin|container.update|c98bea59-27a3-4b7e-bdd3-e7254ba38d49|denied|{"error":"limits.disk_quota (67108864 bytes) is below what the jail's root already references (81452032 bytes); give at least that much, or remove data inside the jail first","error_code":"container_disk_quota_below_usage"}
+1240|2026-11-21T18:59:56.756Z|s7admin|container.update|c98bea59-27a3-4b7e-bdd3-e7254ba38d49|denied|{"error":"limits.disk_quota (67108864 bytes) is below what the jail's root already references (81452032 bytes); give at least that much, or remove data inside the jail first","error_code":"container_disk_quota_below_usage"}
+1239|2026-11-21T18:59:52.679Z|s7oper|vm.delete|5aa7ee89-5302-45ee-8e9d-2638a2fbdce4|success|{"datasets_destroyed":[{"name":"skeptest/skep/vm/5aa7ee89-5302-45ee-8e9d-2638a2fbdce4","type":"filesystem","used_bytes":0},{"name":"skeptest/skep/vm/5aa7ee89-5302-45ee-8e9d-2638a2fbdce4/disk0","type":"volume","size_bytes":8589934592,"used_bytes":0}],"vm_name":"r4-clone-note"}
+-- step 6: delete r4-q
+HTTP 202
+task e9a0c668-a0db-4920-ba09-e7bebe411376 (container.delete): succeeded 
++ zfs list -H -o name -r skeptest/skep/jail
+skeptest/skep/jail
+-- step 7: T
++ zfs get -Hp referenced,skep:template_id skeptest/skep/templates/f496866f-32ba-4527-bcee-5a717a2f74c0
+skeptest/skep/templates/f496866f-32ba-4527-bcee-5a717a2f74c0	referenced	81452032	-
+skeptest/skep/templates/f496866f-32ba-4527-bcee-5a717a2f74c0	skep:template_id	f496866f-32ba-4527-bcee-5a717a2f74c0	local
+T = 81452032
+HTTP 200
+newest task before: e9a0c668
+-- POST r4-q2 with disk_quota 64M
+HTTP 422
+container_disk_quota_below_usage | limits.disk_quota (67108864 bytes) is below the template's size (81452032 bytes), which a new jail's root references from the start; give at least that much | details {'disk_quota': 67108864, 'referenced_bytes': 81452032, 'template_id': 'f496866f-32ba-4527-bcee-5a717a2f74c0'}
+check referenced_bytes == T: True ; disk_quota == 67108864: True ; template_id: True
+HTTP 200
+no new task: True
+HTTP 200
+containers: []
++ zfs list -H -o name -r skeptest/skep/jail
+skeptest/skep/jail
+-- agent audit (newest 2)
+1245|2026-11-21T19:00:42.879Z|s7admin|container.create||denied|{"error":"limits.disk_quota (67108864 bytes) is below the template's size (81452032 bytes), which a new jail's root references from the start; give at least that much","error_code":"container_disk_quota_below_usage"}
+1244|2026-11-21T19:00:41.136Z|s7admin|container.delete|c98bea59-27a3-4b7e-bdd3-e7254ba38d49|success|{"container_id":"c98bea59-27a3-4b7e-bdd3-e7254ba38d49","container_name":"r4-q","datasets_destroyed":[{"name":"skeptest/skep/jail/c98bea59-27a3-4b7e-bdd3-e7254ba38d49","type":"filesystem","used_bytes":1024}]}
+-- POST r4-q2 with disk_quota = T bytes
+HTTP 202
+task 767b4022-2a5b-4ebd-97d2-1a947de4c1e8 (container.create): succeeded 
++ zfs get -Hp refquota,referenced skeptest/skep/jail/c35918ed-23fc-4f8b-b2ec-a4ae03ca81a9
+skeptest/skep/jail/c35918ed-23fc-4f8b-b2ec-a4ae03ca81a9	refquota	81452032	local
+skeptest/skep/jail/c35918ed-23fc-4f8b-b2ec-a4ae03ca81a9	referenced	81452032	-
+HTTP 200
+r4-q2 limits: {'disk_quota': 81452032} state: stopped
+-- delete r4-q2
+HTTP 202
+task 7956c577-4ccd-4b47-995e-2ed85ce011ba (container.delete): succeeded 
++ zfs list -H -o name -r skeptest/skep/jail
+skeptest/skep/jail
+HTTP 200
+containers: []
+-- agent audit (newest 6)
+1249|2026-11-21T19:00:44.703Z|s7admin|container.delete|c35918ed-23fc-4f8b-b2ec-a4ae03ca81a9|success|{"container_id":"c35918ed-23fc-4f8b-b2ec-a4ae03ca81a9","container_name":"r4-q2","datasets_destroyed":[{"name":"skeptest/skep/jail/c35918ed-23fc-4f8b-b2ec-a4ae03ca81a9","type":"filesystem","used_bytes":1024}]}
+1248|2026-11-21T19:00:44.676Z|s7admin|container.delete|c35918ed-23fc-4f8b-b2ec-a4ae03ca81a9|success|
+1247|2026-11-21T19:00:43.448Z|s7admin|container.create|c35918ed-23fc-4f8b-b2ec-a4ae03ca81a9|success|{"container_id":"c35918ed-23fc-4f8b-b2ec-a4ae03ca81a9","container_name":"r4-q2","dataset":"skeptest/skep/jail/c35918ed-23fc-4f8b-b2ec-a4ae03ca81a9","nics":0,"origin":"skeptest/skep/templates/f496866f-32ba-4527-bcee-5a717a2f74c0@skep-base","ssh_key_installed":false,"template_id":"f496866f-32ba-4527-bcee-5a717a2f74c0"}
+1246|2026-11-21T19:00:43.386Z|s7admin|container.create|c35918ed-23fc-4f8b-b2ec-a4ae03ca81a9|success|
+1245|2026-11-21T19:00:42.879Z|s7admin|container.create||denied|{"error":"limits.disk_quota (67108864 bytes) is below the template's size (81452032 bytes), which a new jail's root references from the start; give at least that much","error_code":"container_disk_quota_below_usage"}
+1244|2026-11-21T19:00:41.136Z|s7admin|container.delete|c98bea59-27a3-4b7e-bdd3-e7254ba38d49|success|{"container_id":"c98bea59-27a3-4b7e-bdd3-e7254ba38d49","container_name":"r4-q","datasets_destroyed":[{"name":"skeptest/skep/jail/c98bea59-27a3-4b7e-bdd3-e7254ba38d49","type":"filesystem","used_bytes":1024}]}
+logout s7admin: HTTP 204
+
+######## Cleanup check (same commands as the pre-check), 2026-11-21T19:00:57Z
++ date -u
+Sat Nov 21 19:00:57 UTC 2026
++ /usr/local/sbin/skep-agent -version
+skep-agent 0.1.0 (commit b61e578, built 2026-11-21T18:49:45Z, go1.27.4 freebsd/amd64)
++ /usr/local/sbin/skep-api -version
+skep-api 0.1.0 (commit b61e578, built 2026-11-21T18:49:45Z, go1.27.4 freebsd/amd64)
++ /usr/local/bin/skepctl -version
+skepctl 0.1.0 (commit b61e578, built 2026-11-21T18:49:45Z, go1.27.4 freebsd/amd64)
++ sudo service skep_agent status
+skep_agent is running as pid 30301 (supervisor pid 30299).
++ sudo service skep_api status
+skep_api is running as pid 30361 (supervisor pid 30359).
++ sysctl hw.vmm.vmx.cap.virtual_interrupt_delivery
+hw.vmm.vmx.cap.virtual_interrupt_delivery: 0
++ kldstat -q -m if_epair
+if_epair loaded: exit 0
++ echo 'if_epair loaded: exit 0'
++ jls
+   JID  IP Address      Hostname                      Path
++ ifconfig -l
+vtnet0 vtnet1 lo0 bridge0
++ ifconfig -g epair
++ ifconfig bridge0
++ grep -E 'ether|member'
+	ether 58:9c:fc:10:9f:32
+	member: vtnet1 flags=143<LEARNING,DISCOVER,AUTOEDGE,AUTOPTP>
++ sudo rctl
++ mount -t devfs
+devfs on /dev (devfs)
++ df -h /
+Filesystem     Size    Used   Avail Capacity  Mounted on
+/dev/da0s1a    120G     19G     91G    17%    /
++ freebsd-version -kru
+15.1-RELEASE-p7
+15.1-RELEASE-p7
+15.1-RELEASE-p7
++ uptime
+ 2:00PM  up 2 days,  2:34, 5 users, load averages: 0.12, 0.14, 0.16
++ last reboot
++ head -2
+boot time                                  Thu Nov 19 11:27
+shutdown time                              Thu Nov 19 11:26
++ sudo ls -la /var/run/skep/jails/
+total 16
+drwx------  2 root skep 512 Nov 21 12:59 .
+drwxr-x---  4 root skep 512 Nov 21 13:50 ..
++ zfs list -H -t all -o name -r skeptest
+skeptest
+skeptest/skep
+skeptest/skep-enc
+skeptest/skep-enc/vm
+skeptest/skep/handmade
+skeptest/skep/jail
+skeptest/skep/templates
+skeptest/skep/templates/dbf4243a-81fe-4914-8f7a-fd0a768476aa
+skeptest/skep/templates/dbf4243a-81fe-4914-8f7a-fd0a768476aa@skep-base
+skeptest/skep/templates/f496866f-32ba-4527-bcee-5a717a2f74c0
+skeptest/skep/templates/f496866f-32ba-4527-bcee-5a717a2f74c0@skep-base
+skeptest/skep/vm
+skeptest/skep/vm/c0e23174-3dc0-4503-a691-9af23f657078
+skeptest/skep/vm/c0e23174-3dc0-4503-a691-9af23f657078@skep-ec1f5086-b697-45bf-bc36-d0e729afc06f
+skeptest/skep/vm/c0e23174-3dc0-4503-a691-9af23f657078/disk0
+skeptest/skep/vm/c0e23174-3dc0-4503-a691-9af23f657078/disk0@skep-ec1f5086-b697-45bf-bc36-d0e729afc06f
+skeptest/skep/vm/fc8640f3-205c-404d-855b-1376c792d86e
+skeptest/skep/vm/fc8640f3-205c-404d-855b-1376c792d86e@skep-b4b27599-01fb-46a8-b87a-d53ec3407c23
+skeptest/skep/vm/fc8640f3-205c-404d-855b-1376c792d86e@skep-8d347601-c546-41ce-a078-650a21438fca
+skeptest/skep/vm/fc8640f3-205c-404d-855b-1376c792d86e/disk0
+skeptest/skep/vm/fc8640f3-205c-404d-855b-1376c792d86e/disk0@skep-b4b27599-01fb-46a8-b87a-d53ec3407c23
+skeptest/skep/vm/fc8640f3-205c-404d-855b-1376c792d86e/disk0@skep-8d347601-c546-41ce-a078-650a21438fca
+skeptest/skep/vm/fc8640f3-205c-404d-855b-1376c792d86e/disk1
+skeptest/skep/vm/fc8640f3-205c-404d-855b-1376c792d86e/disk1@skep-b4b27599-01fb-46a8-b87a-d53ec3407c23
+skeptest/skep/vm/fc8640f3-205c-404d-855b-1376c792d86e/disk1@skep-8d347601-c546-41ce-a078-650a21438fca
++ zfs list -H -p -o name,referenced,skep:template_id -r skeptest/skep/templates
+skeptest/skep/templates	26624	-
+skeptest/skep/templates/dbf4243a-81fe-4914-8f7a-fd0a768476aa	84792832	dbf4243a-81fe-4914-8f7a-fd0a768476aa
+skeptest/skep/templates/f496866f-32ba-4527-bcee-5a717a2f74c0	81452032	f496866f-32ba-4527-bcee-5a717a2f74c0
++ sudo /usr/local/sbin/skep-api tls fingerprint -data-dir /var/db/skep
+source:       self-signed
+public key:   sha256:779cc5ec8daa3b04cefd14dc6dc6c9ac1ed989a409831561a47ec7d05cc069dd
+certificate:  sha256:f573e54e4de2c94f30a04be45911d832d02a838ae534bf95fb4ae3eef5883653
+valid until:  2027-12-15T17:39:13Z
+names:        hearst.greenbean.org, hearst, localhost, 127.0.0.1, ::1, 10.79.20.170
++ ls -la /tmp
++ grep -i -e r1- -e r2- -e r3- -e r4- -e mlock -e hostops -e skep
+drwx------    3 aba  wheel  512 Nov 12 08:20 skep-adminprompt357462820
+drwx------    3 aba  wheel  512 Nov 14 17:06 skep-api-test1335281604
+drwx------    3 aba  wheel  512 Nov 12 12:57 skep-api-test136171948
+drwx------    3 aba  wheel  512 Nov 12 19:01 skep-api-test3659600225
++ sudo ls -la /var/db/skep/agent/ /var/db/skep/api/
+/var/db/skep/agent/:
+total 12248
+drwx------  3 root wheel     512 Nov 21 13:49 .
+drwxr-xr-x  6 root wheel     512 Nov 16 14:03 ..
+-rw-------  1 root wheel 2007040 Nov 21 14:00 agent.db
+-rw-------  1 root wheel   32768 Nov 21 14:00 agent.db-shm
+-rw-------  1 root wheel 4120032 Nov 21 14:00 agent.db-wal
+drwx------  4 root wheel     512 Nov 21 13:59 vm
+
+/var/db/skep/api/:
+total 2080
+drwx------  3 skep skep     512 Nov 21 13:49 .
+drwxr-xr-x  6 root wheel    512 Nov 16 14:03 ..
+-rw-------  1 skep skep  331776 Nov 21 13:49 api.db
+-rw-------  1 skep skep   32768 Nov 21 14:00 api.db-shm
+-rw-------  1 skep skep  646872 Nov 21 14:00 api.db-wal
+drwx------  2 skep skep     512 Nov 13 12:39 tls
++ sha256 /usr/local/etc/skep/agent.json
++ sudo sha256 /usr/local/etc/skep/agent.json
+SHA256 (/usr/local/etc/skep/agent.json) = 490bc08738a2dd835952e19c4f59e869857fd15a1a6ce8e8c0b9df1d1f3cb134
++ fetch -qo - --no-verify-peer https://10.79.20.170:8443/api/v1/health
+{"status":"ok"}
++ ls /var/log
++ grep -i skep
++ sudo grep -c '' /var/log/daemon.log
+3383
+
+######## Logs since the deploy (daemon.log, 13:49 local = 18:49Z onward)
++ sudo awk '/^Nov 21 1[34]:/ && $3 >= "13:49:50"' /var/log/daemon.log
++ grep -E 'skep-(agent|api)'
+ERROR: + printf '%s: ' ERROR
++ grep -c '"level":"ERROR"' /tmp/r4-log.31939
+0
+WARN: + printf '%s: ' WARN
++ grep -c '"level":"WARN"' /tmp/r4-log.31939
+6
+INFO: + printf '%s: ' INFO
++ grep -c '"level":"INFO"' /tmp/r4-log.31939
+513
++ grep '"level":"WARN"' /tmp/r4-log.31939
++ grep -o '"msg":"[^"]*"'
++ sort
++ uniq -c
+   6 "msg":"task refused"
++ grep '"level":"ERROR"' /tmp/r4-log.31939
++ head -5
++ rm -f /tmp/r4-log.31939
+
+######## Appendix: the temporary spec web/e2e/r4-quota.spec.ts as it ran in the repeat (removed after the run, not committed)
+import { expect, test } from "@playwright/test";
+
+// TEMPORARY (hearst run 4, step10-progress §27.6 steps 5 and 8): not
+// committed. Run through scripts/web-e2e.sh in external mode only.
+const env = process.env;
+const ready = Boolean(env.R4_USER && env.R4_PASSWORD && env.R4_CID && env.R4_REF && env.R4_TPL && env.R4_TREF);
+
+test("quota below usage and below the template's size, in the edit and create dialogs", async ({ page }) => {
+  test.skip(!ready, "hearst run 4 only");
+  const errors: string[] = [];
+  page.on("pageerror", (err) => errors.push(String(err)));
+
+  // One login for both steps.
+  await page.goto(`/containers/${env.R4_CID}`);
+  await page.getByLabel("Username").fill(env.R4_USER!);
+  await page.getByLabel("Password").fill(env.R4_PASSWORD!);
+  await page.getByRole("button", { name: "Log in" }).click();
+  await expect(page.getByRole("heading", { name: "r4-q", exact: true })).toBeVisible();
+
+  // Step 5: edit dialog, quota 64M.
+  await page.getByRole("button", { name: "Edit", exact: true }).click();
+  const edit = page.getByRole("dialog");
+  await edit.getByLabel("Disk quota").fill("64M");
+  await edit.getByRole("button", { name: "Save" }).click();
+  await expect(edit.getByText(new RegExp(`${env.R4_REF} bytes`))).toBeVisible();
+  await expect(edit.getByText(/The quota is below what the jail's root holds/)).toBeVisible();
+  await expect(edit).toBeVisible();
+  (console.log of the message and hint)
+  await edit.getByRole("button", { name: "Cancel" }).click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+
+  // Step 8: create dialog, minimal-151, quota 64M.
+  await page.goto("/containers");
+  await page.getByRole("button", { name: "Create container" }).click();
+  const create = page.getByRole("dialog");
+  await create.getByLabel("Name", { exact: true }).fill("r4-q3");   // first run: getByLabel("Name") (matched Hostname too)
+  await create.getByLabel("Template").selectOption(env.R4_TPL!);
+  await create.getByLabel("Disk quota").fill("64M");
+  await create.getByRole("button", { name: "Create" }).click();
+  await expect(create.getByText(new RegExp(`${env.R4_TREF} bytes`))).toBeVisible();
+  await expect(create.getByText(/for a new jail, the template's size/)).toBeVisible();
+  await expect(create).toBeVisible();
+  (console.log of the message and hint)
+  await create.getByRole("button", { name: "Cancel" }).click();
+  await expect(page.getByRole("link", { name: "r4-q3", exact: true })).toHaveCount(0);
+
+  const out = await page.evaluate(async () => (await fetch("/api/v1/auth/logout", { method: "POST" })).status);
+  console.log(`logout: ${out}`);
+  expect(errors, "page errors").toEqual([]);
+});
