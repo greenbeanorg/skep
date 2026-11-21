@@ -77,7 +77,8 @@ test("read-only tour: log in, open every section the role shows, log out", async
   // h1; a planned one says so. Each page's code is fetched on first visit
   // (pages are split by route), so this also checks that every chunk loads
   // under the CSP.
-  const links = nav.getByRole("link");
+  // The section links are the list items; the brand link above them is not one.
+  const links = nav.getByRole("listitem").getByRole("link");
   const count = await links.count();
   expect(count).toBeGreaterThan(0);
   for (let i = 0; i < count; i++) {
