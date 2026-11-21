@@ -1620,6 +1620,18 @@ bounds. Step 9 recorded "unlimited" under `jexec -l`; this differs now
 agent set the jail's RLIMIT_MEMLOCK to its `locked_memory` (or unlimited)
 when it starts `/etc/rc`, or leave it.
 
+**Correction (run 2, section 24.4; amendment u).** Two statements above
+are wrong. The jail's `/etc/rc` processes do not inherit the agent's
+128 MiB: the agent starts `/etc/rc` with `jexec -l -U root`, which applies
+the jail's `root` login class (unlimited), and `rc.local` and its children
+run unlimited. The 128 MiB of `cron` and `syslogd` comes from rc.subr,
+which re-applies the `daemon` class (`limits -C daemon`) to every service
+it starts. And step 9's "unlimited" was not a host change: it was measured
+with `jexec -U root` (the `root` class), while run 1 used `jexec` without
+`-U`, which keeps sudo's 64 KiB; the pkg upgrade is not a cause. The
+conclusion stands that one rc.d service can lock at most 128 MiB unless
+it raises its own limit.
+
 ### 23.4 Affects runs 2 and 3
 
 - `if_epair` is loaded live only; another reboot unloads it again.
@@ -1832,3 +1844,41 @@ unmounted (`orphaned_devfs_removed`) before destroying the dataset.
 ### 24.7 Commits
 
 The commit with this section and the record.
+
+### 24.8 Andy's answers (2026-11-21), recorded as amendment u
+
+1. **Run 2's changes 1–5** (24.1 and the stop report) are approved.
+2. **Probe (a): the recommendation is accepted.** The backlog item "a
+   memlock limit provided by the agent" is dropped; 23.3 is corrected (see
+   the correction there). Amendment t's jails.md note follows 24.4:
+   services get the `daemon` class (128 MiB) through rc.subr, raised per
+   service by the jail's administrator; `/etc/rc`, `rc.local`, and
+   `jexec -U root` get the `root` class (unlimited); `default` (64 KiB)
+   applies elsewhere; RCTL `memorylocked` stays the jail-wide bound.
+3. **Finding 1 is fixed in M7b: Skep must always be able to remove its
+   jails.**
+   - a. If `jail -r` fails or times out, the agent appends rc.shutdown's
+     stdout and stderr sections to `console.log` as for a successful stop,
+     then a line `--- jail -r failed: <cleaned last stderr line> ---`, then
+     removes the jail with `jail -R` (no `exec.stop`), then runs the normal
+     post-removal cleanup (devfs by fsid, epairs, RCTL rules, run
+     directory).
+   - b. The stop then succeeds; the agent logs `container_stop_forced` with
+     the cleaned jail output, and the task result carries it if the task
+     model supports warnings (probe; if not, the log and `console.log` are
+     enough).
+   - c. If `jail -R` also fails, stop and delete fail with a coded error
+     `container_remove_failed` whose message includes the cleaned last
+     stderr line, so the API shows it instead of the generic
+     `task_failed`.
+   - d. Probe whether `exec.stop` has a timeout today. If rc.shutdown can
+     hang indefinitely, add a 2-minute timeout (the same as the start) and
+     treat it as a failure under (a).
+4. **Finding 2:** a create or update with a MAC held by a Skep VM returns
+   409 `container_mac_in_use` with `held_by_kind: vm`, matching the
+   start-time check.
+5. **SR-03's learnt-table non-member case and the bridge's own address**
+   cannot be reached on hearst; they are covered by the merrick unit
+   tests.
+
+Only the answers were recorded in this session; no code was written.

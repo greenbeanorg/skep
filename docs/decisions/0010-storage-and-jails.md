@@ -1232,6 +1232,49 @@ Amendments made at acceptance, worked into the text:
       record whether `jail -r` fails; if it does, check the task error and
       `jail_remove_failed` as in test 10.
 
+- **u. Decisions on hearst validation run 2** (Andy, 2026-11-21, from
+  section 24 of
+  [step10-progress.md](../../tests/integration/jails/results/step10-progress.md)).
+  - **Approved:** run 2's changes 1–5 (section 24.1 and the stop report:
+    SR-06 on `agent.db` in two windows; the SR-11 roles inserted into and
+    deleted from `api.db`; the extra `r2-vmrow` row; the database backups;
+    "SR-13" run as SR-I3).
+  - **RLIMIT_MEMLOCK (probe a): the recommendation of section 24.4 is
+    accepted.** The backlog item "a memlock limit provided by the agent"
+    (amendment t) is dropped. Section 23.3 is corrected. Amendment t's
+    jails.md note follows section 24.4: rc.d services get the jail's
+    `daemon` class (128 MiB) through rc.subr, and the jail's administrator
+    raises it per service (`<name>_limits`, `<name>_login_class`);
+    `/etc/rc`, `rc.local`, and `jexec -U root` get the `root` class
+    (unlimited); `default` (64 KiB) applies elsewhere; the RCTL
+    `memorylocked` rule (`limits.locked_memory`) stays the jail-wide bound.
+  - **A failing `jail -r` is fixed in M7b (finding 1): Skep must always be
+    able to remove its jails.**
+    - (a) When `jail -r` fails or times out, the agent appends
+      rc.shutdown's stdout and stderr sections to `console.log` as for a
+      successful stop, then a line
+      `--- jail -r failed: <cleaned last stderr line> ---`, then removes
+      the jail with `jail -R` (no `exec.stop`), then runs the normal
+      post-removal cleanup (devfs by fsid, epairs, RCTL rules, run
+      directory).
+    - (b) The stop then succeeds. The agent logs `container_stop_forced`
+      with the cleaned jail output, and the task result carries it if the
+      task model supports warnings (to be probed; if not, the log and
+      `console.log` are enough).
+    - (c) If `jail -R` also fails, stop and delete fail with a new coded
+      error, `container_remove_failed`, whose message includes the cleaned
+      last stderr line, so the API shows it instead of the generic
+      `task_failed`.
+    - (d) Probe whether `exec.stop` has a timeout today. If rc.shutdown can
+      hang indefinitely, add a 2-minute timeout (the same as the start)
+      and treat its expiry as a failure under (a).
+  - **A VM's MAC at create or update (finding 2)** returns 409
+    `container_mac_in_use` with `held_by_kind: vm`, matching the
+    start-time check, instead of 400 `invalid_request`.
+  - **Not reachable on hearst:** SR-03's learnt-table refusal for a device
+    that is not a bridge member, and the bridge's own address; they are
+    covered by the merrick unit tests.
+
 ## Implementation notes
 
 Recorded during the build of 7a (from 2026-11-14). The decisions above
