@@ -119,8 +119,14 @@ describe("ToggleUserDialog", () => {
       </SessionProvider>,
     );
     await screen.findByText("Disabling ends every session of this user");
+    // findByText does not wait for the dialog to be open: the text is in the
+    // DOM as soon as React commits, but the <dialog> gets its open attribute
+    // in Dialog's effect, which can run later under load. A closed dialog's
+    // contents are inaccessible, so getByRole here was flaky; findByRole
+    // waits until the button is accessible.
+    const disable = await screen.findByRole("button", { name: "Disable" });
     const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: "Disable" }));
+    await user.click(disable);
     await waitFor(() => expect(onDone).toHaveBeenCalled());
     const put = fetchCalls.find((i) => i.method === "PUT");
     expect(put).toBeDefined();

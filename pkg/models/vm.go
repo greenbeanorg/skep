@@ -104,6 +104,10 @@ const (
 	CodeStopTimeout         = "stop_timeout"
 	CodeVMStartFailed       = "vm_start_failed"
 	CodeConsoleBusy         = "console_busy"
+	// CodeVMMACInUse refuses a VM NIC whose MAC address another Skep VM
+	// or a Skep jail already holds, at create and clone, the VM side of
+	// container_mac_in_use (ADR 0010 amendment u, 25.5 point 3).
+	CodeVMMACInUse = "vm_mac_in_use"
 	// CodeDiskHasSnapshots refuses removing a disk that snapshots contain,
 	// unless destroy_snapshots says to destroy them.
 	CodeDiskHasSnapshots = "disk_has_snapshots"

@@ -283,6 +283,8 @@ export function containerErrorHint(code: string, context: "create" | "existing" 
       return "RACCT is off on this host (kern.racct.enable), so only the disk quota can be set. An administrator enables it in loader.conf and reboots.";
     case "mlock_requires_memory_limit":
       return "Locking memory needs a locked-memory limit, and RACCT on.";
+    case "nameservers_require_nic":
+      return "Nameservers need a network interface with a static address. Add one, or clear the nameservers.";
     case "container_ssh_unavailable":
       return "This template has no sshd. Choose a template built with FreeBSD-ssh, or leave the key out.";
     case "template_not_provisioned":

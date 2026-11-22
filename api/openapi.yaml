@@ -771,9 +771,15 @@ paths:
 
         Refusals that need the host to decide (`pool_not_allowed`,
         `bridge_not_allowed`, `engine_unsupported`, `firmware_unsupported`,
-        `insufficient_space`, `media_not_found`) create no task and are
-        audited. An `Idempotency-Key` header makes a retry return the
-        first answer.
+        `insufficient_space`, `media_not_found`, `vm_mac_in_use`) create
+        no task and are audited. An `Idempotency-Key` header makes a retry
+        return the first answer.
+
+        A NIC's `mac_address` that another Skep VM or a Skep jail already
+        holds is refused with `vm_mac_in_use` (409); its details name the
+        holder (`held_by_kind` `vm` or `container`, `held_by_id`,
+        `held_by_name`) and the NIC (`slot`, `mac_address`), as
+        `container_mac_in_use` does for a jail.
       parameters:
         - $ref: "#/components/parameters/IdempotencyKey"
       requestBody:
@@ -1618,7 +1624,9 @@ paths:
         addressing (DHCP by default, or a static IPv4 address with an
         optional gateway, one gateway per jail) is written into the jail's
         `/etc/rc.conf`, and `nameservers` (static addressing only) into
-        its `/etc/resolv.conf`, before the first start. After that the
+        its `/etc/resolv.conf`, before the first start. Nameservers for a
+        jail without a NIC are refused with `nameservers_require_nic`
+        (422), at create, update, and clone. After that the
         addressing describes what Skep wrote; changing it is the jail's own
         business. No IPv6 addressing yet.
       parameters:
@@ -2298,7 +2306,7 @@ components:
       description: |
         The current state of the VM or the host refuses the request:
         `vm_not_stopped`, `vm_not_provisioned`, `vm_name_taken`,
-        `insufficient_space`, `insufficient_memory`, `bhyve_unavailable`,
+        `vm_mac_in_use`, `insufficient_space`, `insufficient_memory`, `bhyve_unavailable`,
         `port_filter_unavailable`,
         `storage_unavailable`, `vm_not_running`, `vm_start_failed`,
         `stop_timeout`, `console_busy`, `resource_busy`,
@@ -2327,8 +2335,8 @@ components:
         `storage_feature_unsupported`, and for jail templates
         `release_unsupported` (no allowlist for the host's release), and
         for jails `container_ssh_unavailable`,
-        `mlock_requires_memory_limit`, `clone_addressing_required`,
-        `container_mac_invalid`, `container_locked_memory_above_max`,
+        `mlock_requires_memory_limit`, `nameservers_require_nic`,
+        `clone_addressing_required`, `container_mac_invalid`, `container_locked_memory_above_max`,
         `container_disk_quota_below_usage`.
         A build task can also fail with `template_script_unknown`,
         `template_trigger_left`, `template_host_changed`,
@@ -2595,7 +2603,11 @@ components:
               model:
                 type: string
                 enum: [virtio-net, e1000]
-              mac_address: { type: string }
+              mac_address:
+                type: string
+                description: |
+                  Generated when left out. Must not be held by another
+                  Skep VM or by a Skep jail (`vm_mac_in_use`, 409).
               bridge: { type: string }
     VMUpdate:
       type: object
@@ -3040,7 +3052,7 @@ components:
         nameservers:
           type: array
           maxItems: 3
-          description: IPv4 or IPv6 addresses for resolv.conf. Only when no NIC uses DHCP (dhclient writes resolv.conf).
+          description: IPv4 or IPv6 addresses for resolv.conf. Only with at least one NIC (`nameservers_require_nic`, 422) and when no NIC uses DHCP (dhclient writes resolv.conf; `invalid_request`).
           items: { type: string }
     ContainerUpdate:
       type: object
@@ -3065,7 +3077,7 @@ components:
         nameservers:
           type: array
           maxItems: 3
-          description: Only before the first start.
+          description: Only before the first start. Left out, the stored list is kept, so an update that removes the last NIC of a jail with nameservers must also send an empty list (`nameservers_require_nic`, 422).
           items: { type: string }
     ContainerAction:
       type: object
@@ -3131,7 +3143,7 @@ components:
           type: array
           maxItems: 3
           items: { type: string }
-          description: Replace the source's (static addressing only). Dropped when no NIC keeps a static address.
+          description: Replace the source's (static addressing only). Dropped when no NIC keeps a static address. Given for a clone without a NIC, refused with `nameservers_require_nic` (422).
     VMClone:
       type: object
       required: [name]
