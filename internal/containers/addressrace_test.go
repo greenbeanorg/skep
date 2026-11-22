@@ -2,8 +2,12 @@ package containers
 
 import (
 	"context"
+	"database/sql"
+	"fmt"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/greenbeanorg/skep/internal/hostops"
 	"github.com/greenbeanorg/skep/pkg/models"
@@ -119,5 +123,62 @@ func TestStartAddressPeerRemovedOutsideSkep(t *testing.T) {
 	f.succeed(f.svc.Action(ctx, b.ID, models.ContainerAction{Action: "start"}, f.sub))
 	if n := f.count(`SELECT COUNT(*) FROM containers WHERE id = ? AND observed_state = 'stopped'`, a.ID); n != 1 {
 		t.Fatal("a is not recorded stopped after b's start compared it with the host")
+	}
+}
+
+// lockProbeJails takes and releases the database's write lock from inside
+// every RunningJails call. If the host were observed while MarkStarting's
+// transaction (BEGIN IMMEDIATE) held that lock, the probe would wait for
+// it; the host is observed first, so the probe never waits.
+type lockProbeJails struct {
+	hostops.Jails
+	db    *sql.DB
+	calls atomic.Int32
+	err   atomic.Value
+}
+
+func (l *lockProbeJails) RunningJails(ctx context.Context) (map[string]hostops.JailState, error) {
+	l.calls.Add(1)
+	pctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	began := time.Now()
+	tx, err := l.db.BeginTx(pctx, nil) // _txlock immediate: takes the write lock
+	if err == nil {
+		err = tx.Commit()
+	}
+	if err == nil && time.Since(began) > time.Second {
+		err = fmt.Errorf("waited %s for the write lock", time.Since(began))
+	}
+	if err != nil {
+		l.err.CompareAndSwap(nil, err)
+	}
+	return l.Jails.RunningJails(ctx)
+}
+
+// TestStartAddressObservesHostOutsideTransaction: the host re-observation
+// of a peer recorded running happens before MarkStarting's write
+// transaction, never inside it (#44 review): host commands must not run
+// while every other writer is blocked.
+func TestStartAddressObservesHostOutsideTransaction(t *testing.T) {
+	var probe *lockProbeJails
+	f := newFixture(t, func(o *Options) {
+		probe = &lockProbeJails{Jails: o.Host.Jails}
+		o.Host.Jails = probe
+	})
+	probe.db = f.db
+	ctx := context.Background()
+	a := f.create(models.ContainerCreate{Name: "a", TemplateID: f.minimal,
+		NICs: []models.ContainerNICSpec{{Bridge: "bridge0", IPv4: static("192.0.2.10/24", "")}}})
+	b := f.create(models.ContainerCreate{Name: "b", TemplateID: f.minimal,
+		NICs: []models.ContainerNICSpec{{Bridge: "bridge0", IPv4: static("192.0.2.10/24", "")}}})
+	f.succeed(f.svc.Action(ctx, a.ID, models.ContainerAction{Action: "start"}, f.sub))
+	f.fake.SetJailStopped(a.ID) // still recorded running: b's start re-observes it
+	before := probe.calls.Load()
+	f.succeed(f.svc.Action(ctx, b.ID, models.ContainerAction{Action: "start"}, f.sub))
+	if probe.calls.Load() == before {
+		t.Fatal("b's start did not list the running jails, so this test does not reach the case")
+	}
+	if err, _ := probe.err.Load().(error); err != nil {
+		t.Fatalf("the host was observed while the write lock was held: %v", err)
 	}
 }
