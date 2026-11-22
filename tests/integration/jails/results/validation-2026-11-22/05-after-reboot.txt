@@ -1,0 +1,29 @@
+10:07AM  up 34 secs, 0 users, load averages: 0.10, 0.03, 0.01
+hw.vmm.vmx.cap.virtual_interrupt_delivery: 0
+kern.racct.enable: 1
+module vmm: loaded
+module if_epair: loaded
+module netgraph: loaded
+module ng_socket: loaded
+module ng_ether: loaded
+module ng_bpf: loaded
+bridge0: flags=1008843<UP,BROADCAST,RUNNING,SIMPLEX,MULTICAST,LOWER_UP> metric 0 mtu 1500
+	options=10<VLAN_HWTAGGING>
+	ether 58:9c:fc:10:9f:32
+	id 00:00:00:00:00:00 priority 32768 hellotime 2 fwddelay 15
+	maxage 20 holdcnt 6 proto rstp maxaddr 2000 timeout 1200
+	root id 00:00:00:00:00:00 priority 32768 ifcost 0 port 0
+	bridge flags=1<VLANFILTER> defuntagged=1
+	member: vtnet1 flags=143<LEARNING,DISCOVER,AUTOEDGE,AUTOPTP>
+	        port 2 priority 128 path cost 2000 vlan protocol 802.1q untagged 1
+	groups: bridge
+	nd6 options=9<PERFORMNUD,IFDISABLED>
+skep_agent is running as pid 1527 (supervisor pid 1526).
+skep_api is running as pid 1570 (supervisor pid 1569).
+skep-agent 0.1.0 (commit dd7a8b6, built 2026-11-22T15:03:13Z, go1.27.4 freebsd/amd64)
+skep-api 0.1.0 (commit dd7a8b6, built 2026-11-22T15:03:13Z, go1.27.4 freebsd/amd64)
+1569 daemon: /usr/local/sbin/skep-api[1570]
+1570 /usr/local/sbin/skep-api -data-dir /var/db/skep -listen 10.79.20.170:8443
+1526 daemon: /usr/local/sbin/skep-agent[1527]
+1527 /usr/local/sbin/skep-agent -data-dir /var/db/skep
+0

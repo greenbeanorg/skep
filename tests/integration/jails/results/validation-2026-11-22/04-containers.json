@@ -1,0 +1,85 @@
+{
+ "http": 200,
+ "body": {
+  "items": [
+   {
+    "id": "710c64dd-9c01-49c8-9e36-8268c3ef2bd8",
+    "name": "rb-c1-jail",
+    "hostname": "rb-c1-jail",
+    "template_id": "f496866f-32ba-4527-bcee-5a717a2f74c0",
+    "template_name": "minimal-151",
+    "pool": "skeptest",
+    "release": "15.1-RELEASE-p6",
+    "options": {
+     "sysvipc": false,
+     "mlock": false
+    },
+    "limits": {},
+    "nics": [
+     {
+      "id": "394763d6-d1c8-49ee-b6a1-3262d48df6ec",
+      "slot": 0,
+      "bridge": "bridge0",
+      "mac_address": "02:74:cd:9d:8d:d9",
+      "interface": "skep0",
+      "ipv4": {
+       "mode": "dhcp"
+      }
+     }
+    ],
+    "provisioned": true,
+    "started_once": false,
+    "desired_state": "stopped",
+    "state": "stopped",
+    "observed_at": "2026-11-22T15:04:31.937Z",
+    "created_at": "2026-11-22T15:04:31.867Z",
+    "updated_at": "2026-11-22T15:04:31.937Z"
+   },
+   {
+    "id": "8ca963d0-4cf0-496c-835d-193d85d63d3a",
+    "name": "rb-c4-clone",
+    "hostname": "rb-c4-clone",
+    "template_id": "f496866f-32ba-4527-bcee-5a717a2f74c0",
+    "template_name": "minimal-151",
+    "pool": "skeptest",
+    "release": "15.1-RELEASE-p6",
+    "options": {
+     "sysvipc": false,
+     "mlock": false
+    },
+    "limits": {},
+    "nics": [],
+    "provisioned": true,
+    "started_once": false,
+    "cloned_from_snapshot_id": "ea7d506b-2d78-479d-8df7-481adc0ac49e",
+    "desired_state": "stopped",
+    "state": "stopped",
+    "observed_at": "2026-11-22T15:04:49.633Z",
+    "created_at": "2026-11-22T15:04:49.575Z",
+    "updated_at": "2026-11-22T15:04:49.633Z"
+   },
+   {
+    "id": "beadd131-9d0e-4df7-b374-35d58146362a",
+    "name": "rb-c4-src",
+    "hostname": "rb-c4-src",
+    "template_id": "f496866f-32ba-4527-bcee-5a717a2f74c0",
+    "template_name": "minimal-151",
+    "pool": "skeptest",
+    "release": "15.1-RELEASE-p6",
+    "options": {
+     "sysvipc": false,
+     "mlock": false
+    },
+    "limits": {},
+    "nics": [],
+    "provisioned": true,
+    "started_once": false,
+    "desired_state": "stopped",
+    "state": "stopped",
+    "observed_at": "2026-11-22T15:04:47.431Z",
+    "created_at": "2026-11-22T15:04:47.371Z",
+    "updated_at": "2026-11-22T15:04:47.431Z"
+   }
+  ]
+ }
+}

@@ -1,0 +1,15 @@
+deploy-test: hearst:/usr/local/sbin/skep-agent root:wheel 0555 13738154 bytes sha256 e2274d044a686c79c44c79c349e95a60511b3dbfb77cf08081a00dfd6b751f93
+deploy-test: hearst:/usr/local/sbin/skep-api root:wheel 0555 14192810 bytes sha256 90199f290dbc6e2d5225cc4c73cf6f07cbd90c1a448647e84f92f3fa84a80b3f
+deploy-test: synced
+deploy-test: hearst:/usr/local/bin/skepctl root:wheel 0555 7217322 bytes sha256 a4cfe9b972e04ffc569857a24d5dcf77480187aa8c2662e30c3fae7de4e474f3
+deploy-test: synced
+deploy-test: restarting skep_api and skep_agent on hearst
+Stopping skep_api.
+Waiting for PIDS: 23246.
+Stopping skep_agent.
+Waiting for PIDS: 23186.
+Starting skep_agent.
+Starting skep_api.
+deploy-test: skep_agent pid 47258 runs /usr/local/sbin/skep-agent: skep-agent 0.1.0 (commit dd7a8b6, built 2026-11-22T15:03:13Z, go1.27.4 freebsd/amd64)
+deploy-test: skep_api pid 47324 runs /usr/local/sbin/skep-api: skep-api 0.1.0 (commit dd7a8b6, built 2026-11-22T15:03:13Z, go1.27.4 freebsd/amd64)
+deploy-test: hearst runs dd7a8b6

@@ -1,0 +1,59 @@
+{
+ "http": 200,
+ "body": {
+  "id": "18a49047-1828-4177-8e6d-23bb85fdead8",
+  "node_id": "97fc6968-7e82-49c9-bda8-9026775ca964",
+  "type": "container.start",
+  "status": "failed",
+  "resource_type": "container",
+  "resource_id": "52bcc0f6-bc32-4f0b-81ef-89d2492e1fc7",
+  "actor": {
+   "id": "af143ddd-2c62-4eeb-803a-2081c4fd0088",
+   "name": "s7admin"
+  },
+  "request_id": "80a8e2e570eb6c69efd420a1",
+  "cancellable": false,
+  "error": {
+   "code": "container_address_in_use",
+   "message": "the starting jail rb-sr07-b holds 192.0.2.77/24 on bridge0; stop it or give this jail another address"
+  },
+  "created_at": "2026-11-22T15:05:04.846Z",
+  "started_at": "2026-11-22T15:05:04.846Z",
+  "finished_at": "2026-11-22T15:05:04.876Z",
+  "events": [
+   {
+    "id": 3999,
+    "kind": "state",
+    "level": "info",
+    "message": "task is pending",
+    "data": {
+     "from": "",
+     "to": "pending"
+    },
+    "created_at": "2026-11-22T15:05:04.846Z"
+   },
+   {
+    "id": 4000,
+    "kind": "state",
+    "level": "info",
+    "message": "task is running",
+    "data": {
+     "from": "pending",
+     "to": "running"
+    },
+    "created_at": "2026-11-22T15:05:04.846Z"
+   },
+   {
+    "id": 4002,
+    "kind": "state",
+    "level": "error",
+    "message": "task is failed",
+    "data": {
+     "from": "running",
+     "to": "failed"
+    },
+    "created_at": "2026-11-22T15:05:04.876Z"
+   }
+  ]
+ }
+}

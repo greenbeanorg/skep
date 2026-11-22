@@ -1,0 +1,6 @@
+login s7admin: HTTP 200 (token not shown)
+s7admin ok
+login s7oper: HTTP 200 (token not shown)
+s7oper ok
+login s7viewer: HTTP 200 (token not shown)
+s7viewer ok
