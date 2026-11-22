@@ -78,6 +78,16 @@ outside the jail. An existing `rc.conf` or `resolv.conf` is opened with
 or replaced: a FIFO, device node, directory, or link that a template put
 there fails the task instead of blocking it (ADR 0010 amendment n, SR-09).
 
+**Nameservers.** `nameservers` (up to three IPv4 or IPv6 addresses) go
+into the jail's `/etc/resolv.conf` before its first start, for static
+addressing only: with a DHCP NIC, `dhclient` writes `resolv.conf`, and
+nameservers are refused (`invalid_request`). For a jail without a NIC
+they are refused with `nameservers_require_nic` (422), at create,
+update, and clone, as the web interface offers the field only when the
+jail has a NIC. An update that leaves `nameservers` out keeps the stored
+list, so one that removes the last NIC of a jail with nameservers must
+also send `"nameservers": []`.
+
 **MAC addresses.** A NIC's MAC address, given in a create, an update,
 or a clone, must be unicast, locally administered (the `0x02` bit of the
 first byte set: the second hex digit is 2, 6, A, or E), and not all
@@ -86,7 +96,8 @@ Left out, Skep generates `02:` and five random bytes. A MAC address
 that another Skep jail or a Skep VM already holds is refused at create,
 update, and clone with `container_mac_in_use` (409), whose details name
 the holder (`held_by_kind` `container` or `vm`, `held_by_id`,
-`held_by_name`), as at start (amendment u). At every start,
+`held_by_name`), as at start (amendment u). The VM side refuses a MAC
+address a jail or another VM holds with `vm_mac_in_use` (409). At every start,
 before any epair is created, the agent also refuses
 (`container_mac_in_use`) a MAC address that a Skep VM holds, or that is
 already present on the NIC's bridge: the bridge's own address, a member

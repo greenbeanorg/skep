@@ -93,8 +93,8 @@ func nullString(s string) any {
 
 // InsertTx stores a new, unprovisioned VM with its disks, volumes, and
 // NICs in an open transaction: the one that creates its vm.create task.
-// datasetRoot names the volumes. It returns ErrVMNameTaken, or an
-// invalid_request error for a MAC address that is already in use.
+// datasetRoot names the volumes. It returns ErrVMNameTaken, or
+// vm_mac_in_use for a MAC address another VM or a jail holds.
 func (s *VMStore) InsertTx(ctx context.Context, tx *sql.Tx, vm models.VM, datasetRoot string) error {
 	var n int
 	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM virtual_machines WHERE name = ?`, vm.Name).Scan(&n); err != nil {
@@ -122,11 +122,11 @@ func (s *VMStore) InsertTx(ctx context.Context, tx *sql.Tx, vm models.VM, datase
 		}
 	}
 	for _, nic := range vm.NICs {
-		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM vm_networks WHERE mac_address = ?`, nic.MACAddress).Scan(&n); err != nil {
-			return fmt.Errorf("database: check MAC address: %w", err)
-		}
-		if n > 0 {
-			return models.Invalid("the MAC address " + nic.MACAddress + " is already used by another network interface")
+		// The service refuses a held MAC before submitting; this check,
+		// in the writing transaction, is the last word. It also covers
+		// clone, whose addresses are generated.
+		if err := macHeld(ctx, tx, nic); err != nil {
+			return err
 		}
 		if _, err := tx.ExecContext(ctx, `
 			INSERT INTO vm_networks (id, vm_id, slot, model, mac_address, bridge, created_at)
@@ -179,6 +179,66 @@ func insertDisk(ctx context.Context, tx *sql.Tx, vm models.VM, d models.VMDisk, 
 const vmColumns = `id, node_id, name, description, engine, cpu_count, memory_bytes, firmware, config,
 	desired_state, provisioned, observed_state, COALESCE(observed_detail, ''), observed_pid, observed_at,
 	COALESCE(cloned_from_snapshot_id, ''), created_at, updated_at`
+
+// CheckMACsFree returns vm_mac_in_use for the first NIC whose MAC address
+// another Skep VM or a Skep jail holds, so that a create is refused before
+// its task is submitted. A NIC without an address (one to be generated) is
+// skipped. InsertTx checks again when it writes.
+func (s *VMStore) CheckMACsFree(ctx context.Context, nics []models.VMNIC) error {
+	for _, nic := range nics {
+		if nic.MACAddress == "" {
+			continue
+		}
+		if err := macHeld(ctx, s.db, nic); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// macHeld is vm_mac_in_use, with the holder in its details as
+// container_mac_in_use names one, when a VM's NIC or a jail's NIC already
+// has nic's MAC address. A VM holder is reported before a jail one.
+// Addresses are stored normalized (lower case), as both services write
+// them.
+func macHeld(ctx context.Context, q queryer, nic models.VMNIC) error {
+	var id, name string
+	var slot int
+	err := q.QueryRowContext(ctx, `
+		SELECT v.id, v.name, n.slot FROM vm_networks n JOIN virtual_machines v ON v.id = n.vm_id
+		WHERE n.mac_address = ? ORDER BY v.name, n.slot LIMIT 1`, nic.MACAddress).Scan(&id, &name, &slot)
+	switch {
+	case err == nil:
+		return macInUse(nic, "vm", id, name, slot)
+	case !errors.Is(err, sql.ErrNoRows):
+		return fmt.Errorf("database: check MAC address: %w", err)
+	}
+	err = q.QueryRowContext(ctx, `
+		SELECT c.id, c.name, n.slot FROM container_networks n JOIN containers c ON c.id = n.container_id
+		WHERE n.mac_address = ? ORDER BY c.name, n.slot LIMIT 1`, nic.MACAddress).Scan(&id, &name, &slot)
+	switch {
+	case err == nil:
+		return macInUse(nic, "container", id, name, slot)
+	case errors.Is(err, sql.ErrNoRows):
+		return nil
+	default:
+		return fmt.Errorf("database: check MAC address: %w", err)
+	}
+}
+
+// macInUse is the vm_mac_in_use error for nic, held by the VM or container
+// (kind "vm" or "container") id, called name, on its NIC slot.
+func macInUse(nic models.VMNIC, kind, id, name string, slot int) error {
+	noun := "VM"
+	if kind == "container" {
+		noun = "container"
+	}
+	return &models.Error{Code: models.CodeVMMACInUse,
+		Message: fmt.Sprintf("the MAC address %s of NIC slot %d is also held by the %s %s (slot %d); give the NIC another address",
+			nic.MACAddress, nic.Slot, noun, name, slot),
+		Details: map[string]any{"slot": nic.Slot, "mac_address": nic.MACAddress,
+			"held_by_kind": kind, "held_by_id": id, "held_by_name": name}}
+}
 
 type queryer interface {
 	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)

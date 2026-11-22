@@ -35,6 +35,7 @@ var StatusForCode = map[string]int{
 	models.CodeStorageUnavailable:  http.StatusConflict,
 	models.CodeVMNameTaken:         http.StatusConflict,
 	models.CodeVMNotStopped:        http.StatusConflict,
+	models.CodeVMMACInUse:          http.StatusConflict,
 	models.CodeVMNotRunning:        http.StatusConflict,
 	models.CodeVMNotProvisioned:    http.StatusConflict,
 	models.CodeStopTimeout:         http.StatusConflict,
@@ -73,6 +74,7 @@ var StatusForCode = map[string]int{
 	models.CodeContainerStartFailed:     http.StatusConflict,
 	models.CodeContainerSSHUnavailable:  http.StatusUnprocessableEntity,
 	models.CodeMlockRequiresMemoryLimit: http.StatusUnprocessableEntity,
+	models.CodeNameserversRequireNIC:    http.StatusUnprocessableEntity,
 	models.CodeEpairUnavailable:         http.StatusConflict,
 	// Guest-port filters (ADR 0011), on jail and VM starts.
 	models.CodePortFilterUnavailable:   http.StatusConflict,

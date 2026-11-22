@@ -87,6 +87,11 @@ func (s *Service) normalizeNICs(specs []models.ContainerNICSpec, nameservers []s
 	if gateways > 1 {
 		return nil, nil, models.Invalid("only one NIC may have a gateway: it is the jail's default route")
 	}
+	if len(nameservers) > 0 && len(nics) == 0 {
+		return nil, nil, &models.Error{Code: models.CodeNameserversRequireNIC,
+			Message: "nameservers need a NIC with static addressing: a jail without a NIC has no network to use them on; give a NIC, or an empty nameservers list",
+			Details: map[string]any{"nameservers_given": len(nameservers)}}
+	}
 	if len(nameservers) > 0 && dhcp {
 		return nil, nil, models.Invalid("nameservers are for static addressing only: with DHCP, dhclient writes the jail's resolv.conf")
 	}
