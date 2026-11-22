@@ -409,6 +409,7 @@ docs/                  architecture, security, and decision records
 - [Architecture overview](docs/architecture/overview.md)
 - [Security overview](docs/security/overview.md)
 - [Running Skep as FreeBSD services](docs/installation/freebsd-service.md)
+- [Upgrading a host](docs/installation/upgrading.md)
 - [skepctl](docs/administration/skepctl.md)
 - [The web interface](docs/administration/web-ui.md)
 - [Virtual machines](docs/administration/virtual-machines.md)
