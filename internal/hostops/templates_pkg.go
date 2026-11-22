@@ -49,6 +49,9 @@ const (
 type EnvCommand struct {
 	Path string
 	Args []string
+	// Stdin, when not nil, is the command's whole standard input (ngctl
+	// -f -, ADR 0011). Otherwise the command gets none.
+	Stdin []byte
 	// Env is the whole environment: nothing is inherited.
 	Env     []string
 	Timeout time.Duration

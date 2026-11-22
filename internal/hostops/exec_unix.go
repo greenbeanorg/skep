@@ -64,6 +64,8 @@ type runOpts struct {
 	// the stderr tail to stderrTo, on a failure or a timeout too
 	// (amendment u: a failed jail -r).
 	keepOnFail bool
+	// stdin, when not nil, is the command's standard input.
+	stdin []byte
 }
 
 // envRunOpts is how RunEnv runs an EnvCommand that has no ConsoleLog.
@@ -77,7 +79,7 @@ func envRunOpts(timeout time.Duration, c EnvCommand) runOpts {
 		over = overflowMark
 	}
 	return runOpts{timeout: timeout, limit: limit, over: over, env: c.Env,
-		stderrLast: c.StderrLastLine, stderrTo: c.StderrTail, keepOnFail: c.OutputOnFailure}
+		stderrLast: c.StderrLastLine, stderrTo: c.StderrTail, keepOnFail: c.OutputOnFailure, stdin: c.Stdin}
 }
 
 // stderrTail is how much of the end of standard error is kept when the
@@ -85,7 +87,8 @@ func envRunOpts(timeout time.Duration, c EnvCommand) runOpts {
 const stderrTail = 64 << 10
 
 // runCommand runs one command with an explicit argument list, the given
-// whole environment, no stdin, a timeout, and capped output.
+// whole environment, no stdin unless o.stdin is set, a timeout, and
+// capped output.
 func runCommand(ctx context.Context, o runOpts, path string, args ...string) ([]byte, error) {
 	if !filepath.IsAbs(path) {
 		return nil, fmt.Errorf("hostops: refusing to run non-absolute command %q", path)
@@ -102,6 +105,9 @@ func runCommand(ctx context.Context, o runOpts, path string, args ...string) ([]
 	headTail := newConsoleLog(&marked, o.limit, o.limit)
 	cmd := exec.CommandContext(ctx, path, args...)
 	cmd.Env = o.env
+	if o.stdin != nil {
+		cmd.Stdin = bytes.NewReader(o.stdin)
+	}
 	// The tail of standard error, for its last line.
 	errTail := newConsoleLog(io.Discard, 0, stderrTail)
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr

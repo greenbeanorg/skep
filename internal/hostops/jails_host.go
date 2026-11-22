@@ -465,6 +465,15 @@ func (h *host) StartJail(ctx context.Context, spec JailSpec) (JailState, error) 
 		}
 		if err != nil {
 			h.cleanJailNet(spec)
+			var me *models.Error
+			if errors.As(err, &me) && me.Code == models.CodePortFilterFailed {
+				if me.Details == nil {
+					me.Details = map[string]any{}
+				}
+				me.Details["container_id"] = spec.ContainerID
+				me.Details["slot"] = nic.Slot
+				return JailState{}, me
+			}
 			return JailState{}, &models.Error{Code: models.CodeContainerStartFailed,
 				Message: "the jail's network could not be set up: " + err.Error(), Details: map[string]any{"container_id": spec.ContainerID}}
 		}
@@ -583,7 +592,8 @@ func (h *host) checkJailDevfs(spec JailSpec, root string) error {
 }
 
 // checkJailNet checks what a jail's NICs need before anything is
-// created: if_epair, a usable allow-listed bridge for each, and, for DHCP,
+// created: if_epair, the netgraph modules of the port filters (ADR 0011),
+// a usable allow-listed bridge for each, and, for DHCP,
 // Skep's devfs ruleset (added when absent).
 func (h *host) checkJailNet(ctx context.Context, spec JailSpec) error {
 	if len(spec.NICs) == 0 {
@@ -593,6 +603,9 @@ func (h *host) checkJailNet(ctx context.Context, spec JailSpec) error {
 		return err
 	}
 	if err := h.EpairAvailable(ctx); err != nil {
+		return err
+	}
+	if err := h.PortFilterAvailable(ctx); err != nil {
 		return err
 	}
 	for _, nic := range spec.NICs {

@@ -278,6 +278,9 @@ func (j fakeJails) StartJail(ctx context.Context, spec hostops.JailSpec) (hostop
 	if len(spec.NICs) > 0 && f.NoEpair {
 		return hostops.JailState{}, &models.Error{Code: models.CodeEpairUnavailable, Message: "the if_epair module is not loaded (simulated)"}
 	}
+	if len(spec.NICs) > 0 && f.NoNetgraph {
+		return hostops.JailState{}, &models.Error{Code: models.CodePortFilterUnavailable, Message: "the netgraph modules are not loaded (simulated)"}
+	}
 	if dhcp {
 		if f.DevfsConflict {
 			return hostops.JailState{}, &models.Error{Code: models.CodeDevfsRulesetConflict,
@@ -298,9 +301,27 @@ func (j fakeJails) StartJail(ctx context.Context, spec hostops.JailSpec) (hostop
 	}
 	epairs := map[int]string{}
 	for _, nic := range spec.NICs {
+		params, err := nic.FilterParams()
+		if err != nil {
+			f.destroyEpairsLocked(spec.ContainerID)
+			return hostops.JailState{}, err
+		}
 		host := fmt.Sprintf("epair%da", f.nextEpair)
 		f.nextEpair++
-		f.epairs[host] = fakeTap{desc: hostops.InterfaceDescription(spec.ContainerID, nic.Slot), bridge: nic.Bridge}
+		f.epairs[host] = fakeTap{desc: hostops.InterfaceDescription(spec.ContainerID, nic.Slot)}
+		if f.filterState().failInstall {
+			f.destroyEpairsLocked(spec.ContainerID)
+			return hostops.JailState{}, &models.Error{Code: models.CodePortFilterFailed,
+				Message: "the filter could not be installed on " + host + " (simulated)",
+				Details: map[string]any{"container_id": spec.ContainerID, "slot": nic.Slot, "interface": host}}
+		}
+		if err := f.installFilterLocked(host, params); err != nil {
+			f.destroyEpairsLocked(spec.ContainerID)
+			return hostops.JailState{}, err
+		}
+		e := f.epairs[host]
+		e.bridge = nic.Bridge
+		f.epairs[host] = e
 		epairs[nic.Slot] = host
 		f.record("ifconfig epair create description %s; %s addm %s", f.epairs[host].desc, nic.Bridge, host)
 	}

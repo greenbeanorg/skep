@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/greenbeanorg/skep/internal/hostops"
+	"github.com/greenbeanorg/skep/internal/portfilter"
 	"github.com/greenbeanorg/skep/pkg/models"
 )
 
@@ -116,14 +118,8 @@ func (r *runner) boot(ctx context.Context) (string, string) {
 		return models.VMFailed, "the vmm instance already exists; force-stop the VM to destroy it"
 	}
 	for _, n := range r.spec.NICs {
-		tap, err := r.ops.Net.CreateTap(ctx, id, n.Slot)
-		if err != nil {
-			return models.VMFailed, "create a tap: " + err.Error()
-		}
-		r.st.Taps[n.Slot] = tap
-		r.save()
-		if err := r.ops.Net.AddBridgeMember(ctx, n.Bridge, tap); err != nil {
-			return models.VMFailed, err.Error()
+		if state, detail := r.addNIC(ctx, n); state != "" {
+			return state, detail
 		}
 	}
 	if err := r.ops.Files.PrepareVM(ctx, id); err != nil {
@@ -164,6 +160,50 @@ func (r *runner) boot(ctx context.Context) (string, string) {
 			return models.VMFailed, fmt.Sprintf("the guest rebooted more than %d times in a minute", maxRebootsPerMinute)
 		}
 	}
+}
+
+// addNIC creates the tap of one NIC, puts its anti-spoofing filter on it,
+// and only then adds it to the bridge (ADR 0011 decision 3), holding the
+// port's lock throughout so the agent's health check never sees the port
+// half installed. It returns a final state and detail on failure, "" on
+// success. The runner does nothing more with the filter: the agent's
+// check owns detection and repair (addition a).
+func (r *runner) addNIC(ctx context.Context, n SpecNIC) (string, string) {
+	id := r.spec.VMID
+	params, err := VMFilterParams(n.MAC)
+	if err != nil {
+		return models.VMFailed, models.CodePortFilterFailed + ": " + err.Error()
+	}
+	unlock, err := r.ops.Filters.LockPort(hostops.PortVM, id, n.Slot, true)
+	if err != nil {
+		return models.VMFailed, "lock the port: " + err.Error()
+	}
+	defer unlock()
+	tap, err := r.ops.Net.CreateTap(ctx, id, n.Slot)
+	if err != nil {
+		return models.VMFailed, "create a tap: " + err.Error()
+	}
+	r.st.Taps[n.Slot] = tap
+	r.save()
+	if _, err := r.ops.Filters.InstallPortFilter(ctx, tap, params); err != nil {
+		return models.VMFailed, models.CodePortFilterFailed + ": " + err.Error()
+	}
+	if err := r.ops.Net.AddBridgeMember(ctx, n.Bridge, tap); err != nil {
+		return models.VMFailed, err.Error()
+	}
+	return "", ""
+}
+
+// VMFilterParams is what a VM NIC's port filter is generated from: the
+// recorded MAC only (Skep records no address for a VM), with IPv6 allowed
+// and the router-advertisement guard (ADR 0011 answers 4 and 7).
+func VMFilterParams(mac string) (portfilter.Params, error) {
+	hw, err := net.ParseMAC(mac)
+	if err != nil {
+		return portfilter.Params{}, fmt.Errorf("invalid MAC address %q", mac)
+	}
+	p := portfilter.Params{MAC: hw, IPv6: true}
+	return p, p.Validate()
 }
 
 // once runs bhyve one time. again is true when the guest rebooted and no

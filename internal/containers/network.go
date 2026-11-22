@@ -271,10 +271,21 @@ func netRCConf(c models.Container) ([]string, error) {
 }
 
 // jailNICs is what StartJail needs of a container's NICs.
-func jailNICs(c models.Container) []hostops.JailNIC {
+func jailNICs(c models.Container) []hostops.JailNIC { return JailNICs(c) }
+
+// JailNICs is what StartJail, and the port-filter check, need of a
+// container's NICs.
+func JailNICs(c models.Container) []hostops.JailNIC {
 	var out []hostops.JailNIC
 	for _, n := range c.NICs {
-		out = append(out, hostops.JailNIC{Slot: n.Slot, Bridge: n.Bridge, MAC: n.MACAddress, DHCP: n.IPv4.Mode == models.IPv4DHCP})
+		nic := hostops.JailNIC{Slot: n.Slot, Bridge: n.Bridge, MAC: n.MACAddress, DHCP: n.IPv4.Mode == models.IPv4DHCP}
+		if !nic.DHCP {
+			nic.IPv4 = n.IPv4.Address
+		}
+		// IPv6 stays false: the API offers no IPv6 setting yet, so every
+		// jail NIC has ipv6_mode none and its port drops IPv6 (ADR 0011
+		// decision 2).
+		out = append(out, nic)
 	}
 	return out
 }

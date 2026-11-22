@@ -69,6 +69,11 @@ type Fake struct {
 	// devfs ruleset 6001 holds someone else's rules.
 	NoEpair       bool
 	DevfsConflict bool
+	// NoNetgraph simulates a host without the netgraph modules the
+	// guest-port filters need (ADR 0011).
+	NoNetgraph bool
+	// pf is the simulated netgraph state.
+	pf fakeFilters
 	// QuarantineStart makes the next starts behave like a /dev guard
 	// refusal whose removal failed: the jail is left in place and the
 	// start fails with container_quarantined (amendment n, SR-06).
@@ -184,7 +189,7 @@ func New(conf hostops.Confinement, opts Options) *Fake {
 // Ops returns the fake as the hostops surface.
 func (f *Fake) Ops() hostops.Ops {
 	return hostops.Ops{Conf: f.conf, ZFS: f, Dirs: fakeDirs{f}, Net: f, VMM: f, Files: fakeFiles{Files: f.files, f: f}, Procs: f,
-		Templates: fakeTemplates{f}, Jails: fakeJails{f}}
+		Templates: fakeTemplates{f}, Jails: fakeJails{f}, Filters: fakePortFilters{f}}
 }
 
 // Calls returns what was called so far, one line per mutating call.

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/greenbeanorg/skep/internal/portfilter"
 	"github.com/greenbeanorg/skep/pkg/models"
 )
 
@@ -60,7 +61,7 @@ func TestParseDescription(t *testing.T) {
 
 func TestRenderJailConfNICs(t *testing.T) {
 	spec := jailSpec()
-	spec.NICs = []JailNIC{{Slot: 0, Bridge: "bridge0", MAC: "02:00:00:00:00:01"}, {Slot: 1, Bridge: "bridge0", MAC: "02:00:00:00:00:02"}}
+	spec.NICs = []JailNIC{{Slot: 0, Bridge: "bridge0", MAC: "02:00:00:00:00:01", IPv4: "192.0.2.1/24"}, {Slot: 1, Bridge: "bridge0", MAC: "02:00:00:00:00:02", IPv4: "192.0.2.1/24"}}
 	conf, err := renderJailConf(spec, "/r")
 	if err != nil {
 		t.Fatal(err)
@@ -75,11 +76,11 @@ func TestRenderJailConfNICs(t *testing.T) {
 		t.Fatalf("a DHCP jail does not get ruleset 6001:\n%s", conf)
 	}
 	for _, bad := range [][]JailNIC{
-		{{Slot: 0, Bridge: "bridge0", MAC: "02:00:00:00:00:01"}, {Slot: 0, Bridge: "bridge0", MAC: "02:00:00:00:00:02"}},
-		{{Slot: 8, Bridge: "bridge0", MAC: "02:00:00:00:00:01"}},
-		{{Slot: 0, Bridge: "bridge0", MAC: "03:00:00:00:00:01"}},
-		{{Slot: 0, Bridge: "bridge0", MAC: "02:00:00:00:00:0A"}},
-		{{Slot: 0, Bridge: "bridge0\"; exec.prestart=\"x", MAC: "02:00:00:00:00:01"}},
+		{{Slot: 0, Bridge: "bridge0", MAC: "02:00:00:00:00:01", IPv4: "192.0.2.1/24"}, {Slot: 0, Bridge: "bridge0", MAC: "02:00:00:00:00:02", IPv4: "192.0.2.1/24"}},
+		{{Slot: 8, Bridge: "bridge0", MAC: "02:00:00:00:00:01", IPv4: "192.0.2.1/24"}},
+		{{Slot: 0, Bridge: "bridge0", MAC: "03:00:00:00:00:01", IPv4: "192.0.2.1/24"}},
+		{{Slot: 0, Bridge: "bridge0", MAC: "02:00:00:00:00:0A", IPv4: "192.0.2.1/24"}},
+		{{Slot: 0, Bridge: "bridge0\"; exec.prestart=\"x", MAC: "02:00:00:00:00:01", IPv4: "192.0.2.1/24"}},
 	} {
 		spec.NICs = bad
 		if _, err := renderJailConf(spec, "/r"); err == nil {
@@ -173,23 +174,70 @@ func TestCreateJailEpair(t *testing.T) {
 	h, run, _ := jailHost(t)
 	run.answers["ifconfig sjc0c0c0c011n0"] = noSuchInterface("sjc0c0c0c011n0")
 	run.answers[epairCreate] = "epair3a\n"
-	host, err := h.createJailEpair(context.Background(), ctrA, JailNIC{Slot: 0, Bridge: "bridge0", MAC: "02:5b:00:00:00:01", DHCP: true})
+	nic := JailNIC{Slot: 0, Bridge: "bridge0", MAC: "02:5b:00:00:00:01", DHCP: true}
+	params, _ := nic.FilterParams()
+	filtered(run, "epair3a", params)
+	host, err := h.createJailEpair(context.Background(), ctrA, nic)
 	if err != nil || host != "epair3a" {
 		t.Fatalf("createJailEpair = %q, %v", host, err)
 	}
+	// The filter is on, and verified, before the jail end is touched and
+	// before the host end joins the bridge (ADR 0011 decision 3).
 	want := []string{
 		"ifconfig sjc0c0c0c011n0", "ifconfig -g epair", epairCreate,
+		"ngctl show epair3a:", "ngctl -f -", "ngctl name [5]:lower skf_epair3a",
+		"ngctl show [5]:", `ngctl msg [19]: getprogram "jail"`, `ngctl msg [19]: getprogram "bridge"`,
 		"ifconfig epair3b name sjc0c0c0c011n0", "ifconfig sjc0c0c0c011n0 ether 02:5b:00:00:00:01", "ifconfig bridge0 addm epair3a",
 	}
 	if !slices.Equal(run.calls, want) {
 		t.Fatalf("calls:\n%q\nwant\n%q", run.calls, want)
+	}
+	prog, _ := portfilter.Program(params)
+	script, _ := portfilter.InstallScript("5", prog)
+	if len(run.envCmds) != 1 || string(run.envCmds[0].Stdin) != script {
+		t.Fatalf("ngctl -f got %+v", run.envCmds)
+	}
+}
+
+func TestCreateJailEpairFilterFailureNeverJoinsTheBridge(t *testing.T) {
+	for name, breakIt := range map[string]func(run *script){
+		"install fails": func(run *script) {
+			run.answers["ngctl -f -"] = &CommandError{Name: "ngctl", ExitCode: 1, Stderr: "ngctl: line 1: error in file", Err: errors.New("exit status 1")}
+		},
+		"wrong program after install": func(run *script) {
+			other, _ := portfilter.Program(portfilter.Params{MAC: net.HardwareAddr{2, 0, 0, 0, 0, 9}})
+			run.answers[`ngctl msg [19]: getprogram "jail"`] = "Args:\t" + portfilter.SetProgram("jail", "bridge", "", other) + "\n"
+		},
+		"hooks already in use": func(run *script) {
+			run.answers["ngctl show epair3a:"] = showFilteredOut
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h, run, _ := jailHost(t)
+			run.answers["ifconfig sjc0c0c0c011n0"] = noSuchInterface("sjc0c0c0c011n0")
+			run.answers[epairCreate] = "epair3a\n"
+			nic := JailNIC{Slot: 0, Bridge: "bridge0", MAC: "02:5b:00:00:00:01", DHCP: true}
+			params, _ := nic.FilterParams()
+			filtered(run, "epair3a", params)
+			breakIt(run)
+			host, err := h.createJailEpair(context.Background(), ctrA, nic)
+			wantCode(t, err, models.CodePortFilterFailed)
+			if host != "epair3a" {
+				t.Errorf("host = %q; the caller must learn the epair to destroy it", host)
+			}
+			for _, c := range run.calls {
+				if strings.Contains(c, "addm") || strings.Contains(c, " name sj") {
+					t.Fatalf("went on after a failed filter: %q", c)
+				}
+			}
+		})
 	}
 }
 
 func TestCreateJailEpairRefusesForeignName(t *testing.T) {
 	h, run, _ := jailHost(t)
 	run.answers["ifconfig sjc0c0c0c011n0"] = ifconfigShow("sjc0c0c0c011n0", "")
-	if _, err := h.createJailEpair(context.Background(), ctrA, JailNIC{Slot: 0, Bridge: "bridge0", MAC: "02:5b:00:00:00:01"}); err == nil {
+	if _, err := h.createJailEpair(context.Background(), ctrA, JailNIC{Slot: 0, Bridge: "bridge0", MAC: "02:5b:00:00:00:01", IPv4: "192.0.2.1/24"}); err == nil {
 		t.Fatal("an existing interface of the jail end's name was ignored")
 	}
 	for _, c := range run.calls {
@@ -292,7 +340,7 @@ func TestCheckJailNetRefusesWithoutEpair(t *testing.T) {
 	// Static only: no devfs ruleset is touched.
 	h, run, _ = jailHost(t)
 	run.answers["ifconfig bridge0"] = "bridge0: flags=8843<UP> mtu 1500\n\tmember: vtnet1 flags=143<LEARNING>\n"
-	spec.NICs[0].DHCP = false
+	spec.NICs[0].DHCP, spec.NICs[0].IPv4 = false, "192.0.2.1/24"
 	if err := h.checkJailNet(context.Background(), spec); err != nil {
 		t.Fatal(err)
 	}
@@ -384,9 +432,9 @@ func TestJailMACProblem(t *testing.T) {
 }
 
 func TestCheckNICsRefusesUniversalMAC(t *testing.T) {
-	err := checkNICs([]JailNIC{{Slot: 0, Bridge: "bridge0", MAC: "58:9c:fc:10:ff:d8"}})
+	err := checkNICs([]JailNIC{{Slot: 0, Bridge: "bridge0", MAC: "58:9c:fc:10:ff:d8", IPv4: "192.0.2.1/24"}})
 	wantCode(t, err, models.CodeContainerMACInvalid)
-	if err := checkNICs([]JailNIC{{Slot: 0, Bridge: "bridge0", MAC: "02:9c:fc:10:ff:d8"}}); err != nil {
+	if err := checkNICs([]JailNIC{{Slot: 0, Bridge: "bridge0", MAC: "02:9c:fc:10:ff:d8", IPv4: "192.0.2.1/24"}}); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -415,7 +463,7 @@ func TestCheckMACsFree(t *testing.T) {
 		h, run, _ := jailHost(t)
 		bridgeWithMACs(run)
 		spec := jailSpec()
-		spec.NICs = []JailNIC{{Slot: 0, Bridge: "bridge0", MAC: mac}}
+		spec.NICs = []JailNIC{{Slot: 0, Bridge: "bridge0", MAC: mac, IPv4: "192.0.2.1/24"}}
 		err := h.checkMACsFree(context.Background(), spec)
 		wantCode(t, err, models.CodeContainerMACInUse)
 		if !strings.Contains(err.Error(), where) {
@@ -426,7 +474,7 @@ func TestCheckMACsFree(t *testing.T) {
 	h, run, _ := jailHost(t)
 	bridgeWithMACs(run)
 	spec := jailSpec()
-	spec.NICs = []JailNIC{{Slot: 0, Bridge: "bridge0", MAC: "02:00:00:00:00:01"}, {Slot: 1, Bridge: "bridge0", MAC: "02:00:00:00:00:02"}}
+	spec.NICs = []JailNIC{{Slot: 0, Bridge: "bridge0", MAC: "02:00:00:00:00:01", IPv4: "192.0.2.1/24"}, {Slot: 1, Bridge: "bridge0", MAC: "02:00:00:00:00:02", IPv4: "192.0.2.1/24"}}
 	if err := h.checkMACsFree(context.Background(), spec); err != nil {
 		t.Fatal(err)
 	}

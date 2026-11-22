@@ -23,7 +23,7 @@ func New(conf Confinement, opts Options) (Ops, error) {
 	}
 	h := newHost(conf, execRunner{timeout: timeout}, kernel{}, opts.Logger)
 	h.spawn, h.self = execSpawner{}, opts.Self
-	return Ops{Conf: conf, ZFS: h, Dirs: newDirs(conf, kernel{}, opts.Logger), Net: h, VMM: h, Files: h, Procs: h, Templates: h, Jails: h}, nil
+	return Ops{Conf: conf, ZFS: h, Dirs: newDirs(conf, kernel{}, opts.Logger), Net: h, VMM: h, Files: h, Procs: h, Templates: h, Jails: h, Filters: h}, nil
 }
 
 // kernel is the real system binding.
