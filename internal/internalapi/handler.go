@@ -119,7 +119,18 @@ func NewHandler(backend Backend, opts Options) http.Handler {
 	root = httpkit.WithRecovery(log, root)
 	root = withRequestLog(log, root)
 	root = withRequestID(root)
+	root = withAgentVersion(root)
 	return root
+}
+
+// withAgentVersion puts the agent's build ID on every response, errors
+// and websocket upgrades included, so skep-api can refuse a mismatch.
+func withAgentVersion(next http.Handler) http.Handler {
+	id := agentproto.BuildID()
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set(agentproto.HeaderAgentVersion, id)
+		next.ServeHTTP(w, r)
+	})
 }
 
 // withRequestID uses the request ID skep-api sent, so both logs and both

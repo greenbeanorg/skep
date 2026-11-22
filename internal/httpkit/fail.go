@@ -12,13 +12,14 @@ import (
 // StatusForCode maps the stable error codes of models.Error to HTTP
 // statuses. A code that is not listed is treated as an internal error.
 var StatusForCode = map[string]int{
-	models.CodeInvalidRequest:      http.StatusBadRequest,
-	models.CodeResourceBusy:        http.StatusConflict,
-	models.CodeIdempotencyConflict: http.StatusConflict,
-	models.CodeNotCancellable:      http.StatusConflict,
-	models.CodeQueueFull:           http.StatusServiceUnavailable,
-	models.CodeShuttingDown:        http.StatusServiceUnavailable,
-	models.CodeAgentUnavailable:    http.StatusServiceUnavailable,
+	models.CodeInvalidRequest:       http.StatusBadRequest,
+	models.CodeResourceBusy:         http.StatusConflict,
+	models.CodeIdempotencyConflict:  http.StatusConflict,
+	models.CodeNotCancellable:       http.StatusConflict,
+	models.CodeQueueFull:            http.StatusServiceUnavailable,
+	models.CodeShuttingDown:         http.StatusServiceUnavailable,
+	models.CodeAgentUnavailable:     http.StatusServiceUnavailable,
+	models.CodeAgentVersionMismatch: http.StatusServiceUnavailable,
 
 	// VM and storage operations (ADR 0009). A request that is well formed
 	// but names something this host does not offer is 422; one that the

@@ -12,6 +12,8 @@ import (
 	"net/http"
 	"net/netip"
 	"regexp"
+
+	"github.com/greenbeanorg/skep/pkg/version"
 )
 
 // Prefix is the path prefix of version 1 of the internal API.
@@ -26,6 +28,19 @@ const (
 	HeaderSourceIP       = "Skep-Source-Ip"
 	HeaderIdempotencyKey = "Idempotency-Key"
 )
+
+// HeaderAgentVersion is on every response of the agent's internal API:
+// the agent's build ID. skep-api refuses to work with an agent whose build
+// differs from its own (503 agent_version_mismatch, ADR 0012 answer 9):
+// both programs come from one package and are upgraded together, so a
+// difference means only one of them was restarted.
+const HeaderAgentVersion = "Skep-Agent-Version"
+
+// BuildID is this program's build: release version and commit.
+func BuildID() string {
+	v := version.Get()
+	return v.Version + "+" + v.Commit
+}
 
 // APIActor is the actor skep-api uses for requests it makes on its own
 // behalf, such as the health check, where no user is involved.

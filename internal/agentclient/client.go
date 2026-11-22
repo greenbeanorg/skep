@@ -47,6 +47,47 @@ type Options struct {
 	// ConnectTimeout and RequestTimeout default to the values above.
 	ConnectTimeout time.Duration
 	RequestTimeout time.Duration
+	// Build is the agent build this client accepts; default
+	// agentproto.BuildID(), skep-api's own (ADR 0012 answer 9).
+	Build string
+}
+
+// VersionMismatchError is returned for any response from an agent of
+// another build. The public API answers 503 agent_version_mismatch.
+type VersionMismatchError struct {
+	Agent, API string
+}
+
+func (e *VersionMismatchError) Error() string { return e.Model().Message }
+
+// Model is the service error the public API answers with.
+func (e *VersionMismatchError) Model() *models.Error {
+	agent := e.Agent
+	if agent == "" {
+		agent = "a build that does not report its version"
+	}
+	return &models.Error{Code: models.CodeAgentVersionMismatch,
+		Message: "skep-agent runs " + agent + " and skep-api runs " + e.API +
+			"; they come from one package and must be restarted together (skep-setup upgrade)"}
+}
+
+// versionCheck refuses every response from an agent of another build,
+// before anything in it is used.
+type versionCheck struct {
+	next http.RoundTripper
+	want string
+}
+
+func (v versionCheck) RoundTrip(req *http.Request) (*http.Response, error) {
+	resp, err := v.next.RoundTrip(req)
+	if err != nil {
+		return nil, err
+	}
+	if got := resp.Header.Get(agentproto.HeaderAgentVersion); got != v.want {
+		resp.Body.Close()
+		return nil, &VersionMismatchError{Agent: got, API: v.want}
+	}
+	return resp, nil
 }
 
 // Client talks to one agent.
@@ -67,6 +108,9 @@ func New(opts Options) (*Client, error) {
 	if opts.RequestTimeout <= 0 {
 		opts.RequestTimeout = DefaultRequestTimeout
 	}
+	if opts.Build == "" {
+		opts.Build = agentproto.BuildID()
+	}
 	dialer := &net.Dialer{Timeout: opts.ConnectTimeout}
 	transport := &http.Transport{
 		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
@@ -80,7 +124,7 @@ func New(opts Options) (*Client, error) {
 		// is no proxy and no TLS on this hop.
 		Proxy: nil,
 	}
-	return &Client{http: &http.Client{Transport: transport}, timeout: opts.RequestTimeout}, nil
+	return &Client{http: &http.Client{Transport: versionCheck{next: transport, want: opts.Build}}, timeout: opts.RequestTimeout}, nil
 }
 
 // Close releases idle connections.
@@ -94,6 +138,12 @@ func (c *Client) Health(ctx context.Context) models.Health {
 		// Critical: without the agent nothing about the node can be
 		// answered.
 		h = models.Health{}
+		var me *models.Error
+		if errors.As(err, &me) && me.Code == models.CodeAgentVersionMismatch {
+			// No version strings here: health is public.
+			h.Record("agent", true, "skep-agent and skep-api are different builds; restart both (skep-setup upgrade)")
+			return h
+		}
 		h.Record("agent", true, "the host agent is not reachable")
 		return h
 	}
@@ -182,6 +232,10 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 
 	resp, err := c.http.Do(req)
 	if err != nil {
+		var vm *VersionMismatchError
+		if errors.As(err, &vm) {
+			return vm.Model()
+		}
 		if ctxErr := ctx.Err(); ctxErr != nil && errors.Is(err, ctxErr) && !isDialError(err) {
 			return ctxErr
 		}
