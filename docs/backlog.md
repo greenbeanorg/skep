@@ -15,6 +15,8 @@ built. Entries say when they may be picked up.
 | `skep-setup` and the agent agree on whether the FreeBSD-base (pkgbase) repository is usable: setup reads the repo files, the agent probes differently | After 0.1 | PR #52 fix round (2026-11-22) |
 | `skep-setup` checks that `/var/db/skep` (and its parents) are root-owned and not group or other writable before using it | After 0.1 | PR #52 fix round (2026-11-22) |
 | `skep-setup`: a journal with an unknown format or a wrong ID no longer makes every command fail; it is reported and set aside like an unreadable one, with a way to clear it | After 0.1 | PR #52 lab re-check (2026-11-22) |
+| `skep-setup remove -revert-host` (and its plan) ignores journals of an earlier install: today the journals survive `pkg delete` and `-purge-data`, so after a reinstall the revert plan also lists lines an earlier install added (the lines seen are in the clean-install check's results on PR #54) | After 0.1 | Finding 1 of PR #52 (2026-11-22, backlog only by Andy's instruction) |
+| `skep-setup` passes the rc.d script's `-data-dir` and `-config` (`skep_api_data_dir`, `skep_api_config`) to `skep-api admin create` and `admin exists`, which today use skep-api's defaults while setup locates `api.db` from `rc.conf` | After 0.1 | Finding 1 fix (2026-11-22) |
 | An optional pinned IPv4 address for VM NICs (anti-spoofing beyond MAC) | Not scheduled | [ADR 0011](decisions/0011-guest-port-anti-spoofing.md) decision 7 |
 | Default jail limits, or limits required per role | Not scheduled | [Jails](administration/jails.md#limits) |
 | An option to reset a jail's SSH host keys on clone | Not scheduled | [Jails](administration/jails.md) |

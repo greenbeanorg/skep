@@ -332,6 +332,7 @@ skep-api admin create --username andy          # asks for the password twice, wi
 skep-api admin reset-password --username andy  # recovery for a lost password; ends that user's sessions
 skep-api admin disable --username carol        # disable a user; ends that user's sessions
 skep-api admin delete --username carol --yes   # delete a user; ends that user's sessions
+skep-api admin exists --username andy          # read-only: exit 0 exists, 1 does not, 2 error
 skep-api admin hash-benchmark                  # how long one password hash takes on this host
 ```
 

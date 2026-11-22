@@ -263,18 +263,9 @@ func stopService(ctx context.Context, r Runner, svc string, printf func(string, 
 // root, it could create the API's database owned by root (ADR 0012
 // amendment, build decision 8).
 func (a *Applier) adminCreate(ctx context.Context, username string) error {
-	users, err := ReadAccounts(hostPath(a.Root, "/etc/passwd"))
+	cred, err := skepCredential(a.Root)
 	if err != nil {
 		return err
-	}
-	u, ok := findAccount(users, skepAccount)
-	if !ok {
-		return errors.New("no skep user in /etc/passwd")
-	}
-	uid, err1 := strconv.ParseUint(u.ID, 10, 32)
-	gid, err2 := strconv.ParseUint(u.GID, 10, 32)
-	if err1 != nil || err2 != nil || uid == 0 || gid == 0 {
-		return fmt.Errorf("the skep user has UID %q and GID %q; refusing to run skep-api admin create as it", u.ID, u.GID)
 	}
 	db, err := APIDBPath(a.Root)
 	if err != nil {
@@ -304,8 +295,27 @@ func (a *Applier) adminCreate(ctx context.Context, username string) error {
 		sleep(time.Second)
 	}
 	_, err = a.Runner.Run(ctx, Cmd{Name: hostPath(a.Root, apiBin), Args: []string{"admin", "create", "--username", username},
-		Interactive: true, As: &Credential{UID: uint32(uid), GID: uint32(gid)}})
+		Interactive: true, As: cred})
 	return err
+}
+
+// skepCredential is the skep account's UID and primary GID from the
+// root's /etc/passwd; never root.
+func skepCredential(root string) (*Credential, error) {
+	users, err := ReadAccounts(hostPath(root, "/etc/passwd"))
+	if err != nil {
+		return nil, err
+	}
+	u, ok := findAccount(users, skepAccount)
+	if !ok {
+		return nil, errors.New("no skep user in /etc/passwd")
+	}
+	uid, err1 := strconv.ParseUint(u.ID, 10, 32)
+	gid, err2 := strconv.ParseUint(u.GID, 10, 32)
+	if err1 != nil || err2 != nil || uid == 0 || gid == 0 {
+		return nil, fmt.Errorf("the skep user has UID %q and GID %q; refusing to run skep-api as it", u.ID, u.GID)
+	}
+	return &Credential{UID: uint32(uid), GID: uint32(gid)}, nil
 }
 
 func isRegular(path string) bool {

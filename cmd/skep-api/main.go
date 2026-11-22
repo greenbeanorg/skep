@@ -48,8 +48,14 @@ func main() {
 		drop:         privdrop.To,
 		readPassword: termpass.Read,
 	})
+	var exitErr *exitCodeError
 	switch {
 	case err == nil:
+	case errors.As(err, &exitErr):
+		if exitErr.msg != "" {
+			fmt.Fprintln(os.Stderr, "skep-api:", exitErr.msg)
+		}
+		os.Exit(exitErr.code)
 	case errors.Is(err, flag.ErrHelp):
 		os.Exit(2)
 	default:

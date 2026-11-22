@@ -145,3 +145,23 @@ func snapshot(t *testing.T, root string) string {
 	})
 	return b.String()
 }
+
+// Finding 1 of PR #52: the plan asks skep-api only as root, only on the
+// real host, and never through the real runner for a fixture root.
+func TestAdminCheckerChoice(t *testing.T) {
+	real := env{runner: setup.HostRunner{}, euid: 0}
+	if _, ok := real.adminChecker("/").(setup.SkepAPIAdmins); !ok {
+		t.Error("root on /: does not ask skep-api")
+	}
+	for name, c := range map[string]setup.AdminChecker{
+		"fixture root": real.adminChecker("/tmp/fixture"),
+		"not root":     env{runner: setup.HostRunner{}, euid: 1001}.adminChecker("/"),
+	} {
+		if _, ok := c.(setup.NoAdminChecker); !ok {
+			t.Errorf("%s: %T, want NoAdminChecker", name, c)
+		}
+	}
+	if _, ok := (env{runner: nil, euid: 1001}).adminChecker("/tmp/fixture").(setup.SkepAPIAdmins); !ok {
+		t.Error("a test runner is not asked")
+	}
+}

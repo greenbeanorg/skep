@@ -73,6 +73,21 @@ func (e env) realRunner() bool {
 	return ok
 }
 
+// adminChecker is how the plan asks whether the -admin user exists:
+// skep-api admin exists, run as the skep user. That needs root, and with
+// the real runner and a -root other than / it would read this host's
+// database instead of the root's, so neither case asks.
+func (e env) adminChecker(root string) setup.AdminChecker {
+	switch {
+	case !e.realRunner():
+	case root != "/":
+		return setup.NoAdminChecker{Reason: "-root " + root + ": skep-api admin exists would read this host's api.db, not the root's"}
+	case e.euid != 0:
+		return setup.NoAdminChecker{Reason: "only root can run skep-api admin exists as the skep user; run skep-setup as root"}
+	}
+	return setup.SkepAPIAdmins{Runner: e.runner}
+}
+
 // agentFor is the agent's socket under root, or the test's fake.
 func (e env) agentFor(root string) setup.Agent {
 	if e.agent != nil {
@@ -262,6 +277,7 @@ func computePlan(ctx context.Context, name string, args []string, e env, extra f
 			return o, setup.Plan{}, err
 		}
 	}
+	o.Admins = e.adminChecker(o.Root)
 	f, err := e.prober.Probe(ctx)
 	if err != nil {
 		return o, setup.Plan{}, err

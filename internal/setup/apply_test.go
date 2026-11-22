@@ -28,11 +28,20 @@ type fakeRunner struct {
 	outputs map[string]string
 	// onStart runs after "service NAME start".
 	onStart func(name string)
+	// admins are the users in the fake api.db: "skep-api admin create"
+	// adds one, "skep-api admin exists" answers from it.
+	admins map[string]bool
 }
 
 func newFakeRunner() *fakeRunner {
-	return &fakeRunner{running: map[string]bool{}, fail: map[string]error{}}
+	return &fakeRunner{running: map[string]bool{}, fail: map[string]error{}, admins: map[string]bool{}}
 }
+
+// exitCode is an error with a process exit code, as *exec.ExitError has.
+type exitCode int
+
+func (e exitCode) Error() string { return fmt.Sprintf("exit status %d", int(e)) }
+func (e exitCode) ExitCode() int { return int(e) }
 
 // shortCmd is how the fakes record a command. Every program must be given
 // by absolute path; base-system programs are recorded by their name.
@@ -73,6 +82,19 @@ func (f *fakeRunner) Run(_ context.Context, c Cmd) (string, error) {
 	for k, out := range f.outputs {
 		if strings.Contains(s, k) {
 			return out, nil
+		}
+	}
+	if strings.HasSuffix(c.Name, apiBin) && len(c.Args) == 4 && c.Args[0] == "admin" && c.Args[2] == "--username" {
+		user := c.Args[3]
+		switch c.Args[1] {
+		case "create":
+			f.admins[user] = true
+			return "", nil
+		case "exists":
+			if f.admins[user] {
+				return fmt.Sprintf("user %q exists (role admin)\n", user), nil
+			}
+			return fmt.Sprintf("there is no user %q\n", user), fmt.Errorf("%s: %w", c, exitCode(1))
 		}
 	}
 	switch c.Name {
@@ -497,22 +519,87 @@ func TestSecondApplyWithStartAndAdminIsANoOp(t *testing.T) {
 	}
 	f := facts()
 	f.Running = map[string]bool{"skep_agent": true, "skep_api": true}
+	o.Admins = SkepAPIAdmins{Runner: e.runner}
 	p := compute(t, o, f)
 	if acts := p.Actions(); len(acts) != 0 {
 		t.Fatalf("second plan has actions: %v", acts)
 	}
 	want(t, p, OK, "skep_agent", "running")
-	want(t, p, OK, "first administrator andy", "created by skep-setup run")
+	want(t, p, OK, "first administrator andy", `exists (skep-api admin exists: user "andy" exists (role admin))`)
+	if c := e.runner.calls[len(e.runner.calls)-1]; c != root+"/usr/local/sbin/skep-api admin exists --username andy (as 409:409)" {
+		t.Fatalf("the plan asked %q", c)
+	}
 	if _, err := e.applier().Apply(context.Background(), p); !errors.Is(err, ErrNothingToDo) {
 		t.Fatalf("second apply: %v, want ErrNothingToDo", err)
 	}
-	// Rolled back, the run still made the user: not planned again.
+	// Rolled back, the run still made the user, and skep-api says so.
 	if _, err := Rollback(root, "", e.clock); err != nil {
 		t.Fatal(err)
 	}
-	want(t, compute(t, o, f), OK, "first administrator andy", "")
+	want(t, compute(t, o, f), OK, "first administrator andy", "exists")
 	// Stopped services are started again.
 	want(t, compute(t, o, facts()), Add, "start skep_api", "")
+}
+
+// Finding 1 of PR #52: journals survive pkg delete and remove
+// -purge-data, so a journal's admin-create must not make the plan skip the
+// administrator of a new api.db. Only skep-api decides.
+func TestPlanAdminAsksSkepAPINotTheJournals(t *testing.T) {
+	root := stockHost(t)
+	e := newApplyEnv(t, root)
+	apiStarts(root, e.runner)
+	o := newBridgeOpts(root)
+	o.Start, o.Admin = true, "andy"
+	if _, err := e.applier().Apply(context.Background(), compute(t, o, facts())); err != nil {
+		t.Fatal(err)
+	}
+	running := facts()
+	running.Running = map[string]bool{"skep_agent": true, "skep_api": true}
+	o.Admins = SkepAPIAdmins{Runner: e.runner}
+
+	// A reinstall: the journal says andy was created, api.db is new.
+	e.runner.admins = map[string]bool{}
+	p := compute(t, o, running)
+	want(t, p, Add, "first administrator andy", `no user "andy"`)
+	if strings.Join(actions(p), "|") != (Action{Type: ActAdminCreate, Username: "andy"}).String() {
+		t.Fatalf("plan %v", actions(p))
+	}
+
+	// Data purged: no api.db at all. With -start, the create is planned
+	// without asking (build decision 8); without it, refused.
+	if err := os.RemoveAll(hostPath(root, "/var/db/skep/api")); err != nil {
+		t.Fatal(err)
+	}
+	calls := len(e.runner.calls)
+	want(t, compute(t, o, facts()), Add, "first administrator andy", "no API database yet")
+	noStart := o
+	noStart.Start = false
+	want(t, compute(t, noStart, facts()), Refuse, "first administrator andy", "--start")
+	if len(e.runner.calls) != calls {
+		t.Fatalf("asked skep-api without an api.db: %v", e.runner.calls[calls:])
+	}
+
+	// skep-api cannot answer: refused, with its error.
+	apiStarts(root, e.runner)
+	e.runner.onStart("skep_api")
+	e.runner.fail["admin exists"] = fmt.Errorf("skep-api admin exists: %w: skep-api: database is locked", exitCode(2))
+	want(t, compute(t, o, running), Refuse, "first administrator andy", "database is locked")
+	delete(e.runner.fail, "admin exists")
+
+	// No way to ask (non-root, or a fixture root with the real runner).
+	o.Admins = nil
+	want(t, compute(t, o, running), Refuse, "first administrator andy", "cannot ask skep-api")
+	o.Admins = NoAdminChecker{Reason: "only root can run skep-api admin exists"}
+	want(t, compute(t, o, running), Refuse, "first administrator andy", "only root can run")
+
+	// The journals play no part any more: with skep-api saying andy
+	// exists and no journal at all, the plan is ok.
+	if err := os.RemoveAll(filepath.Join(root, journalRoot)); err != nil {
+		t.Fatal(err)
+	}
+	e.runner.admins["andy"] = true
+	o.Admins = SkepAPIAdmins{Runner: e.runner}
+	want(t, compute(t, o, running), OK, "first administrator andy", "exists")
 }
 
 func TestPlanAdminNeedsTheAPIDirectory(t *testing.T) {
@@ -681,7 +768,7 @@ func TestApplyAdminRefusesARootSkepAccount(t *testing.T) {
 	os.MkdirAll(filepath.Join(root, "etc"), 0o755)
 	os.WriteFile(filepath.Join(root, "etc/passwd"), []byte("skep:*:0:0::/nonexistent:/usr/sbin/nologin\n"), 0o644)
 	a := &Applier{Root: root, Runner: newFakeRunner()}
-	if err := a.adminCreate(context.Background(), "andy"); err == nil || !strings.Contains(err.Error(), "refusing to run skep-api admin create") {
+	if err := a.adminCreate(context.Background(), "andy"); err == nil || !strings.Contains(err.Error(), "refusing to run skep-api as it") {
 		t.Fatalf("err %v", err)
 	}
 }

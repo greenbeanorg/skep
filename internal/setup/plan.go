@@ -185,6 +185,9 @@ type Options struct {
 	Start bool
 	// Admin creates the first administrator with this username.
 	Admin string
+	// Admins answers whether Admin exists once api.db does. Nil: the
+	// plan cannot ask, and refuses -admin while api.db exists.
+	Admins AdminChecker
 
 	// fileOwner returns a file's owner UID; the tests, which do not run
 	// as root, replace it. Nil means the owner from stat(2).
@@ -294,7 +297,8 @@ func ValidateOptions(o Options) error {
 }
 
 // Compute returns the plan for the host under o.Root with facts f. It
-// reads files and nothing else.
+// reads files and, with -admin and an existing api.db, asks o.Admins
+// (skep-api admin exists, read-only); it changes nothing.
 func Compute(ctx context.Context, o Options, f Facts) (Plan, error) {
 	if err := ValidateOptions(o); err != nil {
 		return Plan{}, err
@@ -303,7 +307,7 @@ func Compute(ctx context.Context, o Options, f Facts) (Plan, error) {
 	if err != nil {
 		return Plan{}, err
 	}
-	b := &builder{o: o, f: f, journals: journals}
+	b := &builder{ctx: ctx, o: o, f: f, journals: journals}
 	if j := incompleteJournal(journals); j != nil {
 		b.refuse("journal", "apply "+j.ID, "an earlier run did not finish; run skep-setup rollback "+j.ID+" first")
 	}
@@ -353,30 +357,49 @@ func Compute(ctx context.Context, o Options, f Facts) (Plan, error) {
 // admin plans the first administrator. skep-api admin create opens
 // api.db; run before skep_api has ever started, it would create the API's
 // data directory as root and lock the unprivileged API out of it, so it
-// runs after --start, or once the directory exists.
+// runs after --start, or once the directory exists (build decision 8).
+//
+// Whether the administrator exists is asked of skep-api itself (skep-api
+// admin exists, as the skep user, read-only), never decided from the
+// journals: they survive pkg delete and remove --purge-data, so after a
+// reinstall a journal's admin-create says nothing about the new api.db
+// (finding 1 of PR #52).
 func (b *builder) admin() {
-	// skep-api admin create refuses a username that exists, so a second
-	// apply with the same answers must not plan it again. Rollback never
-	// deletes the user, so a rolled-back run counts too.
-	for _, j := range b.journals {
-		for _, e := range j.Entries {
-			if e.Done && e.Action.Type == ActAdminCreate && e.Action.Username == b.o.Admin {
-				b.ok("api", "first administrator "+b.o.Admin, "created by skep-setup run "+j.ID)
-				return
-			}
-		}
-	}
-	if _, err := os.Stat(hostPath(b.o.Root, "/var/db/skep/api")); err != nil && !b.o.Start {
-		b.refuse("api", "first administrator "+b.o.Admin,
-			"skep_api has not created its data directory yet; add --start, or start skep_api first")
+	what := "first administrator " + b.o.Admin
+	db, err := APIDBPath(b.o.Root)
+	if err != nil {
+		b.refuse("api", what, "skep-api's configuration: "+err.Error())
 		return
 	}
-	b.add("api", "first administrator "+b.o.Admin, "never a password in a flag, a file, or the journal",
-		Action{Type: ActAdminCreate, Username: b.o.Admin})
+	if !exists(db) {
+		if _, err := os.Stat(hostPath(b.o.Root, "/var/db/skep/api")); err != nil && !b.o.Start {
+			b.refuse("api", what,
+				"skep_api has not created its data directory yet; add --start, or start skep_api first")
+			return
+		}
+		b.add("api", what, "no API database yet; never a password in a flag, a file, or the journal",
+			Action{Type: ActAdminCreate, Username: b.o.Admin})
+		return
+	}
+	if b.o.Admins == nil {
+		b.refuse("api", what, "cannot ask skep-api whether "+b.o.Admin+" exists")
+		return
+	}
+	found, detail, err := b.o.Admins.AdminExists(b.ctx, b.o.Root, b.o.Admin)
+	switch {
+	case err != nil:
+		b.refuse("api", what, "cannot tell whether "+b.o.Admin+" exists: "+err.Error())
+	case found:
+		b.ok("api", what, "exists (skep-api admin exists: "+detail+")")
+	default:
+		b.add("api", what, "not in the API database (skep-api admin exists: "+detail+"); never a password in a flag, a file, or the journal",
+			Action{Type: ActAdminCreate, Username: b.o.Admin})
+	}
 }
 
 // builder accumulates the plan.
 type builder struct {
+	ctx      context.Context
 	o        Options
 	f        Facts
 	journals []Journal

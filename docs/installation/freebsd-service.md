@@ -135,6 +135,13 @@ either command.
 the host, ending its sessions. Neither touches the only enabled
 administrator.
 
+`skep-api admin exists --username NAME` says whether a user exists. It
+opens `api.db` read-only and only if it exists: it never creates the
+database or its directory and never migrates the schema. Exit status 0:
+the user exists (with its role, and whether it is disabled); 1: it does
+not; 2: the question could not be answered (no `api.db`, an unreadable
+database, a bad name). `skep-setup` uses it to plan `-admin`.
+
 To use the API from the command line, see
 [skepctl](../administration/skepctl.md). To use it from a browser, see
 [the web interface](../administration/web-ui.md) below and in its own

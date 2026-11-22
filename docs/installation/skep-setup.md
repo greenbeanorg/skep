@@ -46,7 +46,7 @@ refused.
 | `-listen ADDR:PORT` | The API listen address (default: the management address, port 8443). `0.0.0.0` or `::` only with `-listen-all` |
 | `-no-racct` | Do not add `kern.racct.enable="1"` (jail limits other than `disk_quota` are then refused) |
 | `-start` | Start both services at the end of `apply` |
-| `-admin NAME` | Create the first administrator (asks for the password, twice, without echo). Needs `-start`, or `/var/db/skep/api` to exist already (the API has run once); otherwise the plan refuses, because `skep-api admin create` run as root first would create the API's data directory owned by root ([ADR 0012 amendment](../decisions/0012-installer.md#amendment-2026-11-22-build-decisions-confirmed), build decision 8). Setup runs `skep-api admin create` **as the `skep` user** (UID and primary GID from `/etc/passwd`, never root), and only once `skep_api` has written `/var/run/skep/api.pid` and created `api.db` (it waits up to 30 s). If it fails, every other change stays made, the journal is finished with the error, and setup prints the same `apply` command to retry: it then plans only the administrator |
+| `-admin NAME` | Create the first administrator (asks for the password, twice, without echo). Needs `-start`, or `/var/db/skep/api` to exist already (the API has run once); otherwise the plan refuses, because `skep-api admin create` run as root first would create the API's data directory owned by root ([ADR 0012 amendment](../decisions/0012-installer.md#amendment-2026-11-22-build-decisions-confirmed), build decision 8). Setup runs `skep-api admin create` **as the `skep` user** (UID and primary GID from `/etc/passwd`, never root), and only once `skep_api` has written `/var/run/skep/api.pid` and created `api.db` (it waits up to 30 s). If it fails, every other change stays made, the journal is finished with the error, and setup prints the same `apply` command to retry: it then plans only the administrator. Whether the administrator exists is asked of `skep-api` itself: with no `api.db` the create is planned; with one, `check`, `plan` and `apply` run `skep-api admin exists --username NAME` as the `skep` user with the fixed environment (read-only; it never creates or migrates `api.db`). Exit 0 is `ok`, 1 plans the create, anything else refuses with skep-api's error. Asking needs root; as another user, or with `-root` other than `/`, the plan refuses `-admin` while `api.db` exists |
 
 ## What apply changes
 
@@ -136,9 +136,10 @@ Each `apply` (and `remove`) creates `/var/db/skep/setup/<UTC timestamp>/`
 `journal.json`: each action, and the SHA-256 of the file before and
 after. A second `apply` with the same answers finds nothing to do and
 writes no journal: with `-start`, a service that is running already
-(`service NAME status`) is `ok`; with `-admin`, a username an earlier run
-created is `ok` (also after that run was rolled back, since rollback
-never deletes users).
+(`service NAME status`) is `ok`; with `-admin`, a username that exists in
+`api.db` is `ok`. The journals do not decide this: they survive
+`pkg delete` and `remove -purge-data`, so after a reinstall a journal's
+`admin-create` says nothing about the new database (finding 1 of PR #52).
 
 `skep-setup rollback [ID]` (default: the newest run) first prints the
 run it would undo (its ID, command, start time, and how many changes it
