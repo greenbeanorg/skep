@@ -53,8 +53,9 @@ func TestPortFilterAvailable(t *testing.T) {
 	run.answers["kldstat -q -m ng_bpf"] = &CommandError{Name: "kldstat", ExitCode: 1, Err: errors.New("exit status 1")}
 	err := h.PortFilterAvailable(context.Background())
 	wantCode(t, err, models.CodePortFilterUnavailable)
-	if !strings.Contains(err.Error(), "ng_bpf") || !strings.Contains(err.Error(), "kld_list") {
-		t.Errorf("the refusal does not say what to load: %v", err)
+	if !strings.Contains(err.Error(), "ng_bpf") || !strings.Contains(err.Error(), `sysrc kld_list+="netgraph ng_socket ng_ether ng_bpf"`) ||
+		strings.Contains(err.Error(), `kld_list="`) {
+		t.Errorf("the refusal does not say what to load in the appending sysrc form: %v", err)
 	}
 	for _, c := range run.calls {
 		if strings.HasPrefix(c, "kldload") || strings.HasPrefix(c, "ngctl") {
