@@ -291,8 +291,43 @@ func TestEnsureVolumeDeviceRestoresDevAfterCancel(t *testing.T) {
 func TestEnsureVolumeDeviceRestoresDevWhenNoneFails(t *testing.T) {
 	h, run, _ := devHost(t, volLine())
 	run.answers[setNone] = &CommandError{Name: "zfs", ExitCode: 1, Stderr: "permission denied", Err: errors.New("exit status 1")}
-	if _, err := h.EnsureVolumeDevice(context.Background(), devSpec, stoppedOK); err == nil {
-		t.Fatal("a failed volmode=none was not reported")
+	_, err := h.EnsureVolumeDevice(context.Background(), devSpec, stoppedOK)
+	me := wantReason(t, err, models.CodeDiskDeviceMissing, "repair_failed")
+	if e, _ := me.Details["error"].(string); !strings.Contains(e, "permission denied") {
+		t.Errorf("details = %v, want the volmode=none error", me.Details)
+	}
+	if me.Details["dataset"] != devDS {
+		t.Errorf("details = %v", me.Details)
+	}
+	if s := sets(run.calls); !reflect.DeepEqual(s, []string{setNone, setDev}) {
+		t.Errorf("sets = %v", s)
+	}
+}
+
+// realUnencryptedZvol is `zfs list -H -p -t filesystem,volume -o <the
+// columns hostops lists>` of an unencrypted zvol on FreeBSD 15.1-p7
+// (zfs-2.4.2, langrishe, 2026-11-22), renamed to the test's dataset and
+// owner: keystatus is "-".
+const realUnencryptedZvol = devDS + "\tvolume\t1073741824\t57344\t57344\t0\tdev\t16384\t669\t-\t-\toff\t-\ton\t1.00\t" +
+	vmA + "\t" + diskA1 + "\t-\t-\t-\t-\n"
+
+func TestEnsureVolumeDeviceRepairsRealUnencryptedOutput(t *testing.T) {
+	list, err := parseDatasets([]byte(realUnencryptedZvol))
+	if err != nil || len(list) != 1 {
+		t.Fatalf("parse = %v, %v", list, err)
+	}
+	if d := list[0]; d.KeyStatus != "" || d.VolMode != "dev" || d.Locked() {
+		t.Fatalf("KeyStatus %q VolMode %q Locked %v", d.KeyStatus, d.VolMode, d.Locked())
+	}
+	h, run, sys := devHost(t, realUnencryptedZvol)
+	run.onRun = func(call string) {
+		if call == setDev {
+			sys.modes[devPath] = charMode
+		}
+	}
+	res, err := h.EnsureVolumeDevice(context.Background(), devSpec, stoppedOK)
+	if err != nil || res.Rounds != 1 {
+		t.Fatalf("= %+v, %v; keystatus \"-\" must not be refused as storage_locked", res, err)
 	}
 	if s := sets(run.calls); !reflect.DeepEqual(s, []string{setNone, setDev}) {
 		t.Errorf("sets = %v", s)

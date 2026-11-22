@@ -230,7 +230,11 @@ func (h *host) toggleVolMode(ctx context.Context, name string) error {
 			name, h.dev.attempts, adminCommand(name)), map[string]any{"command": adminCommand(name), "error": err.Error()})
 	}
 	if firstErr != nil {
-		return fmt.Errorf("hostops: zfs set volmode=none %s: %w", name, firstErr)
+		// volmode=dev is back, so the zvol is as it was, still without
+		// its node: the repair failed.
+		return deviceError(name, "repair_failed", fmt.Sprintf(
+			"setting volmode=none on %s failed, so its device node could not be repaired; volmode=dev was set back", name),
+			map[string]any{"error": firstErr.Error()})
 	}
 	return nil
 }

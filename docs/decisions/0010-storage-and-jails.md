@@ -2344,9 +2344,11 @@ host-safe specs pinned. Details in section 29 of
 ## Amendment z (Proposed): zvol device nodes
 
 - Status: **Proposed**, 2026-11-22. Built (`fix/zvol-device-node`), unit
-  tested on merrick, **pending FreeBSD validation**. Not to be merged
-  until Andy has answered the questions below and the probe and
-  validation have run on fresh lab VMs.
+  tested on merrick; FreeBSD validation on the lab VMs smith and langrishe,
+  2026-11-22 (results in
+  [zvol-device-node-20261122.md](../../tests/integration/setup/results/zvol-device-node-20261122.md)).
+  Andy answered the questions on 2026-11-22 (below). Not to be merged
+  until Andy has reviewed the validation results and marked it Accepted.
 
 **The behaviour.** On FreeBSD 15.1-RELEASE-p7 (zfs-2.4.2), a zvol created
 with `-o volmode=dev` gets its `/dev/zvol/<dataset>` node only sometimes:
@@ -2381,7 +2383,10 @@ those cases the same way, and the probe must confirm it.
 4. The repair is `zfs set volmode=none`, then `zfs set volmode=dev`. Once
    the first set has been attempted, whatever its result, the second is
    always attempted, up to five times, one second apart, on a context
-   that ignores the caller's cancellation. Then the node gets up to 10 s.
+   that ignores the caller's cancellation. If `volmode=none` failed and
+   `volmode=dev` was set back, the result is `disk_device_missing` with
+   reason `repair_failed` and the `zfs` error in `error`. Then the node
+   gets up to 10 s.
    At most two rounds are made, and the stopped check runs before each.
 5. A zvol found at `volmode=none` is never repaired automatically:
    `disk_device_missing` with reason `volmode_none`, the dataset, and
@@ -2433,20 +2438,20 @@ with a Skep-free reproducer is drafted in
 [docs/upstream/openzfs-zvol-volmode-dev-node.md](../upstream/openzfs-zvol-volmode-dev-node.md);
 Andy files it.
 
-**Questions for Andy.**
+**Andy's answers** (2026-11-22; the status stays Proposed until Andy has
+reviewed the validation results and marks it Accepted).
 
 1. Post-operation checks (after create, disk add, clone, and rollback)
-   report a node that is still missing but don't fail the task, and start
-   is the gate. Accept, or should create and clone fail and undo?
-2. Three checks go beyond what was asked: the zvol's owner properties,
-   no vmm instance of the VM, and attempting `volmode=dev` even after a
-   failed `volmode=none` (which may or may not have taken effect).
-   Accept?
-3. Should a health check report Skep zvols left at `volmode=none` (for
-   example after an agent crash mid-repair)? It is in the backlog for
-   after 0.1 unless you want it now.
-4. The new error code is `disk_device_missing` (409); its details are
-   `dataset`, `reason` (`volmode_none`, `volmode_not_dev`,
-   `vm_not_stopped`, `repair_failed`, `restore_failed`,
-   `no_stopped_check`), and, where an administrator acts, `command`.
-   Accept the name and the status?
+   report a node that is still missing but don't fail the task: **accepted;
+   start is the gate.**
+2. The three checks beyond what was asked (the zvol's owner properties, no
+   vmm instance of the VM, and attempting `volmode=dev` even after a failed
+   `volmode=none`): **all three accepted.**
+3. A health check for Skep zvols left at `volmode=none`: **after 0.1**; the
+   backlog row stays.
+4. The error code `disk_device_missing` (409): **name and status
+   accepted.** Its details are `dataset`, `reason` (`volmode_none`,
+   `volmode_not_dev`, `not_a_volume`, `vm_not_stopped`, `repair_failed`,
+   `restore_failed`, `no_stopped_check`), and, where an administrator acts,
+   `command`. A failed `volmode=none` after which `volmode=dev` was set
+   back is `repair_failed`, with the `zfs` error in `error`.
