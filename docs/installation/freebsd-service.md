@@ -73,6 +73,11 @@ kernel. File permissions are the first check; this is the second.
   assume one record per line. Details:
   [tests/integration/rcd/daemon-log-joined-records.md](../../tests/integration/rcd/daemon-log-joined-records.md).
 
+### Upgrading
+
+[Upgrading a host](upgrading.md) has the general steps and what each
+release needs, including from b61e578 (Milestone 7b) to Milestone 7c.
+
 ### Upgrading from the Milestone 3 service
 
 Until Milestone 4 the agent ran as `skep` and owned `/var/db/skep/agent`.

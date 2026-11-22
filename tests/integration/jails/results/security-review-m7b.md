@@ -188,7 +188,7 @@ written.
 | SR-04 unbounded locked memory | medium | Fix now: `locked_memory` required with `mlock`; applied as its own RCTL rule and read back whenever set, with or without `memory`. |
 | SR-05 RCTL coverage, optional limits | medium | Documentation now (what the limits do not cover, and that `container:write` can create an unlimited jail). Default limits or limits required per role: backlog. |
 | SR-06 failed guard plus failed removal | low | Fix now: a quarantined failed state with its own code and hint; never running, never `exec.stop`/`rc.shutdown`; start and stop refused; delete and the sweep retry removal without `exec.stop`. |
-| SR-07 duplicate-IP race | low | Backlog. |
+| SR-07 duplicate-IP race | low | Backlog. The race between two starts is closed (2026-11-22, branch `fix/sr07-address-race`): `MarkStarting` repeats the check in its writing transaction. Other bridges on one L2 segment and DHCP leases stay out of scope. |
 | SR-08 interface renamed by jail root | low | Backlog. |
 | SR-09 FIFO in the in-jail writer | low | Fix now: `O_NONBLOCK` plus the existing flags, `fstat`, refuse anything not a regular file before any read or write. |
 | SR-10 dist source archive checks | low | Backlog. |
