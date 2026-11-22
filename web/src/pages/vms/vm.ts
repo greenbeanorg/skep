@@ -54,6 +54,8 @@ export function vmErrorHint(code: string): string | undefined {
   switch (code) {
     case "bhyve_unavailable":
       return "bhyve cannot run a VM on this host. The system page says what is missing.";
+    case "port_filter_unavailable":
+      return "The netgraph modules that give each NIC its anti-spoofing filter are not loaded on the host; an administrator adds netgraph, ng_socket, ng_ether and ng_bpf to kld_list.";
     case "insufficient_memory":
       return "The running VMs and this one need more memory than the host leaves for guests.";
     case "stop_timeout":

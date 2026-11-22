@@ -312,6 +312,28 @@ Which check failed is shown only with a session: in the full health
 document, where each check says whether it is `critical`, and in the
 `health` field of `GET /api/v1/system`.
 
+The agent's guest-network checks are non-critical: `port_filters` (a
+running guest's port lost its anti-spoofing filter, was detached, or the
+netgraph modules are missing) and `bridge_vlan_unfiltered` (a guest bridge
+without VLAN filtering). See
+[Guest-port anti-spoofing](../administration/guest-port-filtering.md).
+
+## Kernel modules and bridges for guests
+
+Skep loads no kernel modules. A host that runs guests with NICs needs,
+in `/etc/rc.conf`:
+
+```
+kld_list="if_epair netgraph ng_socket ng_ether ng_bpf"
+```
+
+`if_epair` gives jails their interfaces. The netgraph modules filter every
+guest port (ADR 0011). `vmm` and `nmdm` go in `/boot/loader.conf`
+([VM guide](../administration/virtual-machines.md#preparing-the-host)).
+Guest bridges should filter VLANs (`vlanfilter`, with the uplink's
+`ifuntagged` PVID set **first**, and `defuntagged`), as described in
+[Bridge VLAN filtering](../administration/guest-port-filtering.md#bridge-vlan-filtering).
+
 ## Talking to the agent directly
 
 The agent has no TCP port. For debugging, as root or `skep`:

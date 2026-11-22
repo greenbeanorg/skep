@@ -66,7 +66,23 @@ itself. An administrator does the following once.
    upstream hypervisor must accept frames from MAC addresses it did not
    assign (on Proxmox, the VM firewall's MAC filter must be off for that
    device), and guests need a DHCP server on that segment if they are to
-   get addresses.
+   get addresses. Set up the bridge's VLAN filtering as described in
+   [Bridge VLAN filtering](guest-port-filtering.md#bridge-vlan-filtering).
+
+5. **Load the netgraph modules** that filter every guest NIC
+   (anti-spoofing, ADR 0011). In `/etc/rc.conf`:
+
+   ```
+   kld_list="if_epair netgraph ng_socket ng_ether ng_bpf"
+   ```
+
+   Now: `kldload netgraph ng_socket ng_ether ng_bpf`. Without them a VM
+   with a NIC is refused with `port_filter_unavailable`. Each tap gets
+   a MAC-only filter before it joins the bridge: the guest can send only
+   with its recorded MAC, IPv6 passes (router advertisements dropped),
+   and DHCP-server replies and control frames are dropped. Skep records
+   no IPv4 address for a VM, so a VM can still use any IPv4 address with
+   its own MAC. See [Guest-port anti-spoofing](guest-port-filtering.md).
 
 5. **Name what Skep may use** in `/usr/local/etc/skep/agent.json`
    (root-owned; the API cannot change it):
@@ -307,6 +323,8 @@ any request. Do not kill a runner by hand; if one dies, the VM is shown as
 | Symptom | Look at |
 |---|---|
 | Start refused with `bhyve_unavailable` | The reason names what is missing: `vmm`, `nmdm`, or the firmware |
+| Start refused with `port_filter_unavailable` | The netgraph modules are not loaded; see step 5 of [Preparing the host](#preparing-the-host) |
+| Run ends `failed` with `port_filter_failed: …` | The tap's anti-spoofing filter could not be installed; the agent log names the step ([Guest-port anti-spoofing](guest-port-filtering.md)) |
 | Start refused with `bridge_not_allowed` | The bridge is not in `network.bridges`, does not exist, or has a management interface as a member |
 | `insufficient_memory` | Running VMs plus this one exceed physical memory minus `host_memory_reserve_bytes` |
 | Start fails with `vm_start_failed` | The task message carries the runner's detail; `bhyve.log` has bhyve's own output |
