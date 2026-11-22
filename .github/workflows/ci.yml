@@ -150,6 +150,12 @@ jobs:
       - name: Install the web interface's dependencies
         run: make web-install
 
+      # THIRD_PARTY_NOTICES lists every Go module linked into the shipped
+      # binaries and every npm package in the built interface, with their
+      # licenses; a dependency change without "make notices" fails here.
+      - name: Third-party notices are current
+        run: make notices-check
+
       - name: Vet and test with the interface embedded
         run: |
           make web-build

@@ -171,8 +171,14 @@ func (s *Service) start(ctx context.Context, c models.Container, report tasks.Re
 	defer release()
 	// started_once is set before any code runs in the tree, so a crash
 	// after jail -c can never leave it 0 (decision 13).
+	// The store refuses here when another jail recorded starting or
+	// running holds one of this jail's static addresses on the same
+	// bridge: the check at submission can race with another start
+	// (SR-07). Peers recorded running are compared with the host first,
+	// so a jail removed outside Skep does not hold its address.
+	s.refreshAddressPeers(ctx, c)
 	if err := s.store.MarkStarting(ctx, c.ID, s.now().UTC()); err != nil {
-		return nil, err
+		return nil, failure(err)
 	}
 	report.Progress("starting the jail (jail -c, the /dev guard, /etc/rc)", nil)
 	st, err := s.jails.StartJail(ctx, s.spec(c, 0))

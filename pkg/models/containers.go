@@ -71,6 +71,10 @@ const (
 	// CodeMlockRequiresMemoryLimit: mlock without an RCTL locked-memory
 	// limit, or without RACCT (decision 9, amendment j).
 	CodeMlockRequiresMemoryLimit = "mlock_requires_memory_limit"
+	// CodeNameserversRequireNIC: nameservers were given (or kept) for a
+	// jail that would have no NIC, at create, update, or clone; the web
+	// interface offers the field only with a NIC (step 10 run 3, item 3).
+	CodeNameserversRequireNIC = "nameservers_require_nic"
 	// CodeContainerStartFailed: jail(8) or /etc/rc failed, or the jail's
 	// parameters were not the baseline; the message says which.
 	CodeContainerStartFailed = "container_start_failed"
