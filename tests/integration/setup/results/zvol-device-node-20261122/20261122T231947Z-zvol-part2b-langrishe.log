@@ -1,0 +1,149 @@
+--- b1 plain zvols missing from (a)
+toggle zroot/zvolprobe/a1 none_rc=0  node_under_none=gone dev_rc=0  node_after_tenths=0 volmode=dev
+toggle zroot/zvolprobe/a10 none_rc=0  node_under_none=gone dev_rc=0  node_after_tenths=0 volmode=dev
+toggle zroot/zvolprobe/a11 none_rc=0  node_under_none=gone dev_rc=0  node_after_tenths=0 volmode=dev
+toggle zroot/zvolprobe/a12 none_rc=0  node_under_none=gone dev_rc=0  node_after_tenths=0 volmode=dev
+toggle zroot/zvolprobe/a13 none_rc=0  node_under_none=gone dev_rc=0  node_after_tenths=0 volmode=dev
+toggle zroot/zvolprobe/a14 none_rc=0  node_under_none=gone dev_rc=0  node_after_tenths=0 volmode=dev
+toggle zroot/zvolprobe/a15 none_rc=0  node_under_none=gone dev_rc=0  node_after_tenths=0 volmode=dev
+toggle zroot/zvolprobe/a16 none_rc=0  node_under_none=gone dev_rc=0  node_after_tenths=0 volmode=dev
+toggle zroot/zvolprobe/a19 none_rc=0  node_under_none=gone dev_rc=0  node_after_tenths=0 volmode=dev
+toggle zroot/zvolprobe/a2 none_rc=0  node_under_none=gone dev_rc=0  node_after_tenths=0 volmode=dev
+toggle zroot/zvolprobe/a20 none_rc=0  node_under_none=gone dev_rc=0  node_after_tenths=0 volmode=dev
+toggle zroot/zvolprobe/a21 none_rc=0  node_under_none=gone dev_rc=0  node_after_tenths=0 volmode=dev
+toggle zroot/zvolprobe/a22 none_rc=0  node_under_none=gone dev_rc=0  node_after_tenths=0 volmode=dev
+toggle zroot/zvolprobe/a23 none_rc=0  node_under_none=gone dev_rc=0  node_after_tenths=0 volmode=dev
+toggle zroot/zvolprobe/a25 none_rc=0  node_under_none=gone dev_rc=0  node_after_tenths=0 volmode=dev
+toggle zroot/zvolprobe/a26 none_rc=0  node_under_none=gone dev_rc=0  node_after_tenths=0 volmode=dev
+toggle zroot/zvolprobe/a27 none_rc=0  node_under_none=gone dev_rc=0  node_after_tenths=0 volmode=dev
+toggle zroot/zvolprobe/a28 none_rc=0  node_under_none=gone dev_rc=0  node_after_tenths=0 volmode=dev
+toggle zroot/zvolprobe/a29 none_rc=0  node_under_none=gone dev_rc=0  node_after_tenths=0 volmode=dev
+toggle zroot/zvolprobe/a30 none_rc=0  node_under_none=gone dev_rc=0  node_after_tenths=0 volmode=dev
+toggle zroot/zvolprobe/a31 none_rc=0  node_under_none=gone dev_rc=0  node_after_tenths=0 volmode=dev
+toggle zroot/zvolprobe/a32 none_rc=0  node_under_none=gone dev_rc=0  node_after_tenths=0 volmode=dev
+toggle zroot/zvolprobe/a33 none_rc=0  node_under_none=gone dev_rc=0  node_after_tenths=0 volmode=dev
+toggle zroot/zvolprobe/a35 none_rc=0  node_under_none=gone dev_rc=0  node_after_tenths=0 volmode=dev
+toggle zroot/zvolprobe/a36 none_rc=0  node_under_none=gone dev_rc=0  node_after_tenths=0 volmode=dev
+toggle zroot/zvolprobe/a37 none_rc=0  node_under_none=gone dev_rc=0  node_after_tenths=0 volmode=dev
+toggle zroot/zvolprobe/a38 none_rc=0  node_under_none=gone dev_rc=0  node_after_tenths=0 volmode=dev
+toggle zroot/zvolprobe/a39 none_rc=0  node_under_none=gone dev_rc=0  node_after_tenths=0 volmode=dev
+toggle zroot/zvolprobe/a4 none_rc=0  node_under_none=gone dev_rc=0  node_after_tenths=0 volmode=dev
+toggle zroot/zvolprobe/a40 none_rc=0  node_under_none=gone dev_rc=0  node_after_tenths=0 volmode=dev
+toggle zroot/zvolprobe/a41 none_rc=0  node_under_none=gone dev_rc=0  node_after_tenths=0 volmode=dev
+toggle zroot/zvolprobe/a42 none_rc=0  node_under_none=gone dev_rc=0  node_after_tenths=0 volmode=dev
+toggle zroot/zvolprobe/a43 none_rc=0  node_under_none=gone dev_rc=0  node_after_tenths=0 volmode=dev
+toggle zroot/zvolprobe/a44 none_rc=0  node_under_none=gone dev_rc=0  node_after_tenths=0 volmode=dev
+toggle zroot/zvolprobe/a45 none_rc=0  node_under_none=gone dev_rc=0  node_after_tenths=0 volmode=dev
+toggle zroot/zvolprobe/a46 none_rc=0  node_under_none=gone dev_rc=0  node_after_tenths=0 volmode=dev
+toggle zroot/zvolprobe/a47 none_rc=0  node_under_none=gone dev_rc=0  node_after_tenths=0 volmode=dev
+toggle zroot/zvolprobe/a49 none_rc=0  node_under_none=gone dev_rc=0  node_after_tenths=0 volmode=dev
+toggle zroot/zvolprobe/a5 none_rc=0  node_under_none=gone dev_rc=0  node_after_tenths=0 volmode=dev
+toggle zroot/zvolprobe/a6 none_rc=0  node_under_none=gone dev_rc=0  node_after_tenths=0 volmode=dev
+toggle zroot/zvolprobe/a7 none_rc=0  node_under_none=gone dev_rc=0  node_after_tenths=0 volmode=dev
+toggle zroot/zvolprobe/a8 none_rc=0  node_under_none=gone dev_rc=0  node_after_tenths=0 volmode=dev
+toggle zroot/zvolprobe/a9 none_rc=0  node_under_none=gone dev_rc=0  node_after_tenths=0 volmode=dev
+RESULT b1 plain: toggled 43, node back 43, not back 0
+--- b2 clones
+clone c0 node=N
+toggle zroot/zvolprobe/c0 none_rc=0  node_under_none=gone dev_rc=0  node_after_tenths=0 volmode=dev
+clone c1 node=N
+toggle zroot/zvolprobe/c1 none_rc=0  node_under_none=gone dev_rc=0  node_after_tenths=0 volmode=dev
+clone c2 node=N
+toggle zroot/zvolprobe/c2 none_rc=0  node_under_none=gone dev_rc=0  node_after_tenths=0 volmode=dev
+clone c3 node=N
+toggle zroot/zvolprobe/c3 none_rc=0  node_under_none=gone dev_rc=0  node_after_tenths=0 volmode=dev
+clone c4 node=N
+toggle zroot/zvolprobe/c4 none_rc=0  node_under_none=gone dev_rc=0  node_after_tenths=0 volmode=dev
+clone c5 node=N
+toggle zroot/zvolprobe/c5 none_rc=0  node_under_none=gone dev_rc=0  node_after_tenths=0 volmode=dev
+clone c6 node=N
+toggle zroot/zvolprobe/c6 none_rc=0  node_under_none=gone dev_rc=0  node_after_tenths=0 volmode=dev
+clone c7 node=N
+toggle zroot/zvolprobe/c7 none_rc=0  node_under_none=gone dev_rc=0  node_after_tenths=0 volmode=dev
+clone c8 node=N
+toggle zroot/zvolprobe/c8 none_rc=0  node_under_none=gone dev_rc=0  node_after_tenths=0 volmode=dev
+clone c9 node=N
+toggle zroot/zvolprobe/c9 none_rc=0  node_under_none=gone dev_rc=0  node_after_tenths=0 volmode=dev
+clone c10 node=N
+toggle zroot/zvolprobe/c10 none_rc=0  node_under_none=gone dev_rc=0  node_after_tenths=0 volmode=dev
+clone c11 node=N
+toggle zroot/zvolprobe/c11 none_rc=0  node_under_none=gone dev_rc=0  node_after_tenths=0 volmode=dev
+clone c12 node=N
+toggle zroot/zvolprobe/c12 none_rc=0  node_under_none=gone dev_rc=0  node_after_tenths=0 volmode=dev
+clone c13 node=N
+toggle zroot/zvolprobe/c13 none_rc=0  node_under_none=gone dev_rc=0  node_after_tenths=0 volmode=dev
+clone c14 node=N
+toggle zroot/zvolprobe/c14 none_rc=0  node_under_none=gone dev_rc=0  node_after_tenths=0 volmode=dev
+clone c15 node=N
+toggle zroot/zvolprobe/c15 none_rc=0  node_under_none=gone dev_rc=0  node_after_tenths=0 volmode=dev
+clone c16 node=N
+toggle zroot/zvolprobe/c16 none_rc=0  node_under_none=gone dev_rc=0  node_after_tenths=0 volmode=dev
+clone c17 node=N
+toggle zroot/zvolprobe/c17 none_rc=0  node_under_none=gone dev_rc=0  node_after_tenths=0 volmode=dev
+clone c18 node=N
+toggle zroot/zvolprobe/c18 none_rc=0  node_under_none=gone dev_rc=0  node_after_tenths=0 volmode=dev
+clone c19 node=N
+toggle zroot/zvolprobe/c19 none_rc=0  node_under_none=gone dev_rc=0  node_after_tenths=0 volmode=dev
+RESULT b2 clone: missing 20/20, toggled node back 20, not back 0
+--- b3 rollbacks (1 MiB written between snapshot and rollback)
+rollback a1 node=Y
+rollback a2 node=Y
+rollback a3 node=Y
+rollback a4 node=Y
+rollback a5 node=Y
+rollback a6 node=Y
+rollback a7 node=Y
+rollback a8 node=Y
+rollback a9 node=Y
+rollback a10 node=Y
+rollback a11 node=Y
+rollback a12 node=Y
+rollback a13 node=Y
+rollback a14 node=Y
+rollback a15 node=Y
+rollback a16 node=Y
+rollback a17 node=Y
+rollback a18 node=Y
+rollback a19 node=Y
+rollback a20 node=Y
+no rolled-back zvol was missing; toggling zroot/zvolprobe/a1 (present)
+toggle zroot/zvolprobe/a1 none_rc=0  node_under_none=gone dev_rc=0  node_after_tenths=0 volmode=dev
+RESULT b3 rollback: missing 0/20, toggled node back 1, not back 0
+--- b4 encrypted dataset, key loaded
+keystatus: available
+enc e0 node=N
+toggle zroot/zvolprobe/enc/e0 none_rc=0  node_under_none=gone dev_rc=0  node_after_tenths=0 volmode=dev
+enc e1 node=N
+toggle zroot/zvolprobe/enc/e1 none_rc=0  node_under_none=gone dev_rc=0  node_after_tenths=0 volmode=dev
+enc e2 node=Y
+enc e3 node=N
+toggle zroot/zvolprobe/enc/e3 none_rc=0  node_under_none=gone dev_rc=0  node_after_tenths=0 volmode=dev
+enc e4 node=N
+toggle zroot/zvolprobe/enc/e4 none_rc=0  node_under_none=gone dev_rc=0  node_after_tenths=0 volmode=dev
+enc e5 node=Y
+enc e6 node=N
+toggle zroot/zvolprobe/enc/e6 none_rc=0  node_under_none=gone dev_rc=0  node_after_tenths=0 volmode=dev
+enc e7 node=N
+toggle zroot/zvolprobe/enc/e7 none_rc=0  node_under_none=gone dev_rc=0  node_after_tenths=0 volmode=dev
+enc e8 node=N
+toggle zroot/zvolprobe/enc/e8 none_rc=0  node_under_none=gone dev_rc=0  node_after_tenths=0 volmode=dev
+enc e9 node=Y
+enc e10 node=N
+toggle zroot/zvolprobe/enc/e10 none_rc=0  node_under_none=gone dev_rc=0  node_after_tenths=0 volmode=dev
+enc e11 node=Y
+enc e12 node=N
+toggle zroot/zvolprobe/enc/e12 none_rc=0  node_under_none=gone dev_rc=0  node_after_tenths=0 volmode=dev
+enc e13 node=N
+toggle zroot/zvolprobe/enc/e13 none_rc=0  node_under_none=gone dev_rc=0  node_after_tenths=0 volmode=dev
+enc e14 node=Y
+enc e15 node=N
+toggle zroot/zvolprobe/enc/e15 none_rc=0  node_under_none=gone dev_rc=0  node_after_tenths=0 volmode=dev
+enc e16 node=N
+toggle zroot/zvolprobe/enc/e16 none_rc=0  node_under_none=gone dev_rc=0  node_after_tenths=0 volmode=dev
+enc e17 node=N
+toggle zroot/zvolprobe/enc/e17 none_rc=0  node_under_none=gone dev_rc=0  node_after_tenths=0 volmode=dev
+enc e18 node=N
+toggle zroot/zvolprobe/enc/e18 none_rc=0  node_under_none=gone dev_rc=0  node_after_tenths=0 volmode=dev
+enc e19 node=Y
+RESULT b4 encrypted: missing 14/20, toggled node back 14, not back 0
+geom: lines with zvol in kern.geom.conftxt: 0

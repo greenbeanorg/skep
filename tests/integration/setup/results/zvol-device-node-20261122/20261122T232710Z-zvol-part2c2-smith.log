@@ -1,0 +1,12 @@
+dd 2566: ,stat=,command=
+           2566
+set none rc=0 node=gone
+2 s after none: dd ps=[,stat=,command=]
+set dev rc=0
+node=present dd ps=[,stat=,command=]
+dd exit status 143
+dd stderr:
+dmesg tail:
+vtnet0: link state changed to UP
+ZFS filesystem version: 5
+ZFS storage pool version: features support (5000)

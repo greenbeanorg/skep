@@ -1,0 +1,17 @@
+volumes:       50
+repeat 1: before export 50/50 nodes (0 repaired first)
+after export:        0 nodes under /dev/zvol/tank/zvolprobe
+RESULT e repeat 1: 0 s after import: 50/50 nodes; missing:
+RESULT e repeat 1: 10 s after import: 50/50 nodes; missing:
+RESULT e repeat 1: 30 s after import: 50/50 nodes; missing:
+repeat 2: before export 50/50 nodes (0 repaired first)
+after export:        0 nodes under /dev/zvol/tank/zvolprobe
+RESULT e repeat 2: 0 s after import: 50/50 nodes; missing:
+RESULT e repeat 2: 10 s after import: 50/50 nodes; missing:
+RESULT e repeat 2: 30 s after import: 50/50 nodes; missing:
+repeat 3: before export 50/50 nodes (0 repaired first)
+after export:        0 nodes under /dev/zvol/tank/zvolprobe
+RESULT e repeat 3: 0 s after import: 50/50 nodes; missing:
+RESULT e repeat 3: 10 s after import: 50/50 nodes; missing:
+RESULT e repeat 3: 30 s after import: 50/50 nodes; missing:
+geom: lines with zvol in kern.geom.conftxt: 0

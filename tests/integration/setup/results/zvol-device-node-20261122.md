@@ -27,8 +27,8 @@ As in the clean-install run, this loaded zfs.ko itself; no explicit kldload.
 `zfs version` on both: `zfs-2.4.2-1-FreeBSD_g6330a45b0`,
 `zfs-kmod-2.4.2-1-FreeBSD_g6330a45b0`.
 
-Logs: 20261122T231318Z-zvol-part1-clean-check.log,
-20261122T*-zvol-smith-zpool-create.log.
+Logs (copies in [zvol-device-node-20261122/](zvol-device-node-20261122/)): 20261122T231318Z-zvol-part1-clean-check.log,
+20261122T231332Z-zvol-smith-zpool-create.log.
 
 ## Part 1b: code checks before the probe
 
@@ -44,7 +44,7 @@ keystatus is `-`, which `dash()` turns into `""`; VolMode is `"dev"`. The repair
 check (`KeyStatus != "" && KeyStatus != "available"`) does not refuse it, so there is
 **no storage_locked refusal and nothing to fix.** Added anyway:
 `TestEnsureVolumeDeviceRepairsRealUnencryptedOutput`, which parses exactly this line
-and runs a repair on it. Log: 20261122T*-zvol-part1b-a-zfs-list.log.
+and runs a repair on it. Log: 20261122T231422Z-zvol-part1b-a-zfs-list.log.
 
 **b) Host state before `ensureDevices` in bhyve `Adapter.Start`.** Before it:
 `unavailable` (capabilities), `Validate`, `Inspect` (reads the run state file, looks
@@ -71,6 +71,56 @@ Active: false`. The stopped check passes, and the clone's zvols carry the target
 Tests: `go test -race ./internal/hostops ./internal/vm ./internal/hypervisor/bhyve -run
 'EnsureVolumeDevice|EnsureDevice|DeviceNode|Start'` PASS,
 20261122T231518Z-go-test-hostops-zvoldev.log.
+
+## Part 2: raw zfs probe
+
+Script [probe.sh](zvol-device-node-20261122/probe.sh), run as root in
+`tank/zvolprobe` (smith) and `zroot/zvolprobe` (langrishe). Every zvol was created
+like the agent creates one: `zfs create -s -V 1G -o volblocksize=16K -o volmode=dev`.
+"Toggle" means `zfs set volmode=none`, then `zfs set volmode=dev`, then watching for
+the node for up to 10 s. Nothing ever wrote `volmode=geom`. `vfs.zfs.vol.mode` was the
+default (1). After each part, `kern.geom.conftxt` had **0** lines with `zvol` on both.
+
+| Probe | smith (`tank`, da1) | langrishe (`zroot`) |
+|---|---|---|
+| a) 50 creates, one per second: no node 1 s after create | **45/50** (also 45 at 0 s) | **43/50** (also 43 at 0 s) |
+| a) missing nodes that appeared within 30 s (≥ 31 s after create) | **0 of 45** | **0 of 43** |
+| b1) toggle, plain zvols missing a node | 45/45 node back | 43/43 node back |
+| b2) 20 `zfs clone -o volmode=dev` of a zvol snapshot: no node | **17/20**; toggle 17/17 back | **20/20**; toggle 20/20 back |
+| b3) 20 rollbacks (snapshot, 1 MiB written through the node, `zfs rollback`) of zvols that had a node: no node after | **0/20**; toggle on a present one: back | **0/20**; toggle on a present one: back |
+| b4) 20 zvols in an encrypted dataset (aes-256-gcm, raw key, `keystatus` available): no node | **19/20**; toggle 19/19 back | **14/20**; toggle 14/14 back |
+| node visible after `volmode=dev` (all toggles) | first look (< 0.1 s), 82/82 | first look, 78/78 |
+| c) toggle with a reader (dd) holding the node open | see below | same as smith |
+| d) GPT zvol after the toggle: `…/g0p1`, `kern.geom.conftxt` | **no p1, 0 lines**, `gpart: No such geom` | **no p1, 0 lines**, `gpart: No such geom` |
+| e) `zpool export tank; zpool import tank` with 50 zvols, all with nodes | 3 repeats: **50/50, 50/50, 50/50** nodes at 0 s, 10 s, and 30 s after import (0 after export) | not run (smith only) |
+
+Under `volmode=none` the node was gone every time, as expected.
+
+**c) The toggle with the node held open.** It does **not fail**: `zfs set
+volmode=none` returns 0 with dd reading the node, the node disappears, and the reader
+is gone at once (its file descriptor too). With dd started directly it ends with exit
+status 143 (SIGTERM) and prints no read error; under `timeout(1)` the status was 124.
+What sends the signal was not identified. `volmode=dev` then brings the node back
+(rc 0). So the toggle **pulls the node away from a running consumer**; a repair while
+a VM runs would take the disk away from bhyve. That is what the stopped check and the
+vmm-instance check of rule 3 prevent. Runs: probe.sh `c`, then
+[probe-c3.sh](zvol-device-node-20261122/probe-c3.sh) (dd started directly, SIGINFO
+before and after, `procstat -f`); the middle run's `ps` format was wrong and is kept
+only for the record.
+
+**d)** A 64 MiB GPT image (one 20 MiB freebsd-ufs partition, built with `sfdisk` on a
+file on merrick) was written to `g0` through its node (sha256 identical), then the
+toggle: no `/dev/zvol/<pool>/zvolprobe/g0p1`, nothing naming `g0` or `zvol` in
+`kern.geom.conftxt`. (`g0` itself had no node after create on both hosts and was
+toggled first.)
+
+**What it means for the fix.** None→dev brought the node back in every case
+measured (179 missing nodes on the two hosts, plus 3 present ones), never exposed a
+zvol to GEOM, and the node was there at once, well inside the 10 s the code waits.
+The miss rate on fresh hosts is far higher than the 2/5 seen before (90 % and 86 %).
+Rollback did not lose a node, and import creates all of them. Cleanup:
+`zfs destroy -r <pool>/zvolprobe` on both, the key file removed
+(20261122T233746Z-zvol-part2-cleanup.log).
 
 ## Fixes made during the validation
 
