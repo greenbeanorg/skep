@@ -313,8 +313,13 @@ func Compute(ctx context.Context, o Options, f Facts) (Plan, error) {
 	b.readOnlyChecks()
 	b.guests()
 	if o.Start {
-		b.add("services", "start skep_agent", "", Action{Type: ActServiceStart, Service: "skep_agent"})
-		b.add("services", "start skep_api", "", Action{Type: ActServiceStart, Service: "skep_api"})
+		for _, svc := range []string{"skep_agent", "skep_api"} {
+			if f.Running[svc] {
+				b.ok("services", svc, "running")
+			} else {
+				b.add("services", "start "+svc, "", Action{Type: ActServiceStart, Service: svc})
+			}
+		}
 	}
 	if o.Admin != "" {
 		b.admin()
@@ -327,6 +332,17 @@ func Compute(ctx context.Context, o Options, f Facts) (Plan, error) {
 // data directory as root and lock the unprivileged API out of it, so it
 // runs after --start, or once the directory exists.
 func (b *builder) admin() {
+	// skep-api admin create refuses a username that exists, so a second
+	// apply with the same answers must not plan it again. Rollback never
+	// deletes the user, so a rolled-back run counts too.
+	for _, j := range b.journals {
+		for _, e := range j.Entries {
+			if e.Done && e.Action.Type == ActAdminCreate && e.Action.Username == b.o.Admin {
+				b.ok("api", "first administrator "+b.o.Admin, "created by skep-setup run "+j.ID)
+				return
+			}
+		}
+	}
 	if _, err := os.Stat(hostPath(b.o.Root, "/var/db/skep/api")); err != nil && !b.o.Start {
 		b.refuse("api", "first administrator "+b.o.Admin,
 			"skep_api has not created its data directory yet; add --start, or start skep_api first")

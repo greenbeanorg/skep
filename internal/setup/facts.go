@@ -29,6 +29,9 @@ type Facts struct {
 	// /dev/vmm. Skep's are named skep-<id>.
 	Jails []string
 	VMs   []string
+	// Running holds the Skep services whose "service NAME status"
+	// succeeded (skep_agent, skep_api).
+	Running map[string]bool
 }
 
 // SkepGuests returns the running Skep jails and VMs.

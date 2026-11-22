@@ -106,7 +106,10 @@ Each `apply` (and `remove`) creates `/var/db/skep/setup/<UTC timestamp>/`
 (`0700`), with a copy of every file before its first change and
 `journal.json`: each action, and the SHA-256 of the file before and
 after. A second `apply` with the same answers finds nothing to do and
-writes no journal.
+writes no journal: with `-start`, a service that is running already
+(`service NAME status`) is `ok`; with `-admin`, a username an earlier run
+created is `ok` (also after that run was rolled back, since rollback
+never deletes users).
 
 `skep-setup rollback [ID]` (default: the newest run) puts a file back
 only if it is still byte-identical to what the run left; a file changed

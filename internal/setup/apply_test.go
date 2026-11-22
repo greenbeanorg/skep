@@ -440,6 +440,38 @@ func TestApplyStartAndAdmin(t *testing.T) {
 	}
 }
 
+// TestSecondApplyWithStartAndAdminIsANoOp: the same answers again, with
+// the services running, plan nothing and write no journal (found on
+// smith, 2026-11-22: the second apply started the services again and
+// failed at "user admin already exists", leaving an incomplete journal).
+func TestSecondApplyWithStartAndAdminIsANoOp(t *testing.T) {
+	root := stockHost(t)
+	e := newApplyEnv(t, root)
+	o := newBridgeOpts(root)
+	o.Start, o.Admin = true, "andy"
+	if _, err := e.applier().Apply(context.Background(), compute(t, o, facts())); err != nil {
+		t.Fatal(err)
+	}
+	f := facts()
+	f.Running = map[string]bool{"skep_agent": true, "skep_api": true}
+	p := compute(t, o, f)
+	if acts := p.Actions(); len(acts) != 0 {
+		t.Fatalf("second plan has actions: %v", acts)
+	}
+	want(t, p, OK, "skep_agent", "running")
+	want(t, p, OK, "first administrator andy", "created by skep-setup run")
+	if _, err := e.applier().Apply(context.Background(), p); !errors.Is(err, ErrNothingToDo) {
+		t.Fatalf("second apply: %v, want ErrNothingToDo", err)
+	}
+	// Rolled back, the run still made the user: not planned again.
+	if _, err := Rollback(root, "", e.clock); err != nil {
+		t.Fatal(err)
+	}
+	want(t, compute(t, o, f), OK, "first administrator andy", "")
+	// Stopped services are started again.
+	want(t, compute(t, o, facts()), Add, "start skep_api", "")
+}
+
 func TestPlanAdminNeedsTheAPIDirectory(t *testing.T) {
 	root := stockHost(t)
 	want(t, compute(t, Options{Root: root, Mgmt: []string{"vtnet0"}, Admin: "andy"}, facts()), Refuse, "first administrator andy", "--start")

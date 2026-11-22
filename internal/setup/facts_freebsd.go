@@ -11,8 +11,8 @@ import (
 )
 
 // HostProber reads the facts of this FreeBSD host with read-only
-// commands: freebsd-version, sysctl, ifconfig, zpool list, jls, and a
-// listing of /dev/vmm.
+// commands: freebsd-version, sysctl, ifconfig, zpool list, jls, a
+// listing of /dev/vmm, and "service skep_agent|skep_api status".
 type HostProber struct{}
 
 // Probe implements Prober.
@@ -58,6 +58,12 @@ func (HostProber) Probe(ctx context.Context) (Facts, error) {
 	if entries, err := os.ReadDir("/dev/vmm"); err == nil {
 		for _, e := range entries {
 			f.VMs = append(f.VMs, e.Name())
+		}
+	}
+	f.Running = map[string]bool{}
+	for _, svc := range []string{"skep_agent", "skep_api"} {
+		if _, err := output(ctx, "service", svc, "status"); err == nil {
+			f.Running[svc] = true
 		}
 	}
 	return f, nil
