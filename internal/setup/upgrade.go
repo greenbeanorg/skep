@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path"
 	"regexp"
 	"strconv"
 	"strings"
@@ -18,6 +19,7 @@ import (
 	"time"
 
 	"github.com/greenbeanorg/skep/internal/agentproto"
+	"github.com/greenbeanorg/skep/internal/config"
 	"github.com/greenbeanorg/skep/internal/dbbackup"
 	"github.com/greenbeanorg/skep/pkg/version"
 
@@ -308,6 +310,11 @@ func (u *Upgrader) Upgrade(ctx context.Context) error {
 		}
 	}
 	u.printf("  installed: skep-agent, skep-api and skep-setup are %s\n", want)
+	// The backup directory, the backup commands and the checks below
+	// assume the default data directory.
+	if err := defaultDataDirs(u.Root); err != nil {
+		return &UpgradeRefusal{Reason: err.Error()}
+	}
 	// 2. Unfinished tasks, while the API still accepts requests: the
 	// common refusal, with nothing changed.
 	if u.dbPath, err = AgentDBPath(u.Root); err != nil {
@@ -553,4 +560,27 @@ func inode(path string) (uint64, error) {
 		return 0, errors.New("no inode for " + path)
 	}
 	return uint64(sys.Ino), nil
+}
+
+// manualUpgradeDoc is the procedure for a host skep-setup upgrade does not
+// handle.
+const manualUpgradeDoc = "docs/installation/upgrading.md (\"Upgrading a host\", the general steps)"
+
+// defaultDataDirs refuses a service whose rc.conf data directory
+// (skep_agent_data_dir, skep_api_data_dir) is not the default: upgrade
+// backs up and checks only the default layout.
+func defaultDataDirs(root string) error {
+	rc, err := ReadRCConf(root)
+	if err != nil {
+		return err
+	}
+	for _, v := range []string{"skep_agent_data_dir", "skep_api_data_dir"} {
+		d, set := rc.Get(v)
+		if !set || path.Clean(d) == config.DefaultDataDir {
+			continue
+		}
+		return fmt.Errorf("%s is %q, not the default %s: skep-setup upgrade handles only the default data directory; upgrade by hand as %s describes",
+			v, d, config.DefaultDataDir, manualUpgradeDoc)
+	}
+	return nil
 }

@@ -689,3 +689,26 @@ func TestUpgradeMissingTasksTableIsAnError(t *testing.T) {
 		t.Fatalf("err %v, services %v", err, serviceCalls(h))
 	}
 }
+
+// Part 0 b: a non-default data directory in rc.conf is refused before
+// anything is stopped, naming the manual upgrade procedure; the default
+// spelled differently is not.
+func TestUpgradeRefusesANonDefaultDataDir(t *testing.T) {
+	for _, line := range []string{`skep_agent_data_dir="/srv/skep"`, `skep_api_data_dir="/srv/skep"`} {
+		u, h := newUpgrade(t)
+		os.MkdirAll(hostPath(h.root, "/etc"), 0o755)
+		os.WriteFile(hostPath(h.root, "/etc/rc.conf"), []byte(line+"\n"), 0o644)
+		err := u.Upgrade(context.Background())
+		var r *UpgradeRefusal
+		if !errors.As(err, &r) || !strings.Contains(err.Error(), "docs/installation/upgrading.md") ||
+			!strings.Contains(err.Error(), "nothing was changed") || len(serviceCalls(h)) != 0 {
+			t.Fatalf("%s: err %v, services %v", line, err, serviceCalls(h))
+		}
+	}
+	u, h := newUpgrade(t)
+	os.MkdirAll(hostPath(h.root, "/etc"), 0o755)
+	os.WriteFile(hostPath(h.root, "/etc/rc.conf"), []byte("skep_agent_data_dir=\"/var/db/skep/\"\n"), 0o644)
+	if err := u.Upgrade(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+}

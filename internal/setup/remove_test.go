@@ -577,3 +577,103 @@ func TestRevertSkipsAVariableChangedAfterThePlan(t *testing.T) {
 		t.Fatalf("entries %+v", j.Entries)
 	}
 }
+
+// Part 0 a: when the key check cannot run, --purge-data is refused (not
+// warned, not skipped); without it the warning stays.
+func TestRemovePurgeRefusedWhenTheKeyCheckCannotRun(t *testing.T) {
+	cases := []struct {
+		name  string
+		setup func(e *applyEnv)
+		why   string
+	}{
+		{"zfs list fails", func(e *applyEnv) {
+			e.runner.fail = map[string]error{"zfs list -H -o name -r tank/skep": errors.New("cannot open 'tank': I/O error")}
+		}, "zfs list failed"},
+		{"zfs get encryptionroot fails", func(e *applyEnv) {
+			e.runner.outputs = map[string]string{"zfs list -H -o name -r tank/skep": "tank/skep\n"}
+			e.runner.fail = map[string]error{"encryptionroot": errors.New("permission denied")}
+		}, "zfs get encryptionroot failed"},
+		{"zfs get keylocation fails", func(e *applyEnv) {
+			e.runner.outputs = map[string]string{
+				"zfs list -H -o name -r tank/skep":                "tank/skep\n",
+				"zfs get -H -o value -r encryptionroot tank/skep": "tank/skep\n",
+			}
+			e.runner.fail = map[string]error{"keylocation": errors.New("permission denied")}
+		}, "zfs get keylocation failed"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			e, _, _ := appliedHost(t)
+			agentGuests(t, e.root, 0, 0)
+			c.setup(e)
+			p := computeRemove(t, RemoveOptions{Root: e.root, PurgeData: true}, facts(), e.runner)
+			want(t, p, Refuse, "--purge-data", c.why)
+			p = computeRemove(t, RemoveOptions{Root: e.root}, facts(), e.runner)
+			want(t, p, Warn, "encryption keys under", c.why)
+			if p.Refused() {
+				t.Fatalf("plain remove refused: %+v", p.Items)
+			}
+		})
+	}
+}
+
+// Part 0 a: a pool that is not imported, or a dataset root that does not
+// exist, does not refuse --purge-data.
+func TestRemovePurgeAllowedWithoutTheDatasetRoot(t *testing.T) {
+	e, _, _ := appliedHost(t)
+	agentGuests(t, e.root, 0, 0)
+	e.runner.fail = map[string]error{"zfs list -H -o name -r tank/skep": errors.New("exit status 1: cannot open 'tank/skep': dataset does not exist")}
+	p := computeRemove(t, RemoveOptions{Root: e.root, PurgeData: true}, facts(), e.runner)
+	want(t, p, OK, "datasets under tank/skep", "does not exist")
+	if p.Refused() {
+		t.Fatalf("refused: %+v", p.Items)
+	}
+	// Without agent.json the agent has the defaults: no pools, nothing to
+	// check.
+	cfg := filepath.Join(e.root, "usr/local/etc/skep/agent.json")
+	saved := read(t, cfg)
+	if err := os.Remove(cfg); err != nil {
+		t.Fatal(err)
+	}
+	if p := computeRemove(t, RemoveOptions{Root: e.root, PurgeData: true}, facts(), e.runner); p.Refused() {
+		t.Fatalf("refused without agent.json: %+v", p.Items)
+	}
+	if err := os.WriteFile(cfg, []byte(saved), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	f := facts()
+	delete(f.Pools, "tank")
+	e.runner.fail = map[string]error{}
+	p = computeRemove(t, RemoveOptions{Root: e.root, PurgeData: true}, f, e.runner)
+	want(t, p, Warn, "encryption keys under tank/skep", "not imported")
+	if p.Refused() {
+		t.Fatalf("refused: %+v", p.Items)
+	}
+}
+
+// Part 0 a: agent.json that cannot be read or parsed stops remove before
+// any plan (the guest count reads it first), with or without --purge-data.
+func TestRemoveStopsOnAnUnreadableAgentJSON(t *testing.T) {
+	for name, damage := range map[string]func(p string) error{
+		"directory": func(p string) error {
+			if err := os.Remove(p); err != nil {
+				return err
+			}
+			return os.Mkdir(p, 0o755)
+		},
+		"broken": func(p string) error { return os.WriteFile(p, []byte("{"), 0o640) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			e, _, _ := appliedHost(t)
+			agentGuests(t, e.root, 0, 0)
+			if err := damage(filepath.Join(e.root, "usr/local/etc/skep/agent.json")); err != nil {
+				t.Fatal(err)
+			}
+			for _, purge := range []bool{true, false} {
+				if _, err := ComputeRemove(context.Background(), RemoveOptions{Root: e.root, PurgeData: purge}, facts(), e.runner, noAgent); err == nil {
+					t.Fatalf("purge=%v: planned", purge)
+				}
+			}
+		})
+	}
+}

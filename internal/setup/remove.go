@@ -2,7 +2,6 @@ package setup
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -322,31 +321,33 @@ func (b *builder) purge() error {
 // datasets lists, never destroys, Skep's datasets under each allow-listed
 // pool, and finds the encryption keys of those datasets that are files
 // under /var/db/skep, which --purge-data would delete: refused with
-// --purge-data, a warning without.
+// --purge-data, a warning without. When that check cannot run (the
+// agent's configuration unreadable, or zfs list or zfs get failing for an imported pool),
+// --purge-data is refused too: deleting a key nobody looked for is not
+// undone by a warning.
 func (b *builder) datasets(ctx context.Context, r Runner, purge bool) {
-	raw, err := os.ReadFile(hostPath(b.o.Root, agentJSONPath))
+	pools, datasetRoot, err := AgentStorage(b.o.Root)
 	if err != nil {
+		b.keysUnknown(purge, "the agent's pools", "its configuration cannot be read ("+err.Error()+")")
 		return
 	}
-	var c struct {
-		Storage struct {
-			Pools       []string `json:"pools"`
-			DatasetRoot string   `json:"dataset_root"`
-		} `json:"storage"`
-	}
-	if json.Unmarshal(raw, &c) != nil {
-		return
-	}
-	if c.Storage.DatasetRoot == "" {
-		c.Storage.DatasetRoot = "skep"
-	}
-	for _, p := range c.Storage.Pools {
+	for _, p := range pools {
 		if !poolNameRE.MatchString(p) {
+			b.keysUnknown(purge, "pool "+p, "the name in "+agentJSONPath+" is not a valid pool name")
 			continue
 		}
-		root := p + "/" + c.Storage.DatasetRoot
+		root := p + "/" + datasetRoot
+		if _, imported := b.f.Pools[p]; !imported {
+			b.warn("storage", "encryption keys under "+root, "pool "+p+" is not imported; its datasets and their keylocation were not checked")
+			continue
+		}
 		out, err := r.Run(ctx, Cmd{Name: cmdZfs, Args: []string{"list", "-H", "-o", "name", "-r", root}})
 		if err != nil {
+			if strings.Contains(err.Error(), "dataset does not exist") {
+				b.ok("storage", "datasets under "+root, "none ("+root+" does not exist)")
+				continue
+			}
+			b.keysUnknown(purge, "encryption keys under "+root, "zfs list failed ("+err.Error()+")")
 			continue
 		}
 		names := lines(out)
@@ -359,12 +360,23 @@ func (b *builder) datasets(ctx context.Context, r Runner, purge bool) {
 	}
 }
 
+// keysUnknown reports that whether an encryption key file is under
+// /var/db/skep could not be checked: refused with --purge-data, a warning
+// without.
+func (b *builder) keysUnknown(purge bool, what, why string) {
+	if purge {
+		b.refuse("data", "--purge-data", "whether an encryption key file is under "+dataRoot+" cannot be checked: "+what+": "+why+"; fix that, or move every key out of "+dataRoot+" and delete the data yourself")
+		return
+	}
+	b.warn("storage", "encryption keys under "+dataRoot, what+": "+why+"; whether a key file is under "+dataRoot+" is unknown, and --purge-data would refuse")
+}
+
 // keysUnderData looks up the encryption roots of the datasets under root
 // and their keylocation; a key file under /var/db/skep is reported.
 func (b *builder) keysUnderData(ctx context.Context, r Runner, root string, purge bool) {
 	out, err := r.Run(ctx, Cmd{Name: cmdZfs, Args: []string{"get", "-H", "-o", "value", "-r", "encryptionroot", root}})
 	if err != nil {
-		b.warn("storage", "encryption keys under "+root, "zfs get encryptionroot failed ("+err.Error()+"); whether a key file is under "+dataRoot+" is unknown")
+		b.keysUnknown(purge, "encryption keys under "+root, "zfs get encryptionroot failed ("+err.Error()+")")
 		return
 	}
 	var encRoots []string
@@ -378,7 +390,7 @@ func (b *builder) keysUnderData(ctx context.Context, r Runner, root string, purg
 	}
 	out, err = r.Run(ctx, Cmd{Name: cmdZfs, Args: append([]string{"get", "-H", "-o", "name,value", "keylocation"}, encRoots...)})
 	if err != nil {
-		b.warn("storage", "encryption keys under "+root, "zfs get keylocation failed ("+err.Error()+"); whether a key file is under "+dataRoot+" is unknown")
+		b.keysUnknown(purge, "encryption keys under "+root, "zfs get keylocation failed ("+err.Error()+")")
 		return
 	}
 	var under []string

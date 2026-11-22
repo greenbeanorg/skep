@@ -67,7 +67,9 @@ Every `rc.conf` and `loader.conf` change goes through `sysrc`, except
 ("name contains characters not allowed in shell", for setting, reading
 and `-x` alike), so setup appends that one line itself (and `remove
 -revert-host` deletes exactly that line), replacing the file atomically
-with its mode and owner. Every result is read back and checked. A variable already set to another value
+with its mode and owner and syncing the directory; a `loader.conf` that
+is not a regular file (a symlink, for one) is refused, never followed.
+Every result is read back and checked. A variable already set to another value
 is a **conflict**: reported, never overwritten. Each variable is read
 again just before its `sysrc NAME=` (or, in `remove`, `sysrc -x`); if
 someone set or changed it after the plan, that one change is **skipped**
@@ -173,7 +175,12 @@ database the agent's configuration names (`agent.json`, or
 `skep_agent_config`, with `skep_agent_data_dir`); if that database is
 missing while the agent answers on its socket, it refuses, since it would
 be reading the wrong configuration. `-keep` must be at least 1, and
-`/var/db/skep/backup` must be creatable, before anything is stopped. Then
+`/var/db/skep/backup` must be creatable, before anything is stopped. A
+service whose data directory is not the default (`skep_agent_data_dir` or
+`skep_api_data_dir` set in `rc.conf` to anything but `/var/db/skep`) is
+refused before anything is stopped: upgrade backs up and checks only the
+default layout, so upgrade that host by hand as
+[Upgrading a host](upgrading.md) describes (the general steps). Then
 it:
 
 1. stops `skep_api` (a service that is not running is left as it is,
@@ -283,7 +290,15 @@ to `NO`. By default it keeps everything else (answer 11):
   the operator holds them); remove looks up the encryption roots of the
   datasets under each pool's `skep` dataset, and if one's `keylocation`
   is a file under `/var/db/skep`, `-purge-data` is refused (without it,
-  a warning).
+  a warning). When that check cannot run (`zfs list` or `zfs get` failing
+  for a pool that is imported), `-purge-data` is refused too, not warned
+  or skipped; without it, the plan warns that it is unknown. A pool that
+  is not imported is reported as not checked; a pool whose `skep` dataset
+  does not exist has nothing to check. The pools are read as the agent
+  reads them (`agent.json`, or `skep_agent_config`); without that file the
+  agent has no pools. One that cannot be read or parsed stops `remove`
+  before any plan, with or without `-purge-data` (the guest count reads it
+  first).
 
 It never destroys a dataset; it lists the ones under each pool's
 `skep` dataset for you.

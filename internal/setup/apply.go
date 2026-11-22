@@ -446,16 +446,28 @@ func SysrcCanEdit(name string) bool { return shellNameRE.MatchString(name) }
 // editTunable does what sysrc would do for a loader tunable whose name
 // sysrc refuses: "=" appends name="value" to a file that does not set it,
 // "-x" deletes the lines that assign it. Only plain values are written,
-// and the file is replaced atomically with its mode and owner. The caller
-// reads the result back.
+// and the file is replaced atomically with its mode and owner, the
+// directory synced, as replaceFile does; a file that is not regular (a
+// symlink, for one) is refused. The caller reads the result back.
 func (a *Applier) editTunable(full string, act Action) error {
 	if !tunableNameRE.MatchString(act.Name) {
 		return fmt.Errorf("%s: %q is neither a shell variable nor a loader tunable name", act.File, act.Name)
 	}
-	b, err := os.ReadFile(full)
+	// Lstat, as replaceFile: a symlink or other non-regular file is
+	// refused, never followed or replaced.
+	st, err := os.Lstat(full)
 	missing := errors.Is(err, fs.ErrNotExist)
 	if err != nil && !missing {
 		return err
+	}
+	if !missing && !st.Mode().IsRegular() {
+		return fmt.Errorf("%s is not a regular file; not replaced", full)
+	}
+	var b []byte
+	if !missing {
+		if b, err = os.ReadFile(full); err != nil {
+			return err
+		}
 	}
 	var lines []string
 	if len(b) > 0 {
@@ -497,11 +509,12 @@ func (a *Applier) editTunable(full string, act Action) error {
 		return fmt.Errorf("%s: %s %s is not supported for a loader tunable", act.File, act.Op, act.Name)
 	}
 	mode, uid, gid := fs.FileMode(0o644), 0, 0
-	if st, err := os.Stat(full); err == nil {
-		mode = st.Mode().Perm()
-		if sys, ok := st.Sys().(*syscall.Stat_t); ok {
-			uid, gid = int(sys.Uid), int(sys.Gid)
+	if !missing {
+		sys, ok := st.Sys().(*syscall.Stat_t)
+		if !ok {
+			return fmt.Errorf("%s: no owner information", full)
 		}
+		mode, uid, gid = st.Mode().Perm(), int(sys.Uid), int(sys.Gid)
 	} else if uid, gid, err = a.ids("root", "wheel"); err != nil {
 		return err
 	}
@@ -527,7 +540,10 @@ func (a *Applier) editTunable(full string, act Action) error {
 	if werr != nil {
 		return werr
 	}
-	return os.Rename(name, full)
+	if err := os.Rename(name, full); err != nil {
+		return err
+	}
+	return syncDir(filepath.Dir(full))
 }
 
 // ids resolves an owner and group through the root's own account files.

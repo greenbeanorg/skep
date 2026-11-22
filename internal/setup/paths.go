@@ -73,3 +73,24 @@ func exists(path string) bool {
 	_, err := os.Lstat(path)
 	return err == nil
 }
+
+// AgentStorage returns the agent's allow-listed pools and dataset root as
+// the running agent has them: agent.json (or skep_agent_config) loaded the
+// way the agent loads it. Without a configuration file the agent uses the
+// defaults: no pools.
+func AgentStorage(root string) (pools []string, datasetRoot string, err error) {
+	file, dataDir, err := serviceConfigFile(root, "skep_agent_config", "skep_agent_data_dir")
+	if err != nil {
+		return nil, "", err
+	}
+	opts := config.LoadOptions{DefaultPath: hostPath(root, config.DefaultConfigPath), LookupEnv: noEnv,
+		Overrides: config.Overrides{DataDir: dataDir}}
+	if file != "" {
+		opts.Path = hostPath(root, file)
+	}
+	c, err := config.Load(opts)
+	if err != nil {
+		return nil, "", err
+	}
+	return c.Storage.Pools, c.Storage.DatasetRoot, nil
+}

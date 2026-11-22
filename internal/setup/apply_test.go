@@ -584,6 +584,49 @@ func TestEditTunable(t *testing.T) {
 	}
 }
 
+// Part 0 c: editTunable refuses a loader.conf that is not a regular file
+// (a symlink is neither followed nor replaced) and creates a missing one.
+func TestEditTunableRefusesANonRegularFile(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "real.conf")
+	if err := os.WriteFile(target, []byte("vmm_load=\"YES\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "loader.conf")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	a := &Applier{Root: "/", Chown: func(string, int, int) error { return nil }}
+	set := Action{Type: ActSysrc, File: "/boot/loader.conf", Name: "kern.racct.enable", Op: "=", Value: "1"}
+	for _, act := range []Action{set, {Type: ActSysrc, File: "/boot/loader.conf", Name: "kern.racct.enable", Op: "-x"}} {
+		if err := a.editTunable(link, act); err == nil || !strings.Contains(err.Error(), "not a regular file") {
+			t.Fatalf("%s on a symlink: %v", act.Op, err)
+		}
+	}
+	if st, err := os.Lstat(link); err != nil || st.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("the symlink was replaced: %v %v", st, err)
+	}
+	if got := read(t, target); got != "vmm_load=\"YES\"\n" {
+		t.Fatalf("the target changed: %q", got)
+	}
+	sub := filepath.Join(dir, "adir")
+	if err := os.Mkdir(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.editTunable(sub, set); err == nil || !strings.Contains(err.Error(), "not a regular file") {
+		t.Fatalf("directory: %v", err)
+	}
+	// A missing file is created with the tunable.
+	a.Root = stockHost(t)
+	missing := filepath.Join(dir, "new.conf")
+	if err := a.editTunable(missing, set); err != nil {
+		t.Fatal(err)
+	}
+	if got := read(t, missing); got != "kern.racct.enable=\"1\"\n" {
+		t.Fatalf("created %q", got)
+	}
+}
+
 // A4 and A13: without skep_api's pid file and api.db, the administrator is
 // not created; the wait is bounded, the journal is finished with the
 // error, and the same apply then plans only the administrator.
