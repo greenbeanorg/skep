@@ -54,6 +54,8 @@ rc prints it, and so may a host whose rc output is visible.
 
 **Recommendation:** A (done), and optionally D. No Skep code change.
 
+**Decided (Andy, 2026-11-22):** A; no FreeBSD problem report (D) for now.
+
 Pending FreeBSD validation: nothing new to validate; the lines and the
 script were read on hearst (read-only) in this run, and the jail-start
 logs above are from earlier runs.
