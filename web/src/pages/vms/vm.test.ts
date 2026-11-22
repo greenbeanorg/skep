@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { consoleURL } from "@/api/client";
 
-import { VM_NAME_RE, parseSize, sizeProblem } from "./vm";
+import { VM_NAME_RE, parseSize, sizeProblem, vmErrorHint } from "./vm";
 
 describe("parseSize", () => {
   it("reads bytes and binary suffixes as the API does", () => {
@@ -36,5 +36,13 @@ describe("consoleURL", () => {
   it("uses wss on an https origin and escapes the ID", () => {
     expect(consoleURL("a/b", { protocol: "https:", host: "h:8443" })).toBe("wss://h:8443/api/v1/vms/a%2Fb/console/serial");
     expect(consoleURL("x", { protocol: "http:", host: "h" })).toBe("ws://h/api/v1/vms/x/console/serial");
+  });
+});
+
+describe("vmErrorHint", () => {
+  it("gives the appending sysrc form for the netgraph modules", () => {
+    const hint = vmErrorHint("port_filter_unavailable");
+    expect(hint).toContain('sysrc kld_list+="netgraph ng_socket ng_ether ng_bpf"');
+    expect(hint).not.toContain('kld_list="');
   });
 });

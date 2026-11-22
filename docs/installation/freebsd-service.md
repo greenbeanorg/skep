@@ -7,8 +7,10 @@ Skep runs as two rc.d services (ADR 0004, ADR 0006):
 | `skep_agent` | `packaging/rc.d/skep_agent` | `root` | The Unix socket `/var/run/skep/agent.sock` only. No network listener. |
 | `skep_api` | `packaging/rc.d/skep_api` | `skep` (unprivileged) | TCP, `127.0.0.1:8443` by default |
 
-There is no package or installer yet (Milestone 10), so the steps below are
-manual. They were run on FreeBSD 15.1-RELEASE-p6, including an in-place
+There is no package or installer yet (Milestone 10,
+[ADR 0012](../decisions/0012-installer.md), accepted, not yet built), so the steps below are
+manual; [Host requirements](host-requirements.md) puts every step of a
+new host in order. They were run on FreeBSD 15.1-RELEASE-p6, including an in-place
 upgrade of a Milestone 3 installation; the native test and its recorded
 result are in
 [tests/integration/rcd](../../tests/integration/rcd/README.md).
@@ -89,9 +91,9 @@ variable `skep_agent_runas` is no longer read and can be removed.
 ## Install
 
 ```sh
-# The service account. No login shell, no home directory.
-pw groupadd skep
-pw useradd skep -g skep -d /nonexistent -s /usr/sbin/nologin -c "Skep service account"
+# The service account, UID/GID 409 (ADR 0012). No login shell, no home directory.
+pw groupadd skep -g 409
+pw useradd skep -u 409 -g skep -d /nonexistent -s /usr/sbin/nologin -c "Skep service account"
 
 install -o root -g wheel -m 0555 skep-agent skep-api /usr/local/sbin/
 install -o root -g wheel -m 0555 packaging/rc.d/skep_agent packaging/rc.d/skep_api /usr/local/etc/rc.d/
@@ -337,12 +339,16 @@ without VLAN filtering). See
 
 ## Kernel modules and bridges for guests
 
-Skep loads no kernel modules. A host that runs guests with NICs needs,
-in `/etc/rc.conf`:
+Skep loads no kernel modules. A host that runs guests with NICs needs
+these in `kld_list` in `/etc/rc.conf`:
 
+```sh
+sysrc kld_list+="if_epair netgraph ng_socket ng_ether ng_bpf"
+kldload if_epair netgraph ng_socket ng_ether ng_bpf    # now, without a reboot
 ```
-kld_list="if_epair netgraph ng_socket ng_ether ng_bpf"
-```
+
+`+=` appends to an existing `kld_list`; writing `kld_list="…"` by hand
+would replace it and drop modules the host already loads at boot.
 
 `if_epair` gives jails their interfaces. The netgraph modules filter every
 guest port (ADR 0011). `vmm` and `nmdm` go in `/boot/loader.conf`
@@ -384,5 +390,6 @@ pw userdel skep             # also removes the skep group
   the data directory on a ZFS dataset.
 - Logging to a file with rotation is not offered; use syslog and
   `newsyslog(8)`.
-- The account's UID and GID are whatever `pw` assigns. A fixed, registered
-  UID is a packaging decision for Milestone 10.
+- The account's UID and GID are fixed at 409 by ADR 0012 (the lowest pair
+  free in the ports registry on 2026-11-22; registered when a port is
+  submitted). Hosts set up earlier keep what `pw` assigned.

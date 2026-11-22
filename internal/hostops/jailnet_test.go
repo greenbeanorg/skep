@@ -161,7 +161,13 @@ func TestEnsureDHCPRuleset(t *testing.T) {
 func TestEpairAvailable(t *testing.T) {
 	h, run, _ := jailHost(t)
 	run.answers["kldstat -q -m if_epair"] = &CommandError{Name: "kldstat", ExitCode: 1, Err: errors.New("exit status 1")}
-	wantCode(t, h.EpairAvailable(context.Background()), models.CodeEpairUnavailable)
+	err := h.EpairAvailable(context.Background())
+	wantCode(t, err, models.CodeEpairUnavailable)
+	// The hint appends to kld_list; a kld_list="..." line pasted into
+	// rc.conf would replace the operator's existing list.
+	if !strings.Contains(err.Error(), `sysrc kld_list+="if_epair"`) || strings.Contains(err.Error(), `kld_list="`) {
+		t.Errorf("the refusal's hint is not the appending sysrc form: %v", err)
+	}
 	h, _, _ = jailHost(t)
 	if err := h.EpairAvailable(context.Background()); err != nil {
 		t.Fatal(err)
