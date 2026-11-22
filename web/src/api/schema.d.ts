@@ -414,11 +414,11 @@ export interface paths {
          *     no task and are audited. An `Idempotency-Key` header makes a retry
          *     return the first answer.
          *
-         *     A NIC's `mac_address` that a Skep jail already holds is refused
-         *     with `vm_mac_in_use` (409); its details name the jail
-         *     (`held_by_kind` `container`, `held_by_id`, `held_by_name`) and the
-         *     NIC (`slot`, `mac_address`), as `container_mac_in_use` does for a
-         *     jail. One that another VM holds is `invalid_request` (400).
+         *     A NIC's `mac_address` that another Skep VM or a Skep jail already
+         *     holds is refused with `vm_mac_in_use` (409); its details name the
+         *     holder (`held_by_kind` `vm` or `container`, `held_by_id`,
+         *     `held_by_name`) and the NIC (`slot`, `mac_address`), as
+         *     `container_mac_in_use` does for a jail.
          */
         post: operations["createVM"];
         delete?: never;
@@ -1431,9 +1431,8 @@ export interface components {
                 /** @enum {string} */
                 model?: "virtio-net" | "e1000";
                 /**
-                 * @description Generated when left out. Must not be held by another VM
-                 *     (`invalid_request`) or by a Skep jail (`vm_mac_in_use`,
-                 *     409).
+                 * @description Generated when left out. Must not be held by another
+                 *     Skep VM or by a Skep jail (`vm_mac_in_use`, 409).
                  */
                 mac_address?: string;
                 bridge: string;

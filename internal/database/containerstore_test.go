@@ -201,8 +201,8 @@ func TestContainerStoreMACHeld(t *testing.T) {
 // TestVMStoreMACHeldByJail: the VM side (ADR 0010 amendment u, 25.5 point
 // 3). A VM NIC whose MAC a jail holds is refused with vm_mac_in_use and the
 // jail named in the details, both by CheckMACsFree and by InsertTx in the
-// writing transaction; a MAC another VM holds stays invalid_request; a free
-// MAC is stored.
+// writing transaction; a MAC another VM holds is vm_mac_in_use too, naming
+// the VM; a free MAC is stored.
 func TestVMStoreMACHeldByJail(t *testing.T) {
 	ctx := context.Background()
 	db := openTestDB(t)
@@ -278,13 +278,32 @@ func TestVMStoreMACHeldByJail(t *testing.T) {
 	if err := insert(v1); err != nil {
 		t.Fatalf("a free MAC: %v", err)
 	}
-	// Another VM's MAC: unchanged, 400 invalid_request.
+	// Another VM's MAC: vm_mac_in_use too, naming the VM, from both checks.
 	v2 := vm("cccccccc-0000-4000-8000-000000000001", "vm2", "cccccccc-0000-4000-8000-000000000002", "02:00:00:00:00:0b")
-	var me *models.Error
-	if err := insert(v2); !errors.As(err, &me) || me.Code != models.CodeInvalidRequest {
-		t.Fatalf("a VM-held MAC: %v, want invalid_request", err)
+	heldByVM := func(err error) {
+		t.Helper()
+		var me *models.Error
+		if !errors.As(err, &me) || me.Code != models.CodeVMMACInUse {
+			t.Fatalf("err = %v, want vm_mac_in_use", err)
+		}
+		want := map[string]any{"slot": 0, "mac_address": "02:00:00:00:00:0b", "held_by_kind": "vm",
+			"held_by_id": v1.ID, "held_by_name": "vm1"}
+		for k, v := range want {
+			if me.Details[k] != v {
+				t.Errorf("details[%s] = %v, want %v", k, me.Details[k], v)
+			}
+		}
+		if !strings.Contains(me.Message, "VM vm1 (slot 0)") {
+			t.Errorf("message %q does not name the VM and its slot", me.Message)
+		}
 	}
-	if err := s.CheckMACsFree(ctx, v2.NICs); err != nil {
-		t.Fatalf("CheckMACsFree checks jails only: %v", err)
+	heldByVM(s.CheckMACsFree(ctx, v2.NICs))
+	heldByVM(insert(v2))
+	if _, err := s.Get(ctx, v2.ID); !errors.Is(err, models.ErrNotFound) {
+		t.Fatalf("a refused VM was stored: %v", err)
+	}
+	// A NIC whose address is still to be generated is not checked.
+	if err := s.CheckMACsFree(ctx, []models.VMNIC{{Slot: 0}}); err != nil {
+		t.Fatalf("an empty MAC: %v", err)
 	}
 }

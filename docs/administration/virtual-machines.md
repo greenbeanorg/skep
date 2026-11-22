@@ -238,10 +238,10 @@ with a warning in the task result.
 
 A NIC without `mac_address` gets a generated one (`02:` and five random
 bytes). A given address must be unicast and not all zeroes. One that
-another Skep VM already holds is refused with `invalid_request` (400);
-one that a Skep jail holds is refused with `vm_mac_in_use` (409), whose
-details name the jail (`held_by_kind` `container`, `held_by_id`,
-`held_by_name`) and the NIC (`slot`, `mac_address`). Nothing is created
+another Skep VM or a Skep jail already holds is refused with
+`vm_mac_in_use` (409), whose details name the holder (`held_by_kind`
+`vm` or `container`, `held_by_id`, `held_by_name`) and the NIC (`slot`,
+`mac_address`). Nothing is created
 and the refusal is audited. A NIC's MAC cannot be changed after creation;
 a clone gets new, generated addresses.
 

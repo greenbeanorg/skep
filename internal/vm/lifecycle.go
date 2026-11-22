@@ -71,10 +71,6 @@ func (s *Service) CreateVM(ctx context.Context, req models.VMCreate, sub Submiss
 			return models.VMCreated{}, s.refuse(ctx, refused, err)
 		}
 	}
-	// A MAC address a jail holds: 409 vm_mac_in_use, before any task.
-	if err := s.store.CheckMACsFree(ctx, vm.NICs); err != nil {
-		return models.VMCreated{}, s.refuse(ctx, refused, err)
-	}
 	raw, err := json.Marshal(createPayload{Request: vm})
 	if err != nil {
 		return models.VMCreated{}, err
@@ -110,6 +106,12 @@ func (s *Service) CreateVM(ctx context.Context, req models.VMCreate, sub Submiss
 		}
 	}
 
+	// A MAC address another VM or a jail holds: 409 vm_mac_in_use, before
+	// any task. After the replay lookup, so that a replay is not refused
+	// over the address its own first create stored.
+	if err := s.store.CheckMACsFree(ctx, vm.NICs); err != nil {
+		return models.VMCreated{}, s.refuse(ctx, refused, err)
+	}
 	if err := s.assignIDs(&vm); err != nil {
 		return models.VMCreated{}, err
 	}

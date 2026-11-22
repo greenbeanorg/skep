@@ -87,7 +87,7 @@ that another Skep jail or a Skep VM already holds is refused at create,
 update, and clone with `container_mac_in_use` (409), whose details name
 the holder (`held_by_kind` `container` or `vm`, `held_by_id`,
 `held_by_name`), as at start (amendment u). The VM side refuses a MAC
-address a jail holds with `vm_mac_in_use` (409). At every start,
+address a jail or another VM holds with `vm_mac_in_use` (409). At every start,
 before any epair is created, the agent also refuses
 (`container_mac_in_use`) a MAC address that a Skep VM holds, or that is
 already present on the NIC's bridge: the bridge's own address, a member
