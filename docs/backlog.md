@@ -8,6 +8,7 @@ built. Entries say when they may be picked up.
 | Item | When | Where it came from |
 |---|---|---|
 | Skep logs to syslog itself (a `slog` handler sending one record per message to `/var/run/log`), instead of daemon(8)'s `-S` pipe, so records are never joined on one `daemon.log` line | After 0.1 | [daemon-log-joined-records.md](../tests/integration/rcd/daemon-log-joined-records.md), option B (Andy, 2026-11-22) |
+| Agent drain mode for `skep-setup upgrade`: the agent stops accepting new tasks and finishes or refuses the queued ones, instead of setup stopping `skep_api`, so a late refusal no longer leaves the new API answering `503 agent_version_mismatch` next to the old agent | After 0.1 | Lab-VM validation of PR #52 (2026-11-22); Andy accepted the 503-after-late-refusal behaviour for 0.1 |
 | An optional pinned IPv4 address for VM NICs (anti-spoofing beyond MAC) | Not scheduled | [ADR 0011](decisions/0011-guest-port-anti-spoofing.md) decision 7 |
 | Default jail limits, or limits required per role | Not scheduled | [Jails](administration/jails.md#limits) |
 | An option to reset a jail's SSH host keys on clone | Not scheduled | [Jails](administration/jails.md) |

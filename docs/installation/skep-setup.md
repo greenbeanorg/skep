@@ -10,11 +10,16 @@ did not create.
 
 **Status (2026-11-22):** built and tested on Linux against fixture roots
 (copies of a stock UFS install, a stock ZFS install, and `hearst`'s
-files). `check` and `plan` were run read-only on `hearst`
-([output](../../tests/integration/setup/results/hearst-check-plan-20261122.txt)).
-`apply`, `rollback`, `upgrade` and `remove` are **pending FreeBSD
-validation** on the two lab VMs ADR 0012 asks for; they have never run
-against a real host's files.
+files), and validated on the two lab VMs ADR 0012 asks for, FreeBSD
+15.1-RELEASE-p7: `smith` (UFS root, distribution sets) and `langrishe`
+(ZFS root, pkgbase). `check`, `plan`, `apply` (with `-start` and
+`-admin`), a second `apply`, `rollback` of an apply and of a remove,
+`upgrade` (both refusals and the success path) and `remove` (default and
+`-revert-host -purge-data`) ran against the real hosts; rc.conf and
+loader.conf came back byte-identical. Three fixes came out of it (sysrc
+refuses dotted names; a second apply with `-start -admin` was not a
+no-op; revert left `NAME=""`). Record:
+[lab-VM validation](../../tests/integration/setup/results/lab-vm-validation-20261122.md).
 
 ```
 skep-setup check     [answers]   read-only: what is configured, missing, in conflict, refused
@@ -154,6 +159,8 @@ still the old one if the failure came before its restart. Until a later
 agent_version_mismatch` to everything that needs the agent, and its
 health is `unavailable`. The tasks keep running on the agent; run
 `skep-setup upgrade` again once they have finished.
+Andy accepted this for 0.1 (2026-11-22, seen on both lab VMs); an agent
+drain mode that avoids it is in the [backlog](../backlog.md).
 
 Running guests are not touched: VM runners and jails survive the agent
 restart. If only one of the two services was restarted, the API answers
@@ -213,7 +220,15 @@ to `NO`. By default it keeps everything else (answer 11):
 It never destroys a dataset; it lists the ones under each pool's
 `skep` dataset for you.
 
-`pkg delete skep` itself refuses while a Skep guest is running: the
+**Validation finding (2026-11-22, both lab VMs, pkg 2.9.2): the refusal
+below is printed but not enforced.** pkg stops on a failing
+pre-deinstall script only with `DEVELOPER_MODE` on; by default it prints
+"DEINSTALL script failed" and deletes the files anyway (exit 0), leaving
+the guests and the running daemons without their binaries. Until that is
+decided, run `skep-setup remove` (which does refuse) before `pkg delete`.
+A failing pre-install, by contrast, does stop `pkg add`.
+
+`pkg delete skep` itself is meant to refuse while a Skep guest is running: the
 package's pre-deinstall script looks for jails named `skep-*` (`jls`) and
 VMs named `skep-*` (`/dev/vmm`) on the host, so it refuses **even when
 `skep_agent` is stopped**, as it is after `skep-setup remove`. It never

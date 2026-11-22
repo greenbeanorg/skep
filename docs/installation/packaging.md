@@ -5,9 +5,13 @@ Decision 1). The tree and the manifest are staged on the development
 machine; `pkg create` runs by hand on a FreeBSD 15 amd64 lab VM, because
 it needs FreeBSD's `pkg` (answer 2). There is no Go `.pkg` writer.
 
-**Status:** the staging is built and tested on Linux. `pkg create`, `pkg
-add`, `pkg upgrade` and `pkg delete` with this manifest and these scripts
-are **pending FreeBSD validation** on the lab VMs ADR 0012 asks for.
+**Status:** the staging is built and tested on Linux, and `pkg create`,
+`pkg add`, `pkg upgrade` and `pkg delete` with this manifest and these
+scripts ran on the lab VMs (FreeBSD 15.1-RELEASE-p7, pkg 2.9.2, smith and
+langrishe, 2026-11-22;
+[record](../../tests/integration/setup/results/lab-vm-validation-20261122.md)).
+Everything in sections 3 and 4 behaved as written **except the
+pre-deinstall refusal, which pkg does not enforce** (section 2).
 
 ## 1. Stage (development machine)
 
@@ -60,6 +64,15 @@ Both are plain `sh`, embedded in `+MANIFEST` from `packaging/pkg/`.
   `PKG_UPGRADE` is set, because `pkg upgrade` runs the old package's
   deinstall scripts and an upgrade leaves guests running. `pkg delete -f`
   overrides it.
+
+  **Measured on pkg 2.9.2 (2026-11-22):** `pkg upgrade` runs the old
+  package's pre-deinstall with `PKG_UPGRADE=true`; `pkg delete` leaves it
+  unset; `pkg add` of a newer `.pkg` is a "forced install" and runs no
+  pre-deinstall at all. **A failing pre-deinstall does not stop `pkg
+  delete`** unless `DEVELOPER_MODE` is on: pkg prints "DEINSTALL script
+  failed", deletes the files and exits 0. The refusal is therefore a
+  warning only; decision pending (see the validation record). A failing
+  pre-install does stop `pkg add` (exit 1, nothing installed).
 
 Neither script edits `rc.conf`, enables, starts or stops a service.
 
