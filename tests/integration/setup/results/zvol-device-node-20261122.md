@@ -122,6 +122,56 @@ Rollback did not lose a node, and import creates all of them. Cleanup:
 `zfs destroy -r <pool>/zvolprobe` on both, the key file removed
 (20261122T233746Z-zvol-part2-cleanup.log).
 
+## Part 3: validation through the agent
+
+**Install: done on both.** `make stage` at 64de929, `pkg create` on smith (staged
+sha256 matched `SHA256SUMS.stage`; `skep-0.1.0.pkg` sha256 `4e64d49d…0208`), copied
+to langrishe. `pkg add`, then `skep-setup apply -mgmt vtnet0 -pool tank|zroot
+-no-racct -start -admin admin -yes` under `timeout -f` (password typed over a pty from
+the creds file, never printed). Both services running; `skepctl login` with the pin
+from `skep-api tls fingerprint`. Logs: *-zvol-build-pkg.log,
+*-zvol-smith-install-apply.log, *-zvol-langrishe-install-apply.log.
+
+**Through the API: blocked.** The first `vm.create` (one 64 MiB thin disk, no NIC)
+failed: `bhyve_unavailable: the UEFI variable store template BHYVE_UEFI_VARS.fd is not
+in the firmware directory`. That comes from the `edk2-bhyve` package, which
+`fresh-151` doesn't have and this run was not approved to install. A VM start also
+needs `vmm.ko`, and kld changes were excluded. The failed create was undone (no VM
+row, no zvol). So **none of the API steps ran:** the 50/20/20 loops through
+`vm.create`, `vm.clone`, and `vm.snapshot.rollback`, the real VM started from a
+disk whose node was missing, and `vm.start` refused with `disk_device_missing`.
+They stay **pending FreeBSD validation** and need `pkg install edk2-bhyve` and
+`kldload vmm` (or `vmm_load` and a reboot) on the lab VMs.
+
+**What ran instead: the agent's hostops code on real ZFS.**
+[tests/integration/storage/zvoldev](../../storage/zvoldev/main.go), cross-compiled and
+run as root on both VMs. It builds the real FreeBSD `hostops` (the agent's own code,
+`/sbin/zfs` through its runner) with `DatasetRoot: zvolprobe`, so everything was under
+`<pool>/zvolprobe`, destroyed at the end. It calls `Disks.Create`, `ZFS.CloneVM`,
+`ZFS.Snapshot`, and `ZFS.Rollback` as the VM service does, each followed by
+`Disks.EnsureDevice` with a stopped check that says stopped, as the VM service calls
+it after those operations. It does **not** exercise the API, the VM service's task
+code, bhyve's `Adapter.Start`, or a guest. The clone and rollback source was a
+64 MiB disk holding the GPT image (sha256 identical after the write, then
+snapshotted); before every rollback, 1 MiB of random data was written into it.
+
+| Through hostops | smith (`tank`) | langrishe (`zroot`) |
+|---|---|---|
+| 50 disk creates: node at the end / needed a repair | **50/50** / 47 | **50/50** / 45 |
+| 20 clones of the GPT disk: node at the end / needed a repair | **20/20** / 4 | **20/20** / 7 |
+| 20 rollbacks of the GPT disk: node at the end / needed a repair | **20/20** / 0 | **20/20** / 0 |
+| repairs: rounds, time (incl. the 5 s wait for a late node) | all 1 round; 5.06–5.16 s | all 1 round; 5.05–5.14 s |
+| check (d) after the clones and after the rollbacks: `p1` nodes / `kern.geom.conftxt` lines with `zvol` | 0 / 0, both times | 0 / 0, both times |
+| refusal, VM not stopped (stopped check says running) on a disk with no node | `disk_device_missing`, reason `vm_not_stopped`; volmode still `dev`, node still missing (no `zfs set`) | same |
+| refusal, volmode set to `none` by hand on a stopped VM's disk | `disk_device_missing`, reason `volmode_none`, `command: zfs set volmode=dev tank/zvolprobe/vm/da3bf3fa-…/disk0`; volmode still `none` | same, `zroot/zvolprobe/vm/30ee8c6c-…/disk0` |
+| after running that command by hand | volmode `dev`, node back | same |
+
+Every repair and refusal was in hostops' log (52 "repaired" lines on smith = 47 + 4 +
+the source; 53 on langrishe), the refusals at WARN with the reason. A clone made
+through `CloneVM` (a filesystem clone, then the volume clone) missed its node far less
+often (4/20, 7/20) than a bare `zfs clone` of a zvol in Part 2 (17/20, 20/20); the
+reason was not investigated.
+
 ## Fixes made during the validation
 
 1. `toggleVolMode`: a failed `volmode=none` with `volmode=dev` set back is
