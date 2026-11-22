@@ -57,7 +57,7 @@ line most of the time.
 | A. Document it (this change) | `freebsd-service.md` says a syslog line can hold several records and how to parse them | Nothing changes for operators who grep; parsers must handle it |
 | B. The agent and API log to syslog themselves | A `slog.Handler` that sends one record per `syslog(3)`-style datagram to `/var/run/log` (`log/syslog`, standard library), selected by a config key; daemon(8) without `-S` keeps only stray output | New config key and rc.d change (ask first); records keep their boundaries; the rc.d syslog variables move to the program's config |
 | C. daemon(8) writes a file | `daemon -o /var/log/skep/agent.log` instead of `-S`; the file gets the bytes unchanged, one record per line | rc.d change, newsyslog(8) entry, file permissions; loses syslog forwarding |
-| D. Fix daemon(8) upstream | Loop over lines with `memchr` and send one `syslog()` per line, as daemon(8) did before the 14.0 rework | A FreeBSD bug report and patch; Skep still runs on releases without it |
+| D. Fix daemon(8) upstream | Loop over the lines with `memchr` and send one `syslog()` per line (older daemon(8) versions are believed to have done this; not checked) | A FreeBSD bug report and patch; Skep still runs on releases without it |
 
 **Recommendation:** A now (done here), and D as a FreeBSD problem report, since
 one syslog message per line is what `-S` users expect. B is the right
