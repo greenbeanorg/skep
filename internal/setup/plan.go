@@ -82,6 +82,9 @@ func (a Action) String() string {
 		if a.File != rcConfPath {
 			flag = "-f " + a.File + " "
 		}
+		if a.Op == "-x" {
+			return fmt.Sprintf("sysrc %s-x %s", flag, a.Name)
+		}
 		return fmt.Sprintf(`sysrc %s%s%s"%s"`, flag, a.Name, a.Op, a.Value)
 	case ActWrite:
 		return fmt.Sprintf("write %s (%04o %s:%s)", a.File, a.Mode, a.Owner, a.Group)
@@ -91,6 +94,12 @@ func (a Action) String() string {
 		return "service " + a.Service + " start"
 	case ActAdminCreate:
 		return "skep-api admin create --username " + a.Username + " (asks for the password, twice, without echo)"
+	case ActServiceStop:
+		return "service " + a.Service + " stop"
+	case ActRemovePath:
+		return "rm -rf " + a.File
+	case ActPwDelete:
+		return "pw userdel " + a.Name + "; pw groupdel " + a.Name
 	}
 	return a.Type
 }

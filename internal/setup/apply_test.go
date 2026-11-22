@@ -24,6 +24,8 @@ type fakeRunner struct {
 	fail map[string]error
 	// lie makes sysrc write this value instead of the one asked for.
 	lie string
+	// outputs answers a command whose string contains the key.
+	outputs map[string]string
 }
 
 func newFakeRunner() *fakeRunner {
@@ -41,6 +43,11 @@ func (f *fakeRunner) Run(_ context.Context, c Cmd) (string, error) {
 	for k, err := range f.fail {
 		if strings.Contains(s, k) {
 			return "", err
+		}
+	}
+	for k, out := range f.outputs {
+		if strings.Contains(s, k) {
+			return out, nil
 		}
 	}
 	switch c.Name {
@@ -96,6 +103,9 @@ func (f *fakeRunner) sysrc(args []string) error {
 			if !strings.HasPrefix(strings.TrimSpace(l), name+"=") {
 				out = append(out, l)
 			}
+		}
+		if len(out) == 0 {
+			return os.WriteFile(file, nil, 0o644)
 		}
 		return os.WriteFile(file, []byte(strings.Join(out, "\n")+"\n"), 0o644)
 	}

@@ -25,6 +25,8 @@ type Applier struct {
 	// Out receives one line per action.
 	Out         io.Writer
 	SkepVersion string
+	// Command names the run in its journal: "apply" (default) or "remove".
+	Command string
 }
 
 func (a *Applier) chown(path string, uid, gid int) error {
@@ -55,7 +57,11 @@ func (a *Applier) Apply(ctx context.Context, p Plan) (*Journal, error) {
 	if len(acts) == 0 {
 		return nil, ErrNothingToDo
 	}
-	j, err := a.newJournal("apply", acts)
+	cmd := a.Command
+	if cmd == "" {
+		cmd = "apply"
+	}
+	j, err := a.newJournal(cmd, acts)
 	if err != nil {
 		return nil, err
 	}
@@ -67,7 +73,7 @@ func (a *Applier) Apply(ctx context.Context, p Plan) (*Journal, error) {
 		e := &j.Entries[i]
 		act := e.Action
 		act.Content = acts[i].Content
-		if act.File != "" && (act.Type == ActSysrc || act.Type == ActWrite) {
+		if act.File != "" && (act.Type == ActSysrc || act.Type == ActWrite || (act.Type == ActRemovePath && isRegular(hostPath(a.Root, act.File)))) {
 			e.File = act.File
 			if !backedUp[act.File] {
 				if err := a.backup(j, e); err != nil {
@@ -179,15 +185,73 @@ func (a *Applier) do(ctx context.Context, act Action) error {
 	case ActAdminCreate:
 		_, err := a.Runner.Run(ctx, Cmd{Name: "skep-api", Args: []string{"admin", "create", "--username", act.Username}, Interactive: true})
 		return err
+	case ActServiceStop:
+		if _, err := a.Runner.Run(ctx, Cmd{Name: "service", Args: []string{act.Service, "status"}}); err != nil {
+			a.printf("    %s is not running\n", act.Service)
+			return nil
+		}
+		_, err := a.Runner.Run(ctx, Cmd{Name: "service", Args: []string{act.Service, "stop"}})
+		return err
+	case ActRemovePath:
+		return a.removePath(act.File)
+	case ActPwDelete:
+		return a.pwDelete(ctx, act.Name)
 	}
 	return fmt.Errorf("unknown action %q", act.Type)
+}
+
+func isRegular(path string) bool {
+	st, err := os.Lstat(path)
+	return err == nil && st.Mode().IsRegular()
+}
+
+// removePath deletes Skep's own data only: something under /var/db/skep
+// other than setup's journals, or agent.json or api.json.
+func (a *Applier) removePath(p string) error {
+	clean := filepath.Clean(p)
+	inData := strings.HasPrefix(clean, dataRoot+"/") && strings.Count(clean, "/") == strings.Count(dataRoot, "/")+1 &&
+		clean != dataRoot+"/setup"
+	if !inData && clean != agentJSONPath && clean != apiJSONPath {
+		return fmt.Errorf("refusing to delete %s: not Skep's data", p)
+	}
+	return os.RemoveAll(hostPath(a.Root, clean))
+}
+
+// pwDelete removes the skep user and its group.
+func (a *Applier) pwDelete(ctx context.Context, name string) error {
+	if name != skepAccount {
+		return fmt.Errorf("refusing to delete the account %q", name)
+	}
+	pw := func(args ...string) Cmd {
+		if a.Root != "/" {
+			args = append([]string{"-R", a.Root}, args...)
+		}
+		return Cmd{Name: "pw", Args: args}
+	}
+	users, _ := ReadAccounts(hostPath(a.Root, "/etc/passwd"))
+	if _, ok := findAccount(users, name); ok {
+		if _, err := a.Runner.Run(ctx, pw("userdel", name)); err != nil {
+			return err
+		}
+	}
+	groups, _ := ReadAccounts(hostPath(a.Root, "/etc/group"))
+	if _, ok := findAccount(groups, name); ok {
+		if _, err := a.Runner.Run(ctx, pw("groupdel", name)); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // sysrc runs sysrc(8) on the file and checks the result by reading it
 // back: a value sysrc did not write as asked is an error.
 func (a *Applier) sysrc(ctx context.Context, act Action) error {
 	full := hostPath(a.Root, act.File)
-	if _, err := a.Runner.Run(ctx, Cmd{Name: "sysrc", Args: []string{"-f", full, act.Name + act.Op + act.Value}}); err != nil {
+	args := []string{"-f", full, act.Name + act.Op + act.Value}
+	if act.Op == "-x" {
+		args = []string{"-f", full, "-x", act.Name}
+	}
+	if _, err := a.Runner.Run(ctx, Cmd{Name: "sysrc", Args: args}); err != nil {
 		return err
 	}
 	v, err := ReadShVars(full)
@@ -196,6 +260,18 @@ func (a *Applier) sysrc(ctx context.Context, act Action) error {
 	}
 	got, ok := v.Vals[act.Name]
 	switch {
+	case act.Op == "-x":
+		if ok {
+			return fmt.Errorf("%s: %s is still set after sysrc -x", act.File, act.Name)
+		}
+		return nil
+	case act.Op == "-=":
+		for _, w := range strings.Fields(act.Value) {
+			if slices.Contains(strings.Fields(got), w) {
+				return fmt.Errorf("%s: %s is %q after sysrc, still has %q", act.File, act.Name, got, w)
+			}
+		}
+		return nil
 	case !ok:
 		return fmt.Errorf("%s: %s is not set after sysrc", act.File, act.Name)
 	case act.Op == "=" && got != act.Value:
@@ -354,6 +430,10 @@ func Rollback(root, id string, now time.Time) (RollbackReport, error) {
 	for _, path := range order {
 		st := files[path]
 		full := hostPath(root, path)
+		if st.last.Action.Type == ActRemovePath {
+			r.Kept = append(r.Kept, path+": deleted by remove; a copy is in "+filepath.Join(JournalDir(root, j.ID), st.first.Backup))
+			continue
+		}
 		cur, err := fileSHA256(full)
 		if err != nil {
 			return r, err
@@ -400,8 +480,10 @@ func Rollback(root, id string, now time.Time) (RollbackReport, error) {
 			r.Kept = append(r.Kept, "administrator "+e.Action.Username+": rollback does not delete users")
 		case e.Action.Type == ActServiceStop:
 			r.Kept = append(r.Kept, e.Action.Service+": rollback does not start services again")
-		case e.Action.Type == ActRemovePath:
+		case e.Action.Type == ActRemovePath && e.File == "":
 			r.Kept = append(r.Kept, e.Action.File+": deleted data cannot be restored")
+		case e.Action.Type == ActPwDelete:
+			r.Kept = append(r.Kept, "the skep account: rollback does not create it again (reinstall the package)")
 		}
 	}
 	t := now.UTC()
