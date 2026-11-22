@@ -1,0 +1,37 @@
+{
+ "http": 200,
+ "body": {
+  "id": "52bcc0f6-bc32-4f0b-81ef-89d2492e1fc7",
+  "name": "rb-sr07-a",
+  "hostname": "rb-sr07-a",
+  "template_id": "f496866f-32ba-4527-bcee-5a717a2f74c0",
+  "template_name": "minimal-151",
+  "pool": "skeptest",
+  "release": "15.1-RELEASE-p6",
+  "options": {
+   "sysvipc": false,
+   "mlock": false
+  },
+  "limits": {},
+  "nics": [
+   {
+    "id": "707c622e-4b96-4a02-bba1-1aaf23a295b2",
+    "slot": 0,
+    "bridge": "bridge0",
+    "mac_address": "02:52:f7:8f:86:98",
+    "interface": "skep0",
+    "ipv4": {
+     "mode": "static",
+     "address": "192.0.2.77/24"
+    }
+   }
+  ],
+  "provisioned": true,
+  "started_once": false,
+  "desired_state": "stopped",
+  "state": "stopped",
+  "observed_at": "2026-11-22T15:05:01.997Z",
+  "created_at": "2026-11-22T15:05:01.922Z",
+  "updated_at": "2026-11-22T15:05:01.997Z"
+ }
+}

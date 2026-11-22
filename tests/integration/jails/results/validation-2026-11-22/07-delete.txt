@@ -1,0 +1,221 @@
+{
+ "http": 202,
+ "body": {
+  "id": "6802dbcb-9bac-4102-b2ab-2406a86dec97",
+  "node_id": "97fc6968-7e82-49c9-bda8-9026775ca964",
+  "type": "container.delete",
+  "status": "pending",
+  "resource_type": "container",
+  "resource_id": "52bcc0f6-bc32-4f0b-81ef-89d2492e1fc7",
+  "actor": {
+   "id": "af143ddd-2c62-4eeb-803a-2081c4fd0088",
+   "name": "s7admin"
+  },
+  "request_id": "9a01ce597fa8b4ed10e042f1",
+  "cancellable": false,
+  "created_at": "2026-11-22T15:05:24.374Z"
+ },
+ "task": {
+  "id": "6802dbcb-9bac-4102-b2ab-2406a86dec97",
+  "type": "container.delete",
+  "status": "succeeded",
+  "error_code": null,
+  "error_message": null,
+  "resource_id": "52bcc0f6-bc32-4f0b-81ef-89d2492e1fc7"
+ }
+}
+{
+ "http": 202,
+ "body": {
+  "id": "de03b491-be2b-4feb-a292-626f0f9b1fde",
+  "node_id": "97fc6968-7e82-49c9-bda8-9026775ca964",
+  "type": "container.delete",
+  "status": "pending",
+  "resource_type": "container",
+  "resource_id": "63c5d407-50a7-411a-9678-1c169f29e85e",
+  "actor": {
+   "id": "af143ddd-2c62-4eeb-803a-2081c4fd0088",
+   "name": "s7admin"
+  },
+  "request_id": "30fa14f14c74bf6c449a7cc0",
+  "cancellable": false,
+  "created_at": "2026-11-22T15:05:25.61Z"
+ },
+ "task": {
+  "id": "de03b491-be2b-4feb-a292-626f0f9b1fde",
+  "type": "container.delete",
+  "status": "succeeded",
+  "error_code": null,
+  "error_message": null,
+  "resource_id": "63c5d407-50a7-411a-9678-1c169f29e85e"
+ }
+}
+{
+ "http": 202,
+ "body": {
+  "id": "e4d4e41e-4d18-49f0-99c4-0c3b97ab9e8c",
+  "node_id": "97fc6968-7e82-49c9-bda8-9026775ca964",
+  "type": "container.delete",
+  "status": "pending",
+  "resource_type": "container",
+  "resource_id": "710c64dd-9c01-49c8-9e36-8268c3ef2bd8",
+  "actor": {
+   "id": "af143ddd-2c62-4eeb-803a-2081c4fd0088",
+   "name": "s7admin"
+  },
+  "request_id": "4ac371a48ca7030b570c2f8a",
+  "cancellable": false,
+  "created_at": "2026-11-22T15:05:26.857Z"
+ },
+ "task": {
+  "id": "e4d4e41e-4d18-49f0-99c4-0c3b97ab9e8c",
+  "type": "container.delete",
+  "status": "succeeded",
+  "error_code": null,
+  "error_message": null,
+  "resource_id": "710c64dd-9c01-49c8-9e36-8268c3ef2bd8"
+ }
+}
+{
+ "http": 202,
+ "body": {
+  "id": "99eaac47-42ed-4bcb-8d9e-c80b3572ea14",
+  "node_id": "97fc6968-7e82-49c9-bda8-9026775ca964",
+  "type": "container.delete",
+  "status": "pending",
+  "resource_type": "container",
+  "resource_id": "8ca963d0-4cf0-496c-835d-193d85d63d3a",
+  "actor": {
+   "id": "af143ddd-2c62-4eeb-803a-2081c4fd0088",
+   "name": "s7admin"
+  },
+  "request_id": "35bc29bebcaa6d94f662aa8f",
+  "cancellable": false,
+  "created_at": "2026-11-22T15:05:28.092Z"
+ },
+ "task": {
+  "id": "99eaac47-42ed-4bcb-8d9e-c80b3572ea14",
+  "type": "container.delete",
+  "status": "succeeded",
+  "error_code": null,
+  "error_message": null,
+  "resource_id": "8ca963d0-4cf0-496c-835d-193d85d63d3a"
+ }
+}
+{
+ "http": 202,
+ "body": {
+  "id": "56848f97-0263-4b3c-bfc0-8d803be4977a",
+  "node_id": "97fc6968-7e82-49c9-bda8-9026775ca964",
+  "type": "container.delete",
+  "status": "pending",
+  "resource_type": "container",
+  "resource_id": "beadd131-9d0e-4df7-b374-35d58146362a",
+  "actor": {
+   "id": "af143ddd-2c62-4eeb-803a-2081c4fd0088",
+   "name": "s7admin"
+  },
+  "request_id": "bc6d5213c6e0798c9d8a7b12",
+  "cancellable": false,
+  "created_at": "2026-11-22T15:05:29.325Z"
+ },
+ "task": {
+  "id": "56848f97-0263-4b3c-bfc0-8d803be4977a",
+  "type": "container.delete",
+  "status": "succeeded",
+  "error_code": null,
+  "error_message": null,
+  "resource_id": "beadd131-9d0e-4df7-b374-35d58146362a"
+ }
+}
+{
+ "http": 202,
+ "body": {
+  "id": "d8f4f9d0-4058-417d-a1c9-4ef434d0accc",
+  "node_id": "97fc6968-7e82-49c9-bda8-9026775ca964",
+  "type": "vm.delete",
+  "status": "pending",
+  "resource_type": "vm",
+  "resource_id": "65403651-21fc-4233-8121-94d1a100e975",
+  "actor": {
+   "id": "af143ddd-2c62-4eeb-803a-2081c4fd0088",
+   "name": "s7admin"
+  },
+  "request_id": "44f153e1a0dd84e88d748fd4",
+  "cancellable": false,
+  "created_at": "2026-11-22T15:05:30.543Z"
+ },
+ "task": {
+  "id": "d8f4f9d0-4058-417d-a1c9-4ef434d0accc",
+  "type": "vm.delete",
+  "status": "succeeded",
+  "error_code": null,
+  "error_message": null,
+  "resource_id": "65403651-21fc-4233-8121-94d1a100e975"
+ }
+}
+{
+ "http": 409,
+ "body": {
+  "error": {
+   "code": "vm_not_stopped",
+   "message": "the virtual machine is running; stop it first",
+   "request_id": "4c68f9d5cce6703926c69f43",
+   "details": {
+    "state": "running"
+   }
+  }
+ }
+}
+{
+ "http": 202,
+ "body": {
+  "id": "f242f8c6-75b6-4e70-ad4c-33365451fdb2",
+  "node_id": "97fc6968-7e82-49c9-bda8-9026775ca964",
+  "type": "container.delete",
+  "status": "pending",
+  "resource_type": "container",
+  "resource_id": "0f0a23f9-a348-4cae-99ac-c1d192484c8e",
+  "actor": {
+   "id": "af143ddd-2c62-4eeb-803a-2081c4fd0088",
+   "name": "s7admin"
+  },
+  "request_id": "8792861b0fb39b9f1b2f9a45",
+  "cancellable": false,
+  "created_at": "2026-11-22T15:08:02.683Z"
+ },
+ "task": {
+  "id": "f242f8c6-75b6-4e70-ad4c-33365451fdb2",
+  "type": "container.delete",
+  "status": "succeeded",
+  "error_code": null,
+  "error_message": null,
+  "resource_id": "0f0a23f9-a348-4cae-99ac-c1d192484c8e"
+ }
+}
+{
+ "http": 202,
+ "body": {
+  "id": "23f5a23a-477d-4801-ac5e-25810080411b",
+  "node_id": "97fc6968-7e82-49c9-bda8-9026775ca964",
+  "type": "vm.delete",
+  "status": "pending",
+  "resource_type": "vm",
+  "resource_id": "c66cbff9-3f13-4916-9552-0561b8f66853",
+  "actor": {
+   "id": "af143ddd-2c62-4eeb-803a-2081c4fd0088",
+   "name": "s7admin"
+  },
+  "request_id": "8bf6f6801530a2db0cc3297e",
+  "cancellable": false,
+  "created_at": "2026-11-22T15:08:21.272Z"
+ },
+ "task": {
+  "id": "23f5a23a-477d-4801-ac5e-25810080411b",
+  "type": "vm.delete",
+  "status": "succeeded",
+  "error_code": null,
+  "error_message": null,
+  "resource_id": "c66cbff9-3f13-4916-9552-0561b8f66853"
+ }
+}

@@ -1,0 +1,5 @@
+SHA256 (/etc/rc.conf) = 2b2b74580b6bb3e6b2b56c637f95e0c1ac51d36a11584a986b0c8ad0f73b2bbd
+490bc08738a2dd835952e19c4f59e869857fd15a1a6ce8e8c0b9df1d1f3cb134
+skep-agent 0.1.0 (commit dd7a8b6, built 2026-11-22T15:03:13Z, go1.27.4 freebsd/amd64)
+if_epair netgraph ng_socket ng_ether ng_bpf
+addm vtnet1 ifuntagged vtnet1 1 defuntagged 1 vlanfilter up

@@ -1,0 +1,5 @@
+2026-11-22T01:07:47.200Z|port_filter.restored|success
+2026-11-22T01:07:47.190Z|port_filter.missing|failure
+2026-11-22T01:02:03.104Z|port_filter.restored|success
+2026-11-22T01:02:03.094Z|port_filter.missing|failure
+2026-11-22T00:59:33.565Z|port_filter.detached|success

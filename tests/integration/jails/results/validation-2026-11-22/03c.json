@@ -1,0 +1,17 @@
+{
+ "http": 409,
+ "body": {
+  "error": {
+   "code": "vm_mac_in_use",
+   "message": "the MAC address 02:74:cd:9d:8d:d9 of NIC slot 0 is also held by the container rb-c1-jail (slot 0); give the NIC another address",
+   "request_id": "d6783aa5548493833a787023",
+   "details": {
+    "held_by_id": "710c64dd-9c01-49c8-9e36-8268c3ef2bd8",
+    "held_by_kind": "container",
+    "held_by_name": "rb-c1-jail",
+    "mac_address": "02:74:cd:9d:8d:d9",
+    "slot": 0
+   }
+  }
+ }
+}

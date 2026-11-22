@@ -1,0 +1,153 @@
+{
+ "http": 200,
+ "body": {
+  "items": [
+   {
+    "id": "c0e23174-3dc0-4503-a691-9af23f657078",
+    "node_id": "97fc6968-7e82-49c9-bda8-9026775ca964",
+    "name": "fbsd1",
+    "description": "",
+    "engine": "bhyve",
+    "cpu_count": 2,
+    "memory_bytes": 1073741824,
+    "firmware": "uefi",
+    "config": {
+     "console": {
+      "vnc": {
+       "enabled": false
+      }
+     }
+    },
+    "provisioned": true,
+    "desired_state": "stopped",
+    "observed": {
+     "state": "stopped",
+     "at": "2026-11-22T15:04:33.64Z"
+    },
+    "drift": false,
+    "disks": [
+     {
+      "id": "c8aef261-f1a4-4736-a6b0-c2307a6e03d4",
+      "slot": 0,
+      "bus": "virtio-blk",
+      "read_only": false,
+      "size_bytes": 8589934592,
+      "pool": "skeptest",
+      "pool_type": "zfs",
+      "thin": true,
+      "volblocksize": 16384,
+      "dataset": "skeptest/skep/vm/c0e23174-3dc0-4503-a691-9af23f657078/disk0"
+     }
+    ],
+    "nics": [
+     {
+      "id": "79fcfb83-e3de-45b8-b7c9-ae7b17f0ff4c",
+      "slot": 0,
+      "model": "virtio-net",
+      "mac_address": "02:1e:08:e9:9d:7c",
+      "bridge": "bridge0"
+     }
+    ],
+    "created_at": "2026-11-14T15:09:29.78Z",
+    "updated_at": "2026-11-15T11:55:26.471Z"
+   },
+   {
+    "id": "65403651-21fc-4233-8121-94d1a100e975",
+    "node_id": "97fc6968-7e82-49c9-bda8-9026775ca964",
+    "name": "rb-c1-vm",
+    "description": "",
+    "engine": "bhyve",
+    "cpu_count": 1,
+    "memory_bytes": 268435456,
+    "firmware": "uefi",
+    "config": {
+     "console": {
+      "vnc": {
+       "enabled": false
+      }
+     }
+    },
+    "provisioned": true,
+    "desired_state": "stopped",
+    "observed": {
+     "state": "stopped",
+     "at": "2026-11-22T15:04:33.64Z"
+    },
+    "drift": false,
+    "disks": [],
+    "nics": [
+     {
+      "id": "011d9018-fcaa-4299-8823-e807799f4494",
+      "slot": 0,
+      "model": "virtio-net",
+      "mac_address": "02:0e:60:b5:a8:10",
+      "bridge": "bridge0"
+     }
+    ],
+    "created_at": "2026-11-22T15:04:33.53Z",
+    "updated_at": "2026-11-22T15:04:33.538Z"
+   },
+   {
+    "id": "fc8640f3-205c-404d-855b-1376c792d86e",
+    "node_id": "97fc6968-7e82-49c9-bda8-9026775ca964",
+    "name": "snaptest",
+    "description": "",
+    "engine": "bhyve",
+    "cpu_count": 1,
+    "memory_bytes": 536870912,
+    "firmware": "uefi",
+    "config": {
+     "console": {
+      "vnc": {
+       "enabled": false
+      }
+     }
+    },
+    "provisioned": true,
+    "desired_state": "stopped",
+    "observed": {
+     "state": "stopped",
+     "at": "2026-11-22T15:04:33.64Z"
+    },
+    "drift": false,
+    "disks": [
+     {
+      "id": "4fad9ba4-f916-4fd6-95c8-00e9725c63e2",
+      "slot": 0,
+      "bus": "virtio-blk",
+      "read_only": false,
+      "size_bytes": 1073741824,
+      "pool": "skeptest",
+      "pool_type": "zfs",
+      "thin": true,
+      "volblocksize": 16384,
+      "dataset": "skeptest/skep/vm/fc8640f3-205c-404d-855b-1376c792d86e/disk0"
+     },
+     {
+      "id": "770732b3-f3a6-421e-8d23-68a87e134380",
+      "slot": 1,
+      "bus": "virtio-blk",
+      "read_only": false,
+      "size_bytes": 1073741824,
+      "pool": "skeptest",
+      "pool_type": "zfs",
+      "thin": true,
+      "volblocksize": 16384,
+      "dataset": "skeptest/skep/vm/fc8640f3-205c-404d-855b-1376c792d86e/disk1"
+     }
+    ],
+    "nics": [
+     {
+      "id": "05b37e5c-f416-4d7e-8dcc-666cc4938b53",
+      "slot": 0,
+      "model": "virtio-net",
+      "mac_address": "02:ea:fb:62:fb:03",
+      "bridge": "bridge0"
+     }
+    ],
+    "created_at": "2026-11-14T21:59:46.744Z",
+    "updated_at": "2026-11-14T21:59:46.845Z"
+   }
+  ]
+ }
+}

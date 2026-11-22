@@ -1,0 +1,26 @@
+{
+ "http": 202,
+ "body": {
+  "id": "171a00c6-457c-423c-9c69-6dfc7b1a2943",
+  "node_id": "97fc6968-7e82-49c9-bda8-9026775ca964",
+  "type": "vm.start",
+  "status": "pending",
+  "resource_type": "vm",
+  "resource_id": "c66cbff9-3f13-4916-9552-0561b8f66853",
+  "actor": {
+   "id": "af143ddd-2c62-4eeb-803a-2081c4fd0088",
+   "name": "s7admin"
+  },
+  "request_id": "2d778f0fd5614a788eb631f0",
+  "cancellable": false,
+  "created_at": "2026-11-22T15:07:22.523Z"
+ },
+ "task": {
+  "id": "171a00c6-457c-423c-9c69-6dfc7b1a2943",
+  "type": "vm.start",
+  "status": "succeeded",
+  "error_code": null,
+  "error_message": null,
+  "resource_id": "c66cbff9-3f13-4916-9552-0561b8f66853"
+ }
+}

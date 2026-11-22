@@ -29,7 +29,7 @@ with CPU type `host`) between Milestone 1 and Milestone 7c. The state of
 | ZFS-root host | **Pending FreeBSD validation**; nothing in Skep depends on the root file system type, but no ZFS-root host has run it |
 | A host installed from distribution sets (not pkgbase) | **Pending FreeBSD validation**: affects only the pkgbase template source (step 11) |
 | Bare metal, AMD-V hosts | **Pending validation**; only nested Intel VT-x with EPT and unrestricted guest has run bhyve under Skep |
-| Persistent `kld_list` and bridge `vlanfilter` across a reboot | **Pending**: on `hearst` both were applied live only (see [the upgrade note](#hearst-today)) |
+| Persistent `kld_list` and bridge `vlanfilter` across a reboot | Validated on `hearst` 2026-11-22 ([results](../../tests/integration/jails/results/validation-2026-11-22.md)) |
 
 ## What Skep never does to the host by itself
 
@@ -384,21 +384,18 @@ administrator's, not the host's.
 
 ## hearst today
 
-For comparison, the lab host as checked on 2026-11-22 (read-only):
+For comparison, the lab host as of 2026-11-22, after the validation run
+that made `kld_list` and the bridge line persistent and rebooted:
 
 | Setting | `hearst` | This procedure |
 |---|---|---|
 | `loader.conf` | all five lines of step 3 | same |
-| `kld_list` | **not set**; `if_epair` and the netgraph modules loaded by hand after the last reboot | step 4 |
-| `bridge0` | `addm vtnet1 up`, **no `vlanfilter`** in `rc.conf` | step 6 |
+| `kld_list` | `if_epair netgraph ng_socket ng_ether ng_bpf` | step 4 |
+| `bridge0` | `addm vtnet1 ifuntagged vtnet1 1 defuntagged 1 vlanfilter up` | step 6 |
 | Listen address | `skep_api_args="-listen 10.79.20.170:8443"` | step 12, either form |
 | Pool | `skeptest`, file-backed, plus a directory pool `dirpool` | step 5 |
 | `FreeBSD-base` | enabled (pkgbase install) | step 11 |
-
-So after the next reboot `hearst` will refuse every guest with a NIC
-(`port_filter_unavailable`) until the modules are loaded again, and its
-bridge will report `bridge_vlan_unfiltered`. Making `kld_list` and the
-bridge line persistent on `hearst` needs Andy's approval.
+| `skep` account | UID/GID 1002 (set up before ADR 0012 fixed 409) | step 7 |
 
 ## Remove
 

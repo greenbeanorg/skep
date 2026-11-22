@@ -1,0 +1,2 @@
+rb-sr07-a|stopped|0
+rb-sr07-b|running|1
