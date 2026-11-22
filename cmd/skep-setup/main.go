@@ -5,7 +5,7 @@
 //	skep-setup plan    [answers]   read-only: the exact changes apply would make
 //	skep-setup apply   [answers]   make them, with backups and a journal
 //	skep-setup rollback [ID]       undo one apply where files are unchanged since
-//	skep-setup upgrade             after pkg upgrade: back up, restart in order
+//	skep-setup upgrade             after pkg upgrade: stop the API, wait for tasks, back up, restart in order
 //	skep-setup remove  [--plan]    before pkg delete: stop, disable, optionally revert
 //
 // The answers are flags (see "skep-setup plan -h"). Nothing here runs a
@@ -137,7 +137,7 @@ func usage(w io.Writer) {
   plan      read-only: the exact changes apply would make, and what it leaves to you
   apply     make the planned changes (backups and a journal in /var/db/skep/setup)
   rollback  undo one apply, only where files are unchanged since
-  upgrade   after "pkg upgrade skep": check versions, back up, restart in order
+  upgrade   after "pkg upgrade skep": check versions, stop the API, wait for tasks, back up, restart in order
   remove    before "pkg delete skep": stop and disable the services
   version   print the version
 

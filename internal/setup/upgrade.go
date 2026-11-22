@@ -106,9 +106,14 @@ type Upgrader struct {
 	Out    io.Writer
 	// Self is setup's own build; the installed programs must match it.
 	Self version.Info
-	// Force upgrades while tasks are running (they become interrupted).
+	// Force upgrades although tasks are pending or running: they become
+	// interrupted and must be resubmitted.
 	Force bool
-	Keep  int
+	// Wait is how long, after skep_api is stopped, upgrade waits for
+	// pending and running tasks to finish (default DefaultTaskWait).
+	// Negative means do not wait.
+	Wait time.Duration
+	Keep int
 	// Sleep and PIDWait pace the wait for a restarted service; Inode
 	// reads a file's inode. Tests replace them.
 	Sleep   func(time.Duration)
@@ -116,10 +121,40 @@ type Upgrader struct {
 	Inode   func(path string) (uint64, error)
 }
 
-// UpgradeRefusal is a reason upgrade did nothing.
-type UpgradeRefusal struct{ Reason string }
+// DefaultTaskWait is how long upgrade waits for tasks after stopping
+// skep_api.
+const DefaultTaskWait = 60 * time.Second
 
-func (r *UpgradeRefusal) Error() string { return "refused: " + r.Reason + "; nothing was changed" }
+// forceHint is what --force does to tasks, in every message about them.
+const forceHint = "or use --force (pending and running tasks are then interrupted and must be resubmitted)"
+
+// UpgradeRefusal is a reason upgrade did not upgrade. Before skep_api is
+// stopped nothing has changed; after, skep_api has been started again and
+// After says so.
+type UpgradeRefusal struct {
+	Reason string
+	After  string
+}
+
+func (r *UpgradeRefusal) Error() string {
+	if r.After != "" {
+		return "refused: " + r.Reason + "; " + r.After
+	}
+	return "refused: " + r.Reason + "; nothing was changed"
+}
+
+// What a failure leaves, for restoreAPI's message.
+const (
+	// stateAgentUntouched: before skep_agent was stopped. The API is the
+	// new build, the agent the old one.
+	stateAgentUntouched = "skep_agent was not restarted, so skep_api (the new build) and skep-agent (the old one) " +
+		"differ and the API answers 503 agent_version_mismatch until skep-setup upgrade completes; " +
+		"run skep-setup upgrade again"
+	// stateAgentFailed: skep_agent was stopped and did not come back as
+	// the new build.
+	stateAgentFailed = "skep_agent did not come back as the new build, so the API cannot serve agent requests; " +
+		"see the agent's log, then run skep-setup upgrade again"
+)
 
 func (u *Upgrader) printf(format string, args ...any) {
 	if u.Out != nil {
@@ -142,23 +177,34 @@ func (u *Upgrader) installedBuild(ctx context.Context, bin string) (string, erro
 	return m[2] + "+" + m[3], nil
 }
 
-// runningTasks counts the agent's running tasks, read-only. A missing
-// database (never started) has none.
-func runningTasks(ctx context.Context, path string) (int, error) {
+// taskCount is the agent's unfinished tasks.
+type taskCount struct{ pending, running int }
+
+func (c taskCount) total() int { return c.pending + c.running }
+
+func (c taskCount) String() string {
+	return fmt.Sprintf("%d task(s) pending and %d running", c.pending, c.running)
+}
+
+// unfinishedTasks counts the agent's pending and running tasks,
+// read-only. A missing database (never started) has none.
+func unfinishedTasks(ctx context.Context, path string) (taskCount, error) {
+	var c taskCount
 	if _, err := os.Stat(path); errors.Is(err, fs.ErrNotExist) {
-		return 0, nil
+		return c, nil
 	}
 	q := url.Values{}
 	q.Set("mode", "ro")
 	q.Add("_pragma", "busy_timeout(5000)")
 	db, err := sql.Open("sqlite", "file:"+(&url.URL{Path: path}).EscapedPath()+"?"+q.Encode())
 	if err != nil {
-		return 0, err
+		return c, err
 	}
 	defer db.Close()
-	var n int
-	err = db.QueryRowContext(ctx, `SELECT count(*) FROM tasks WHERE status = 'running'`).Scan(&n)
-	return n, err
+	err = db.QueryRowContext(ctx,
+		`SELECT count(*) FILTER (WHERE status = 'pending'), count(*) FILTER (WHERE status = 'running')
+		 FROM tasks WHERE status IN ('pending', 'running')`).Scan(&c.pending, &c.running)
+	return c, err
 }
 
 var labelSafeRE = regexp.MustCompile(`[^A-Za-z0-9._+-]`)
@@ -177,64 +223,90 @@ func (u *Upgrader) Upgrade(ctx context.Context) error {
 	if u.Inode == nil {
 		u.Inode = inode
 	}
+	if u.Wait == 0 {
+		u.Wait = DefaultTaskWait
+	}
 	// 1. Platform and versions.
 	f, err := u.Prober.Probe(ctx)
 	if err != nil {
 		return err
 	}
 	if it := platformItem(f); it.Kind == Refuse {
-		return &UpgradeRefusal{it.What + ": " + it.Detail}
+		return &UpgradeRefusal{Reason: it.What + ": " + it.Detail}
 	}
 	want := u.Self.Version + "+" + u.Self.Commit
 	for _, bin := range []string{agentBin, apiBin} {
 		got, err := u.installedBuild(ctx, bin)
 		if err != nil {
-			return &UpgradeRefusal{err.Error()}
+			return &UpgradeRefusal{Reason: err.Error()}
 		}
 		if got != want {
-			return &UpgradeRefusal{fmt.Sprintf("%s is %s, skep-setup is %s: the package was not upgraded as one", bin, got, want)}
+			return &UpgradeRefusal{Reason: fmt.Sprintf("%s is %s, skep-setup is %s: the package was not upgraded as one", bin, got, want)}
 		}
 	}
 	u.printf("  installed: skep-agent, skep-api and skep-setup are %s\n", want)
-	// 2. Running tasks.
-	n, err := runningTasks(ctx, hostPath(u.Root, agentDB))
+	// 2. Unfinished tasks, while the API still accepts requests: the
+	// common refusal, with nothing changed.
+	agentDBPath := hostPath(u.Root, agentDB)
+	tc, err := unfinishedTasks(ctx, agentDBPath)
 	if err != nil {
 		return fmt.Errorf("read the agent's tasks: %w", err)
 	}
-	if n > 0 && !u.Force {
-		return &UpgradeRefusal{fmt.Sprintf("%d task(s) are running; wait for them, or use --force (they become interrupted)", n)}
+	if tc.total() > 0 && !u.Force {
+		return &UpgradeRefusal{Reason: tc.String() + "; wait for them, " + forceHint}
 	}
-	// 3. Backups, labelled with the running (old) build.
 	old, err := u.Agent.Build(ctx)
 	if err != nil {
 		u.printf("  the running agent's build is unknown (%v)\n", err)
 		old = "unknown"
 	}
+	// 3. Stop the API, so no new task can be submitted, and look again.
+	// From here on, every refusal or failure starts skep_api again
+	// (restoreAPI), except a failure of its own final start.
+	if _, err := u.Runner.Run(ctx, Cmd{Name: "service", Args: []string{"skep_api", "stop"}}); err != nil {
+		return u.restoreAPI(ctx, want, fmt.Errorf("stop skep_api: %w", err), "no database was backed up; "+stateAgentUntouched)
+	}
+	u.printf("  service skep_api stop\n")
+	tc, err = u.waitForTasks(ctx, agentDBPath)
+	if err != nil {
+		return u.restoreAPI(ctx, want, fmt.Errorf("read the agent's tasks after stopping skep_api: %w", err), "no database was backed up; "+stateAgentUntouched)
+	}
+	if tc.total() > 0 {
+		if !u.Force {
+			return u.restoreAPI(ctx, want, &UpgradeRefusal{
+				Reason: fmt.Sprintf("%s after waiting %s with skep_api stopped; wait for them, ", tc, max(u.Wait, 0)) + forceHint},
+				"no database was backed up; "+stateAgentUntouched+" once the tasks have finished")
+		}
+		u.printf("  --force: %s are interrupted by the agent restart and must be resubmitted\n", tc)
+	}
+	// 4. Backups, labelled with the running (old) build.
 	label := labelSafeRE.ReplaceAllString(old, "_")
 	dir := hostPath(u.Root, backupDir) + "/" + label + "-" + u.Now().UTC().Format("20060102T150405Z")
 	for _, bin := range []string{agentBin, apiBin} {
 		out, err := u.Runner.Run(ctx, Cmd{Name: hostPath(u.Root, bin), Args: []string{"db", "backup", "-dir", dir, "-keep", strconv.Itoa(u.Keep)}})
 		if err != nil {
-			return fmt.Errorf("backup failed, nothing restarted: %w", err)
+			return u.restoreAPI(ctx, want, fmt.Errorf("backup failed: %w", err), stateAgentUntouched)
 		}
 		u.printf("%s", indent(out))
 	}
-	// 4. Ordered restart, each service verified.
-	for _, c := range [][]string{{"skep_api", "stop"}, {"skep_agent", "stop"}} {
-		if _, err := u.Runner.Run(ctx, Cmd{Name: "service", Args: c}); err != nil {
-			return err
-		}
-		u.printf("  service %s %s\n", c[0], c[1])
+	// 5. Restart the agent, then the API, each verified.
+	if _, err := u.Runner.Run(ctx, Cmd{Name: "service", Args: []string{"skep_agent", "stop"}}); err != nil {
+		return u.restoreAPI(ctx, want, fmt.Errorf("stop skep_agent: %w", err), "backups in "+dir+"; "+stateAgentFailed)
 	}
-	for _, s := range []struct{ svc, bin, pid string }{{"skep_agent", agentBin, agentPID}, {"skep_api", apiBin, apiPID}} {
-		if _, err := u.Runner.Run(ctx, Cmd{Name: "service", Args: []string{s.svc, "start"}}); err != nil {
-			return err
-		}
-		if err := u.verify(ctx, s.svc, s.bin, s.pid, want); err != nil {
-			return err
-		}
+	u.printf("  service skep_agent stop\n")
+	if _, err := u.Runner.Run(ctx, Cmd{Name: "service", Args: []string{"skep_agent", "start"}}); err != nil {
+		return u.restoreAPI(ctx, want, fmt.Errorf("start skep_agent: %w", err), "backups in "+dir+"; "+stateAgentFailed)
 	}
-	// 5. Health.
+	if err := u.verify(ctx, "skep_agent", agentBin, agentPID, want); err != nil {
+		return u.restoreAPI(ctx, want, err, "backups in "+dir+"; "+stateAgentFailed)
+	}
+	if _, err := u.Runner.Run(ctx, Cmd{Name: "service", Args: []string{"skep_api", "start"}}); err != nil {
+		return err
+	}
+	if err := u.verify(ctx, "skep_api", apiBin, apiPID, want); err != nil {
+		return err
+	}
+	// 6. Health.
 	status, err := u.Agent.Health(ctx)
 	if err != nil {
 		return fmt.Errorf("both services restarted, but the agent's health is unknown: %w", err)
@@ -245,6 +317,59 @@ func (u *Upgrader) Upgrade(ctx context.Context) error {
 	}
 	u.printf("upgraded to %s; backups in %s\n", want, dir)
 	return nil
+}
+
+// waitForTasks re-reads the agent's unfinished tasks once skep_api is
+// stopped, and polls every second for up to u.Wait while any remain.
+func (u *Upgrader) waitForTasks(ctx context.Context, path string) (taskCount, error) {
+	tc, err := unfinishedTasks(ctx, path)
+	if err != nil || tc.total() == 0 || u.Wait <= 0 {
+		return tc, err
+	}
+	u.printf("  %s; waiting up to %s for them to finish\n", tc, u.Wait)
+	for waited := time.Duration(0); waited < u.Wait; waited += time.Second {
+		if err := ctx.Err(); err != nil {
+			return tc, err
+		}
+		u.Sleep(time.Second)
+		if tc, err = unfinishedTasks(ctx, path); err != nil || tc.total() == 0 {
+			return tc, err
+		}
+	}
+	return tc, nil
+}
+
+// restoreAPI starts skep_api again after cause, checks its pid file and
+// that it runs the installed file, reports the agent's health, and
+// returns cause with what happened to the API and state, what else the
+// failure left.
+func (u *Upgrader) restoreAPI(ctx context.Context, want string, cause error, state string) error {
+	// The context may be what failed; starting the API must not depend
+	// on it.
+	rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), u.PIDWait+30*time.Second)
+	defer cancel()
+	var problem error
+	if _, err := u.Runner.Run(rctx, Cmd{Name: "service", Args: []string{"skep_api", "start"}}); err != nil {
+		problem = fmt.Errorf("start skep_api: %w", err)
+	} else if err := u.verify(rctx, "skep_api", apiBin, apiPID, want); err != nil {
+		problem = err
+	}
+	if problem != nil {
+		return fmt.Errorf("%w; and skep_api could not be started again: %v (start it by hand: service skep_api start); %s", cause, problem, state)
+	}
+	u.printf("  service skep_api start (after the failure)\n")
+	if status, err := u.Agent.Health(rctx); err != nil {
+		u.printf("  agent health: unknown (%v)\n", err)
+	} else {
+		u.printf("  agent health: %s\n", status)
+	}
+	after := "skep_api was started again; " + state
+	var r *UpgradeRefusal
+	if errors.As(cause, &r) {
+		r.After = after
+		return r
+	}
+	return fmt.Errorf("%w; %s", cause, after)
 }
 
 func indent(s string) string {

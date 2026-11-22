@@ -27,11 +27,18 @@ type upgradeHost struct {
 	nextPID   int
 	fail      map[string]error
 	noPIDFile map[string]bool
+	// on runs a hook after a command containing the key was recorded.
+	on map[string]func()
 }
 
 func (h *upgradeHost) Run(_ context.Context, c Cmd) (string, error) {
 	s := strings.ReplaceAll(c.String(), h.root, "")
 	h.calls = append(h.calls, s)
+	for k, f := range h.on {
+		if strings.Contains(s, k) {
+			f()
+		}
+	}
 	for k, err := range h.fail {
 		if strings.Contains(s, k) {
 			return "", err
@@ -85,7 +92,7 @@ func newUpgrade(t *testing.T) (*Upgrader, *upgradeHost) {
 			apiBin:   "skep-api 0.1.1 (commit abc1234, built 2026-11-22T16:00:00Z, go1.27.4 freebsd/amd64)",
 		},
 		textInode: map[string]string{"skep_agent": "11", "skep_api": "22"},
-		fail:      map[string]error{}, noPIDFile: map[string]bool{},
+		fail:      map[string]error{}, noPIDFile: map[string]bool{}, on: map[string]func(){},
 	}
 	u := &Upgrader{Root: root, Runner: h, Prober: fakeProber{facts()}, Agent: fakeAgent{build: "0.1.0+dd7a8b6", health: "ok"},
 		Now: func() time.Time { return time.Date(2026, 11, 22, 17, 0, 0, 0, time.UTC) }, Self: newBuild,
@@ -108,8 +115,9 @@ func TestUpgradeInOrder(t *testing.T) {
 	dir := "/var/db/skep/backup/0.1.0+dd7a8b6-20261122T170000Z"
 	want := []string{
 		agentBin + " -version", apiBin + " -version",
+		"service skep_api stop",
 		agentBin + " db backup -dir " + dir + " -keep 3", apiBin + " db backup -dir " + dir + " -keep 3",
-		"service skep_api stop", "service skep_agent stop",
+		"service skep_agent stop",
 		"service skep_agent start", "fstat -p 1001", agentBin + " -version",
 		"service skep_api start", "fstat -p 1002", apiBin + " -version",
 	}
@@ -142,15 +150,8 @@ func TestUpgradeRefusals(t *testing.T) {
 			h.builds[apiBin] = "skep-api 0.1.1 (commit fff0000, built x, go freebsd/amd64)"
 		},
 		"unreadable version": func(u *Upgrader, h *upgradeHost) { h.builds[apiBin] = "garbage" },
-		"running tasks": func(u *Upgrader, h *upgradeHost) {
-			db, err := database.Open(context.Background(), hostPath(h.root, agentDB))
-			if err != nil {
-				panic(err)
-			}
-			db.Exec(`CREATE TABLE tasks (id TEXT, status TEXT)`)
-			db.Exec(`INSERT INTO tasks VALUES ('t1', 'running'), ('t2', 'succeeded')`)
-			db.Close()
-		},
+		"running tasks":      func(u *Upgrader, h *upgradeHost) { setTasks(h.root, "running", "succeeded") },
+		"pending task":       func(u *Upgrader, h *upgradeHost) { setTasks(h.root, "pending", "failed") },
 	}
 	for name, mod := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -158,7 +159,7 @@ func TestUpgradeRefusals(t *testing.T) {
 			mod(u, h)
 			err := u.Upgrade(context.Background())
 			var r *UpgradeRefusal
-			if !errors.As(err, &r) {
+			if !errors.As(err, &r) || !strings.HasSuffix(err.Error(), "nothing was changed") {
 				t.Fatalf("err %v", err)
 			}
 			for _, c := range h.calls {
@@ -168,36 +169,209 @@ func TestUpgradeRefusals(t *testing.T) {
 			}
 		})
 	}
-	t.Run("running tasks with --force", func(t *testing.T) {
+	t.Run("the refusal names --force's cost", func(t *testing.T) {
 		u, h := newUpgrade(t)
-		cases["running tasks"](u, h)
-		u.Force = true
-		if err := u.Upgrade(context.Background()); err != nil {
-			t.Fatal(err)
+		cases["pending task"](u, h)
+		err := u.Upgrade(context.Background())
+		if err == nil || !strings.Contains(err.Error(), "1 task(s) pending and 0 running") ||
+			!strings.Contains(err.Error(), "pending and running tasks are then interrupted and must be resubmitted") {
+			t.Fatalf("err %v", err)
 		}
 	})
 }
 
-func TestUpgradeBackupFailureRestartsNothing(t *testing.T) {
+// setTasks gives the agent's database one task per status.
+func setTasks(root string, statuses ...string) {
+	db, err := database.Open(context.Background(), hostPath(root, agentDB))
+	if err != nil {
+		panic(err)
+	}
+	defer db.Close()
+	db.Exec(`CREATE TABLE IF NOT EXISTS tasks (id TEXT, status TEXT)`)
+	db.Exec(`DELETE FROM tasks`)
+	for i, st := range statuses {
+		if _, err := db.Exec(`INSERT INTO tasks VALUES (?, ?)`, fmt.Sprintf("t%d", i), st); err != nil {
+			panic(err)
+		}
+	}
+}
+
+// apiRestarted checks the API was started again after its stop, and
+// verified: its pid file read, its process checked with fstat, its build.
+func apiRestarted(t *testing.T, h *upgradeHost) {
+	t.Helper()
+	calls := strings.Join(h.calls, "\n")
+	i := strings.LastIndex(calls, "service skep_api start")
+	if i < 0 || !strings.Contains(calls, "service skep_api stop") {
+		t.Fatalf("skep_api not stopped and started again:\n%s", calls)
+	}
+	if !strings.Contains(calls[i:], "fstat -p ") || !strings.Contains(calls[i:], apiBin+" -version") {
+		t.Fatalf("restarted skep_api not verified:\n%s", calls)
+	}
+	if _, err := os.Stat(hostPath(h.root, apiPID)); err != nil {
+		t.Fatal("no API pid file after the restart")
+	}
+}
+
+func noBackupNoAgent(t *testing.T, h *upgradeHost) {
+	t.Helper()
+	for _, c := range h.calls {
+		if strings.Contains(c, "db backup") || strings.Contains(c, "skep_agent") {
+			t.Fatalf("ran %q", c)
+		}
+	}
+}
+
+func TestUpgradeTaskAfterTheAPIStopIsRefusedAndTheAPIRestarted(t *testing.T) {
 	u, h := newUpgrade(t)
-	h.fail["skep-api db backup"] = errors.New("disk full")
-	if err := u.Upgrade(context.Background()); err == nil || !strings.Contains(err.Error(), "nothing restarted") {
+	setTasks(h.root, "succeeded")
+	// A task submitted between the check and the API stop.
+	h.on["service skep_api stop"] = func() { setTasks(h.root, "succeeded", "pending") }
+	sleeps := 0
+	u.Sleep = func(time.Duration) { sleeps++ }
+	u.Wait = 5 * time.Second
+	err := u.Upgrade(context.Background())
+	var r *UpgradeRefusal
+	if !errors.As(err, &r) {
 		t.Fatalf("err %v", err)
 	}
-	if len(serviceCalls(h)) != 0 {
-		t.Fatalf("services touched: %v", serviceCalls(h))
+	for _, w := range []string{"1 task(s) pending and 0 running after waiting 5s with skep_api stopped",
+		"must be resubmitted", "skep_api was started again", "503 agent_version_mismatch", "once the tasks have finished"} {
+		if !strings.Contains(err.Error(), w) {
+			t.Errorf("error lacks %q: %v", w, err)
+		}
 	}
+	if strings.Contains(err.Error(), "nothing was changed") {
+		t.Error("claims nothing was changed after restarting the API")
+	}
+	if sleeps != 5 {
+		t.Errorf("waited %d s, want 5", sleeps)
+	}
+	noBackupNoAgent(t, h)
+	apiRestarted(t, h)
+}
+
+func TestUpgradeRunningTaskAfterTheAPIStopIsRefusedWithoutWaiting(t *testing.T) {
+	u, h := newUpgrade(t)
+	h.on["service skep_api stop"] = func() { setTasks(h.root, "running") }
+	u.Wait = -1
+	u.Sleep = func(time.Duration) { t.Fatal("slept with no wait") }
+	err := u.Upgrade(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "0 task(s) pending and 1 running after waiting 0s") {
+		t.Fatalf("err %v", err)
+	}
+	noBackupNoAgent(t, h)
+	apiRestarted(t, h)
+}
+
+func TestUpgradeProceedsWhenTasksFinishWithinTheWait(t *testing.T) {
+	u, h := newUpgrade(t)
+	h.on["service skep_api stop"] = func() { setTasks(h.root, "running", "pending") }
+	sleeps := 0
+	u.Sleep = func(time.Duration) {
+		sleeps++
+		switch sleeps {
+		case 2:
+			setTasks(h.root, "succeeded", "running")
+		case 3:
+			setTasks(h.root, "succeeded", "succeeded")
+		}
+	}
+	u.Wait = 60 * time.Second
+	if err := u.Upgrade(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if sleeps != 3 {
+		t.Errorf("slept %d times, want 3", sleeps)
+	}
+	if got := strings.Join(serviceCalls(h), ", "); got != "service skep_api stop, service skep_agent stop, service skep_agent start, service skep_api start" {
+		t.Fatalf("services: %s", got)
+	}
+}
+
+func TestUpgradeForceInterruptsPendingAndRunning(t *testing.T) {
+	u, h := newUpgrade(t)
+	setTasks(h.root, "pending", "running")
+	var out strings.Builder
+	u.Out, u.Force, u.Wait = &out, true, 2*time.Second
+	if err := u.Upgrade(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "--force: 1 task(s) pending and 1 running are interrupted by the agent restart and must be resubmitted") {
+		t.Fatalf("output:\n%s", out.String())
+	}
+	if got := strings.Join(serviceCalls(h), ", "); got != "service skep_api stop, service skep_agent stop, service skep_agent start, service skep_api start" {
+		t.Fatalf("services: %s", got)
+	}
+}
+
+func TestUpgradeRecheckFailureRestartsTheAPI(t *testing.T) {
+	u, h := newUpgrade(t)
+	setTasks(h.root, "succeeded")
+	h.on["service skep_api stop"] = func() {
+		if err := os.WriteFile(hostPath(h.root, agentDB), []byte("not a database, not at all, garbage garbage garbage garbage garbage garbage garbage garbage garbage garbage"), 0o600); err != nil {
+			panic(err)
+		}
+		os.Remove(hostPath(h.root, agentDB) + "-wal")
+		os.Remove(hostPath(h.root, agentDB) + "-shm")
+	}
+	err := u.Upgrade(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "read the agent's tasks after stopping skep_api") ||
+		!strings.Contains(err.Error(), "skep_api was started again") {
+		t.Fatalf("err %v", err)
+	}
+	noBackupNoAgent(t, h)
+	apiRestarted(t, h)
+}
+
+func TestUpgradeRestoreFailureIsReported(t *testing.T) {
+	u, h := newUpgrade(t)
+	h.on["service skep_api stop"] = func() { setTasks(h.root, "pending") }
+	h.fail["service skep_api start"] = errors.New("exit status 1")
+	u.Wait = -1
+	err := u.Upgrade(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "skep_api could not be started again") ||
+		!strings.Contains(err.Error(), "service skep_api start") {
+		t.Fatalf("err %v", err)
+	}
+}
+
+func TestUpgradeCancelledWaitRestartsTheAPI(t *testing.T) {
+	u, h := newUpgrade(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	h.on["service skep_api stop"] = func() { setTasks(h.root, "running") }
+	u.Sleep = func(time.Duration) { cancel() }
+	err := u.Upgrade(ctx)
+	if err == nil || !strings.Contains(err.Error(), "context canceled") || !strings.Contains(err.Error(), "skep_api was started again") {
+		t.Fatalf("err %v", err)
+	}
+	apiRestarted(t, h)
+}
+
+func TestUpgradeBackupFailureRestartsTheAPI(t *testing.T) {
+	u, h := newUpgrade(t)
+	h.fail["skep-api db backup"] = errors.New("disk full")
+	err := u.Upgrade(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "backup failed: disk full") || !strings.Contains(err.Error(), "skep_api was started again") {
+		t.Fatalf("err %v", err)
+	}
+	if got := strings.Join(serviceCalls(h), ", "); got != "service skep_api stop, service skep_api start" {
+		t.Fatalf("services: %s", got)
+	}
+	apiRestarted(t, h)
 }
 
 func TestUpgradeVerifiesTheRunningFile(t *testing.T) {
 	u, h := newUpgrade(t)
 	h.textInode["skep_agent"] = "99" // still the old, replaced file
 	err := u.Upgrade(context.Background())
-	if err == nil || !strings.Contains(err.Error(), "runs inode 99, not the installed") {
+	if err == nil || !strings.Contains(err.Error(), "runs inode 99, not the installed") ||
+		!strings.Contains(err.Error(), "skep_agent did not come back as the new build") {
 		t.Fatalf("err %v", err)
 	}
-	if slices := serviceCalls(h); strings.Contains(strings.Join(slices, " "), "skep_api start") {
-		t.Fatal("started the API after the agent failed its check")
+	// Every failure after the API stop starts it again, once.
+	if got := strings.Join(serviceCalls(h), ", "); got != "service skep_api stop, service skep_agent stop, service skep_agent start, service skep_api start" {
+		t.Fatalf("services: %s", got)
 	}
 }
 

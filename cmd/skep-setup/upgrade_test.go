@@ -40,3 +40,21 @@ func TestUpgradeCommand(t *testing.T) {
 		}
 	}
 }
+
+func TestUpgradeWaitFlag(t *testing.T) {
+	r := &versionRunner{}
+	e := env{prober: fakeProber{f: hostFacts()}, runner: r, euid: 0, confirm: func(string) bool { return true }}
+	root := t.TempDir()
+	if res := runWith(t, e, "upgrade", "-root", root, "-yes", "-wait", "-1s"); res.code != exitUsage || !strings.Contains(res.stderr, "must not be negative") || len(r.calls) != 0 {
+		t.Fatalf("negative -wait: %+v %v", res, r.calls)
+	}
+	if res := runWith(t, e, "upgrade", "-root", root, "-yes", "-wait", "soon"); res.code != exitUsage || len(r.calls) != 0 {
+		t.Fatalf("bad -wait: %+v %v", res, r.calls)
+	}
+	// 0 and a duration are accepted (the run then refuses on the build).
+	for _, w := range []string{"0", "90s"} {
+		if res := runWith(t, e, "upgrade", "-root", root, "-yes", "-wait", w); res.code != exitRefused || !strings.Contains(res.stderr, "not upgraded as one") {
+			t.Fatalf("-wait %s: %+v", w, res)
+		}
+	}
+}
