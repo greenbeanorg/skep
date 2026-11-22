@@ -1,9 +1,13 @@
 # Upgrading a host
 
-There is no package yet (Milestone 10, [ADR 0012](../decisions/0012-installer.md),
-Proposed), so an upgrade is: replace the binaries, prepare the host for
-whatever the new release needs, and restart the services in order. This
-page has one section per upgrade that needs more than the binaries.
+A host installed from the package (Milestone 10) is upgraded with
+`pkg upgrade skep` and then [`skep-setup upgrade`](skep-setup.md#upgrades),
+which backs up both databases (`skep-agent db backup`, `skep-api db
+backup`), restarts the services in order and checks them. That path is
+**pending FreeBSD validation**. A host installed by hand, as every host
+is today, is upgraded as below: replace the binaries, prepare the host
+for whatever the new release needs, and restart the services in order.
+This page has one section per upgrade that needs more than the binaries.
 
 The general steps, as root:
 
@@ -19,9 +23,15 @@ skep-agent -version; skep-api -version
 ```
 
 Before replacing the binaries, copy `/var/db/skep/agent/agent.db` and
-`/var/db/skep/api/api.db` somewhere safe (with the services stopped, or
-with `sqlite3 <db> ".backup <file>"`). Migrations only go forward, and an
+`/var/db/skep/api/api.db` somewhere safe: `skep-agent db backup` and
+`skep-api db backup` (from a build that has them) write consistent copies
+to `/var/db/skep/backup/` while the services run; otherwise stop the
+services, or use `sqlite3 <db> ".backup <file>"`. Migrations only go forward, and an
 older binary refuses a newer schema, so that copy is the only way back.
+
+Restart both services: from a build with the version handshake on,
+`skep-api` answers `503 agent_version_mismatch` while the agent is
+another build.
 
 **Running guests are not stopped by an agent restart.** VMs run under
 their own runner processes, which survive it (ADR 0009 decision 7);
