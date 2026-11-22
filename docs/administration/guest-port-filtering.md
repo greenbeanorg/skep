@@ -58,9 +58,13 @@ with the reason (`port_filter_failed: …`), as a tap failure does.
 Skep loads no kernel modules. Add the netgraph modules to `kld_list` in
 `/etc/rc.conf`, with the modules jails and VMs already need:
 
+```sh
+sysrc kld_list+="if_epair netgraph ng_socket ng_ether ng_bpf"
 ```
-kld_list="if_epair netgraph ng_socket ng_ether ng_bpf"
-```
+
+`+=` appends to whatever `kld_list` already holds; writing
+`kld_list="…"` by hand would replace it. Check the result with
+`sysrc -n kld_list`.
 
 (`vmm` and `nmdm` stay in `/boot/loader.conf` as described in the
 [VM guide](virtual-machines.md#preparing-the-host).) To load them now
