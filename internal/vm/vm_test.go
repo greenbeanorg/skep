@@ -335,11 +335,11 @@ func TestCreateIsRefusedBeforeAnythingIsMade(t *testing.T) {
 		t.Errorf("%d volume rows, want 1", n)
 	}
 
-	// A MAC address already in use is refused by the companion.
+	// A MAC address another VM holds is refused with vm_mac_in_use (409).
 	taken, _ := f.svc.VMs(ctx, models.VMListOptions{})
 	dup := basicVM("dup-mac")
 	dup.NICs[0].MACAddress = taken.Items[0].NICs[0].MACAddress
-	if _, err := f.svc.CreateVM(ctx, dup, f.sub); code(err) != models.CodeInvalidRequest {
+	if _, err := f.svc.CreateVM(ctx, dup, f.sub); code(err) != models.CodeVMMACInUse {
 		t.Errorf("duplicate MAC: %v", err)
 	}
 	// Without ZFS nothing can be created, and nothing is.
