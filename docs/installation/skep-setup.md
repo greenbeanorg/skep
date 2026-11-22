@@ -57,8 +57,12 @@ refused.
 | `api.json` | Written once with the listen address, `0640 root:skep` | API start |
 | `/var/db/skep/media` | Created `0700 root:wheel` | |
 
-Every `rc.conf` and `loader.conf` change goes through `sysrc`, and its
-result is read back and checked. A variable already set to another value
+Every `rc.conf` and `loader.conf` change goes through `sysrc`, except
+`kern.racct.enable`: FreeBSD 15.1's `sysrc` refuses a name with a dot
+("name contains characters not allowed in shell", for setting, reading
+and `-x` alike), so setup appends that one line itself (and `remove
+-revert-host` deletes exactly that line), replacing the file atomically
+with its mode and owner. Every result is read back and checked. A variable already set to another value
 is a **conflict**: reported, never overwritten. `agent.json` and
 `api.json` are created, never rewritten; if one exists and setup did not
 write it, `apply` refuses and prints its proposed version next to it.

@@ -8,9 +8,11 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -247,11 +249,15 @@ func (a *Applier) pwDelete(ctx context.Context, name string) error {
 // back: a value sysrc did not write as asked is an error.
 func (a *Applier) sysrc(ctx context.Context, act Action) error {
 	full := hostPath(a.Root, act.File)
-	args := []string{"-f", full, act.Name + act.Op + act.Value}
-	if act.Op == "-x" {
-		args = []string{"-f", full, "-x", act.Name}
-	}
-	if _, err := a.Runner.Run(ctx, Cmd{Name: "sysrc", Args: args}); err != nil {
+	if SysrcCanEdit(act.Name) {
+		args := []string{"-f", full, act.Name + act.Op + act.Value}
+		if act.Op == "-x" {
+			args = []string{"-f", full, "-x", act.Name}
+		}
+		if _, err := a.Runner.Run(ctx, Cmd{Name: "sysrc", Args: args}); err != nil {
+			return err
+		}
+	} else if err := a.editTunable(full, act); err != nil {
 		return err
 	}
 	v, err := ReadShVars(full)
@@ -285,6 +291,106 @@ func (a *Applier) sysrc(ctx context.Context, act Action) error {
 		}
 	}
 	return nil
+}
+
+// shellNameRE is what sysrc(8) accepts as a variable name.
+var shellNameRE = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+// tunableNameRE is a loader tunable such as kern.racct.enable.
+var tunableNameRE = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z0-9_]+)+$`)
+
+// SysrcCanEdit reports whether sysrc(8) can set or remove the variable.
+// It accepts shell variable names only: on FreeBSD 15.1, "sysrc -f
+// /boot/loader.conf kern.racct.enable=1" (and -n, -c, -x on such a name)
+// fails with "name contains characters not allowed in shell". Setup edits
+// those loader.conf lines itself (editTunable).
+func SysrcCanEdit(name string) bool { return shellNameRE.MatchString(name) }
+
+// editTunable does what sysrc would do for a loader tunable whose name
+// sysrc refuses: "=" appends name="value" to a file that does not set it,
+// "-x" deletes the lines that assign it. Only plain values are written,
+// and the file is replaced atomically with its mode and owner. The caller
+// reads the result back.
+func (a *Applier) editTunable(full string, act Action) error {
+	if !tunableNameRE.MatchString(act.Name) {
+		return fmt.Errorf("%s: %q is neither a shell variable nor a loader tunable name", act.File, act.Name)
+	}
+	b, err := os.ReadFile(full)
+	missing := errors.Is(err, fs.ErrNotExist)
+	if err != nil && !missing {
+		return err
+	}
+	var lines []string
+	if len(b) > 0 {
+		lines = strings.SplitAfter(string(b), "\n")
+		if lines[len(lines)-1] == "" {
+			lines = lines[:len(lines)-1]
+		}
+	}
+	assigns := func(line string) bool {
+		m := assignRE.FindStringSubmatch(strings.TrimSpace(line))
+		return m != nil && m[1] == act.Name
+	}
+	var out []string
+	switch act.Op {
+	case "=":
+		if strings.ContainsAny(act.Value, "\"$`\\\n") {
+			return fmt.Errorf("%s: refusing to write %s with the value %q", act.File, act.Name, act.Value)
+		}
+		for _, l := range lines {
+			if assigns(l) {
+				return fmt.Errorf("%s: %s is set already; left alone", act.File, act.Name)
+			}
+		}
+		out = lines
+		if n := len(out); n > 0 && !strings.HasSuffix(out[n-1], "\n") {
+			out[n-1] += "\n"
+		}
+		out = append(out, act.Name+`="`+act.Value+`"`+"\n")
+	case "-x":
+		if missing {
+			return nil
+		}
+		for _, l := range lines {
+			if !assigns(l) {
+				out = append(out, l)
+			}
+		}
+	default:
+		return fmt.Errorf("%s: %s %s is not supported for a loader tunable", act.File, act.Op, act.Name)
+	}
+	mode, uid, gid := fs.FileMode(0o644), 0, 0
+	if st, err := os.Stat(full); err == nil {
+		mode = st.Mode().Perm()
+		if sys, ok := st.Sys().(*syscall.Stat_t); ok {
+			uid, gid = int(sys.Uid), int(sys.Gid)
+		}
+	} else if uid, gid, err = a.ids("root", "wheel"); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(full), ".skep-setup-*")
+	if err != nil {
+		return err
+	}
+	name := tmp.Name()
+	defer os.Remove(name)
+	_, werr := tmp.WriteString(strings.Join(out, ""))
+	if werr == nil {
+		werr = tmp.Chmod(mode)
+	}
+	if werr == nil {
+		werr = tmp.Sync()
+	}
+	if cerr := tmp.Close(); werr == nil {
+		werr = cerr
+	}
+	if werr == nil {
+		werr = a.chown(name, uid, gid)
+	}
+	if werr != nil {
+		return werr
+	}
+	return os.Rename(name, full)
 }
 
 // ids resolves an owner and group through the root's own account files.

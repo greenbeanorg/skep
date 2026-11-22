@@ -127,7 +127,7 @@ func TestPlanStockHostNewBridge(t *testing.T) {
 	for _, w := range []string{
 		`sysrc -f /boot/loader.conf vmm_load="YES"`,
 		`sysrc -f /boot/loader.conf nmdm_load="YES"`,
-		`sysrc -f /boot/loader.conf kern.racct.enable="1"`,
+		`append kern.racct.enable="1" to /boot/loader.conf`,
 		`sysrc kld_list+="if_epair netgraph ng_socket ng_ether ng_bpf"`,
 		`sysrc zfs_enable="YES"`,
 		`sysrc cloned_interfaces+="bridge0"`,

@@ -114,7 +114,7 @@ func TestRemoveRevertHost(t *testing.T) {
 	}
 	p := computeRemove(t, RemoveOptions{Root: e.root, RevertHost: true}, facts(), e.runner)
 	got := strings.Join(actions(p), "\n")
-	for _, w := range []string{"sysrc -f /boot/loader.conf -x vmm_load", "sysrc -f /boot/loader.conf -x kern.racct.enable",
+	for _, w := range []string{"sysrc -f /boot/loader.conf -x vmm_load", "delete the kern.racct.enable line from /boot/loader.conf",
 		`sysrc kld_list-="if_epair netgraph ng_socket ng_ether ng_bpf"`, `sysrc cloned_interfaces-="bridge0"`,
 		"sysrc -x ifconfig_bridge0", "sysrc -x skep_agent_enable", "sysrc -x zfs_enable"} {
 		if !strings.Contains(got, w) {

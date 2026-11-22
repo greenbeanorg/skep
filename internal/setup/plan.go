@@ -4,7 +4,8 @@
 //
 // Setup only adds. For files it does not own (/boot/loader.conf,
 // /etc/rc.conf) it adds a missing line or appends to a list, through
-// sysrc(8); an existing line with another value is a conflict, reported
+// sysrc(8) (loader tunables with a dot in the name, which sysrc refuses,
+// by setup itself); an existing line with another value is a conflict, reported
 // and left alone. It refuses to edit a file it cannot parse, never loads
 // a module, never reboots, never creates a pool, and never changes an
 // interface or bridge it did not create (ADR 0012 Decisions 2 and 3).
@@ -81,6 +82,13 @@ func (a Action) String() string {
 		flag := ""
 		if a.File != rcConfPath {
 			flag = "-f " + a.File + " "
+		}
+		if !SysrcCanEdit(a.Name) {
+			// sysrc refuses the name; setup edits the line itself.
+			if a.Op == "-x" {
+				return fmt.Sprintf("delete the %s line from %s", a.Name, a.File)
+			}
+			return fmt.Sprintf(`append %s%s"%s" to %s`, a.Name, a.Op, a.Value, a.File)
 		}
 		if a.Op == "-x" {
 			return fmt.Sprintf("sysrc %s-x %s", flag, a.Name)

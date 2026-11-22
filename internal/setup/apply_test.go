@@ -69,7 +69,7 @@ func (f *fakeRunner) Run(_ context.Context, c Cmd) (string, error) {
 	return "", nil
 }
 
-var sysrcArgRE = regexp.MustCompile(`^([A-Za-z_][A-Za-z0-9_.]*)(\+=|-=|=)(.*)$`)
+var sysrcArgRE = regexp.MustCompile(`^([A-Za-z_][A-Za-z0-9_]*)(\+=|-=|=)(.*)$`)
 
 // sysrc handles "-f FILE NAME=V", "NAME+=V", "NAME-=V" and "-f FILE -x NAME"
 // as sysrc does: the last assignment is rewritten in place, a new one is
@@ -80,6 +80,15 @@ func (f *fakeRunner) sysrc(args []string) error {
 		return fmt.Errorf("fake sysrc: unsupported %v", args)
 	}
 	file := args[1]
+	// Like FreeBSD 15.1's sysrc: a name with a dot (a loader tunable) is
+	// refused, for -x as for an assignment.
+	for _, a := range args[2:] {
+		name, _, _ := strings.Cut(strings.TrimLeft(a, "-"), "=")
+		name = strings.TrimRight(name, "+-")
+		if strings.Contains(name, ".") {
+			return fmt.Errorf("sysrc: %s: name contains characters not allowed in shell", name)
+		}
+	}
 	b, err := os.ReadFile(file)
 	if err != nil && !os.IsNotExist(err) {
 		return err
@@ -227,7 +236,9 @@ func TestApplyRollbackRoundTrip(t *testing.T) {
 	if st, err := os.Stat(hostPath(root, mediaDir)); err != nil || !st.IsDir() || st.Mode().Perm() != 0o700 {
 		t.Errorf("media dir: %v %v", st, err)
 	}
-	wantChowns := []chownCall{{"/usr/local/etc/skep", 0, 0}, {"/usr/local/etc/skep", 0, 409}, {"/var/db/skep", 0, 0}}
+	// /boot: loader.conf, rewritten by setup for kern.racct.enable with
+	// its owner kept (the fixture's, as the tests do not run as root).
+	wantChowns := []chownCall{{"/boot", os.Getuid(), os.Getgid()}, {"/usr/local/etc/skep", 0, 0}, {"/usr/local/etc/skep", 0, 409}, {"/var/db/skep", 0, 0}}
 	if fmt.Sprint(e.chowns) != fmt.Sprint(wantChowns) {
 		t.Errorf("chowns %v, want %v", e.chowns, wantChowns)
 	}
@@ -446,5 +457,54 @@ func TestRollbackUnknownJournal(t *testing.T) {
 	}
 	if _, err := LoadJournal(root, "../../etc"); err == nil {
 		t.Error("loaded a journal outside the journal directory")
+	}
+}
+
+// TestEditTunable covers the loader.conf lines sysrc(8) cannot edit
+// because their names contain dots (seen on FreeBSD 15.1, smith,
+// 2026-11-22).
+func TestEditTunable(t *testing.T) {
+	dir := t.TempDir()
+	f := filepath.Join(dir, "loader.conf")
+	orig := "hw.vmm.vmx.cap.virtual_interrupt_delivery=\"0\"\nvmm_load=\"YES\"" // no final newline
+	if err := os.WriteFile(f, []byte(orig), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	a := &Applier{Root: "/", Chown: func(string, int, int) error { return nil }}
+	set := Action{Type: ActSysrc, File: "/boot/loader.conf", Name: "kern.racct.enable", Op: "=", Value: "1"}
+	if err := a.editTunable(f, set); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := read(t, f), orig+"\nkern.racct.enable=\"1\"\n"; got != want {
+		t.Fatalf("after =: %q, want %q", got, want)
+	}
+	if st, _ := os.Stat(f); st.Mode().Perm() != 0o640 {
+		t.Errorf("mode %v, want 0640 kept", st.Mode())
+	}
+	if err := a.editTunable(f, set); err == nil || !strings.Contains(err.Error(), "set already") {
+		t.Errorf("second =: %v, want a refusal", err)
+	}
+	bad := set
+	bad.Name, bad.Value = "kern.other", `1" ; x="`
+	if err := a.editTunable(f, bad); err == nil {
+		t.Error("a value with a quote was written")
+	}
+	bad = set
+	bad.Name = "kern.racct.enable; reboot"
+	if err := a.editTunable(f, bad); err == nil {
+		t.Error("a name that is not a tunable was accepted")
+	}
+	// A similar name stays when the tunable is deleted.
+	if err := os.WriteFile(f, []byte(read(t, f)+"kern.racct.enable_x=\"1\"\n"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.editTunable(f, Action{Type: ActSysrc, File: "/boot/loader.conf", Name: "kern.racct.enable", Op: "-x"}); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := read(t, f), orig+"\nkern.racct.enable_x=\"1\"\n"; got != want {
+		t.Fatalf("after -x: %q, want %q", got, want)
+	}
+	if !SysrcCanEdit("kld_list") || SysrcCanEdit("kern.racct.enable") {
+		t.Error("SysrcCanEdit")
 	}
 }
