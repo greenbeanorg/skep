@@ -164,8 +164,8 @@ func (m *Manager) reload(force bool) error {
 	if m.source == Operator {
 		l, err = loadPair(certFile, keyFile)
 	} else {
-		// Finishes a swap that generate has half done, so a reload that
-		// lands between its renames gets the new pair.
+		// Reads under the directory lock, so it never sees a swap half
+		// done, and finishes a swap that a crash interrupted.
 		l, err = loadGenerated(m.opts.Dir)
 	}
 	if err != nil {

@@ -176,10 +176,13 @@ picks the new pair up within a minute, or at once with
 
 A new pair is first written, complete and synced, as `key.pem.next` and
 `cert.pem.next`, and then moved into place: the key, then the
-certificate. A reader that finds the key moved but not yet the
-certificate finishes the move itself, so the server never loads a key and
-certificate that do not belong together. If the host stops in the
-middle, the next start finishes the move. Leftover `.next` files next to
+certificate. The whole swap runs under an exclusive `flock(2)` lock on
+the TLS directory, and every read of the pair takes a shared lock on it,
+so the server never loads a key and certificate that do not belong
+together, even while `skep-api tls regenerate` runs in another process.
+A renewal takes the same lock and first checks that `key.pem` still holds
+the key it is renewing. If the host stops between the two moves, the next
+start (or the next reload) finishes the move. Leftover `.next` files next to
 a working pair (the host stopped before anything was moved) are ignored
 and replaced by the next regenerate. Skep never moves a pending key
 whose certificate does not match it.

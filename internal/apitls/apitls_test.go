@@ -767,3 +767,75 @@ func TestRegenerateCallsIntentBeforeAnythingChanges(t *testing.T) {
 	}
 	assertSwapped(t, dir, after.PublicKeySHA256)
 }
+
+// TestReadersWaitForTheSwap: a reader never reads while a swap holds the
+// directory lock, even at the moment between the two renames; it waits
+// and then gets the new pair.
+func TestReadersWaitForTheSwap(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "tls")
+	c := &clock{t: time.Now()}
+	newSelfSigned(t, dir, c, nil)
+
+	unlock, err := lockDir(dir, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	newPin := halfSwapped(t, dir, c.now())
+	got := make(chan string, 1)
+	go func() {
+		l, err := loadGenerated(dir)
+		if err != nil {
+			got <- "error: " + err.Error()
+			return
+		}
+		got <- fingerprint(l.leaf.RawSubjectPublicKeyInfo)
+	}()
+	select {
+	case pin := <-got:
+		unlock()
+		t.Fatalf("a read finished while the swap held the lock: %s", pin)
+	case <-time.After(200 * time.Millisecond):
+	}
+	if err := finishSwap(dir); err != nil {
+		t.Fatal(err)
+	}
+	unlock()
+	select {
+	case pin := <-got:
+		if pin != newPin {
+			t.Errorf("read %s after the swap, want %s", pin, newPin)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the read did not finish after the lock was released")
+	}
+	assertSwapped(t, dir, newPin)
+}
+
+// TestRenewDoesNotPairTheOldKeyWithANewOne: a renewal that runs after
+// another process regenerated the key, before the server reloaded, must
+// not write a certificate for the old key next to the new key.
+func TestRenewDoesNotPairTheOldKeyWithANewOne(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "tls")
+	c := &clock{t: time.Date(2026, 11, 12, 12, 0, 0, 0, time.UTC)}
+	a := &auditLog{}
+	m := newSelfSigned(t, dir, c, a)
+	old := m.Info()
+
+	_, after, err := Regenerate(dir, c.now(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.advance(Validity - 29*24*time.Hour)
+	m.checkExpiry(context.Background()) // no reload first: the race
+	if m.Info().CertificateSHA256 != old.CertificateSHA256 || len(a.all()) != 0 {
+		t.Error("renewed the old key's certificate after the key was regenerated")
+	}
+	assertSwapped(t, dir, after.PublicKeySHA256)
+
+	// The next tick picks up the new pair.
+	m.Tick(context.Background())
+	if m.Info().PublicKeySHA256 != after.PublicKeySHA256 {
+		t.Errorf("serving %s after a tick, want %s", m.Info().PublicKeySHA256, after.PublicKeySHA256)
+	}
+	assertSwapped(t, dir, after.PublicKeySHA256)
+}
