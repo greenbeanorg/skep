@@ -166,6 +166,23 @@ larger than about 320 KiB, and the 64 KiB `GET .../console-log` returns
 ends with rc's real last lines. Its content is the jail's (a jail can
 write anything there, including lines that look like Skep's).
 
+Every start of a jail with the stock `/etc/rc` shows these four lines
+after `Starting Network: lo0.`; they are harmless and come from the base
+system, not from Skep:
+
+```
+route: message indicates error: File exists
+add host 127.0.0.1: gateway lo0 fib 0: route already in table
+route: message indicates error: File exists
+add host ::1: gateway lo0 fib 0: route already in table
+```
+
+`/etc/rc.d/routing` always adds the loopback routes, but the kernel has
+already created them when `lo0` got its addresses a moment earlier, so
+`route add` reports `EEXIST`. Loopback works either way. Skep does not
+filter them out of the console log (it never edits rc's output). Details:
+[tests/integration/jails/results/route-file-exists-at-jail-start.md](../../tests/integration/jails/results/route-file-exists-at-jail-start.md).
+
 The agent closes its end of the pipe as soon as the start ends, whether
 rc succeeded, failed, or timed out, and never waits for every writer to
 close it. **A process rc leaves running that later writes to its
