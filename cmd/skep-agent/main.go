@@ -66,11 +66,14 @@ func main() {
 }
 
 // run is the whole program; main only maps its error to an exit code.
-// Without a command it runs the agent; "audit" is a local command for the
-// host's administrator.
+// Without a command it runs the agent; "audit" and "db" are local commands
+// for the host's administrator.
 func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if len(args) > 0 && args[0] == "audit" {
 		return runAudit(ctx, args[1:], stdout, stderr)
+	}
+	if len(args) > 0 && args[0] == "db" {
+		return runDB(ctx, args[1:], stdout, stderr)
 	}
 	if len(args) > 0 && args[0] == hostops.RunnerCommand {
 		return runRunner(args[1:], stderr)

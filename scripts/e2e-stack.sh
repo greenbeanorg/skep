@@ -29,11 +29,23 @@ if ! grep -a -q 'src="/theme.js"' "${bin}/skep-api"; then
 	echo "e2e-stack: ${bin}/skep-api was built without the web interface; run 'make build'" >&2
 	exit 1
 fi
-# The agent's test build carries the test.sleep task type. It is built here
-# when missing; it is never installed anywhere.
-if [ ! -x "${bin}/skep-agent-testbuild" ]; then
-	echo "e2e-stack: building ${bin}/skep-agent-testbuild"
-	CGO_ENABLED=0 go build -trimpath -tags skep_testtasks -o "${bin}/skep-agent-testbuild" ./cmd/skep-agent
+# The agent's test build carries the test.sleep task type. It is never
+# installed anywhere. skep-api refuses an agent of another build (503
+# agent_version_mismatch), so it is stamped with skep-api's version and
+# commit, and rebuilt when it was stamped otherwise.
+api_build=$("${bin}/skep-api" -version | sed -n 's/^skep-api \([^ ]*\) (commit \([^,]*\),.*/\1 \2/p')
+api_version=${api_build% *}
+api_commit=${api_build#* }
+if [ -z "${api_build}" ]; then
+	echo "e2e-stack: cannot read the version of ${bin}/skep-api" >&2
+	exit 1
+fi
+if [ ! -x "${bin}/skep-agent-testbuild" ] ||
+	! "${bin}/skep-agent-testbuild" -version | grep -q "^skep-agent ${api_version} (commit ${api_commit},"; then
+	echo "e2e-stack: building ${bin}/skep-agent-testbuild (${api_version}, commit ${api_commit})"
+	CGO_ENABLED=0 go build -trimpath -tags skep_testtasks \
+		-ldflags "-X github.com/greenbeanorg/skep/pkg/version.Version=${api_version} -X github.com/greenbeanorg/skep/pkg/version.Commit=${api_commit}" \
+		-o "${bin}/skep-agent-testbuild" ./cmd/skep-agent
 fi
 
 # A short directory: the socket path is limited to about 104 bytes.

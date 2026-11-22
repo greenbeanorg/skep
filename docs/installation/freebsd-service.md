@@ -7,10 +7,11 @@ Skep runs as two rc.d services (ADR 0004, ADR 0006):
 | `skep_agent` | `packaging/rc.d/skep_agent` | `root` | The Unix socket `/var/run/skep/agent.sock` only. No network listener. |
 | `skep_api` | `packaging/rc.d/skep_api` | `skep` (unprivileged) | TCP, `127.0.0.1:8443` by default |
 
-There is no package or installer yet (Milestone 10,
-[ADR 0012](../decisions/0012-installer.md), accepted, not yet built), so the steps below are
-manual; [Host requirements](host-requirements.md) puts every step of a
-new host in order. They were run on FreeBSD 15.1-RELEASE-p6, including an in-place
+The package and [`skep-setup`](skep-setup.md) (Milestone 10,
+[ADR 0012](../decisions/0012-installer.md)) are built but pending FreeBSD
+validation, so the steps below are the manual ones;
+[Host requirements](host-requirements.md) puts every step of a new host
+in order. They were run on FreeBSD 15.1-RELEASE-p6, including an in-place
 upgrade of a Milestone 3 installation; the native test and its recorded
 result are in
 [tests/integration/rcd](../../tests/integration/rcd/README.md).
@@ -133,6 +134,13 @@ either command.
 `skep-api admin delete --username NAME --yes` disable or delete a user on
 the host, ending its sessions. Neither touches the only enabled
 administrator.
+
+`skep-api admin exists --username NAME` says whether a user exists. It
+opens `api.db` read-only and only if it exists: it never creates the
+database or its directory and never migrates the schema. Exit status 0:
+the user exists (with its role, and whether it is disabled); 1: it does
+not; 2: the question could not be answered (no `api.db`, an unreadable
+database, a bad name). `skep-setup` uses it to plan `-admin`.
 
 To use the API from the command line, see
 [skepctl](../administration/skepctl.md). To use it from a browser, see
@@ -307,6 +315,21 @@ refuses it.
 The database files do not shrink when rows are removed; SQLite reuses the
 space, so they stop growing. To shrink one, stop its service and run
 `VACUUM` on it with `sqlite3(1)`.
+
+## Database backups
+
+```sh
+skep-agent db backup
+skep-api db backup
+```
+
+Each writes a consistent copy of its database (SQLite `VACUUM INTO` on a
+read-only connection; the service keeps running) to
+`/var/db/skep/backup/<version>+<commit>-<UTC timestamp>/` (`0700`, the
+copy `0600`), with its SHA-256 and a listing of the audit archive (not a
+copy). `-dir DIR` writes into a given directory there, `-keep N` keeps
+the newest N backups made this way (default 3). `skep-setup upgrade`
+runs both before every restart ([skep-setup](skep-setup.md#upgrades)).
 
 ## Monitoring health
 

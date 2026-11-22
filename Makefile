@@ -7,7 +7,7 @@ BUILD_DATE := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 GO      ?= go
 PKG     := github.com/greenbeanorg/skep
 BIN_DIR := bin
-CMDS    := skep-agent skep-api skepctl
+CMDS    := skep-agent skep-api skepctl skep-setup
 
 LDFLAGS := -s -w \
 	-X $(PKG)/pkg/version.Version=$(VERSION) \
@@ -26,7 +26,7 @@ export CGO_ENABLED := 0
 WEBUI_DIST := internal/webui/dist
 WEBUI_TAGS := -tags skep_webui
 
-.PHONY: all build build-go build-freebsd build-freebsd-go build-freebsd-test test vet lint fmt install-hooks run-dev clean help web-install web-check web-build web-e2e notices notices-check
+.PHONY: all build build-go build-freebsd build-freebsd-go build-freebsd-test stage stage-go test vet lint fmt install-hooks run-dev clean help web-install web-check web-build web-e2e notices notices-check
 
 all: vet test build build-freebsd
 
@@ -53,6 +53,16 @@ build-freebsd-go: ## Cross-compile the FreeBSD amd64 binaries into bin/freebsd-a
 		GOOS=freebsd GOARCH=amd64 $(GO) build -trimpath $(GOTAGS) -ldflags '$(LDFLAGS)' \
 			-o $(BIN_DIR)/freebsd-amd64/$$cmd ./cmd/$$cmd || exit 1; \
 	done
+
+# The FreeBSD package (ADR 0012 Decision 1): stage the tree under
+# /usr/local, +MANIFEST with the package scripts, and a plist with owners
+# and modes, in dist/pkg. pkg-create(8) needs FreeBSD, so the .pkg itself
+# is made on a FreeBSD 15 lab VM (docs/installation/packaging.md).
+stage: build-freebsd ## Build the FreeBSD binaries with the web interface, then stage the package in dist/pkg
+	$(GO) run ./scripts/pkgstage -bin $(BIN_DIR)/freebsd-amd64 -out dist/pkg -version $(VERSION)
+
+stage-go: build-freebsd-go ## As stage, without the web interface (no Node.js needed)
+	$(GO) run ./scripts/pkgstage -bin $(BIN_DIR)/freebsd-amd64 -out dist/pkg -version $(VERSION)
 
 # The test agent contains the test-only task types (build tag
 # skep_testtasks) and the rc.d integration test. Neither is ever installed
