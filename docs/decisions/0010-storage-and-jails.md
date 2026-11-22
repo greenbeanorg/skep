@@ -18,6 +18,9 @@
   under [Decisions](#decisions) and are worked into the text. The changes
   `hearst` needs are under [Changes hearst needs](#changes-hearst-needs),
   all approved.
+- Amendment z, zvol device nodes: **Proposed** (2026-11-22), built on
+  branch `fix/zvol-device-node`, not yet validated on FreeBSD; see
+  [Amendment z](#amendment-z-proposed-zvol-device-nodes).
 - Date: 2026-11-14 (proposed and accepted)
 - Depends on: [ADR 0003](0003-read-only-discovery.md) (discovery never
   changes the host), [ADR 0004](0004-privilege-boundary.md) (typed
@@ -2337,3 +2340,113 @@ mode refused a missing and a wrong pin before any test and ran the
 host-safe specs pinned. Details in section 29 of
 [step10-progress.md](../../tests/integration/jails/results/step10-progress.md).
 
+
+## Amendment z (Proposed): zvol device nodes
+
+- Status: **Proposed**, 2026-11-22. Built (`fix/zvol-device-node`), unit
+  tested on merrick, **pending FreeBSD validation**. Not to be merged
+  until Andy has answered the questions below and the probe and
+  validation have run on fresh lab VMs.
+
+**The behaviour.** On FreeBSD 15.1-RELEASE-p7 (zfs-2.4.2), a zvol created
+with `-o volmode=dev` gets its `/dev/zvol/<dataset>` node only sometimes:
+2 in 5 on smith and on langrishe, created one after another, and 1 in 6
+one at a time (lab-VM validation of PR #52, finding 5). A node that is
+missing never appears later. bhyve opens disks by that node, so the VM
+fails to start: "Could not open backing file … No such file or
+directory". `zfs set volmode=none` and then `zfs set volmode=dev`
+brought the node back 5 times in 5, and never exposed the zvol to GEOM.
+Whether the same happens after `zfs clone` and `zfs rollback`, and for a
+zvol in an encrypted dataset, has not been measured yet. The code treats
+those cases the same way, and the probe must confirm it.
+
+**The rules.** `ZFS.EnsureVolumeDevice` in hostops (root agent):
+
+1. The dataset is derived from the agent's own record of the VM's disks
+   (pool, VM ID, slot) through `Confinement.DiskDataset`, so it is
+   always under the allow-listed pool's `<pool>/<root>/vm/`. Nothing from
+   a request names it. A repair also requires the zvol's `skep:vm_id`
+   and `skep:disk_id` to name the disk.
+2. The node is checked with `lstat` and must be a character device. A
+   path that exists as anything else is an error. A missing node is
+   first given about 5 s to appear on its own.
+3. A repair happens only if all of these hold: the dataset is a volume;
+   `volmode` is exactly `dev`; `keystatus` is `available` or not
+   applicable; the VM is stopped. The stopped check is the caller's: it
+   re-inspects the VM inside the VM's task, the per-resource exclusivity
+   that `vm.start` takes. In addition, the host must have no vmm instance
+   of the VM. Otherwise nothing is changed and the error is returned:
+   `disk_device_missing` (409) with `dataset` and `reason`, or
+   `storage_locked`.
+4. The repair is `zfs set volmode=none`, then `zfs set volmode=dev`. Once
+   the first set has been attempted, whatever its result, the second is
+   always attempted, up to five times, one second apart, on a context
+   that ignores the caller's cancellation. Then the node gets up to 10 s.
+   At most two rounds are made, and the stopped check runs before each.
+5. A zvol found at `volmode=none` is never repaired automatically:
+   `disk_device_missing` with reason `volmode_none`, the dataset, and
+   `command: zfs set volmode=dev <dataset>` for the administrator. Any
+   other mode except `dev` is refused the same way (`volmode_not_dev`).
+   Skep never writes a value other than `none` and `dev`.
+6. `/sbin/zfs` through the hostops Runner: absolute path, fixed
+   environment, no shell.
+7. Every repair is logged with dataset, rounds, and duration, and every
+   refusal with its reason.
+8. Disks are only created, attached, cloned, or rolled back while the VM
+   is stopped (`vm.update` and rollback require it, and a clone is not
+   provisioned until its task ends), so there is no hot-attach case.
+
+Where it is called: bhyve's `Adapter.Start`, which covers `vm.start` and
+`vm.restart` and fails the start on an error. The VM service also calls
+it after `vm.create`, a disk added by `vm.update`, `vm.clone` (before the
+clone is marked provisioned), and `vm.snapshot.rollback`. There, a node
+that is still missing is reported in the task's progress and the log,
+not as a failure. The ZFS work stands (a rollback cannot be undone), and
+the next start is the gate.
+
+**Why `volmode=geom` is excluded.** `geom` (or a `default` that resolves
+to it) also creates the node, but it hands the zvol to GEOM. The host
+then tastes the guest's partition table, creates `…p1`-style providers
+for it, and may act on what it finds: labels, swap, and so on. That is
+what `volmode=dev` exists to prevent (ADR 0009 decision 3). A repair
+that switched through `geom` would expose every guest disk to the host
+for a moment, so neither the repair nor the probes ever use it.
+
+**If the agent dies between the two sets.** The zvol is left at
+`volmode=none`, with no node. The data is untouched; only the property
+changed. The next start (or post-operation check) finds `volmode=none`
+and refuses it under rule 5, naming the dataset and the exact `zfs set
+volmode=dev` command. Skep does not repair it automatically, because it
+cannot tell its own interrupted repair from an administrator who set
+`none` on purpose. The window is two `zfs set` calls long.
+
+**Validation still owed** (the run of 2026-11-22 could not do it: smith
+and langrishe were not at `fresh-151`, and hearst was unreachable):
+raw `zfs` probes on two fresh VMs (miss rate over 50 creates; none→dev
+for a plain zvol, a clone, a rolled-back zvol, and a zvol in an encrypted
+dataset; the toggle while a reader holds the node open; no `p1` and
+nothing in `kern.geom.conftxt` for a zvol holding a GPT); then, through
+the agent, 50 creates, 20 clones, and 20 rollbacks, each ending with a
+node; a real VM started from a disk whose node was missing; and the two
+refusals (VM running, `volmode=none` set by hand). An upstream report
+with a Skep-free reproducer is drafted in
+[docs/upstream/openzfs-zvol-volmode-dev-node.md](../upstream/openzfs-zvol-volmode-dev-node.md);
+Andy files it.
+
+**Questions for Andy.**
+
+1. Post-operation checks (after create, disk add, clone, and rollback)
+   report a node that is still missing but don't fail the task, and start
+   is the gate. Accept, or should create and clone fail and undo?
+2. Three checks go beyond what was asked: the zvol's owner properties,
+   no vmm instance of the VM, and attempting `volmode=dev` even after a
+   failed `volmode=none` (which may or may not have taken effect).
+   Accept?
+3. Should a health check report Skep zvols left at `volmode=none` (for
+   example after an agent crash mid-repair)? It is in the backlog for
+   after 0.1 unless you want it now.
+4. The new error code is `disk_device_missing` (409); its details are
+   `dataset`, `reason` (`volmode_none`, `volmode_not_dev`,
+   `vm_not_stopped`, `repair_failed`, `restore_failed`,
+   `no_stopped_check`), and, where an administrator acts, `command`.
+   Accept the name and the status?
