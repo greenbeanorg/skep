@@ -407,6 +407,7 @@ docs/                  architecture, security, and decision records
 ## Documentation
 
 - [Architecture overview](docs/architecture/overview.md)
+  (design note, not decided: [role management](docs/architecture/role-management-design.md))
 - [Security overview](docs/security/overview.md)
 - [Running Skep as FreeBSD services](docs/installation/freebsd-service.md)
 - [Upgrading a host](docs/installation/upgrading.md)
