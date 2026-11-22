@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"net/url"
 	"os"
+	"path/filepath"
 	"slices"
 	"sort"
 	"strings"
@@ -151,6 +152,27 @@ func (b *builder) disable(name string) {
 
 type addedVar struct {
 	file, name, op, value string
+	// created: the variable was not in the file before that apply (read
+	// from the apply's backup of the file), so setup made it.
+	created bool
+}
+
+// setBefore reports whether name was set in file before journal j first
+// changed it, from j's backup copy. No backup (the file did not exist)
+// means it was not set.
+func setBefore(root string, j Journal, file, name string) bool {
+	for _, e := range j.Entries {
+		if e.File != file || e.Backup == "" {
+			continue
+		}
+		v, err := ReadShVars(filepath.Join(JournalDir(root, j.ID), e.Backup))
+		if err != nil {
+			return true // unknown: treat as the operator's, never delete it
+		}
+		_, ok := v.Vals[name]
+		return ok
+	}
+	return false
 }
 
 // revertHost plans removing what setup's applies added, where unchanged,
@@ -168,9 +190,10 @@ func (b *builder) revertHost() map[string]bool {
 			if !e.Done || a.Type != ActSysrc || (a.Op != "=" && a.Op != "+=") {
 				continue
 			}
-			v := addedVar{a.File, a.Name, a.Op, a.Value}
+			v := addedVar{file: a.File, name: a.Name, op: a.Op, value: a.Value}
 			if !seen[v] {
 				seen[v] = true
+				v.created = a.Op == "+=" && !setBefore(b.o.Root, j, a.File, a.Name)
 				added = append(added, v)
 			}
 		}
@@ -203,9 +226,17 @@ func (b *builder) revertHost() map[string]bool {
 					mine = append(mine, w)
 				}
 			}
-			if len(mine) == 0 {
+			rest := len(strings.Fields(cur)) - len(mine)
+			switch {
+			case v.created && rest == 0:
+				// sysrc NAME-= leaves NAME="" behind (FreeBSD 15.1, smith,
+				// 2026-11-22); a list setup created and that holds only
+				// setup's words, or nothing, is deleted, so the file
+				// returns to its bytes before apply.
+				act = &Action{Type: ActSysrc, File: v.file, Name: v.name, Op: "-x"}
+			case len(mine) == 0:
 				b.ok(v.file, v.name, "setup's words are gone already")
-			} else {
+			default:
 				act = &Action{Type: ActSysrc, File: v.file, Name: v.name, Op: "-=", Value: strings.Join(mine, " ")}
 			}
 		}

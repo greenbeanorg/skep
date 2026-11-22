@@ -115,7 +115,7 @@ func TestRemoveRevertHost(t *testing.T) {
 	p := computeRemove(t, RemoveOptions{Root: e.root, RevertHost: true}, facts(), e.runner)
 	got := strings.Join(actions(p), "\n")
 	for _, w := range []string{"sysrc -f /boot/loader.conf -x vmm_load", "delete the kern.racct.enable line from /boot/loader.conf",
-		`sysrc kld_list-="if_epair netgraph ng_socket ng_ether ng_bpf"`, `sysrc cloned_interfaces-="bridge0"`,
+		`sysrc kld_list-="if_epair netgraph ng_socket ng_ether ng_bpf"`, "sysrc -x cloned_interfaces",
 		"sysrc -x ifconfig_bridge0", "sysrc -x skep_agent_enable", "sysrc -x zfs_enable"} {
 		if !strings.Contains(got, w) {
 			t.Errorf("lacks %q:\n%s", w, got)
@@ -351,4 +351,50 @@ func kldList(t *testing.T, root string) string {
 		t.Fatal(err)
 	}
 	return rc.Vals["kld_list"]
+}
+
+// TestRevertHostRestoresTheBytes: apply then remove --revert-host on a
+// stock host gives rc.conf and loader.conf back byte for byte. sysrc
+// NAME-= leaves NAME="" (FreeBSD 15.1, smith, 2026-11-22), so a list
+// setup created is deleted instead; an empty leftover of an earlier
+// revert is deleted too.
+func TestRevertHostRestoresTheBytes(t *testing.T) {
+	e, rc0, loader0 := appliedHost(t)
+	rcPath := filepath.Join(e.root, "etc/rc.conf")
+	p := computeRemove(t, RemoveOptions{Root: e.root, RevertHost: true}, facts(), e.runner)
+	got := strings.Join(actions(p), "\n")
+	for _, w := range []string{"sysrc -x kld_list", "sysrc -x cloned_interfaces"} {
+		if !strings.Contains(got, w) {
+			t.Errorf("lacks %q:\n%s", w, got)
+		}
+	}
+	if _, err := e.remover().Apply(context.Background(), p); err != nil {
+		t.Fatal(err)
+	}
+	if got := read(t, rcPath); got != rc0 {
+		t.Errorf("rc.conf:\n%s\nwant:\n%s", got, rc0)
+	}
+	if got := read(t, filepath.Join(e.root, "boot/loader.conf")); got != loader0 {
+		t.Errorf("loader.conf:\n%s\nwant:\n%s", got, loader0)
+	}
+
+	// The leftover of an older build's revert: kld_list="" stays behind.
+	e, rc0, _ = appliedHost(t)
+	rcPath = filepath.Join(e.root, "etc/rc.conf")
+	if _, err := e.runner.Run(context.Background(), Cmd{Name: "sysrc", Args: []string{"-f", rcPath, "kld_list-=if_epair netgraph ng_socket ng_ether ng_bpf"}}); err != nil {
+		t.Fatal(err)
+	}
+	if v, _ := ReadShVars(rcPath); v.Vals["kld_list"] != "" {
+		t.Fatalf("fake sysrc: kld_list %q", v.Vals["kld_list"])
+	}
+	p = computeRemove(t, RemoveOptions{Root: e.root, RevertHost: true}, facts(), e.runner)
+	if !strings.Contains(strings.Join(actions(p), "\n"), "sysrc -x kld_list") {
+		t.Errorf("an empty kld_list setup created is not deleted:\n%s", strings.Join(actions(p), "\n"))
+	}
+	if _, err := e.remover().Apply(context.Background(), p); err != nil {
+		t.Fatal(err)
+	}
+	if got := read(t, rcPath); got != rc0 {
+		t.Errorf("rc.conf after the leftover:\n%s\nwant:\n%s", got, rc0)
+	}
 }

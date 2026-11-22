@@ -196,6 +196,10 @@ to `NO`. By default it keeps everything else (answer 11):
     missing, so a module you had listed before apply (`if_epair` or
     `if_epair.ko`) stays, as does anything you added since that setup did
     not add. Rolling back the apply or the remove keeps them too;
+  - a list that apply created (absent before it, per the apply's backup)
+    and that holds nothing but setup's words is deleted (`sysrc -x`):
+    FreeBSD's `sysrc NAME-="..."` leaves `NAME=""` behind, so this is what
+    returns `rc.conf` to its bytes before apply;
   - rolled-back applies are ignored; in a file that is not plain
     `name=value` lines, nothing is edited and the `sysrc` steps are printed
     for you.
