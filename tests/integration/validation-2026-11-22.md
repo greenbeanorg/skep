@@ -12,6 +12,9 @@ What it validates on a real host, from main:
   is refused with 409 `vm_mac_in_use` (PR #37, merged as 3dc3d7e).
 - **C4**: nameservers on a jail without a NIC are refused with 422
   `nameservers_require_nic`, at create, update and clone (PR #40).
+- **SR-07**: two jails with the same static address on one bridge,
+  started concurrently: exactly one starts, the other is refused with
+  `container_address_in_use` (PR #44).
 - **M7c item 10** (ADR 0011 Decision 12): after a reboot with `kld_list`,
   the netgraph modules are back and the next guest start is filtered.
 
@@ -194,6 +197,63 @@ nameservers (GET it); 4d succeeds. If the clone endpoint needs the source
 snapshotted first, the 422 must still come before any task (the check is
 in `normalizeNICs`, shared by create, update and clone).
 
+## Step 4b — SR-07: two starts of jails with the same address (Claude Code)
+
+Needs main at or after PR #44's merge (check `git log --oneline | grep
+SR-07` in step 2a). If #44 is not on main, skip this step and say so.
+It must finish, with both jails deleted, before step 5: step 5b assumes no
+guest ports on bridge0.
+
+Two jails with the same static address on bridge0 (TEST-NET-1, which
+nothing on VLAN 60 uses; bridge0 is the only bridge in `agent.json`, so
+no config change is needed), started at the same moment. Whichever
+reaches `MarkStarting` second is refused, either at submission (the other
+is already running: HTTP 409) or when its start is recorded (the other is
+starting: the task fails). Both refusals carry `container_address_in_use`.
+
+```sh
+# 4b-1. two NIC'd jails, same address, created (never refused at create)
+for n in rb-sr07-a rb-sr07-b; do
+  $A POST /containers "{\"name\":\"$n\",\"template_id\":\"$TPL\",\"nics\":[{\"bridge\":\"bridge0\",\"ipv4\":{\"mode\":\"static\",\"address\":\"192.0.2.77/24\"}}]}" --wait | tee $S/04b-1-$n.json
+done
+JA=...; JB=...   # their ids
+$A GET /containers > /dev/null    # log in once, so the two calls below share the cached token
+
+# 4b-2. both starts at once
+$A POST /containers/$JA/actions '{"action":"start"}' --wait > $S/04b-2-a.json 2>&1 &
+$A POST /containers/$JB/actions '{"action":"start"}' --wait > $S/04b-2-b.json 2>&1 &
+wait
+cat $S/04b-2-a.json $S/04b-2-b.json
+
+# 4b-3. the result on the host and in the API
+$A GET /containers/$JA | tee $S/04b-3-a.json
+$A GET /containers/$JB | tee $S/04b-3-b.json
+ssh hearst "jls -N name ip4.addr" | tee $S/04b-3-jls.txt   # read-only; VNET jails show no ip4.addr
+ssh hearst "sudo sqlite3 -readonly -cmd '.timeout 5000' /var/db/skep/agent/agent.db \
+  \"SELECT name, observed_state, started_once FROM containers WHERE name LIKE 'rb-sr07-%'\"" | tee $S/04b-3-db.txt
+
+# 4b-4. clean up: stop the one that runs, delete both
+$A POST /containers/<the running one>/actions '{"action":"stop"}' --wait | tee $S/04b-4-stop.json
+for id in $JA $JB; do $A DELETE /containers/$id --wait; done | tee $S/04b-4-delete.txt
+$A GET /containers | tee $S/04b-4-containers.json   # no rb-sr07-*
+ssh hearst "ifconfig -l; ngctl list | grep -c skf_ || true" | tee $S/04b-4-host.txt   # no epair left, 0 skf_ nodes
+```
+
+Pass:
+
+- Exactly one of the two jails is `running` (API and `containers` row);
+  the other is `stopped` with `started_once` 0.
+- The other one's refusal is either HTTP 409 or a task that `failed`,
+  and in both cases `error.code` `container_address_in_use`, details
+  `address` `192.0.2.77/24`, `bridge` `bridge0`, `held_by_name` the jail
+  that runs.
+- After 4b-4: no `rb-sr07-*` jail, no epair and no `skf_` node left on
+  hearst.
+
+If both jails run, that is a security property failing (two guests with
+one address on one bridge): stop both, delete them, stop the session and
+report.
+
 ## Step 5 — kld_list, bridge0 vlanfilter, reboot (Andy)
 
 Andy, as root. The order is the one in `docs/installation/upgrading.md`,
@@ -293,7 +353,7 @@ rm -rf tests/integration/jails/m7c-validation/.tokens
 The binaries from main stay deployed (that is the point of step 2). The
 `kld_list` and `ifconfig_bridge0` lines stay (Andy's persistent changes).
 Record the results in `tests/integration/jails/results/` (C1, C4,
-item 10), update the "pending" notes in `README.md`,
+SR-07, item 10), update the "pending" notes in `README.md`,
 `docs/architecture/overview.md`, `docs/installation/upgrading.md` ("Status
 of this procedure") and `tests/integration/jails/results/m7c-validation.md`
 item 10, and write the stop report to `~/stop-report.md`.
