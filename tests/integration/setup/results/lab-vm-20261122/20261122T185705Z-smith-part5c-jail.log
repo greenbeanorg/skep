@@ -1,0 +1,221 @@
+{"container":{"id":"8ef3b38b-7ba6-4613-a740-d98d10cd5d2e","name":"smoke1","hostname":"smoke1","template_id":"e0ae4cf9-a168-4c15-ab2f-cdedc3f54499","template_name":"base151","pool":"tank","release":"15.1-RELEASE","options":{"sysvipc":false,"mlock":false},"limits":{},"nics":[{"id":"cb6fe722-be2a-4baf-a3e1-a4705c4f3d42","slot":0,"bridge":"bridge0","mac_address":"02:05:23:ee:21:bb","interface":"skep0","ipv4":{"mode":"dhcp"}}],"provisioned":false,"started_once":false,"desired_state":"stopped","state":"unknown","created_at":"2026-11-22T18:57:05.528Z","updated_at":"2026-11-22T18:57:05.528Z"},"task":{"id":"19e95b41-1007-4929-a853-cbf03addd622","node_id":"21919a44-11d1-45a1-92db-d8d51f2e4f0c","type":"container.create","status":"pending","resource_type":"container","resource_id":"8ef3b38b-7ba6-4613-a740-d98d10cd5d2e","actor":{"id":"72310b28-d442-4bc3-86ed-1d4159965eb4","name":"admin"},"request_id":"ec283ecf22ad098617802154","cancellable":false,"created_at":"2026-11-22T18:57:05.528Z"}}
+
+HTTP 202
+TIMEOUT ()
+{"id":"8e7ba155-1e55-4b2e-ae24-18815b6ea9d8","node_id":"21919a44-11d1-45a1-92db-d8d51f2e4f0c","type":"container.start","status":"pending","resource_type":"container","resource_id":"8ef3b38b-7ba6-4613-a740-d98d10cd5d2e","actor":{"id":"72310b28-d442-4bc3-86ed-1d4159965eb4","name":"admin"},"request_id":"e8fd816721e55f836a2c5e57","cancellable":false,"created_at":"2026-11-22T19:07:28.332Z"}
+
+HTTP 202
+ID:           8e7ba155-1e55-4b2e-ae24-18815b6ea9d8
+Type:         container.start
+Status:       succeeded
+Resource:     container 8ef3b38b-7ba6-4613-a740-d98d10cd5d2e
+Created:      2026-11-22 19:07:28Z
+Started:      2026-11-22 19:07:28Z
+Finished:     2026-11-22 19:07:29Z
+
+Events:
+  2026-11-22 19:07:28Z  state     info  task is pending
+  2026-11-22 19:07:28Z  state     info  task is running
+  2026-11-22 19:07:28Z  progress  info  starting the jail (jail -c, the /dev guard, /etc/rc)
+  2026-11-22 19:07:29Z  state     info  task is succeeded
+VM smokevm1 (17a08121-e0f3-4625-ad75-52e9c534de02) created; task 94dcbe1a-3dbf-4f40-b593-2b393f317582 is succeeded
+vm.start smokevm1: task 020c4177-48ea-495e-b1a8-ce5593730fe9 is failed
+skepctl: task 020c4177-48ea-495e-b1a8-ce5593730fe9 failed: vm_start_failed: the virtual machine did not start: bhyve exited with an error (status 4): Device emulation initialization error: No such file or directory
+name=skep-17a08121-e0f3-4625-ad75-52e9c534de02
+uuid=17a08121-e0f3-4625-ad75-52e9c534de02
+cpus=1
+memory.size=512M
+acpi_tables=true
+rtc.use_localtime=false
+x86.vmexit_on_hlt=true
+x86.vmexit_on_pause=true
+x86.strictmsr=false
+bootrom=/usr/local/share/edk2-bhyve/BHYVE_UEFI.fd
+bootvars=/var/db/skep/agent/vm/17a08121-e0f3-4625-ad75-52e9c534de02/uefi-vars.fd
+lpc.com1.path=/dev/nmdm-skep-17a08121-e0f3-4625-ad75-52e9c534de02.1A
+pci.0.0.0.device=hostbridge
+pci.0.31.0.device=lpc
+pci.0.2.0.device=virtio-blk
+pci.0.2.0.path=/dev/zvol/tank/skep/vm/17a08121-e0f3-4625-ad75-52e9c534de02/disk0
+pci.0.10.0.device=virtio-net
+pci.0.10.0.backend=tap0
+pci.0.10.0.mac=02:d1:b4:5e:92:62
+---
+bhyve: Could not open backing file: /dev/zvol/tank/skep/vm/17a08121-e0f3-4625-ad75-52e9c534de02/disk0: No such file or directory
+Could not open backing file: No such file or directory
+Device emulation initialization error: No such file or directory
+total 7808
+-rw-r--r--  1 root wheel 3653632 Oct 24 04:28 BHYVE_UEFI.fd
+-rw-r--r--  1 root wheel 3653632 Oct 24 04:28 BHYVE_UEFI_CODE.fd
+-rw-r--r--  1 root wheel  540672 Oct 24 04:28 BHYVE_UEFI_VARS.fd
+ls: -R: No such file or directory
+ls: /dev/zvol/tank/skep/: No such file or directory
+ls: /dev/nmdm*: No such file or directory
+NAME                                                     VOLSIZE  VOLMODE
+tank/skep/vm/17a08121-e0f3-4625-ad75-52e9c534de02/disk0       2G  dev
+NAME                                                                PROPERTY  VALUE    SOURCE
+tank                                                                volmode   default  default
+tank/skep                                                           volmode   default  default
+tank/skep/jail                                                      volmode   default  default
+tank/skep/jail/8ef3b38b-7ba6-4613-a740-d98d10cd5d2e                 volmode   default  default
+tank/skep/vm                                                        volmode   default  default
+tank/skep/vm/17a08121-e0f3-4625-ad75-52e9c534de02                   volmode   default  default
+tank/skep/vm/17a08121-e0f3-4625-ad75-52e9c534de02/disk0             volmode   dev      local
+vfs.zfs.vol.mode: 1
+vfs.zfs.vol.recursive: 0
+ls: /dev/zvol: No such file or directory
+ichsmb0: <Intel 82801I (ICH9) SMBus controller> port 0x700-0x73f irq 16 at device 31.3 on pci0
+smbus0: <System Management Bus> on ichsmb0
+hms0: <QEMU QEMU USB Tablet> on hidbus0
+hms0: 5 buttons and [XYW] coordinates ID=0
+bridge0: Ethernet address: 58:9c:fc:10:fe:cd
+lo0: link state changed to UP
+vtnet0: link state changed to UP
+vtnet1: link state changed to UP
+bridge0: link state changed to UP
+vtnet1: promiscuous mode enabled
+epair0a: Ethernet address: 58:9c:fc:10:ea:36
+epair0b: Ethernet address: 58:9c:fc:10:96:eb
+epair0a: link state changed to UP
+epair0b: link state changed to UP
+epair0b: changing name to 'sj8ef3b38b7bn0'
+epair0a: promiscuous mode enabled
+sj8ef3b38b7bn0: changing name to 'skep0'
+lo0: link state changed to UP
+tap0: Ethernet address: 58:9c:fc:10:a4:a7
+tap0: promiscuous mode enabled
+total 2
+dr-xr-xr-x   3 root wheel 512 Nov 22 14:08 .
+dr-xr-xr-x  13 root wheel 512 Nov 22 13:52 ..
+dr-xr-xr-x   2 root wheel 512 Nov 22 14:08 tank
+
+/dev/zvol/tank:
+total 1
+dr-xr-xr-x  2 root wheel     512 Nov 22 14:08 .
+dr-xr-xr-x  3 root wheel     512 Nov 22 14:08 ..
+crw-r-----  1 root operator 0x7e Nov 22 14:07 zvtest-default
+ls: /dev/zd*: No such file or directory
+NAME                                                     VOLMODE
+tank/skep/vm/17a08121-e0f3-4625-ad75-52e9c534de02/disk0  dev
+tank/zvtest-default                                      default
+tank/zvtest-dev                                          dev
+z0xfffff80160766700 [shape=box,label="ZFS::ZVOL\nzfs::zvol::tank/zvtest-default\nr#1"];
+z0xfffff80160766800 [shape=hexagon,label="zvol/tank/zvtest-default\nr0w0e0\nerr#0\nsector=512\nstripe=16384"];
+z0xfffff80006b99000 [shape=box,label="DEV\nzvol/tank/zvtest-default\nr#2"];
+    <name>ZFS::ZVOL</name>
+      <name>zfs::zvol::tank/zvtest-default</name>
+	  <name>zvol/tank/zvtest-default</name>
+      <name>zvol/tank/zvtest-default</name>
+vfs.zfs.zvol_enforce_quotas: 1
+vfs.zfs.vol.threads: 0
+vfs.zfs.vol.mode: 1
+vfs.zfs.vol.unmap_enabled: 1
+15.1-RELEASE-p7
+15.1-RELEASE-p7
+15.1-RELEASE-p7
+zfs-2.4.2-1-FreeBSD_g6330a45b0
+zfs-kmod-2.4.2-1-FreeBSD_g6330a45b0
+-- default->dev:
+ls: /dev/zvol/tank/: No such file or directory
+-- dev->geom:
+total 0
+crw-r-----  1 root operator 0x7e Nov 22 14:08 zvtest-dev
+-- geom->dev:
+total 0
+crw-r-----  1 root operator 0x81 Nov 22 14:08 zvtest-dev
+-- new dev after 5s:
+total 0
+crw-r-----  1 root operator 0x81 Nov 22 14:08 zvtest-dev
+ls: /dev/zvol/tank/skep/vm/*/: No such file or directory
+/dev/zvol/tank/:
+total 0
+crw-r-----  1 root operator 0x81 Nov 22 14:08 zvtest-dev
+NAME                                                     VOLMODE
+tank/skep/vm/17a08121-e0f3-4625-ad75-52e9c534de02/disk0  dev
+tank/zvtest-default                                      dev
+tank/zvtest-dev                                          dev
+tank/zvtest-dev2                                         dev
+vfs.zfs.zvol_enforce_quotas: 1
+vfs.zfs.vol.request_sync: 0
+vfs.zfs.vol.num_taskqs: 0
+vfs.zfs.vol.threads: 0
+vfs.zfs.vol.mode: 1
+vfs.zfs.vol.prefetch_bytes: 131072
+vfs.zfs.vol.inhibit_dev: 0
+vfs.zfs.vol.unmap_enabled: 1
+vfs.zfs.vol.recursive: 0
+zvtest-dev zvtest-dev2 (after geom zvtest-dev2)
+total 0
+crw-r-----  1 root operator 0x81 Nov 22 14:08 zvtest-dev
+crw-r-----  1 root operator 0x82 Nov 22 14:08 zvtest-dev2
+(after dev zvtest-dev2)
+zvtest-default zvtest-dev zvtest-dev2 (after geom zvtest-default)
+total 0
+crw-r-----  1 root operator 0x81 Nov 22 14:08 zvtest-dev
+crw-r-----  1 root operator 0x82 Nov 22 14:08 zvtest-dev2
+(after dev zvtest-default)
+-- inherit test: create without -o then set dev
+zvtest-c
+zvtest-dev
+zvtest-dev2
+total 0
+crw-r-----  1 root operator 0x81 Nov 22 14:08 zvtest-dev
+crw-r-----  1 root operator 0x82 Nov 22 14:08 zvtest-dev2
+tank/skep/vm/17a08121-e0f3-4625-ad75-52e9c534de02/disk0	volmode	dev	local
+total 0
+crw-r-----  1 root operator 0x84 Nov 22 14:09 disk0
+NAME                                                      USED  AVAIL  REFER  MOUNTPOINT
+tank/skep/vm/17a08121-e0f3-4625-ad75-52e9c534de02/disk0    56K  14.7G    56K  -
+vm.start smokevm1: task 01f6c076-a9ec-4347-9bbf-89ba343532dc is succeeded
+skep-8ef3b38b-7ba6-4613-a740-d98d10cd5d2e
+skep-17a08121-e0f3-4625-ad75-52e9c534de02
+There are 8 total nodes:
+  Name: skf_epair0a     Type: bpf             ID: 00000008   Num hooks: 2
+  Name: skf_tap0        Type: bpf             ID: 00000039   Num hooks: 2
+	bridge flags=1<VLANFILTER> defuntagged=1
+	member: tap0 flags=143<LEARNING,DISCOVER,AUTOEDGE,AUTOPTP>
+	        port 8 priority 128 path cost 2000000 vlan protocol 802.1q untagged 1
+	member: epair0a flags=143<LEARNING,DISCOVER,AUTOEDGE,AUTOPTP>
+	        port 5 priority 128 path cost 2000 vlan protocol 802.1q untagged 1
+	member: vtnet1 flags=143<LEARNING,DISCOVER,AUTOEDGE,AUTOPTP>
+	        port 2 priority 128 path cost 2000 vlan protocol 802.1q untagged 1
+	ether 02:05:23:ee:21:bb
+	inet 10.79.60.122 netmask 0xffffff00 broadcast 10.79.60.255
+	status: active
+{"status":"ok","version":"0.1.0","uptime_seconds":752,"checks":{"access_audit_archive":{"status":"ok","critical":false},"agent":{"status":"ok","critical":true},"audit_archive":{"status":"ok","critical":false},"bridge_vlan_unfiltered":{"status":"ok","critical":false},"database":{"status":"ok","critical":true},"orphaned_interfaces":{"status":"ok","critical":false},"port_filters":{"status":"ok","critical":false},"storage_capacity":{"status":"ok","critical":false},"storage_locked":{"status":"ok","critical":false}}}
+
+HTTP 200
+vm.stop smokevm1: task 89cdaf39-61cd-42ff-ac6c-e2eeb5360c98 is succeeded
+vm.delete smokevm1: task 455ea341-f88a-40c1-830d-88c74046f313 is succeeded
+HTTP 202
+Status:       succeeded
+{"id":"1d54ff03-d902-4533-806f-f31c6bf1eeea","node_id":"21919a44-11d1-45a1-92db-d8d51f2e4f0c","type":"container.delete","status":"pending","resource_type":"container","resource_id":"8ef3b38b-7ba6-4613-a740-d98d10cd5d2e","actor":{"id":"72310b28-d442-4bc3-86ed-1d4159965eb4","name":"admin"},"request_id":"9bc9b012ed9f13d7a3ecdf54","cancellable":false,"created_at":"2026-11-22T19:09:44.394Z"}
+
+HTTP 202
+Traceback (most recent call last):
+  File "<string>", line 1, in <module>
+    import json,sys;print(json.load(sys.stdin)["task"]["id"])
+                          ~~~~~~~~~~~~~~~~~~~~^^^^^^^^
+KeyError: 'task'
+ls: /dev/vmm: No such file or directory
+0
+NAME                                                       USED  AVAIL  REFER  MOUNTPOINT
+tank                                                       373M  14.7G   104K  /tank
+tank/skep                                                  372M  14.7G    96K  /tank/skep
+tank/skep/jail                                              96K  14.7G    96K  /tank/skep/jail
+tank/skep/templates                                        372M  14.7G    96K  /tank/skep/templates
+tank/skep/templates/e0ae4cf9-a168-4c15-ab2f-cdedc3f54499   372M  14.7G   372M  /tank/skep/templates/e0ae4cf9-a168-4c15-ab2f-cdedc3f54499
+tank/skep/vm                                                96K  14.7G    96K  /tank/skep/vm
+	member: vtnet1 flags=143<LEARNING,DISCOVER,AUTOEDGE,AUTOPTP>
+ID:           1d54ff03-d902-4533-806f-f31c6bf1eeea
+Type:         container.delete
+Status:       succeeded
+Resource:     container 8ef3b38b-7ba6-4613-a740-d98d10cd5d2e
+Created:      2026-11-22 19:09:44Z
+Started:      2026-11-22 19:09:44Z
+Finished:     2026-11-22 19:09:44Z
+Events:
+  2026-11-22 19:09:44Z  state     info  task is pending
+  2026-11-22 19:09:44Z  state     info  task is running
+  2026-11-22 19:09:44Z  progress  info  destroying the jail's dataset
+  2026-11-22 19:09:44Z  state     info  task is succeeded

@@ -1,0 +1,27 @@
+Status:       succeeded
+Status:       succeeded
+skep-07ca42ac-b3da-49ab-b329-55e7b5df53b8
+[1/1] Deinstalling skep-0.1.1...
+skep: refusing to remove the package while Skep guests are running:
+skep:   jail skep-07ca42ac-b3da-49ab-b329-55e7b5df53b8
+skep: stop them first (web interface, skepctl, or the API), or run skep-setup remove --plan.
+skep: pkg delete -f overrides this check.
+pkg: DEINSTALL script failed
+[1/1] Deleting files for skep-0.1.1: .......... done
+pkg delete rc=0
+package GONE
+skep-07ca42ac-b3da-49ab-b329-55e7b5df53b8
+7136 /usr/local/sbin/skep-api -data-dir /var/db/skep
+7048 daemon: /usr/local/sbin/skep-agent[7050]
+7050 /usr/local/sbin/skep-agent -data-dir /var/db/skep
+7134 daemon: /usr/local/sbin/skep-api[7136]
+--- restore
+Extracting skep-0.1.1: .......... done
+Stopping skep_api.
+Waiting for PIDS: 7134.
+Stopping skep_agent.
+Waiting for PIDS: 7048.
+Starting skep_agent.
+Starting skep_api.
+skep_agent is running as pid 8254 (supervisor pid 8252).
+skep_api is running as pid 8337 (supervisor pid 8335).

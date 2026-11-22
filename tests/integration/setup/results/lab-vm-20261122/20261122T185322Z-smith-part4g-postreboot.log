@@ -1,0 +1,40 @@
+ 1:53PM  up 51 secs, 0 users, load averages: 0.31, 0.09, 0.03
+skep_agent is running as pid 1443 (supervisor pid 1442).
+skep_api is running as pid 1478 (supervisor pid 1477).
+hw.vmm.vmx.cap.virtual_interrupt_delivery: 0
+kern.racct.enable: 1
+ 2    1 0xffffffff82554000     3988 nmdm.ko
+ 3    1 0xffffffff82558000   380270 vmm.ko
+ 4    1 0xffffffff83200000   3f2c78 zfs.ko
+ 5    1 0xffffffff83018000     539c if_epair.ko
+ 6    4 0xffffffff8301e000     abb8 netgraph.ko
+ 7    1 0xffffffff83029000     3918 ng_socket.ko
+ 8    1 0xffffffff8302d000     31e0 ng_ether.ko
+ 9    1 0xffffffff83031000     2208 ng_bpf.ko
+14    1 0xffffffff83043000     8810 if_bridge.ko
+15    1 0xffffffff8304c000     6120 bridgestp.ko
+bridge0: flags=1008843<UP,BROADCAST,RUNNING,SIMPLEX,MULTICAST,LOWER_UP> metric 0 mtu 1500
+	options=10<VLAN_HWTAGGING>
+	ether 58:9c:fc:10:fe:cd
+	id 00:00:00:00:00:00 priority 32768 hellotime 2 fwddelay 15
+	maxage 20 holdcnt 6 proto rstp maxaddr 2000 timeout 1200
+	root id 00:00:00:00:00:00 priority 32768 ifcost 0 port 0
+	bridge flags=1<VLANFILTER> defuntagged=1
+	member: vtnet1 flags=143<LEARNING,DISCOVER,AUTOEDGE,AUTOPTP>
+	        port 2 priority 128 path cost 2000 vlan protocol 802.1q untagged 1
+	groups: bridge
+	nd6 options=9<PERFORMNUD,IFDISABLED>
+vtnet1: flags=1008943<UP,BROADCAST,RUNNING,PROMISC,SIMPLEX,MULTICAST,LOWER_UP> metric 0 mtu 1500
+	options=ec039b<RXCSUM,TXCSUM,VLAN_MTU,VLAN_HWTAGGING,VLAN_HWCSUM,TSO4,TSO6,VLAN_HWTSO,LINKSTATE,RXCSUM_IPV6,TXCSUM_IPV6,HWSTATS>
+	ether bc:24:11:3b:0f:b1
+	media: Ethernet autoselect (10Gbase-T <full-duplex>)
+	status: active
+	nd6 options=29<PERFORMNUD,IFDISABLED,AUTO_LINKLOCAL>
+NAME   SIZE  ALLOC   FREE  CKPOINT  EXPANDSZ   FRAG    CAP  DEDUP    HEALTH  ALTROOT
+tank  15.5G   384K  15.5G        -         -     0%     0%  1.00x    ONLINE  -
+skep-agent 0.1.0 (commit bd406aa, built 2026-11-22T18:50:14Z, go1.27.4 freebsd/amd64)
+skep-api 0.1.0 (commit bd406aa, built 2026-11-22T18:50:14Z, go1.27.4 freebsd/amd64)
+--- /api/v1/health
+{"status":"ok","version":"0.1.0","uptime_seconds":45,"checks":{"access_audit_archive":{"status":"ok","critical":false},"agent":{"status":"ok","critical":true},"audit_archive":{"status":"ok","critical":false},"bridge_vlan_unfiltered":{"status":"ok","critical":false},"database":{"status":"ok","critical":true},"orphaned_interfaces":{"status":"ok","critical":false},"port_filters":{"status":"ok","critical":false},"storage_capacity":{"status":"ok","critical":false},"storage_locked":{"status":"ok","critical":false}}}
+
+HTTP 200

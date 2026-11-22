@@ -1,0 +1,10 @@
+20261122T192821Z
+skep-setup check, root / (read-only; nothing was changed)
+  21 ok, 0 to add, 0 warnings, 0 conflicts, 0 for you, 0 refused
+check rc=0
+skep-setup apply, root /
+  21 ok, 0 to add, 0 warnings, 0 conflicts, 0 for you, 0 refused
+nothing to do: the host is already as planned
+apply rc=0
+20261122T192821Z
+rc.conf loader.conf agent.json api.json: unchanged

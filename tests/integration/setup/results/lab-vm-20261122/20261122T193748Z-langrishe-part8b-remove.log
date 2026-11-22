@@ -1,0 +1,94 @@
+Status:       succeeded
+  refuse   guests                             0 VM(s) and 1 jail(s) exist (0 running)
+  2 ok, 4 to add, 0 warnings, 0 conflicts, 2 for you, 1 refused
+skep-setup: refused: nothing was changed
+remove rc=0
+Status:       succeeded
+SHA256 (/etc/rc.conf) = 96212f082cac6c475501db5845a4ce98ce801c4fb67ef5645ba30fc5622e0d1f
+=== remove (default)
+  manual   storage                            datasets under zroot/skep
+  manual   package                            then remove the files
+  3 ok, 4 to add, 0 warnings, 0 conflicts, 2 for you, 0 refused
+  service skep_api stop
+  service skep_agent stop
+  sysrc skep_agent_enable="NO"
+  sysrc skep_api_enable="NO"
+done: journal /var/db/skep/setup/20261122T193755Z. Now remove the files: pkg delete skep
+skep_agent is not running.
+skep_api is not running.
+skep_agent_enable="NO"
+skep_api_enable="NO"
+SHA256 (/etc/rc.conf) = cf6a36a6fc5b94b1deaa5810d423a4e2b7a332dd507efe225a2ec01bd629ae94
+SHA256 (/boot/loader.conf) = c6a71a0f57a0ed3e47087b3095b8d2c1ca8f245d3da2d843a8792a919363ae69
+=== rollback 20261122T193755Z
+  restored /etc/rc.conf
+  kept     skep_agent: rollback does not start services again
+  kept     skep_api: rollback does not start services again
+rolled back 20261122T193755Z
+skep_agent_enable="YES"
+skep_api_enable="YES"
+SHA256 (/etc/rc.conf) = 96212f082cac6c475501db5845a4ce98ce801c4fb67ef5645ba30fc5622e0d1f
+SHA256 (/boot/loader.conf) = c6a71a0f57a0ed3e47087b3095b8d2c1ca8f245d3da2d843a8792a919363ae69
+skep_agent is not running.
+  manual   storage                            datasets under zroot/skep
+                                                zroot/skep
+                                                zroot/skep/jail
+                                                zroot/skep/templates
+                                                zroot/skep/templates/02cb4aff-f6bf-4108-8169-ebb97ecbfa25
+                                                zroot/skep/vm
+                                                $ zfs destroy -r zroot/skep
+  service skep_agent stop
+  sysrc -f /boot/loader.conf -x vmm_load
+  sysrc -f /boot/loader.conf -x nmdm_load
+  delete the kern.racct.enable line from /boot/loader.conf
+  sysrc -x kld_list
+  sysrc -x cloned_interfaces
+  sysrc -x ifconfig_vtnet1
+  sysrc -x ifconfig_bridge0
+  sysrc -x skep_agent_enable
+  sysrc -x skep_api_enable
+  rm -rf /var/db/skep/agent
+  rm -rf /var/db/skep/api
+  rm -rf /var/db/skep/backup
+  rm -rf /var/db/skep/media
+  rm -rf /usr/local/etc/skep/agent.json
+  rm -rf /usr/local/etc/skep/api.json
+  pw userdel skep; pw groupdel skep
+done: journal /var/db/skep/setup/20261122T193804Z. Now remove the files: pkg delete skep
+rc=0
+hostname="langrishe.greenbean.org"
+ifconfig_vtnet0="inet 10.79.20.82 netmask 255.255.255.0"
+defaultrouter="10.79.20.1"
+sshd_enable="YES"
+moused_nondefault_enable="NO"
+# Set dumpdev to "AUTO" to enable crash dumps, "NO" to disable
+dumpdev="AUTO"
+zfs_enable="YES"
+---
+kern.geom.label.disk_ident.enable="0"
+kern.geom.label.gptid.enable="0"
+zfs_load="YES"
+hw.vmm.vmx.cap.virtual_interrupt_delivery="0"
+SHA256 (/etc/rc.conf) = fd574992f98b7711b768422c905e276d0a92ff4758fabc7bd3ed4ac12d3c3729
+SHA256 (/boot/loader.conf) = a27b0c57033768f0d3a4a53e692b959fc985d70c28c3fc539896b91b84d1bdd9
+-rw-r--r--  1 root wheel 132 Nov 22 14:38 /boot/loader.conf
+-rw-r--r--  1 root wheel 262 Nov 22 14:38 /etc/rc.conf
+id: skep: no such user
+pw: unknown group `skep'
+total 35
+drwxr-xr-x   3 root wheel  3 Nov 22 14:38 .
+drwxr-xr-x  14 root wheel 16 Nov 22 14:28 ..
+drwx------   5 root wheel  5 Nov 22 14:38 setup
+agent.json.sample
+api.json.sample
+NAME                                                        USED  AVAIL  REFER  MOUNTPOINT
+zroot/skep                                                 98.8M  27.1G    96K  /zroot/skep
+zroot/skep/jail                                              96K  27.1G    96K  /zroot/skep/jail
+zroot/skep/templates                                       98.5M  27.1G    96K  /zroot/skep/templates
+zroot/skep/templates/02cb4aff-f6bf-4108-8169-ebb97ecbfa25  98.4M  27.1G  98.4M  /zroot/skep/templates/02cb4aff-f6bf-4108-8169-ebb97ecbfa25
+zroot/skep/vm                                                96K  27.1G    96K  /zroot/skep/vm
+=== pkg delete
+[1/1] Deleting files for skep-0.1.1: .......... done
+rc=0
+package gone
+ls: /usr/local/etc/skep: No such file or directory

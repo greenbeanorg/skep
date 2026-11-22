@@ -1,0 +1,202 @@
+hw.vmm.vmx.cap.virtual_interrupt_delivery="0"
+vmm_load="YES"
+nmdm_load="YES"
+ls: /var/db/skep/setup/*: No such file or directory
+/var/db/skep:
+total 24
+drwxr-xr-x   3 root wheel 512 Nov 22 13:47 .
+drwxr-xr-x  15 root wheel 512 Nov 22 13:47 ..
+drwx------   3 root wheel 512 Nov 22 13:47 setup
+{
+  "format": 1,
+  "id": "20261122T184709Z",
+  "command": "apply",
+  "skep_version": "0.1.0 (commit e8836a8, built 2026-11-22T18:44:31Z, go1.27.4 freebsd/amd64)",
+  "started_at": "2026-11-22T18:47:09.453432011Z",
+  "complete": false,
+  "entries": [
+    {
+      "action": {
+        "type": "sysrc",
+        "file": "/boot/loader.conf",
+        "name": "vmm_load",
+        "op": "=",
+        "value": "YES"
+      },
+      "file": "/boot/loader.conf",
+      "backup": "files/boot_loader.conf",
+      "before_sha256": "75cecdcc65cb2d69ba01812ee2b9a7c153827a3a34afe2ab186aaf0f6d98f760",
+      "after_sha256": "f92a35080259265fab084792de1babebf51ad77ca42e27854b5d3d11222696d8",
+      "done": true
+    },
+    {
+      "action": {
+        "type": "sysrc",
+        "file": "/boot/loader.conf",
+        "name": "nmdm_load",
+        "op": "=",
+        "value": "YES"
+      },
+      "file": "/boot/loader.conf",
+      "after_sha256": "3d0bf555649329921da73ddbf465513414abffde877474dab64f513917e97eeb",
+      "done": true
+    },
+    {
+      "action": {
+        "type": "sysrc",
+        "file": "/boot/loader.conf",
+        "name": "kern.racct.enable",
+        "op": "=",
+        "value": "1"
+      },
+      "file": "/boot/loader.conf",
+      "after_sha256": "3d0bf555649329921da73ddbf465513414abffde877474dab64f513917e97eeb",
+      "done": false,
+      "error": "sysrc -f /boot/loader.conf kern.racct.enable=1: exit status 1: sysrc: kern.racct.enable: name contains characters not allowed in shell"
+    },
+    {
+      "action": {
+        "type": "sysrc",
+        "file": "/etc/rc.conf",
+        "name": "kld_list",
+        "op": "+=",
+        "value": "if_epair netgraph ng_socket ng_ether ng_bpf"
+      },
+      "done": false
+    },
+    {
+      "action": {
+        "type": "sysrc",
+        "file": "/etc/rc.conf",
+        "name": "zfs_enable",
+        "op": "=",
+        "value": "YES"
+      },
+      "done": false
+    },
+    {
+      "action": {
+        "type": "sysrc",
+        "file": "/etc/rc.conf",
+        "name": "cloned_interfaces",
+        "op": "+=",
+        "value": "bridge0"
+      },
+      "done": false
+    },
+    {
+      "action": {
+        "type": "sysrc",
+        "file": "/etc/rc.conf",
+        "name": "ifconfig_vtnet1",
+        "op": "=",
+        "value": "up"
+      },
+      "done": false
+    },
+    {
+      "action": {
+        "type": "sysrc",
+        "file": "/etc/rc.conf",
+        "name": "ifconfig_bridge0",
+        "op": "=",
+        "value": "addm vtnet1 ifuntagged vtnet1 1 defuntagged 1 vlanfilter up"
+      },
+      "done": false
+    },
+    {
+      "action": {
+        "type": "sysrc",
+        "file": "/etc/rc.conf",
+        "name": "skep_agent_enable",
+        "op": "=",
+        "value": "YES"
+      },
+      "done": false
+    },
+    {
+      "action": {
+        "type": "sysrc",
+        "file": "/etc/rc.conf",
+        "name": "skep_api_enable",
+        "op": "=",
+        "value": "YES"
+      },
+      "done": false
+    },
+    {
+      "action": {
+        "type": "write",
+        "file": "/usr/local/etc/skep/agent.json",
+        "mode": 384,
+        "owner": "root",
+        "group": "wheel"
+      },
+      "done": false
+    },
+    {
+      "action": {
+        "type": "write",
+        "file": "/usr/local/etc/skep/api.json",
+        "mode": 416,
+        "owner": "root",
+        "group": "skep"
+      },
+      "done": false
+    },
+    {
+      "action": {
+        "type": "mkdir",
+        "file": "/var/db/skep/media",
+        "mode": 448,
+        "owner": "root",
+        "group": "wheel"
+      },
+      "done": false
+    },
+    {
+      "action": {
+        "type": "service-start",
+        "service": "skep_agent"
+      },
+      "done": false
+    },
+    {
+      "action": {
+        "type": "service-start",
+        "service": "skep_api"
+      },
+      "done": false
+    },
+    {
+      "action": {
+        "type": "admin-create",
+        "username": "admin"
+      },
+      "done": false
+    }
+  ]
+}
+--- plan (must refuse: unfinished run)
+  refuse   journal                            apply 20261122T184709Z
+                                                an earlier run did not finish; run skep-setup rollback 20261122T184709Z first
+skep-setup: refused: apply would change nothing until the refused items are resolved
+  7 ok, 14 to add, 0 warnings, 0 conflicts, 3 for you, 1 refused
+rc=0
+--- rollback
+  restored /boot/loader.conf
+rolled back 20261122T184709Z
+rc=0
+SHA256 (/etc/rc.conf) = 1c8ad78602c576494bb5c8c2b9d4a1ac4ec8aec1d84686bbdc19ea1f3f900113
+SHA256 (/boot/loader.conf) = 75cecdcc65cb2d69ba01812ee2b9a7c153827a3a34afe2ab186aaf0f6d98f760
+/var/db/skep:
+total 24
+drwxr-xr-x   3 root wheel 512 Nov 22 13:47 .
+drwxr-xr-x  15 root wheel 512 Nov 22 13:47 ..
+drwx------   3 root wheel 512 Nov 22 13:47 setup
+
+/var/db/skep/setup:
+total 24
+drwx------  3 root wheel 512 Nov 22 13:47 .
+drwxr-xr-x  3 root wheel 512 Nov 22 13:47 ..
+drwx------  3 root wheel 512 Nov 22 13:47 20261122T184709Z

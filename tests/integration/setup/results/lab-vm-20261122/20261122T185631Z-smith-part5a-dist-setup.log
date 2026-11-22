@@ -1,0 +1,31 @@
+total 160876
+drwxr-xr-x  2 root wheel       512 Nov 22 13:56 .
+drwxr-xr-x  7 root wheel       512 Nov 22 13:56 ..
+-rw-r--r--  1 root wheel      1044 Nov 22 13:56 MANIFEST
+-rw-r--r--  1 root wheel 164624792 Nov 22 13:56 base.txz
+SHA256 (/usr/local/etc/skep/agent.json) = 81870917ba661871df7a47e64f37299d6ef4c04302520b22179891337fe66a26
+SHA256 (/var/tmp/agent.json.setup-orig) = 81870917ba661871df7a47e64f37299d6ef4c04302520b22179891337fe66a26
+-rw-------  1 root wheel 296 Nov 22 13:56 /usr/local/etc/skep/agent.json
+{
+  "storage": {
+    "pools": [
+      "tank"
+    ],
+    "directories": [],
+    "dataset_root": "skep",
+    "media_dir": "/var/db/skep/media",
+    "dist_dir": "/var/db/skep/dist"
+  },
+  "network": {
+    "bridges": [
+      "bridge0"
+    ],
+    "management_interfaces": [
+      "vtnet0"
+    ]
+  }
+}
+Stopping skep_agent.
+Waiting for PIDS: 2278.
+Starting skep_agent.
+skep_agent is running as pid 2796 (supervisor pid 2795).

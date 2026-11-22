@@ -1,0 +1,119 @@
+{"host_release":"15.1-RELEASE-p7","pkgbase":{"available":true},"packages":["FreeBSD-set-minimal","FreeBSD-ssh"],"dist":{"available":false,"reason":"storage.dist_dir is not set in the agent's configuration"}}
+
+HTTP 200
+{"template":{"id":"02cb4aff-f6bf-4108-8169-ebb97ecbfa25","name":"base151","pool":"zroot","source":"pkgbase","packages":["FreeBSD-set-minimal","FreeBSD-ssh"],"provisioned":false,"patch_differs":false,"has_sshd":false,"used_bytes":0,"created_at":"2026-11-22T19:30:02.231Z"},"task":{"id":"c42b39b8-68fc-4d88-bcd0-20d955b9ecd2","node_id":"91400eab-59c2-40f2-beb3-dff777c2b1fc","type":"container.template.create","status":"pending","resource_type":"container_template","resource_id":"02cb4aff-f6bf-4108-8169-ebb97ecbfa25","actor":{"id":"ab127f5f-47b8-4385-85dc-e3b7fcc3b0d2","name":"admin"},"request_id":"17fc93f0e0f428bc5602c3b4","cancellable":true,"created_at":"2026-11-22T19:30:02.231Z"}}
+
+HTTP 202
+ID:           c42b39b8-68fc-4d88-bcd0-20d955b9ecd2
+Type:         container.template.create
+Status:       succeeded
+Resource:     container_template 02cb4aff-f6bf-4108-8169-ebb97ecbfa25
+Created:      2026-11-22 19:30:02Z
+Started:      2026-11-22 19:30:02Z
+Finished:     2026-11-22 19:30:46Z
+
+Events:
+  2026-11-22 19:30:02Z  state     info  task is pending
+  2026-11-22 19:30:02Z  state     info  task is running
+  2026-11-22 19:30:02Z  progress  info  checking the templates directory
+  2026-11-22 19:30:02Z  progress  info  recording the host files
+  2026-11-22 19:30:02Z  progress  info  creating the template dataset
+  2026-11-22 19:30:02Z  progress  info  installing the base packages (scripts and triggers off)
+  2026-11-22 19:30:44Z  progress  info  checking the package scripts against the allowlist
+  2026-11-22 19:30:44Z  progress  info  checking the trigger files against the allowlist
+  2026-11-22 19:30:44Z  progress  info  checking the template's release
+  2026-11-22 19:30:44Z  progress  info  starting the build jail
+  2026-11-22 19:30:44Z  progress  info  running /usr/sbin/certctl rehash in the build jail
+  2026-11-22 19:30:44Z  progress  info  running /usr/sbin/pwd_mkdb -i -p -d /etc /etc/master.passwd in the build jail
+  2026-11-22 19:30:44Z  progress  info  running /usr/sbin/services_mkdb -l -q -o /var/db/services.db /etc/services in the build jail
+  2026-11-22 19:30:44Z  progress  info  running /usr/bin/cap_mkdb -l /etc/login.conf in the build jail
+  2026-11-22 19:30:44Z  progress  info  running /usr/bin/makewhatis /usr/share/man in the build jail
+  2026-11-22 19:30:45Z  progress  info  running /usr/bin/makewhatis /usr/share/openssl/man in the build jail
+  2026-11-22 19:30:45Z  progress  info  removing the build jail
+  2026-11-22 19:30:45Z  progress  info  checking for deferred triggers
+  2026-11-22 19:30:45Z  progress  info  checking that the template holds no SSH host keys
+  2026-11-22 19:30:45Z  progress  info  removing the repository catalogues and checking the package cache
+  2026-11-22 19:30:45Z  progress  info  comparing the host files
+  2026-11-22 19:30:46Z  progress  info  removing the work area
+  2026-11-22 19:30:46Z  progress  info  taking @skep-base
+  2026-11-22 19:30:46Z  state     info  task is succeeded
+{"items":[{"id":"02cb4aff-f6bf-4108-8169-ebb97ecbfa25","name":"base151","pool":"zroot","source":"pkgbase","packages":["FreeBSD-set-minimal","FreeBSD-ssh"],"provisioned":true,"release":"15.1-RELEASE-p7","host_release":"15.1-RELEASE-p7","patch_differs":false,"has_sshd":true,"used_bytes":103219200,"created_at":"2026-11-22T19:30:02.231Z"}]}
+
+HTTP 200
+Status:       succeeded
+Status:       succeeded
+skepctl: the pool is not in storage.pools or storage.directories of the agent's configuration (HTTP 422, pool_not_allowed), request a86e4885ce2a1fd2703398c7
+{"name":"smokevm1","cpu_count":1,"memory":"512M","disks":[{"size":"2G","pool":"zroot","thin":true}],"nics":[{"bridge":"bridge0"}]}
+VM smokevm1 (ce71af8f-4924-42b2-8ee6-bd8568e603ff) created; task 397736f0-5bb4-4f57-a4b0-a81603427c56 is succeeded
+vm.start smokevm1: task 8c5e6a63-204f-4737-bbbd-5c38f36b8f4a is succeeded
+NAME                                                      VOLMODE
+zroot/skep/vm/ce71af8f-4924-42b2-8ee6-bd8568e603ff/disk0  dev
+total 1
+dr-xr-xr-x  3 root wheel 512 Nov 22 14:31 zroot
+
+/dev/zvol/zroot:
+total 1
+dr-xr-xr-x  3 root wheel 512 Nov 22 14:31 skep
+
+/dev/zvol/zroot/skep:
+total 1
+dr-xr-xr-x  3 root wheel 512 Nov 22 14:31 vm
+zfs-2.4.2-1-FreeBSD_g6330a45b0
+zfs-kmod-2.4.2-1-FreeBSD_g6330a45b0
+total 1
+dr-xr-xr-x  3 root wheel     512 Nov 22 14:31 vm
+crw-r-----  1 root operator 0x8e Nov 22 14:31 zvtest-default
+-- default->dev
+total 1
+dr-xr-xr-x  3 root wheel 512 Nov 22 14:31 vm
+vfs.zfs.vol.mode: 1
+bootenvs[0]="zfs:zroot/ROOT/default"
+currdev="zfs:zroot/ROOT/default:"
+loaddev="zfs:zroot/ROOT/default:"
+vfs.root.mountfrom="zfs:zroot/ROOT/default"
+zfs_be_active="zfs:zroot/ROOT/default"
+zfs_be_currpage="1"
+zfs_be_root="zroot/ROOT"
+zfs_load="YES"
+== 10.79.20.82 (zroot)
+vm zvt4 zvt5 
+== 10.79.20.81 (tank)
+zvt4 zvt5 
+zvt1 after 1s: none
+zvt2 after 1s: none
+zvt3 after 1s: none
+zvt4 after 1s: none
+zvt5 after 1s: none
+zvt6 after 1s: node
+after 15s: vm zvt6 
+created: vm zvt6 
+after none->dev: vm zvt1 zvt2 zvt3 zvt4 zvt5 zvt6 
+after geom->dev: vm zvt1 zvt2 zvt3 zvt4 zvt5 zvt6 
+skep-1f787124-68b3-4d7f-8f3d-b4debfb2f1b9
+skep-ce71af8f-4924-42b2-8ee6-bd8568e603ff
+  Name: skf_epair0a     Type: bpf             ID: 00000008   Num hooks: 2
+  Name: skf_tap0        Type: bpf             ID: 00000010   Num hooks: 2
+	bridge flags=1<VLANFILTER> defuntagged=1
+	member: tap0 flags=143<LEARNING,DISCOVER,AUTOEDGE,AUTOPTP>
+	        port 8 priority 128 path cost 2000000 vlan protocol 802.1q untagged 1
+	member: epair0a flags=143<LEARNING,DISCOVER,AUTOEDGE,AUTOPTP>
+	        port 5 priority 128 path cost 2000 vlan protocol 802.1q untagged 1
+	member: vtnet1 flags=143<LEARNING,DISCOVER,AUTOEDGE,AUTOPTP>
+	        port 2 priority 128 path cost 2000 vlan protocol 802.1q untagged 1
+	ether 02:95:b8:a2:06:77
+	inet 10.79.60.128 netmask 0xffffff00 broadcast 10.79.60.255
+{"status":"ok","version":"0.1.0","uptime_seconds":209,"checks":{"access_audit_archive":{"status":"ok","critical":false},"agent":{"status":"ok","critical":true},"audit_archive":{"status":"ok","critical":false},"bridge_vlan_unfiltered":{"status":"ok","critical":false},"database":{"status":"ok","critical":true},"orphaned_interfaces":{"status":"ok","critical":false},"port_filters":{"status":"ok","critical":false},"storage_capacity":{"status":"ok","critical":false},"storage_locked":{"status":"ok","critical":false}}}
+
+HTTP 200
+vm.stop smokevm1: task f6d64fc3-b8f8-43c6-8467-6c6d8df0f7b4 is succeeded
+vm.delete smokevm1: task 46d6cb00-bc16-40ba-849d-6ecf3bf51742 is succeeded
+Status:       succeeded
+Status:       succeeded
+ls: /dev/vmm: No such file or directory
+0
+NAME                                                        USED  AVAIL  REFER  MOUNTPOINT
+zroot/skep                                                 98.8M  27.1G    96K  /zroot/skep
+zroot/skep/jail                                              96K  27.1G    96K  /zroot/skep/jail
+zroot/skep/templates                                       98.5M  27.1G    96K  /zroot/skep/templates
+zroot/skep/templates/02cb4aff-f6bf-4108-8169-ebb97ecbfa25  98.4M  27.1G  98.4M  /zroot/skep/templates/02cb4aff-f6bf-4108-8169-ebb97ecbfa25
+zroot/skep/vm                                                96K  27.1G    96K  /zroot/skep/vm

@@ -1,0 +1,54 @@
+Status:       succeeded
+Status:       succeeded
+skep-048b918f-71d6-4465-b892-1765afed95dc
+Checking integrity... done (0 conflicting)
+Deinstallation has been requested for the following 1 packages (of 0 packages in the universe):
+
+Installed packages to be REMOVED:
+	skep: 0.1.2
+
+Number of packages to be removed: 1
+
+The operation will free 45 MiB.
+[1/1] Deinstalling skep-0.1.2...
+skep: refusing to remove the package while Skep guests are running:
+skep:   jail skep-048b918f-71d6-4465-b892-1765afed95dc
+skep: stop them first (web interface, skepctl, or the API), or run skep-setup remove --plan.
+skep: pkg delete -f overrides this check.
+[1/1] Deleting files for skep-0.1.2: pkg: DEINSTALL script failed
+.......... done
+pkg delete rc=0
+pkg: No package(s) matching skep
+ls: /usr/local/sbin/skep-agent: No such file or directory
+Extracting skep-0.1.2: .......... done
+skep-0.1.2
+Stopping skep_api.
+Waiting for PIDS: 11365.
+Stopping skep_agent.
+Waiting for PIDS: 11279.
+Starting skep_agent.
+Starting skep_api.
+skep_agent is running as pid 12983 (supervisor pid 12981).
+skep_api is running as pid 13066 (supervisor pid 13064).
+skep-048b918f-71d6-4465-b892-1765afed95dc
+=== DEVELOPER_MODE=yes pkg delete (diagnostic)
+Updating database digests format: . done
+Checking integrity... done (0 conflicting)
+Deinstallation has been requested for the following 1 packages (of 0 packages in the universe):
+
+Installed packages to be REMOVED:
+	skep: 0.1.2
+
+Number of packages to be removed: 1
+
+The operation will free 45 MiB.
+[1/1] Deinstalling skep-0.1.2...
+skep: refusing to remove the package while Skep guests are running:
+skep:   jail skep-048b918f-71d6-4465-b892-1765afed95dc
+skep: stop them first (web interface, skepctl, or the API), or run skep-setup remove --plan.
+skep: pkg delete -f overrides this check.
+pkg: DEINSTALL script failed
+rc=3
+skep-0.1.2
+/usr/local/sbin/skep-agent
+DEVELOPER_MODE = false;

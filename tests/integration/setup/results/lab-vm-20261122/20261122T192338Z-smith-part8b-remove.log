@@ -1,0 +1,350 @@
+Status:       succeeded
+=== remove -plan (stopped guest exists)
+skep-setup remove, root / (read-only; nothing was changed)
+  refuse   guests                             0 VM(s) and 1 jail(s) exist (0 running)
+                                                delete them first, or use --keep-guests to leave them unmanaged
+  add      services                           stop skep_api
+                                                -> service skep_api stop
+  add      services                           stop skep_agent
+                                                -> service skep_agent stop
+                                                running guests keep running
+  ok       host                               lines setup added to rc.conf and loader.conf
+                                                kept (use --revert-host to remove them where unchanged)
+  add      /etc/rc.conf                       skep_agent_enable="NO"
+                                                -> sysrc skep_agent_enable="NO"
+  add      /etc/rc.conf                       skep_api_enable="NO"
+                                                -> sysrc skep_api_enable="NO"
+  ok       data                               /var/db/skep, agent.json, api.json, the skep account
+                                                kept (use --purge-data to delete them)
+  manual   storage                            datasets under tank/skep
+                                                setup never destroys a dataset; destroy them yourself once nothing uses them:
+                                                tank/skep
+                                                tank/skep/jail
+                                                tank/skep/jail/048b918f-71d6-4465-b892-1765afed95dc
+                                                tank/skep/templates
+                                                tank/skep/templates/e0ae4cf9-a168-4c15-ab2f-cdedc3f54499
+                                                tank/skep/vm
+                                                $ zfs destroy -r tank/skep
+  manual   package                            then remove the files
+                                                $ pkg delete skep
+  2 ok, 4 to add, 0 warnings, 0 conflicts, 2 for you, 1 refused
+skep-setup: refused: nothing was changed
+rc=3
+=== remove -yes
+skep-setup remove, root /
+  refuse   guests                             0 VM(s) and 1 jail(s) exist (0 running)
+                                                delete them first, or use --keep-guests to leave them unmanaged
+  add      services                           stop skep_api
+                                                -> service skep_api stop
+  add      services                           stop skep_agent
+                                                -> service skep_agent stop
+                                                running guests keep running
+  ok       host                               lines setup added to rc.conf and loader.conf
+                                                kept (use --revert-host to remove them where unchanged)
+  add      /etc/rc.conf                       skep_agent_enable="NO"
+                                                -> sysrc skep_agent_enable="NO"
+  add      /etc/rc.conf                       skep_api_enable="NO"
+                                                -> sysrc skep_api_enable="NO"
+  ok       data                               /var/db/skep, agent.json, api.json, the skep account
+                                                kept (use --purge-data to delete them)
+  manual   storage                            datasets under tank/skep
+                                                setup never destroys a dataset; destroy them yourself once nothing uses them:
+                                                tank/skep
+                                                tank/skep/jail
+                                                tank/skep/jail/048b918f-71d6-4465-b892-1765afed95dc
+                                                tank/skep/templates
+                                                tank/skep/templates/e0ae4cf9-a168-4c15-ab2f-cdedc3f54499
+                                                tank/skep/vm
+                                                $ zfs destroy -r tank/skep
+  manual   package                            then remove the files
+                                                $ pkg delete skep
+  2 ok, 4 to add, 0 warnings, 0 conflicts, 2 for you, 1 refused
+skep-setup: refused: nothing was changed
+rc=3
+Status:       succeeded
+SHA256 (/etc/rc.conf) = 9d59643908f97aa91a887f3434893e8d3ad243dac6821d32395ecce8af75a233
+SHA256 (/boot/loader.conf) = 36d2a35e2081aa4224b9dee7632e0d8bf431b3e29591ae0317c2778442ff14b8
+=== remove -yes (default)
+skep-setup remove, root /
+  ok       guests                             no Skep guests
+  add      services                           stop skep_api
+  add      services                           stop skep_agent
+  ok       host                               lines setup added to rc.conf and loader.conf
+  add      /etc/rc.conf                       skep_agent_enable="NO"
+  add      /etc/rc.conf                       skep_api_enable="NO"
+  ok       data                               /var/db/skep, agent.json, api.json, the skep account
+  manual   storage                            datasets under tank/skep
+  manual   package                            then remove the files
+  3 ok, 4 to add, 0 warnings, 0 conflicts, 2 for you, 0 refused
+  service skep_api stop
+  service skep_agent stop
+  sysrc skep_agent_enable="NO"
+  sysrc skep_api_enable="NO"
+done: journal /var/db/skep/setup/20261122T192352Z. Now remove the files: pkg delete skep
+rc=0
+skep_agent is not running.
+skep_api is not running.
+skep_agent_enable="NO"
+skep_api_enable="NO"
+SHA256 (/etc/rc.conf) = f9a8fe2b33dbfd610e84ab6dcaad2215943fcc0ff6748c8b637266d63156c4c9
+SHA256 (/boot/loader.conf) = 36d2a35e2081aa4224b9dee7632e0d8bf431b3e29591ae0317c2778442ff14b8
+/var/db/skep:
+agent
+api
+backup
+dist
+media
+setup
+
+/var/db/skep/setup:
+20261122T184709Z
+20261122T185105Z
+20261122T185331Z
+20261122T192352Z
+agent.json
+agent.json.sample
+api.json
+api.json.sample
+uid=409(skep) gid=409(skep) groups=409(skep)
+  restored /etc/rc.conf
+  kept     skep_agent: rollback does not start services again
+  kept     skep_api: rollback does not start services again
+rolled back 20261122T192352Z
+rc=0
+skep_agent_enable="YES"
+skep_api_enable="YES"
+SHA256 (/etc/rc.conf) = 9d59643908f97aa91a887f3434893e8d3ad243dac6821d32395ecce8af75a233
+SHA256 (/boot/loader.conf) = 36d2a35e2081aa4224b9dee7632e0d8bf431b3e29591ae0317c2778442ff14b8
+skep_agent is not running.
+=== check after rollback
+skep-setup check, root / (read-only; nothing was changed)
+  17 ok, 2 to add, 0 warnings, 0 conflicts, 1 for you, 0 refused
+  manual   packages                           FreeBSD-base repository
+  add      services                           start skep_agent
+  add      services                           start skep_api
+=== remove -revert-host -purge-data -plan
+skep-setup remove, root / (read-only; nothing was changed)
+  ok       guests                             no Skep guests
+  add      services                           stop skep_api
+                                                -> service skep_api stop
+  add      services                           stop skep_agent
+                                                -> service skep_agent stop
+  add      /boot/loader.conf                  sysrc -f /boot/loader.conf -x vmm_load
+                                                -> sysrc -f /boot/loader.conf -x vmm_load
+  add      /boot/loader.conf                  sysrc -f /boot/loader.conf -x nmdm_load
+                                                -> sysrc -f /boot/loader.conf -x nmdm_load
+  add      /boot/loader.conf                  delete the kern.racct.enable line from /boot/loader.conf
+                                                -> delete the kern.racct.enable line from /boot/loader.conf
+  add      /etc/rc.conf                       sysrc kld_list-="if_epair netgraph ng_socket ng_ether ng_bpf"
+                                                -> sysrc kld_list-="if_epair netgraph ng_socket ng_ether ng_bpf"
+  add      /etc/rc.conf                       sysrc -x zfs_enable
+                                                -> sysrc -x zfs_enable
+  add      /etc/rc.conf                       sysrc cloned_interfaces-="bridge0"
+                                                -> sysrc cloned_interfaces-="bridge0"
+  add      /etc/rc.conf                       sysrc -x ifconfig_vtnet1
+                                                -> sysrc -x ifconfig_vtnet1
+  add      /etc/rc.conf                       sysrc -x ifconfig_bridge0
+                                                -> sysrc -x ifconfig_bridge0
+  add      /etc/rc.conf                       sysrc -x skep_agent_enable
+                                                -> sysrc -x skep_agent_enable
+  add      /etc/rc.conf                       sysrc -x skep_api_enable
+                                                -> sysrc -x skep_api_enable
+  manual   host                               the running system
+  warn     data                               --purge-data
+  add      data                               delete /var/db/skep/agent
+                                                -> rm -rf /var/db/skep/agent
+  add      data                               delete /var/db/skep/api
+                                                -> rm -rf /var/db/skep/api
+  add      data                               delete /var/db/skep/backup
+                                                -> rm -rf /var/db/skep/backup
+  add      data                               delete /var/db/skep/dist
+                                                -> rm -rf /var/db/skep/dist
+  add      data                               delete /var/db/skep/media
+                                                -> rm -rf /var/db/skep/media
+  add      config                             delete /usr/local/etc/skep/agent.json
+                                                -> rm -rf /usr/local/etc/skep/agent.json
+  add      config                             delete /usr/local/etc/skep/api.json
+                                                -> rm -rf /usr/local/etc/skep/api.json
+  add      account                            delete the skep user and group
+                                                -> pw userdel skep; pw groupdel skep
+  manual   storage                            datasets under tank/skep
+                                                $ zfs destroy -r tank/skep
+  manual   package                            then remove the files
+                                                $ pkg delete skep
+  1 ok, 20 to add, 1 warnings, 0 conflicts, 3 for you, 0 refused
+=== run
+skep-setup remove, root /
+  ok       guests                             no Skep guests
+  add      services                           stop skep_api
+                                                -> service skep_api stop
+  add      services                           stop skep_agent
+                                                -> service skep_agent stop
+                                                running guests keep running
+  add      /boot/loader.conf                  sysrc -f /boot/loader.conf -x vmm_load
+                                                -> sysrc -f /boot/loader.conf -x vmm_load
+                                                added by skep-setup and unchanged since
+  add      /boot/loader.conf                  sysrc -f /boot/loader.conf -x nmdm_load
+                                                -> sysrc -f /boot/loader.conf -x nmdm_load
+                                                added by skep-setup and unchanged since
+  add      /boot/loader.conf                  delete the kern.racct.enable line from /boot/loader.conf
+                                                -> delete the kern.racct.enable line from /boot/loader.conf
+                                                added by skep-setup and unchanged since
+  add      /etc/rc.conf                       sysrc kld_list-="if_epair netgraph ng_socket ng_ether ng_bpf"
+                                                -> sysrc kld_list-="if_epair netgraph ng_socket ng_ether ng_bpf"
+                                                added by skep-setup and unchanged since
+  add      /etc/rc.conf                       sysrc -x zfs_enable
+                                                -> sysrc -x zfs_enable
+                                                added by skep-setup and unchanged since
+  add      /etc/rc.conf                       sysrc cloned_interfaces-="bridge0"
+                                                -> sysrc cloned_interfaces-="bridge0"
+                                                added by skep-setup and unchanged since
+  add      /etc/rc.conf                       sysrc -x ifconfig_vtnet1
+                                                -> sysrc -x ifconfig_vtnet1
+                                                added by skep-setup and unchanged since
+  add      /etc/rc.conf                       sysrc -x ifconfig_bridge0
+                                                -> sysrc -x ifconfig_bridge0
+                                                added by skep-setup and unchanged since
+  add      /etc/rc.conf                       sysrc -x skep_agent_enable
+                                                -> sysrc -x skep_agent_enable
+                                                added by skep-setup and unchanged since
+  add      /etc/rc.conf                       sysrc -x skep_api_enable
+                                                -> sysrc -x skep_api_enable
+                                                added by skep-setup and unchanged since
+  manual   host                               the running system
+                                                reverting boot-time lines unloads no module and destroys no interface; they go at the next boot, or now with ifconfig BRIDGE destroy once nothing uses the bridge
+  warn     data                               --purge-data
+                                                deletes the node identity, both databases, every audit log and archive, the database backups, the TLS key and the install media in /var/db/skep, and agent.json and api.json. It cannot be undone; setup's journals in /var/db/skep/setup are kept
+  add      data                               delete /var/db/skep/agent
+                                                -> rm -rf /var/db/skep/agent
+  add      data                               delete /var/db/skep/api
+                                                -> rm -rf /var/db/skep/api
+  add      data                               delete /var/db/skep/backup
+                                                -> rm -rf /var/db/skep/backup
+  add      data                               delete /var/db/skep/dist
+                                                -> rm -rf /var/db/skep/dist
+  add      data                               delete /var/db/skep/media
+                                                -> rm -rf /var/db/skep/media
+  add      config                             delete /usr/local/etc/skep/agent.json
+                                                -> rm -rf /usr/local/etc/skep/agent.json
+                                                a copy is kept in the journal
+  add      config                             delete /usr/local/etc/skep/api.json
+                                                -> rm -rf /usr/local/etc/skep/api.json
+                                                a copy is kept in the journal
+  add      account                            delete the skep user and group
+                                                -> pw userdel skep; pw groupdel skep
+                                                files still owned by it would show a bare number
+  manual   storage                            datasets under tank/skep
+                                                setup never destroys a dataset; destroy them yourself once nothing uses them:
+                                                tank/skep
+                                                tank/skep/jail
+                                                tank/skep/templates
+                                                tank/skep/templates/e0ae4cf9-a168-4c15-ab2f-cdedc3f54499
+                                                tank/skep/vm
+                                                $ zfs destroy -r tank/skep
+  manual   package                            then remove the files
+                                                $ pkg delete skep
+  1 ok, 20 to add, 1 warnings, 0 conflicts, 3 for you, 0 refused
+This deletes the node identity, both databases and every audit log, and cannot be undone. Delete them? [type yes to continue]   service skep_api stop
+    skep_api is not running
+  service skep_agent stop
+    skep_agent is not running
+  sysrc -f /boot/loader.conf -x vmm_load
+  sysrc -f /boot/loader.conf -x nmdm_load
+  delete the kern.racct.enable line from /boot/loader.conf
+  sysrc kld_list-="if_epair netgraph ng_socket ng_ether ng_bpf"
+  sysrc -x zfs_enable
+  sysrc cloned_interfaces-="bridge0"
+  sysrc -x ifconfig_vtnet1
+  sysrc -x ifconfig_bridge0
+  sysrc -x skep_agent_enable
+  sysrc -x skep_api_enable
+  rm -rf /var/db/skep/agent
+  rm -rf /var/db/skep/api
+  rm -rf /var/db/skep/backup
+  rm -rf /var/db/skep/dist
+  rm -rf /var/db/skep/media
+  rm -rf /usr/local/etc/skep/agent.json
+  rm -rf /usr/local/etc/skep/api.json
+  pw userdel skep; pw groupdel skep
+done: journal /var/db/skep/setup/20261122T192409Z. Now remove the files: pkg delete skep
+rc=0
+=== after
+hostname="smith.greenbean.org"
+ifconfig_vtnet0="inet 10.79.20.81/24"
+sshd_enable="YES"
+moused_nondefault_enable="NO"
+# Set dumpdev to "AUTO" to enable crash dumps, "NO" to disable
+dumpdev="AUTO"
+defaultrouter="10.79.20.1"
+kld_list=""
+cloned_interfaces=""
+---
+hw.vmm.vmx.cap.virtual_interrupt_delivery="0"
+SHA256 (/etc/rc.conf) = 5cffdb7adcb84c9f7982c24f6d24875a862153412838b835c1e317245feda444
+SHA256 (/boot/loader.conf) = 75cecdcc65cb2d69ba01812ee2b9a7c153827a3a34afe2ab186aaf0f6d98f760
+-rw-r--r--  1 root wheel  46 Nov 22 14:24 /boot/loader.conf
+-rw-r--r--  1 root wheel 255 Nov 22 14:24 /etc/rc.conf
+id: skep: no such user
+0
+/var/db/skep:
+total 24
+drwxr-xr-x   3 root wheel 512 Nov 22 14:24 .
+drwxr-xr-x  15 root wheel 512 Nov 22 13:47 ..
+drwx------   7 root wheel 512 Nov 22 14:24 setup
+
+/var/db/skep/setup:
+total 56
+drwx------  7 root wheel 512 Nov 22 14:24 .
+drwxr-xr-x  3 root wheel 512 Nov 22 14:24 ..
+drwx------  3 root wheel 512 Nov 22 13:47 20261122T184709Z
+drwx------  3 root wheel 512 Nov 22 13:51 20261122T185105Z
+drwx------  3 root wheel 512 Nov 22 13:53 20261122T185331Z
+drwx------  3 root wheel 512 Nov 22 14:23 20261122T192352Z
+drwx------  3 root wheel 512 Nov 22 14:24 20261122T192409Z
+total 32
+drwxr-xr-x  2 root wheel  512 Nov 22 14:24 .
+drwxr-xr-x  9 root wheel  512 Nov 22 14:14 ..
+-rw-r--r--  1 root wheel 1316 Nov 22 14:20 agent.json.sample
+-rw-r--r--  1 root wheel  822 Nov 22 14:20 api.json.sample
+NAME                                                       USED  AVAIL  REFER  MOUNTPOINT
+tank                                                       373M  14.7G   104K  /tank
+tank/skep                                                  372M  14.7G    96K  /tank/skep
+tank/skep/jail                                              96K  14.7G    96K  /tank/skep/jail
+tank/skep/templates                                        372M  14.7G    96K  /tank/skep/templates
+tank/skep/templates/e0ae4cf9-a168-4c15-ab2f-cdedc3f54499   372M  14.7G   372M  /tank/skep/templates/e0ae4cf9-a168-4c15-ab2f-cdedc3f54499
+tank/skep/vm                                                96K  14.7G    96K  /tank/skep/vm
+skep-setup remove, root / (read-only; nothing was changed)
+  ok       guests                             no Skep guests
+  add      services                           stop skep_api
+  add      services                           stop skep_agent
+  ok       /boot/loader.conf                  vmm_load
+  ok       /boot/loader.conf                  nmdm_load
+  ok       /boot/loader.conf                  kern.racct.enable
+  add      /etc/rc.conf                       sysrc -x kld_list
+  ok       /etc/rc.conf                       zfs_enable
+  add      /etc/rc.conf                       sysrc -x cloned_interfaces
+  ok       /etc/rc.conf                       ifconfig_vtnet1
+  ok       /etc/rc.conf                       ifconfig_bridge0
+  ok       /etc/rc.conf                       skep_agent_enable
+  ok       /etc/rc.conf                       skep_api_enable
+  manual   host                               the running system
+  ok       /etc/rc.conf                       skep_agent_enable
+  ok       /etc/rc.conf                       skep_api_enable
+  ok       data                               /var/db/skep, agent.json, api.json, the skep account
+  manual   package                            then remove the files
+  12 ok, 4 to add, 0 warnings, 0 conflicts, 2 for you, 0 refused
+  service skep_agent stop
+    skep_agent is not running
+  sysrc -x kld_list
+  sysrc -x cloned_interfaces
+done: journal /var/db/skep/setup/20261122T192615Z. Now remove the files: pkg delete skep
+rc=0
+hostname="smith.greenbean.org"
+ifconfig_vtnet0="inet 10.79.20.81/24"
+sshd_enable="YES"
+moused_nondefault_enable="NO"
+# Set dumpdev to "AUTO" to enable crash dumps, "NO" to disable
+dumpdev="AUTO"
+defaultrouter="10.79.20.1"
+SHA256 (/etc/rc.conf) = 1c8ad78602c576494bb5c8c2b9d4a1ac4ec8aec1d84686bbdc19ea1f3f900113
+SHA256 (/boot/loader.conf) = 75cecdcc65cb2d69ba01812ee2b9a7c153827a3a34afe2ab186aaf0f6d98f760

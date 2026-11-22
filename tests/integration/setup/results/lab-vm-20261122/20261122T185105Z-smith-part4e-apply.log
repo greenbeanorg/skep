@@ -1,0 +1,79 @@
+apply rc=0
+skep-setup apply, root /
+  add      /boot/loader.conf                  vmm_load="YES"
+                                                -> sysrc -f /boot/loader.conf vmm_load="YES"
+                                                bhyve; takes effect at the next boot (setup never reboots or runs kldload; now: kldload vmm)
+  add      /boot/loader.conf                  nmdm_load="YES"
+                                                -> sysrc -f /boot/loader.conf nmdm_load="YES"
+                                                VM serial consoles; takes effect at the next boot (now: kldload nmdm)
+  add      /boot/loader.conf                  kern.racct.enable="1"
+                                                -> append kern.racct.enable="1" to /boot/loader.conf
+                                                RACCT, which Skep's jail limits (RCTL) need; takes effect only after a reboot
+  add      /etc/rc.conf                       kld_list+="if_epair netgraph ng_socket ng_ether ng_bpf"
+                                                -> sysrc kld_list+="if_epair netgraph ng_socket ng_ether ng_bpf"
+                                                appended; nothing removed or reordered; loaded at the next boot (now: kldload if_epair netgraph ng_socket ng_ether ng_bpf)
+  add      /etc/rc.conf                       zfs_enable="YES"
+                                                -> sysrc zfs_enable="YES"
+                                                imports the pools at boot
+  add      /etc/rc.conf                       cloned_interfaces+="bridge0"
+                                                -> sysrc cloned_interfaces+="bridge0"
+                                                new bridge bridge0 on the spare uplink vtnet1, vlanfilter on (ADR 0011); takes effect at the next boot
+  add      /etc/rc.conf                       ifconfig_vtnet1="up"
+                                                -> sysrc ifconfig_vtnet1="up"
+                                                new bridge bridge0 on the spare uplink vtnet1, vlanfilter on (ADR 0011); takes effect at the next boot
+  add      /etc/rc.conf                       ifconfig_bridge0="addm vtnet1 ifuntagged vtnet1 1 defuntagged 1 vlanfilter up"
+                                                -> sysrc ifconfig_bridge0="addm vtnet1 ifuntagged vtnet1 1 defuntagged 1 vlanfilter up"
+                                                new bridge bridge0 on the spare uplink vtnet1, vlanfilter on (ADR 0011); takes effect at the next boot
+  manual   network                            bridge0 now
+                                                setup never runs ifconfig; to have the bridge before the next boot, run these from the console, in order
+                                                $ ifconfig bridge0 create
+                                                $ ifconfig vtnet1 up
+                                                $ ifconfig bridge0 addm vtnet1 ifuntagged vtnet1 1 defuntagged 1
+                                                $ ifconfig bridge0 vlanfilter up
+  add      /etc/rc.conf                       skep_agent_enable="YES"
+                                                -> sysrc skep_agent_enable="YES"
+  add      /etc/rc.conf                       skep_api_enable="YES"
+                                                -> sysrc skep_api_enable="YES"
+  add      config                             /usr/local/etc/skep/agent.json
+                                                -> write /usr/local/etc/skep/agent.json (0600 root:wheel)
+                                                the agent's allow-lists
+  add      config                             /usr/local/etc/skep/api.json
+                                                -> write /usr/local/etc/skep/api.json (0640 root:skep)
+                                                listen address 10.79.20.81:8443
+  add      storage                            /var/db/skep/media
+                                                -> mkdir /var/db/skep/media (0700 root:wheel)
+                                                install media; Skep only reads it
+  manual   packages                           edk2-bhyve
+                                                UEFI firmware for VMs is not installed; jails do not need it
+                                                $ pkg install edk2-bhyve
+  manual   packages                           FreeBSD-base repository
+                                                disabled; the pkgbase jail template source needs it (or use the dist source)
+                                                $ printf 'FreeBSD-base: { enabled: yes }\n' >> /usr/local/etc/pkg/repos/FreeBSD.conf
+  add      services                           start skep_agent
+                                                -> service skep_agent start
+  add      services                           start skep_api
+                                                -> service skep_api start
+  add      api                                first administrator admin
+                                                -> skep-api admin create --username admin (asks for the password, twice, without echo)
+                                                never a password in a flag, a file, or the journal
+  5 ok, 16 to add, 0 warnings, 0 conflicts, 3 for you, 0 refused
+  sysrc -f /boot/loader.conf vmm_load="YES"
+  sysrc -f /boot/loader.conf nmdm_load="YES"
+  append kern.racct.enable="1" to /boot/loader.conf
+  sysrc kld_list+="if_epair netgraph ng_socket ng_ether ng_bpf"
+  sysrc zfs_enable="YES"
+  sysrc cloned_interfaces+="bridge0"
+  sysrc ifconfig_vtnet1="up"
+  sysrc ifconfig_bridge0="addm vtnet1 ifuntagged vtnet1 1 defuntagged 1 vlanfilter up"
+  sysrc skep_agent_enable="YES"
+  sysrc skep_api_enable="YES"
+  write /usr/local/etc/skep/agent.json (0600 root:wheel)
+  write /usr/local/etc/skep/api.json (0640 root:skep)
+  mkdir /var/db/skep/media (0700 root:wheel)
+  service skep_agent start
+  service skep_api start
+  skep-api admin create --username admin (asks for the password, twice, without echo)
+Administrator "admin" created (user ID 72310b28-d442-4bc3-86ed-1d4159965eb4).
+done: 16 changes, journal /var/db/skep/setup/20261122T185105Z (undo with: skep-setup rollback 20261122T185105Z)
+RACCT takes effect only after a reboot; setup never reboots.
+3 item(s) are left to you; see "manual" above.

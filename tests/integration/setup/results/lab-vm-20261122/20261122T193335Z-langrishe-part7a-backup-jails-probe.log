@@ -1,0 +1,22 @@
+skep-agent db backup: /var/db/skep/backup/0.1.0-67fa267-20261122T193335Z/agent.db sha256 e1c0fda486ee721716c7def849301ff020268646bd4a30c4015c2970bb5bf3dc
+skep-api db backup: /var/db/skep/backup/0.1.0-67fa267-20261122T193335Z/api.db sha256 86b398227d5640232c4e9ebc4b9668c56c1a8bb0663e057942caa12989ba470e
+ls: /var/db/skep/backup/*/: No such file or directory
+Status:       succeeded
+Status:       succeeded
+Status:       succeeded
+Status:       succeeded
+skep-5b6be52f-2a1b-4815-b654-18760bdf16a6
+skep-4bd14313-fd4a-432c-9071-9dd2a88cae3d
+2.9.2
+Packing files for repository: .... done
+Extracting skep-pkgprobe-1.0: . done
+skeplocal is up to date.
+[1/1] Upgrading skep-pkgprobe from 1.0 to 1.1...
+[1/1] Extracting skep-pkgprobe-1.1: . done
+phase=pre-deinstall version=1.0
+PKG_UPGRADE=[true]
+[1/1] Deleting files for skep-pkgprobe-1.1: . done
+phase=pre-deinstall version=1.0
+PKG_UPGRADE=[true]
+phase=pre-deinstall version=1.1
+PKG_UPGRADE=[<unset>]

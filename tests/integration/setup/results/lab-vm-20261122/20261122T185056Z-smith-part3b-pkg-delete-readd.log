@@ -1,0 +1,32 @@
+Updating database digests format: . done
+Checking integrity... done (0 conflicting)
+Deinstallation has been requested for the following 1 packages (of 0 packages in the universe):
+
+Installed packages to be REMOVED:
+	skep: 0.1.0
+
+Number of packages to be removed: 1
+
+The operation will free 45 MiB.
+[1/1] Deinstalling skep-0.1.0...
+[1/1] Deleting files for skep-0.1.0: .......... done
+rc=0
+ls: /usr/local/sbin/skep-*: No such file or directory
+ls: /usr/local/etc/skep: No such file or directory
+uid=409(skep) gid=409(skep) groups=409(skep)
+total 24
+drwxr-xr-x   3 root wheel 512 Nov 22 13:47 .
+drwxr-xr-x  15 root wheel 512 Nov 22 13:47 ..
+drwx------   3 root wheel 512 Nov 22 13:47 setup
+SHA256 (/etc/rc.conf) = 1c8ad78602c576494bb5c8c2b9d4a1ac4ec8aec1d84686bbdc19ea1f3f900113
+SHA256 (/boot/loader.conf) = 75cecdcc65cb2d69ba01812ee2b9a7c153827a3a34afe2ab186aaf0f6d98f760
+Installing skep-0.1.0...
+Extracting skep-0.1.0: .......... done
+rc=0
+skep-setup 0.1.0 (commit bd406aa, built 2026-11-22T18:50:14Z, go1.27.4 freebsd/amd64)
+-r-xr-xr-x  1 root wheel 13779114 Nov 22 13:50 /usr/local/sbin/skep-agent
+-r-xr-xr-x  1 root wheel 14246058 Nov 22 13:50 /usr/local/sbin/skep-api
+-r-xr-xr-x  1 root wheel 11227306 Nov 22 13:50 /usr/local/sbin/skep-setup
+uid=409(skep) gid=409(skep) groups=409(skep)
+SHA256 (/etc/rc.conf) = 1c8ad78602c576494bb5c8c2b9d4a1ac4ec8aec1d84686bbdc19ea1f3f900113
+SHA256 (/boot/loader.conf) = 75cecdcc65cb2d69ba01812ee2b9a7c153827a3a34afe2ab186aaf0f6d98f760

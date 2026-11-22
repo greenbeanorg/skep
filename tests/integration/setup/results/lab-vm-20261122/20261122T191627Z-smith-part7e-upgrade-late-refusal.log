@@ -1,0 +1,112 @@
+19:16:27.325885730
+skep_api gone after 3 polls at 19:16:27
+202 Accepted 0.1.0+20c8731
+{"id":"ec810bf7-a76b-46c5-a158-ce04a7f2bba9","node_id":"21919a44-11d1-45a1-92db-d8d51f2e4f0c","type":"container.stop","status":"pending","resource_type":"container","resource_id":"57ea160b-f5b5-4568-9766-9bd0ffe35d60","actor":{"id":"lab-upgrade-test","name":"lab-upgrade-test"},"cancellable":false,"created_at":"2026-11-22T19:16:27.492Z"}
+
+upgrade rc=124
+  installed: skep-agent, skep-api and skep-setup are 0.1.1+20c8731
+  service skep_api stop
+  skep-agent db backup: /var/db/skep/backup/0.1.0+20c8731-20261122T191627Z/agent.db sha256 9a91c24e7e50018b7a7a160212f2eabdf0f706d68575aa6a2896344d0d58a28e
+  skep-api db backup: /var/db/skep/backup/0.1.0+20c8731-20261122T191627Z/api.db sha256 4ac24c4ac3fcb5c61dc411f0ad790f15195efbbf4eb284da82ee9276bdbcc19e
+  service skep_agent stop
+  skep_agent pid 9347 runs /usr/local/sbin/skep-agent at 0.1.1+20c8731
+  skep_api pid 9434 runs /usr/local/sbin/skep-api at 0.1.1+20c8731
+  health: ok
+upgraded to 0.1.1+20c8731; backups in /var/db/skep/backup/0.1.0+20c8731-20261122T191627Z
+--- after (19:18:27)
+skep_api is not running.
+skep_agent is not running.
+total 16
+drwx------  4 root skep 512 Nov 22 14:14 jails
+drwx------  2 root skep 512 Nov 22 14:09 vm
+0.1.0+20c8731-20261122T191627Z
+0.1.0-20c8731-20261122T191351Z
+=== API while mismatched (19:18:27)
+curl: (7) Failed to connect to 10.79.20.81 port 8443 after 0 ms: Could not connect to server
+
+HTTP 000
+curl: (7) Failed to connect to 10.79.20.81 port 8443 after 0 ms: Could not connect to server
+
+HTTP 000
+curl: (7) Failed to connect to 10.79.20.81 port 8443 after 0 ms: Could not connect to server
+
+HTTP 000
+
+skep-44c06b99-9333-4db7-9034-3b34396204d4
+skep-57ea160b-f5b5-4568-9766-9bd0ffe35d60
+  Name: skf_epair0a     Type: bpf             ID: 00000050   Num hooks: 2
+Starting skep_agent.
+Starting skep_api.
+skep_agent is running as pid 9771 (supervisor pid 9769).
+skep_api is running as pid 9856 (supervisor pid 9855).
+skep-agent 0.1.1 (commit 20c8731, built 2026-11-22T18:55:03Z, go1.27.4 freebsd/amd64)
+{"status":"ok","version":"0.1.1","uptime_seconds":3,"checks":{"access_audit_archive":{"status":"ok","critical":false},"agent":{"status":"ok","critical":true},"audit_archive":{"status":"ok","critical":false},"bridge_vlan_unfiltered":{"status":"ok","critical":false},"database":{"status":"ok","critical":true},"orphaned_interfaces":{"status":"ok","critical":false},"port_filters":{"status":"ok","critical":false},"storage_capacity":{"status":"ok","critical":false},"storage_locked":{"status":"ok","critical":false}}}
+
+HTTP 200
+{"id":"ec810bf7-a76b-46c5-a158-ce04a7f2bba9","node_id":"21919a44-11d1-45a1-92db-d8d51f2e4f0c","type":"container.stop","status":"interrupted","resource_type":"container","resource_id":"57ea160b-f5b5-4568-9766-9bd0ffe35d60","actor":{"id":"lab-upgrade-test","name":"lab-upgrade-test"},"cancellable":false,"error":{"code":"agent_shutdown","message":"the agent shut down while this task was running; it was not resumed"},"created_at":"2026-11-22T19:16:27.492Z","started_at":"2026-11-22T19:16:27.494Z","finished_at":"2026-11-22T19:16:27.529Z","events":[{"id":131,"kind":"state","level":"info","message":"task is pending","data":{"from":"","to":"pending"},"created_at":"2026-11-22T19:16:27.492Z"},{"id":132,
+	member: epair0a flags=143<LEARNING,DISCOVER,AUTOEDGE,AUTOPTP>
+	member: vtnet1 flags=143<LEARNING,DISCOVER,AUTOEDGE,AUTOPTP>
+vtnet0 vtnet1 lo0 bridge0 epair0a
+lo0
+ PID TT  STAT    TIME COMMAND
+8940  -  SCsJ 0:00.00 /usr/sbin/syslogd -s
+8943  -  IJ   0:00.00 syslogd: syslogd.casper (syslogd)
+8944  -  IsJ  0:00.00 syslogd: system.net (syslogd)
+9063  -  SsJ  0:00.00 /usr/sbin/cron -s
+9980  -  RJ   0:00.00 ps ax
+19:19:11
+{"id":"57ea160b-f5b5-4568-9766-9bd0ffe35d60","name":"upb","hostname":"upb","template_id":"e0ae4cf9-a168-4c15-ab2f-cdedc3f54499","template_name":"base151","pool":"tank","release":"15.1-RELEASE","options":{"sysvipc":false,"mlock":false},"limits":{},"nics":[{"id":"db17a5dd-642a-4d7d-9c82-cf2c38834ae0","slot":0,"bridge":"bridge0","mac_address":"02:b3:0d:af:f5:98","interface":"skep0","ipv4":{"mode":"dhcp"},"host_interface":"epair1a"}],"provisioned":true,"started_once":true,"desired_state":"stopped","state":"running","jid":4,"observed_at":"2026-11-22T19:16:27.574Z","created_at":"2026-11-22T19:13:57.42Z","updated_at":"2026-11-22T19:16:27.497Z"}
+
+HTTP 200
+
+Nov 22 14:16:27 smith kernel: epair1a: link state changed to DOWN
+Nov 22 14:16:27 smith kernel: skep0: link state changed to DOWN
+Nov 22 14:16:27 smith skep-api[2349]: {"time":"2026-11-22T14:16:27.016051826-05:00","level":"INFO","msg":"http request","method":"GET","path":"/api/v1/tasks/354d0ee8-8904-401b-b02c-3cd7b8feafca","status":200,"bytes":1195,"duration":928530,"remote":"10.79.20.80:37350","request_id":"9975efbc5b76bb0ae533d903"}
+Nov 22 14:16:27 smith skep-api[2349]: {"time":"2026-11-22T14:16:27.033446886-05:00","level":"INFO","msg":"http request","method":"GET","path":"/api/v1/tasks/354d0ee8-8904-401b-b02c-3cd7b8feafca","status":200,"bytes":1195,"duration":669706,"remote":"10.79.20.80:37366","request_id":"2128e0ff0c4e31f109804dd9"}
+Nov 22 14:16:27 smith skep-api[2349]: {"time":"2026-11-22T14:16:27.456160934-05:00","level":"INFO","msg":"shutting down"}
+Nov 22 14:16:27 smith skep-api[2349]: {"time":"2026-11-22T14:16:27.456243894-05:00","level":"INFO","msg":"stopped"}
+Nov 22 14:16:27 smith skep-agent[3097]: {"time":"2026-11-22T14:16:27.493984862-05:00","level":"INFO","msg":"task accepted","task_id":"ec810bf7-a76b-46c5-a158-ce04a7f2bba9","type":"container.stop","actor_id":"lab-upgrade-test","resource_type":"container","resource_id":"57ea160b-f5b5-4568-9766-9bd0ffe35d60"}
+Nov 22 14:16:27 smith skep-agent[3097]: {"time":"2026-11-22T14:16:27.52490979-05:00","level":"INFO","msg":"shutting down"}
+Nov 22 14:16:27 smith skep-agent[3097]: {"time":"2026-11-22T14:16:27.530285428-05:00","level":"INFO","msg":"task finished","task_id":"ec810bf7-a76b-46c5-a158-ce04a7f2bba9","type":"container.stop","status":"interrupted","error_code":"agent_shutdown"}
+Nov 22 14:16:27 smith skep-agent[3097]: {"time":"2026-11-22T14:16:27.530313501-05:00","level":"INFO","msg":"stopped"}
+Nov 22 14:16:27 smith skep-agent[9345]: {"time":"2026-11-22T14:16:27.564844952-05:00","level":"INFO","msg":"starting skep-agent","version":"0.1.1","commit":"20c8731","dev_mode":false,"data_dir":"/var/db/skep"}
+Nov 22 14:16:27 smith skep-agent[9345]: {"time":"2026-11-22T14:16:27.566935977-05:00","level":"INFO","msg":"database ready","path":"/var/db/skep/agent/agent.db","schema_version":5,"migrations_applied":0}
+Nov 22 14:16:27 smith skep-agent[9345]: {"time":"2026-11-22T14:16:27.567015323-05:00","level":"INFO","msg":"host confinement","pools":["tank"],"dataset_root":"skep","bridges":["bridge0"],"management_interfaces":["vtnet0"],"media_dir":"/var/db/skep/media","firmware_dir":"/usr/local/share/edk2-bhyve"}
+Nov 22 14:16:27 smith skep-agent[9345]: {"time":"2026-11-22T14:16:27.568156816-05:00","level":"INFO","msg":"jail locked-memory total","max_locked_memory_bytes":1062584320,"physical_memory_bytes":4250337280,"configured":false}
+Nov 22 14:16:27 smith skep-agent[9345]: {"time":"2026-11-22T14:16:27.568360335-05:00","level":"INFO","msg":"task engine started","workers":4,"queue_size":64,"interrupted":0}
+Nov 22 14:16:27 smith skep-agent[9345]: {"time":"2026-11-22T14:16:27.5697879-05:00","level":"INFO","msg":"task accepted","task_id":"3d975f8e-174e-43fa-a503-2cdb2856ba98","type":"discovery.refresh","actor_id":"system","resource_type":"node","resource_id":"21919a44-11d1-45a1-92db-d8d51f2e4f0c"}
+Nov 22 14:16:27 smith skep-agent[9345]: {"time":"2026-11-22T14:16:27.56982389-05:00","level":"INFO","msg":"retention configured","tasks_days":90,"audit_archive":true,"audit_live_days":0,"audit_archive_dir":"/var/db/skep/agent/audit-archive"}
+Nov 22 14:16:27 smith skep-agent[9345]: {"time":"2026-11-22T14:16:27.571614794-05:00","level":"INFO","msg":"task accepted","task_id":"68349527-c365-43bb-9c55-253bfcdb0ea7","type":"maintenance.retention","actor_id":"system","resource_type":"maintenance","resource_id":"retention"}
+Nov 22 14:16:27 smith skep-agent[9345]: {"time":"2026-11-22T14:16:27.572365537-05:00","level":"INFO","msg":"retention run finished","tasks_removed":0,"events_removed":0,"audit_archive_error":null}
+Nov 22 14:16:27 smith skep-agent[9345]: {"time":"2026-11-22T14:16:27.572926348-05:00","level":"INFO","msg":"task finished","task_id":"68349527-c365-43bb-9c55-253bfcdb0ea7","type":"maintenance.retention","status":"succeeded","error_code":""} {"time":"2026-11-22T14:16:27.573000097-05:00","level":"INFO","msg":"templates: build jail sweep finished","event":"build_jail_sweep","found":0,"removed":0,"failed":0}
+Nov 22 14:16:27 smith skep-agent[9345]: {"time":"2026-11-22T14:16:27.574161971-05:00","level":"INFO","msg":"host discovered","node_id":"21919a44-11d1-45a1-92db-d8d51f2e4f0c","hostname":"smith.greenbean.org","platform":"freebsd","os":"FreeBSD","release":"15.1-RELEASE-p7","arch":"amd64","bhyve":"available","qemu":"unavailable","zfs":"available"}
+Nov 22 14:16:27 smith skep-agent[9345]: {"time":"2026-11-22T14:16:27.574713819-05:00","level":"INFO","msg":"containers: observed the jails","containers":2,"running":2,"removed_without_exec_stop":0}
+Nov 22 14:16:27 smith skep-agent[9345]: {"time":"2026-11-22T14:16:27.576644873-05:00","level":"INFO","msg":"task finished","task_id":"3d975f8e-174e-43fa-a503-2cdb2856ba98","type":"discovery.refresh","status":"succeeded","error_code":""}
+Nov 22 14:16:27 smith skep-agent[9345]: {"time":"2026-11-22T14:16:27.580177784-05:00","level":"INFO","msg":"orphans: interface check finished","event":"orphaned_interface_check","found":0}
+Nov 22 14:16:27 smith skep-agent[9345]: {"time":"2026-11-22T14:16:27.599456298-05:00","level":"INFO","msg":"bhyve is available","reason":"vmm is loaded, the UEFI firmware is installed, and nmdm is available","max_vcpus_per_vm":2,"guest_memory_bytes":3176595456}
+Nov 22 14:16:27 smith skep-agent[9345]: {"time":"2026-11-22T14:16:27.599685318-05:00","level":"INFO","msg":"internal API listening","socket":"/var/run/skep/agent.sock","base_path":"/internal/v1","mode":"0660","group":"skep","allowed_uids":[0,409]}
+Nov 22 14:16:27 smith skep-api[9432]: {"time":"2026-11-22T14:16:27.845589303-05:00","level":"INFO","msg":"starting skep-api","version":"0.1.1","commit":"20c8731","dev_mode":false,"uid":409,"agent_socket":"/var/run/skep/agent.sock"}
+Nov 22 14:16:27 smith skep-api[9432]: {"time":"2026-11-22T14:16:27.848009432-05:00","level":"INFO","msg":"database ready","path":"/var/db/skep/api/api.db","schema_version":5,"migrations_applied":0}
+Nov 22 14:16:27 smith skep-api[9432]: {"time":"2026-11-22T14:16:27.849126916-05:00","level":"INFO","msg":"TLS: using the generated self-signed certificate","dir":"/var/db/skep/api/tls","not_after":"2027-12-24T18:51:06Z","public_key":"sha256:ee8688cb287f492a059febbc98c7a35acb05816ece5aee944d6da03a5d7e95c1"}
+Nov 22 14:16:28 smith skep-api[9432]: {"time":"2026-11-22T14:16:28.038849594-05:00","level":"INFO","msg":"retention configured","audit_archive":true,"audit_live_days":90,"audit_archive_dir":"/var/db/skep/api/audit-archive"}
+Nov 22 14:16:28 smith skep-api[9432]: {"time":"2026-11-22T14:16:28.039173256-05:00","level":"INFO","msg":"web interface embedded; serving it on every path outside /api"}
+Nov 22 14:16:28 smith skep-api[9432]: {"time":"2026-11-22T14:16:28.039314207-05:00","level":"INFO","msg":"access audit archive run finished","segments_verified":0,"segments_sealed":0,"entries_removed":0}
+Nov 22 14:16:28 smith skep-api[9432]: {"time":"2026-11-22T14:16:28.039331261-05:00","level":"INFO","msg":"API listening","address":"10.79.20.81:8443","base_path":"/api/v1","tls":"1.3","certificate":"self-signed","public_key":"sha256:ee8688cb287f492a059febbc98c7a35acb05816ece5aee944d6da03a5d7e95c1","authentication":"sessions"} {"time":"2026-11-22T14:16:28.039396944-05:00","level":"INFO","msg":"the API is reachable from the network, as configured","address":"10.79.20.81:8443"}
+Nov 22 14:14:00 smith kernel: epair1a: Ethernet address: 58:9c:fc:10:8c:50
+Nov 22 14:14:00 smith kernel: epair1b: Ethernet address: 58:9c:fc:10:88:76
+Nov 22 14:14:00 smith kernel: epair1a: link state changed to UP
+Nov 22 14:14:00 smith kernel: epair1b: link state changed to UP
+Nov 22 14:14:00 smith kernel: epair1b: changing name to 'sj57ea160bf5n0'
+Nov 22 14:14:00 smith kernel: epair1a: promiscuous mode enabled
+Nov 22 14:14:00 smith kernel: sj57ea160bf5n0: changing name to 'skep0'
+Nov 22 14:14:40 smith kernel: epair1a: link state changed to DOWN
+Nov 22 14:14:40 smith kernel: skep0: link state changed to DOWN
+Nov 22 14:16:24 smith kernel: epair1a: Ethernet address: 58:9c:fc:10:8c:50
+Nov 22 14:16:24 smith kernel: epair1b: Ethernet address: 58:9c:fc:10:88:76
+Nov 22 14:16:24 smith kernel: epair1a: link state changed to UP
+Nov 22 14:16:24 smith kernel: epair1b: link state changed to UP
+Nov 22 14:16:24 smith kernel: epair1b: changing name to 'sj57ea160bf5n0'
+Nov 22 14:16:24 smith kernel: epair1a: promiscuous mode enabled
+Nov 22 14:16:24 smith kernel: sj57ea160bf5n0: changing name to 'skep0'
+Nov 22 14:16:27 smith kernel: epair1a: link state changed to DOWN
+Nov 22 14:16:27 smith kernel: skep0: link state changed to DOWN

@@ -1,0 +1,87 @@
+  Name: skf_epair0a     Type: bpf             ID: 00000060   Num hooks: 2
+  Name: skf_epair1a     Type: bpf             ID: 00000069   Num hooks: 2
+Number of packages to be upgraded: 1
+[1/1] Upgrading skep from 0.1.0 to 0.1.1...
+[1/1] Extracting skep-0.1.1: .......... done
+pkg upgrade rc=0
+skep-0.1.1
+skep-5b6be52f-2a1b-4815-b654-18760bdf16a6
+skep-4bd14313-fd4a-432c-9071-9dd2a88cae3d
+  Name: skf_epair0a     Type: bpf             ID: 00000060   Num hooks: 2
+  Name: skf_epair1a     Type: bpf             ID: 00000069   Num hooks: 2
+1454 Sun Nov 22 14:29:28 2026 /usr/local/sbin/skep-agent -data-dir /var/db/skep
+1492 Sun Nov 22 14:29:28 2026 /usr/local/sbin/skep-api -data-dir /var/db/skep
+SHA256 (/etc/rc.conf) = 96212f082cac6c475501db5845a4ce98ce801c4fb67ef5645ba30fc5622e0d1f
+SHA256 (/boot/loader.conf) = c6a71a0f57a0ed3e47087b3095b8d2c1ca8f245d3da2d843a8792a919363ae69
+=== early refusal (19:34:01)
+  installed: skep-agent, skep-api and skep-setup are 0.1.1+67fa267
+skep-setup: refused: 0 task(s) pending and 1 running; wait for them, or use --force (pending and running tasks are then interrupted and must be resubmitted); nothing was changed
+upgrade rc=3
+skep_api is running as pid 1492 (supervisor pid 1488).
+1454 Sun Nov 22 14:29:28 2026 /usr/local/sbin/skep-agent -data-dir /var/db/skep
+1492 Sun Nov 22 14:29:28 2026 /usr/local/sbin/skep-api -data-dir /var/db/skep
+{"status":"ok","version":"0.1.0","uptime_seconds":273,"checks":{"access_audit_archive":{"status":"ok","critical":false},
+Status:       succeeded
+Finished:     2026-11-22 19:35:31Z
+Status:       succeeded
+1
+=== late refusal
+skep-5b6be52f-2a1b-4815-b654-18760bdf16a6
+skep-4bd14313-fd4a-432c-9071-9dd2a88cae3d
+skep-0.1.1
+skep-agent 0.1.1 (commit 67fa267, built 2026-11-22T19:27:19Z, go1.27.4 freebsd/amd64)
+skep_agent is running as pid 1454 (supervisor pid 1452).
+19:35:37
+saw 'skep_api stop' after 13 polls at 19:35:37
+202 Accepted 0.1.0+67fa267
+{"id":"8af97274-2d9e-4600-95dd-b6d9f14dfca0","node_id":"91400eab-59c2-40f2-beb3-dff777c2b1fc","type":"container.stop","status":"pending","resource_type":"container","resource_id":"4bd14313-fd4a-432c-9071-9dd2a88cae3d","actor":{"id":"lab-upgrade-test","name":"lab-upgrade-test"},"cancellable":false,"created_at":"2026-11-22T19:35:37.655Z"}
+
+upgrade rc=3
+  installed: skep-agent, skep-api and skep-setup are 0.1.1+67fa267
+  service skep_api stop
+  0 task(s) pending and 1 running; waiting up to 10s for them to finish
+  skep_api pid 6379 runs /usr/local/sbin/skep-api at 0.1.1+67fa267
+  service skep_api start (after the failure)
+  agent health: ok
+skep-setup: refused: 0 task(s) pending and 1 running after waiting 10s with skep_api stopped; wait for them, or use --force (pending and running tasks are then interrupted and must be resubmitted); skep_api was started again; no database was backed up; skep_agent was not restarted, so skep_api (the new build) and skep-agent (the old one) differ and the API answers 503 agent_version_mismatch until skep-setup upgrade completes; run skep-setup upgrade again once the tasks have finished
+--- after (19:35:48)
+skep_api is running as pid 6379 (supervisor pid 6377).
+skep_agent is running as pid 1454 (supervisor pid 1452).
+6379 Sun Nov 22 14:35:48 2026 /usr/local/sbin/skep-api -data-dir /var/db/skep
+1454 Sun Nov 22 14:29:28 2026 /usr/local/sbin/skep-agent -data-dir /var/db/skep
+0.1.0-67fa267-20261122T193335Z
+skep-5b6be52f-2a1b-4815-b654-18760bdf16a6
+skep-4bd14313-fd4a-432c-9071-9dd2a88cae3d
+=== API while mismatched (19:35:48)
+{"status":"unavailable","version":"","uptime_seconds":0,"checks":{"access_audit_archive":{"status":"ok","critical":false},"agent":{"status":"unavailable","critical":true,"error":"skep-agent and skep-api are different builds; restart both (skep-setup upgrade)"}}}
+
+HTTP 503
+{"error":{"code":"agent_version_mismatch","message":"skep-agent runs 0.1.0+67fa267 and skep-api runs 0.1.1+67fa267; they come from one package and must be restarted together (skep-setup upgrade)","request_id":"86a1cdd532ea942304a5e726"}}
+
+HTTP 503
+
+19:37:08
+  installed: skep-agent, skep-api and skep-setup are 0.1.1+67fa267
+  service skep_api stop
+  skep-agent db backup: /var/db/skep/backup/0.1.0+67fa267-20261122T193708Z/agent.db sha256 2ba96666d68479fc7ad49e04e1358c7dec4fe7315a1157fabd3c30a6ad06d901
+  skep-api db backup: /var/db/skep/backup/0.1.0+67fa267-20261122T193708Z/api.db sha256 08dd7d5789fccd003c6c49027e4d16ac27cb0c0b0909ebc5ceb0056d0f8d9ea9
+  service skep_agent stop
+  skep_agent pid 7050 runs /usr/local/sbin/skep-agent at 0.1.1+67fa267
+  skep_api pid 7136 runs /usr/local/sbin/skep-api at 0.1.1+67fa267
+  health: ok
+upgraded to 0.1.1+67fa267; backups in /var/db/skep/backup/0.1.0+67fa267-20261122T193708Z
+upgrade rc=0
+7136 Sun Nov 22 14:37:09 2026 /usr/local/sbin/skep-api -data-dir /var/db/skep
+7050 Sun Nov 22 14:37:09 2026 /usr/local/sbin/skep-agent -data-dir /var/db/skep
+skep_agent is running as pid 7050 (supervisor pid 7048).
+skep_api is running as pid 7136 (supervisor pid 7134).
+skep-5b6be52f-2a1b-4815-b654-18760bdf16a6
+  Name: skf_epair0a     Type: bpf             ID: 00000060   Num hooks: 2
+0.1.0+67fa267-20261122T193708Z
+0.1.0-67fa267-20261122T193335Z
+{"status":"ok","version":"0.1.1","uptime_seconds":0,"checks":{"access_audit_archive":{"status":"ok","critical":false},"agent":{"status":"ok","critical":true},"audit_archive":{"status":"ok","critical":
+Status:       succeeded
+Status:       succeeded
+Status:       succeeded
+NAME              USED  AVAIL  REFER  MOUNTPOINT
+zroot/skep/jail    96K  27.1G    96K  /zroot/skep/jail

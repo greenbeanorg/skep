@@ -1,0 +1,50 @@
+sleep 90
+{"id":"9ce47dcb-91b4-4e05-bdb0-22d53e323e6c","node_id":"21919a44-11d1-45a1-92db-d8d51f2e4f0c","type":"container.stop","status":"pending","resource_type":"container","resource_id":"57ea160b-f5b5-4568-9766-9bd0ffe35d60","actor":{"id":"72310b28-d442-4bc3-86ed-1d4159965eb4","name":"admin"},"request_id":"190b02339175e891abdd1833","cancellable":false,"created_at":"2026-11-22T19:14:40.526Z"}
+
+HTTP 202
+skepctl: no trust setting for https://10.79.20.81:8443: run skepctl login --server https://10.79.20.81:8443
+=== skep-setup upgrade -wait 10s (19:14:43)
+Stop skep_api, wait for unfinished tasks, back up both databases and restart skep_agent and skep_api? Running guests are not touched. [type yes to continue] skep-setup: not confirmed: nothing was changed
+upgrade rc=1
+19:14:43
+skep_api is running as pid 2351 (supervisor pid 2349).
+skep_agent is running as pid 3099 (supervisor pid 3097).
+2351 Sun Nov 22 13:55:39 2026 /usr/local/sbin/skep-api -data-dir /var/db/skep
+3099 Sun Nov 22 13:56:59 2026 /usr/local/sbin/skep-agent -data-dir /var/db/skep
+skep
+=== API while mismatched
+{"status":"ok","version":"0.1.0","uptime_seconds":1064,"checks":{"access_audit_archive":{"status":"ok","critical":false},"agent":{"status":"ok","critical":true},"audit_archive":{"status":"ok","critical":false},"bridge_vlan_unfiltered":{"status":"ok","critical":false},"database":{"status":"ok","critical":true},"orphaned_interfaces":{"status":"ok","critical":false},"port_filters":{"status":"ok","critical":false},"storage_capacity":{"status":"ok","critical":false},"storage_locked":{"status":"ok","critical":false}}}
+
+HTTP 200
+{"items":[{"id":"44c06b99-9333-4db7-9034-3b34396204d4","name":"upa","hostname":"upa","template_id":"e0ae4cf9-a168-4c15-ab2f-cdedc3f54499","template_name":"base151","pool":"tank","release":"15.1-RELEASE","options":{"sysvipc":false,"mlock":false},"limits":{},"nics":[{"id":"ea723c38-b899-4939-8568-438976ea90e2","slot":0,"bridge":"bridge0","mac_address":"02:e7:76:15:b2:91","interface":"skep0","ipv4":{"mode":"dhcp"},"host_interface":"epair0a"}],"provisioned":true,"started_once":true,"desired_state":"running","state":"running","jid":2,"observed_at":"2026-11-22T19:13:55.068Z","created_at":"2026-11-22T19:13:51.162Z","updated_at":"2026-11-22T19:13:54.304Z"},{"id":"57ea160b-f5b5-4568-9766-9bd0ffe35d60","name":"upb","hostname":"upb","template_id":"e0ae4cf9-a168-4c15-ab2f-cdedc3f54499","template_name":"base151","pool":"tank","release":"15.1-RELEASE","options":{"sysvipc":false,"mlock":false},"limits":{},"nics":[{"id":"db17a5dd-642a-4d7d-9c82-cf2c38834ae0","slot":0,"bridge":"bridge0","mac_address":"02:b3:0d:af:f5:98","interface":"skep0","ipv4":{"mode":"dhcp"},"host_interface":"epair1a"}],"provisioned":true,"started_once":true,"desired_state":"stopped","state":"stopping","jid":3,"observed_at":"2026-11-22T19:14:40.53Z","created_at":"2026-11-22T19:13:57.42Z","updated_at":"2026-11-22T19:14:40.53Z"}]}
+
+HTTP 200
+{"node_id":"21919a44-11d1-45a1-92db-d8d51f2e4f0c","hostname":"smith.greenbean.org","platform":"freebsd","production_host":true,"dev_mode":false,"os":{"name":"FreeBSD","version":"15.1","release":"15.1-RELEASE-p7","kernel":"FreeBSD 15.1-RELEASE-p7 releng/15.1-n283696-bb03631fe3b7 GENERIC"},"architecture":"amd64","skep":{"version":"0.1.0","commit":"20c8731","build_date":"2026-11-22T18:54:55Z","go_version":"go1.27.4","os":"freebsd","arch":"amd64"},"capabilities":{"bhyve":{"status":"available","reason":"vmm kernel module is loaded and /usr/sbin/bhyve is present"},"qemu":{"status":"unavailable","reason":"no QEMU binaries found in /sbin, /bin, /usr/sbin, /usr/bin, /usr/local/sbin, /usr/local/bin"},"zfs":{"status":"available","reason":"zfs kernel module is loaded; 1 pool(s) imported"}},"bhyve":{"available":true,"reason":"vmm is loaded, the UEFI firmware is installed, and nmdm is available","vmm_loaded":true,"firmware_found":true,"nmdm_available":true,"max_vcpus_per_vm":2,"host_memory_bytes":4250337280,"guest_memory_bytes":3176595456,"pools":["tank"],"bridges":["bridge0"]},"containers":{"rctl":true,"max_cpu_percent":200},"started_at":"2026-11-22T18:56:59.148505155Z","uptime_seconds":1064,"api":{"tls":{"source":"self-signed","not_after":"2027-12-24T18:51:06Z","public_key_sha256":"sha256:ee8688cb287f492a059febbc98c7a35acb05816ece5aee944d6da03a5d7e95c1"}},"health":{"status":"ok","version":"0.1.0","uptime_seconds":1064,"checks":{"access_audit_archive":{"status":"ok","critical":false},"agent":{"status":"ok","critical":true},"audit_archive":{"status":"ok","critical":false},"bridge_vlan_unfiltered":{"status":"ok","critical":false},"database":{"status":"ok","critical":true},"orphaned_interfaces":{"status":"ok","critical":false},"port_filters":{"status":"ok","critical":false},"storage_capacity":{"status":"ok","critical":false},"storage_locked":{"status":"ok","critical":false}}}}
+
+HTTP 200
+Status:       running
+Started:      2026-11-22 19:14:40Z
+=== skep-setup upgrade -wait 10s -yes (19:14:51)
+  installed: skep-agent, skep-api and skep-setup are 0.1.1+20c8731
+skep-setup: refused: 0 task(s) pending and 1 running; wait for them, or use --force (pending and running tasks are then interrupted and must be resubmitted); nothing was changed
+upgrade rc=3
+19:14:51
+skep_api is running as pid 2351 (supervisor pid 2349).
+skep_agent is running as pid 3099 (supervisor pid 3097).
+2351 Sun Nov 22 13:55:39 2026 /usr/local/sbin/skep-api -data-dir /var/db/skep
+3099 Sun Nov 22 13:56:59 2026 /usr/local/sbin/skep-agent -data-dir /var/db/skep
+head: illegal line count -- 0
+total 24
+drwx------  3 root wheel 512 Nov 22 14:13 .
+drwxr-xr-x  8 root wheel 512 Nov 22 14:13 ..
+drwx------  2 root wheel 512 Nov 22 14:13 0.1.0-20c8731-20261122T191351Z
+=== API while mismatched (19:14:51)
+{"status":"ok","version":"0.1.0","uptime_seconds":1072,"checks":{"access_audit_archive":{"status":"ok","critical":false},"agent":{"status":"ok","critical":true},"audit_archive":{"status":"ok","critical":false},"bridge_vlan_unfiltered":{"status":"ok","critical":false},"database":{"status":"ok","critical":true},"orphaned_interfaces":{"status":"ok","critical":false},"port_filters":{"status":"ok","critical":false},"storage_capacity":{"status":"ok","critical":false},"storage_locked":{"status":"ok","critical":false}}}
+
+HTTP 200
+{"items":[{"id":"44c06b99-9333-4db7-9034-3b34396204d4","name":"upa","hostname":"upa","template_id":"e0ae4cf9-a168-4c15-ab2f-cdedc3f54499","template_name":"base151","pool":"tank","release":"15.1-RELEASE","options":{"sysvipc":false,"mlock":false},"limits":{},"nics":[{"id":"ea723c38-b899-4939-8568-438976ea90e2","slot":0,"bridge":"bridge0","mac_address":"02:e7:76:15:b2:91","interface":"skep0","ipv4":{"mode":"dhcp"},"host_interface":"epair0a"}],"provisioned":true,"started_once":true,"desired_state":"running","state":"running","jid":2,"observed_at":"2026-11-22T19:13:55.068Z","created_at":"2026-11-22T19:13:51.162Z","updated_at":"2026-11-22T19:13:54.304Z"},{"id":"57ea160b-f5b5-4568-9766-9bd0ffe35d60","name":"upb","hostname":"upb","template_id":"e0ae4cf9-a168-4c15-ab2f-cdedc3f54499","template_name":"base151","pool":"tank","release":"15.1-RELEASE","options":{"sysvipc":false,"mlock":false},"limits":{},"nics":[{"id":"db17a5dd-642a-4d7d-9c82-cf2c38834ae0","slot":0,"bridge":"bridge0","mac_address":"02:b3:0d:af:f5:98","interface":"skep0","ipv4":{"mode":"dhcp"},"host_interface":"epair1a"}],"provisioned":true,"started_once":true,"desired_state":"stopped","state":"stopping","jid":3,"observed_at":"2026-11-22T19:14:40.53Z","created_at":"2026-11-22T19:13:57.42Z","updated_at":"2026-11-22T19:14:40.53Z"}]}
+
+HTTP 200
+{"id":"9ce47dcb-91b4-4e05-bdb0-22d53e323e6c","node_id":"21919a44-11d1-45a1-92db-d8d51f2e4f0c","type":"container.stop","status":"running","resource_type":"container","resource_id":"57ea160b-f5b5-4568-9766-9bd0ffe35d60","actor":{"id":"72310b28-d442-4bc3-86ed-1d4159965eb4","name":"admin"},"request_id":"190b02339175e891abdd1833","cancellable":false,"created_at":"2026-11-22T19:14:40.526Z","started_at":"2026-11-22T19:14:40.527Z","events":[{"id":123,"kind":"state","level":"info","message":"task is pending","data":{"from":"","to":"pending"},"created_at":"2026-11-22T19:14:40.526Z"},{"id":124,"kind":"state","level":"info","message":"task is running","data":{"from":"pending","to":"running"},"created_at":"2026-11-22T19:14:40.527Z"},{"id":125,"kind":"progress","level":"info","message":"stopping the jail (/etc/rc.shutdown, then SIGTERM and SIGKILL)","created_at":"2026-11-22T19:14:40.53Z"}]}
+
+HTTP 200

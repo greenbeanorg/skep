@@ -1,0 +1,52 @@
+--- before
+SHA256 (/etc/rc.conf) = 1c8ad78602c576494bb5c8c2b9d4a1ac4ec8aec1d84686bbdc19ea1f3f900113
+SHA256 (/boot/loader.conf) = 75cecdcc65cb2d69ba01812ee2b9a7c153827a3a34afe2ab186aaf0f6d98f760
+id: skep: no such user
+pw: no such uid `409'
+pw: unknown gid `409'
+1
+--- pkg add
+Installing skep-0.1.0...
+skep: created the skep group and user (UID and GID 409, no login shell, no home).
+Extracting skep-0.1.0: .......... done
+rc=0
+--- after
+uid=409(skep) gid=409(skep) groups=409(skep)
+skep:*:409:409::0:0:Skep service account:/nonexistent:/usr/sbin/nologin
+skep:*:409:
+-r-xr-xr-x  1 root wheel  7217322 Nov 22 13:45 /usr/local/bin/skepctl
+-r-xr-xr-x  1 root wheel     6955 Nov 22 13:45 /usr/local/etc/rc.d/skep_agent
+-r-xr-xr-x  1 root wheel     6228 Nov 22 13:45 /usr/local/etc/rc.d/skep_api
+-r-xr-xr-x  1 root wheel 13779114 Nov 22 13:45 /usr/local/sbin/skep-agent
+-r-xr-xr-x  1 root wheel 14246058 Nov 22 13:45 /usr/local/sbin/skep-api
+-r-xr-xr-x  1 root wheel 11219114 Nov 22 13:45 /usr/local/sbin/skep-setup
+
+/usr/local/share/licenses/skep/:
+total 248
+-r--r--r--  1 root wheel   1303 Nov 22 13:45 LICENSE
+-r--r--r--  1 root wheel 249097 Nov 22 13:45 THIRD_PARTY_NOTICES
+total 16
+drwxr-xr-x  2 root wheel  512 Nov 22 13:46 .
+drwxr-xr-x  8 root wheel  512 Nov 22 13:46 ..
+-rw-r--r--  1 root wheel 1316 Nov 22 13:45 agent.json.sample
+-rw-r--r--  1 root wheel  822 Nov 22 13:45 api.json.sample
+SHA256 (/etc/rc.conf) = 1c8ad78602c576494bb5c8c2b9d4a1ac4ec8aec1d84686bbdc19ea1f3f900113
+SHA256 (/boot/loader.conf) = 75cecdcc65cb2d69ba01812ee2b9a7c153827a3a34afe2ab186aaf0f6d98f760
+1705  -  Ss   0:00.00 sh -c P=~/skep-pkgs/pkg-0.1.0/out/skep-0.1.0.pkg; echo "--- before"; sha256 /etc/rc.conf /boot/loader.conf; id skep; pw usershow -u 409; pw groupshow -g 409; ps ax | grep -c "[s]kep-"; echo "--- pkg add"; sudo pkg add $P; echo rc=$?; echo "--- after"; id skep; pw usershow skep; pw groupshow skep; ls -l /usr/local/sbin/skep-* /usr/local/bin/skepctl /usr/local/etc/rc.d/skep_* /usr/local/share/licenses/skep/; ls -la /usr/local/etc/skep/; sha256 /etc/rc.conf /boot/loader.conf; ps ax | grep "[s]kep-"; echo "procs=$(ps ax | grep -c "[s]kep-")"; ls -ld /var/db/skep 2>&1; sudo pkg check -s skep; echo check-s rc=$?; pkg info -x skep; echo "--- pkg add again"; sudo pkg add $P; echo rc=$?; echo "--- pkg add -f (forced reinstall, account present)"; sudo pkg add -f $P; echo rc=$?; id skep; sha256 /etc/rc.conf; ls /var/tmp/
+procs=2
+ls: /var/db/skep: No such file or directory
+Checking skep: . done
+check-s rc=0
+skep-0.1.0
+--- pkg add again
+Installing skep-0.1.0...
+the most recent version of skep-0.1.0 is already installed
+rc=0
+--- pkg add -f (forced reinstall, account present)
+Installing skep-0.1.0...
+package skep is already installed, forced install
+Extracting skep-0.1.0: .......... done
+rc=0
+uid=409(skep) gid=409(skep) groups=409(skep)
+SHA256 (/etc/rc.conf) = 1c8ad78602c576494bb5c8c2b9d4a1ac4ec8aec1d84686bbdc19ea1f3f900113
+vi.recover

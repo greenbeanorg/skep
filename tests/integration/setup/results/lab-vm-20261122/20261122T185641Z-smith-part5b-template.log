@@ -1,0 +1,49 @@
+skep-setup: refused: apply would change nothing until the refused items are resolved
+  19 ok, 0 to add, 0 warnings, 0 conflicts, 1 for you, 1 refused
+  refuse   config                             /usr/local/etc/skep/agent.json
+rc=0
+{"host_release":"15.1-RELEASE-p7","pkgbase":{"available":true},"packages":["FreeBSD-set-minimal","FreeBSD-ssh"],"dist":{"available":true}}
+
+HTTP 200
+{"template":{"id":"e0ae4cf9-a168-4c15-ab2f-cdedc3f54499","name":"base151","pool":"tank","source":"dist","packages":[],"provisioned":false,"patch_differs":false,"has_sshd":false,"used_bytes":0,"created_at":"2026-11-22T18:56:42.039Z"},"task":{"id":"2392518b-3da0-471c-91c2-cfda718816e9","node_id":"21919a44-11d1-45a1-92db-d8d51f2e4f0c","type":"container.template.create","status":"pending","resource_type":"container_template","resource_id":"e0ae4cf9-a168-4c15-ab2f-cdedc3f54499","actor":{"id":"72310b28-d442-4bc3-86ed-1d4159965eb4","name":"admin"},"request_id":"cef093cc5fb837506ccd2dc9","cancellable":true,"created_at":"2026-11-22T18:56:42.039Z"}}
+
+HTTP 202
+ID:           2392518b-3da0-471c-91c2-cfda718816e9
+Type:         container.template.create
+Status:       succeeded
+Node:         21919a44-11d1-45a1-92db-d8d51f2e4f0c
+Resource:     container_template e0ae4cf9-a168-4c15-ab2f-cdedc3f54499
+Actor:        admin
+Request ID:   cef093cc5fb837506ccd2dc9
+Cancellable:  true
+Created:      2026-11-22 18:56:42Z
+Started:      2026-11-22 18:56:42Z
+Finished:     2026-11-22 18:56:48Z
+
+Events:
+  2026-11-22 18:56:42Z  state     info  task is pending
+  2026-11-22 18:56:42Z  state     info  task is running
+  2026-11-22 18:56:42Z  progress  info  checking the templates directory
+  2026-11-22 18:56:42Z  progress  info  recording the host files
+  2026-11-22 18:56:42Z  progress  info  creating the template dataset
+  2026-11-22 18:56:42Z  progress  info  checking base.txz against its MANIFEST and extracting it
+  2026-11-22 18:56:48Z  progress  info  checking the template's release
+  2026-11-22 18:56:48Z  progress  info  checking for deferred triggers
+  2026-11-22 18:56:48Z  progress  info  checking that the template holds no SSH host keys
+  2026-11-22 18:56:48Z  progress  info  removing the repository catalogues and checking the package cache
+  2026-11-22 18:56:48Z  progress  info  comparing the host files
+  2026-11-22 18:56:48Z  progress  info  removing the work area
+  2026-11-22 18:56:48Z  progress  info  taking @skep-base
+  2026-11-22 18:56:48Z  state     info  task is succeeded
+SHA256 (/usr/local/etc/skep/agent.json) = 81870917ba661871df7a47e64f37299d6ef4c04302520b22179891337fe66a26
+-rw-------  1 root wheel 259 Nov 22 13:51 /usr/local/etc/skep/agent.json
+Stopping skep_agent.
+Waiting for PIDS: 2795.
+Starting skep_agent.
+skep_agent is running as pid 3099 (supervisor pid 3097).
+  20 ok, 0 to add, 0 warnings, 0 conflicts, 1 for you, 0 refused
+NAME                                                       USED  REFER  RDONLY
+tank                                                       372M    96K  off
+tank/skep                                                  372M    96K  off
+tank/skep/templates                                        372M    96K  off
+tank/skep/templates/e0ae4cf9-a168-4c15-ab2f-cdedc3f54499   372M   372M  on

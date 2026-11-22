@@ -1,0 +1,124 @@
+=== pkg-0.1.0
+--- staged sha256 vs SHA256SUMS.stage
+2251d7220c75229d128d8ecef38187c76432f8ea6092d2f85de659713c176079  /usr/local/share/licenses/skep/THIRD_PARTY_NOTICES
+225911de660255b5c893d11e5d339655826f1aaa83d20afd1c6df1559c63a16d  /usr/local/sbin/skep-setup
+3db94ce1c4e44455e6010235327c276064453aec48a1dd01217bb0bbe87ddaea  /usr/local/etc/rc.d/skep_api
+4d1b9fdb39897c815d4b5b3c3bec048b122c7e67e0d6ad7391252eec49a42021  /usr/local/sbin/skep-api
+7496cd70511452df287f552418c2497b81f0de84e538344474a0af5a88e4aa4e  /usr/local/etc/rc.d/skep_agent
+c3ffe458c99763f8844012c1fd4ccc3870e9c04809c86c6fb2a138adc717907d  /usr/local/etc/skep/agent.json.sample
+db954bea6e13fd8c5d6c6b2c1f3b12d9c8dabe10dcad51af8fa5735c61597c46  /usr/local/sbin/skep-agent
+de0084c220cfb5004b2a9ec78f488921b00a9928bb878e5a5246ed9db4addffb  /usr/local/bin/skepctl
+e6169e874c1c55bb92536f7e88961185b69b4fe7c3a5babe946c05fce82a91dc  /usr/local/etc/skep/api.json.sample
+f1b9a657e4eddd9ff40e67cf2c1859fb4e151692eefb961ae2466311bc036066  /usr/local/share/licenses/skep/LICENSE
+--- computed:
+de0084c220cfb5004b2a9ec78f488921b00a9928bb878e5a5246ed9db4addffb ./usr/local/bin/skepctl
+7496cd70511452df287f552418c2497b81f0de84e538344474a0af5a88e4aa4e ./usr/local/etc/rc.d/skep_agent
+3db94ce1c4e44455e6010235327c276064453aec48a1dd01217bb0bbe87ddaea ./usr/local/etc/rc.d/skep_api
+c3ffe458c99763f8844012c1fd4ccc3870e9c04809c86c6fb2a138adc717907d ./usr/local/etc/skep/agent.json.sample
+e6169e874c1c55bb92536f7e88961185b69b4fe7c3a5babe946c05fce82a91dc ./usr/local/etc/skep/api.json.sample
+db954bea6e13fd8c5d6c6b2c1f3b12d9c8dabe10dcad51af8fa5735c61597c46 ./usr/local/sbin/skep-agent
+4d1b9fdb39897c815d4b5b3c3bec048b122c7e67e0d6ad7391252eec49a42021 ./usr/local/sbin/skep-api
+225911de660255b5c893d11e5d339655826f1aaa83d20afd1c6df1559c63a16d ./usr/local/sbin/skep-setup
+f1b9a657e4eddd9ff40e67cf2c1859fb4e151692eefb961ae2466311bc036066 ./usr/local/share/licenses/skep/LICENSE
+2251d7220c75229d128d8ecef38187c76432f8ea6092d2f85de659713c176079 ./usr/local/share/licenses/skep/THIRD_PARTY_NOTICES
+pkg create rc=0
+total 15776
+-rw-r--r--  1 aba aba 16104567 Nov 22 13:45 skep-0.1.0.pkg
+skep-0.1.0
+Name           : skep
+Version        : 0.1.0
+Origin         : sysutils/skep
+Architecture   : FreeBSD:15:amd64
+Prefix         : /usr/local
+Categories     : sysutils
+Licenses       : BSD2CLAUSE
+Maintainer     : https://github.com/greenbeanorg/skep
+WWW            : https://github.com/greenbeanorg/skep
+Comment        : Virtualization and infrastructure management platform
+Annotations    :
+Flat size      : 44.6MiB
+Description    :
+Skep manages bhyve virtual machines and jails on a FreeBSD host through a web
+interface, a REST API, and the skepctl command line.
+
+The package installs files only. Run skep-setup check, then skep-setup plan
+and skep-setup apply, to configure the host.
+skep-0.1.0:
+	/usr/local/bin/skepctl
+	/usr/local/etc/rc.d/skep_agent
+	/usr/local/etc/rc.d/skep_api
+	/usr/local/etc/skep/agent.json.sample
+	/usr/local/etc/skep/api.json.sample
+	/usr/local/sbin/skep-agent
+	/usr/local/sbin/skep-api
+	/usr/local/sbin/skep-setup
+	/usr/local/share/licenses/skep/LICENSE
+	/usr/local/share/licenses/skep/THIRD_PARTY_NOTICES
+scripts: {
+    pre-install: "#!/bin/sh\n#\n# skep package: pre-install script (ADR 0012 Decision 1).\n#\n# Creates the skep group and user with the fixed UID and GID 409 when\n# neither exists. It changes nothing else: it never edits rc.conf, never\n# enables or starts a service, and never touches an existing account.\n#\n# Refuses (exit 1, so pkg stops the install) when:\n#   - only one of the skep user and the skep group exists;\n#   - neither exists and UID 409 or GID 409 belongs to another name.\n# Warns, and continues, when both exist with other numbers (hosts set up\n# by hand before ADR 0012: they work on a single host).\n\nset -u\n\nSKEP_NAME=\"skep\"\nSKEP_ID=\"409\"\n\npw_cmd() {\n\tif [ -n \"${PKG_ROOTDIR:-}\" ] && [ \"${PKG_ROOTDIR}\" != \"/\" ]; then\n\t\tpw -R \"${PKG_ROOTDIR}\" \"$@\"\n\telse\n\t\tpw \"$@\"\n\tfi\n}\n\n# field N of a colon-separated line\nfield() {\n\techo \"$1\" | cut -d: -f\"$2\"\n}\n\nuser_line=$(pw_cmd usershow \"${SKEP_NAME}\" 2>/dev/null || true)\ngroup_line=$(pw_cmd groupshow \"${SKEP_NAME}\" 2>/dev/null || true)\n\nif [ -n \"${user_line}\" ] && [ -n \"${group_line}\" ]; then\n\tuid=$(field \"${user_line}\" 3)\n\tgid=$(field \"${group_line}\" 3)\n\tif [ \"${uid}\" != \"${SKEP_ID}\" ] || [ \"${gid}\" != \"${SKEP_ID}\" ]; then\n\t\techo \"skep: warning: the skep account exists with UID ${uid} and GID ${gid}, not ${SKEP_ID}.\" >&2\n\t\techo \"skep: it works on a single host; a cluster will need ${SKEP_ID} on every node. Nothing was changed.\" >&2\n\tfi\n\texit 0\nfi\n\nif [ -n \"${user_line}\" ] || [ -n \"${group_line}\" ]; then\n\techo \"skep: refusing to install: only one of the skep user and the skep group exists.\" >&2\n\techo \"skep: something other than this package made it; resolve it by hand (pw(8)) and install again.\" >&2\n\texit 1\nfi\n\nother_user=$(pw_cmd usershow -u \"${SKEP_ID}\" 2>/dev/null || true)\nother_group=$(pw_cmd groupshow -g \"${SKEP_ID}\" 2>/dev/null || true)\nif [ -n \"${other_user}\" ]; then\n\techo \"skep: refusing to install: UID ${SKEP_ID} belongs to the user $(field \"${other_user}\" 1).\" >&2\n\texit 1\nfi\nif [ -n \"${other_group}\" ]; then\n\techo \"skep: refusing to install: GID ${SKEP_ID} belongs to the group $(field \"${other_group}\" 1).\" >&2\n\texit 1\nfi\n\npw_cmd groupadd \"${SKEP_NAME}\" -g \"${SKEP_ID}\" || exit 1\nif ! pw_cmd useradd \"${SKEP_NAME}\" -u \"${SKEP_ID}\" -g \"${SKEP_NAME}\" \\\n\t-d /nonexistent -s /usr/sbin/nologin -c \"Skep service account\"; then\n\tpw_cmd groupdel \"${SKEP_NAME}\" >/dev/null 2>&1\n\texit 1\nfi\necho \"skep: created the skep group and user (UID and GID ${SKEP_ID}, no login shell, no home).\"\nexit 0",
+    pre-deinstall: "#!/bin/sh\n#\n# skep package: pre-deinstall script (ADR 0012 Decision 1, answer 14).\n#\n# Refuses (exit 1, so pkg stops) while Skep guests run on this host:\n# jails named skep-* (jls) and bhyve VMs named skep-* (/dev/vmm). Deleting\n# the package then would leave them running with nothing to manage them.\n# \"pkg delete -f\" still overrides it, as for any package.\n#\n# It never refuses during an upgrade. pkg runs the old package's\n# deinstall scripts when it upgrades, and sets PKG_UPGRADE for them; an\n# upgrade replaces the files and leaves running guests alone (ADR 0012\n# Decision 5). Pending FreeBSD validation: that pkg sets PKG_UPGRADE (any\n# non-empty value counts) is to be confirmed on a lab VM.\n#\n# It changes nothing: no service is stopped, no guest is touched.\n\nset -u\n\nif [ -n \"${PKG_UPGRADE:-}\" ]; then\n\texit 0\nfi\n\n# A package installed into another root (pkg -r) is not this host's.\nif [ -n \"${PKG_ROOTDIR:-}\" ] && [ \"${PKG_ROOTDIR}\" != \"/\" ]; then\n\texit 0\nfi\n\njails=$(jls -N name 2>/dev/null | grep '^skep-' || true)\n# SKEP_VMM_DIR exists for the package tests only.\nvmm_dir=\"${SKEP_VMM_DIR:-/dev/vmm}\"\nvms=\"\"\nif [ -d \"${vmm_dir}\" ]; then\n\tvms=$(ls \"${vmm_dir}\" 2>/dev/null | grep '^skep-' || true)\nfi\n\nif [ -n \"${jails}\" ] || [ -n \"${vms}\" ]; then\n\techo \"skep: refusing to remove the package while Skep guests are running:\" >&2\n\tfor g in ${jails}; do echo \"skep:   jail ${g}\" >&2; done\n\tfor g in ${vms}; do echo \"skep:   VM ${g}\" >&2; done\n\techo \"skep: stop them first (web interface, skepctl, or the API), or run skep-setup remove --plan.\" >&2\n\techo \"skep: pkg delete -f overrides this check.\" >&2\n\texit 1\nfi\nexit 0"
+}
+SHA256 (out/skep-0.1.0.pkg) = d6dd2e7724f93b98a189995017e9197395b728b46b889f433a3487f84d80c3dd
+=== pkg-0.1.1
+--- staged sha256 vs SHA256SUMS.stage
+167c907feba9aca5612b82216833657063a837cff56092b998daf149e08aa9d9  /usr/local/sbin/skep-setup
+2251d7220c75229d128d8ecef38187c76432f8ea6092d2f85de659713c176079  /usr/local/share/licenses/skep/THIRD_PARTY_NOTICES
+3db94ce1c4e44455e6010235327c276064453aec48a1dd01217bb0bbe87ddaea  /usr/local/etc/rc.d/skep_api
+5a1510cc062b5826fed1e973430518a3c543db127506f21cbfdd369d8d1b1d80  /usr/local/sbin/skep-api
+7496cd70511452df287f552418c2497b81f0de84e538344474a0af5a88e4aa4e  /usr/local/etc/rc.d/skep_agent
+a3d48ed28d2bc9d4cdee4f0608b1cf342a3d1396d215818252f0ff39a930d150  /usr/local/sbin/skep-agent
+c3ffe458c99763f8844012c1fd4ccc3870e9c04809c86c6fb2a138adc717907d  /usr/local/etc/skep/agent.json.sample
+d11360c1c11728ea6766320563369cd0f817fc73e1a69a6dfc8b4ce5906c0975  /usr/local/bin/skepctl
+e6169e874c1c55bb92536f7e88961185b69b4fe7c3a5babe946c05fce82a91dc  /usr/local/etc/skep/api.json.sample
+f1b9a657e4eddd9ff40e67cf2c1859fb4e151692eefb961ae2466311bc036066  /usr/local/share/licenses/skep/LICENSE
+--- computed:
+d11360c1c11728ea6766320563369cd0f817fc73e1a69a6dfc8b4ce5906c0975 ./usr/local/bin/skepctl
+7496cd70511452df287f552418c2497b81f0de84e538344474a0af5a88e4aa4e ./usr/local/etc/rc.d/skep_agent
+3db94ce1c4e44455e6010235327c276064453aec48a1dd01217bb0bbe87ddaea ./usr/local/etc/rc.d/skep_api
+c3ffe458c99763f8844012c1fd4ccc3870e9c04809c86c6fb2a138adc717907d ./usr/local/etc/skep/agent.json.sample
+e6169e874c1c55bb92536f7e88961185b69b4fe7c3a5babe946c05fce82a91dc ./usr/local/etc/skep/api.json.sample
+a3d48ed28d2bc9d4cdee4f0608b1cf342a3d1396d215818252f0ff39a930d150 ./usr/local/sbin/skep-agent
+5a1510cc062b5826fed1e973430518a3c543db127506f21cbfdd369d8d1b1d80 ./usr/local/sbin/skep-api
+167c907feba9aca5612b82216833657063a837cff56092b998daf149e08aa9d9 ./usr/local/sbin/skep-setup
+f1b9a657e4eddd9ff40e67cf2c1859fb4e151692eefb961ae2466311bc036066 ./usr/local/share/licenses/skep/LICENSE
+2251d7220c75229d128d8ecef38187c76432f8ea6092d2f85de659713c176079 ./usr/local/share/licenses/skep/THIRD_PARTY_NOTICES
+pkg create rc=0
+total 15776
+-rw-r--r--  1 aba aba 16104207 Nov 22 13:45 skep-0.1.1.pkg
+skep-0.1.1
+Name           : skep
+Version        : 0.1.1
+Origin         : sysutils/skep
+Architecture   : FreeBSD:15:amd64
+Prefix         : /usr/local
+Categories     : sysutils
+Licenses       : BSD2CLAUSE
+Maintainer     : https://github.com/greenbeanorg/skep
+WWW            : https://github.com/greenbeanorg/skep
+Comment        : Virtualization and infrastructure management platform
+Annotations    :
+Flat size      : 44.6MiB
+Description    :
+Skep manages bhyve virtual machines and jails on a FreeBSD host through a web
+interface, a REST API, and the skepctl command line.
+
+The package installs files only. Run skep-setup check, then skep-setup plan
+and skep-setup apply, to configure the host.
+skep-0.1.1:
+	/usr/local/bin/skepctl
+	/usr/local/etc/rc.d/skep_agent
+	/usr/local/etc/rc.d/skep_api
+	/usr/local/etc/skep/agent.json.sample
+	/usr/local/etc/skep/api.json.sample
+	/usr/local/sbin/skep-agent
+	/usr/local/sbin/skep-api
+	/usr/local/sbin/skep-setup
+	/usr/local/share/licenses/skep/LICENSE
+	/usr/local/share/licenses/skep/THIRD_PARTY_NOTICES
+scripts: {
+    pre-install: "#!/bin/sh\n#\n# skep package: pre-install script (ADR 0012 Decision 1).\n#\n# Creates the skep group and user with the fixed UID and GID 409 when\n# neither exists. It changes nothing else: it never edits rc.conf, never\n# enables or starts a service, and never touches an existing account.\n#\n# Refuses (exit 1, so pkg stops the install) when:\n#   - only one of the skep user and the skep group exists;\n#   - neither exists and UID 409 or GID 409 belongs to another name.\n# Warns, and continues, when both exist with other numbers (hosts set up\n# by hand before ADR 0012: they work on a single host).\n\nset -u\n\nSKEP_NAME=\"skep\"\nSKEP_ID=\"409\"\n\npw_cmd() {\n\tif [ -n \"${PKG_ROOTDIR:-}\" ] && [ \"${PKG_ROOTDIR}\" != \"/\" ]; then\n\t\tpw -R \"${PKG_ROOTDIR}\" \"$@\"\n\telse\n\t\tpw \"$@\"\n\tfi\n}\n\n# field N of a colon-separated line\nfield() {\n\techo \"$1\" | cut -d: -f\"$2\"\n}\n\nuser_line=$(pw_cmd usershow \"${SKEP_NAME}\" 2>/dev/null || true)\ngroup_line=$(pw_cmd groupshow \"${SKEP_NAME}\" 2>/dev/null || true)\n\nif [ -n \"${user_line}\" ] && [ -n \"${group_line}\" ]; then\n\tuid=$(field \"${user_line}\" 3)\n\tgid=$(field \"${group_line}\" 3)\n\tif [ \"${uid}\" != \"${SKEP_ID}\" ] || [ \"${gid}\" != \"${SKEP_ID}\" ]; then\n\t\techo \"skep: warning: the skep account exists with UID ${uid} and GID ${gid}, not ${SKEP_ID}.\" >&2\n\t\techo \"skep: it works on a single host; a cluster will need ${SKEP_ID} on every node. Nothing was changed.\" >&2\n\tfi\n\texit 0\nfi\n\nif [ -n \"${user_line}\" ] || [ -n \"${group_line}\" ]; then\n\techo \"skep: refusing to install: only one of the skep user and the skep group exists.\" >&2\n\techo \"skep: something other than this package made it; resolve it by hand (pw(8)) and install again.\" >&2\n\texit 1\nfi\n\nother_user=$(pw_cmd usershow -u \"${SKEP_ID}\" 2>/dev/null || true)\nother_group=$(pw_cmd groupshow -g \"${SKEP_ID}\" 2>/dev/null || true)\nif [ -n \"${other_user}\" ]; then\n\techo \"skep: refusing to install: UID ${SKEP_ID} belongs to the user $(field \"${other_user}\" 1).\" >&2\n\texit 1\nfi\nif [ -n \"${other_group}\" ]; then\n\techo \"skep: refusing to install: GID ${SKEP_ID} belongs to the group $(field \"${other_group}\" 1).\" >&2\n\texit 1\nfi\n\npw_cmd groupadd \"${SKEP_NAME}\" -g \"${SKEP_ID}\" || exit 1\nif ! pw_cmd useradd \"${SKEP_NAME}\" -u \"${SKEP_ID}\" -g \"${SKEP_NAME}\" \\\n\t-d /nonexistent -s /usr/sbin/nologin -c \"Skep service account\"; then\n\tpw_cmd groupdel \"${SKEP_NAME}\" >/dev/null 2>&1\n\texit 1\nfi\necho \"skep: created the skep group and user (UID and GID ${SKEP_ID}, no login shell, no home).\"\nexit 0",
+    pre-deinstall: "#!/bin/sh\n#\n# skep package: pre-deinstall script (ADR 0012 Decision 1, answer 14).\n#\n# Refuses (exit 1, so pkg stops) while Skep guests run on this host:\n# jails named skep-* (jls) and bhyve VMs named skep-* (/dev/vmm). Deleting\n# the package then would leave them running with nothing to manage them.\n# \"pkg delete -f\" still overrides it, as for any package.\n#\n# It never refuses during an upgrade. pkg runs the old package's\n# deinstall scripts when it upgrades, and sets PKG_UPGRADE for them; an\n# upgrade replaces the files and leaves running guests alone (ADR 0012\n# Decision 5). Pending FreeBSD validation: that pkg sets PKG_UPGRADE (any\n# non-empty value counts) is to be confirmed on a lab VM.\n#\n# It changes nothing: no service is stopped, no guest is touched.\n\nset -u\n\nif [ -n \"${PKG_UPGRADE:-}\" ]; then\n\texit 0\nfi\n\n# A package installed into another root (pkg -r) is not this host's.\nif [ -n \"${PKG_ROOTDIR:-}\" ] && [ \"${PKG_ROOTDIR}\" != \"/\" ]; then\n\texit 0\nfi\n\njails=$(jls -N name 2>/dev/null | grep '^skep-' || true)\n# SKEP_VMM_DIR exists for the package tests only.\nvmm_dir=\"${SKEP_VMM_DIR:-/dev/vmm}\"\nvms=\"\"\nif [ -d \"${vmm_dir}\" ]; then\n\tvms=$(ls \"${vmm_dir}\" 2>/dev/null | grep '^skep-' || true)\nfi\n\nif [ -n \"${jails}\" ] || [ -n \"${vms}\" ]; then\n\techo \"skep: refusing to remove the package while Skep guests are running:\" >&2\n\tfor g in ${jails}; do echo \"skep:   jail ${g}\" >&2; done\n\tfor g in ${vms}; do echo \"skep:   VM ${g}\" >&2; done\n\techo \"skep: stop them first (web interface, skepctl, or the API), or run skep-setup remove --plan.\" >&2\n\techo \"skep: pkg delete -f overrides this check.\" >&2\n\texit 1\nfi\nexit 0"
+}
+SHA256 (out/skep-0.1.1.pkg) = 0a432ab96d67b8f2561f9e8c9f2923a128757f1dadc08bffef74245ede7648e8
+SHA256 (out/skep-pkgprobe-1.0.pkg) = 0c943afdf703c1289ce21f53b2f94078e3756b03f225df8c419b8d84f8bbdb84
+SHA256 (out/skep-pkgprobe-1.1.pkg) = 987adab7e33aa5c8f71ff3edc2211b63f9cc01d4e78772a3ad070c05b4cd9d0b
