@@ -2,6 +2,9 @@ openapi: 3.0.3
 info:
   title: Skep API
   version: 0.1.0
+  license:
+    name: BSD-2-Clause
+    url: https://opensource.org/license/bsd-2-clause
   description: |
     REST API of Skep, a virtualization and infrastructure management platform
     built on the FreeBSD® operating system.
