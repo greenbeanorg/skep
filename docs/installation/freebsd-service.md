@@ -64,7 +64,21 @@ kernel. File permissions are the first check; this is the second.
   records running tasks as `interrupted` before the host goes down.
 - Log lines (JSON) go to syslog as `daemon.info`, tags `skep-agent` and
   `skep-api`. With the stock `syslog.conf` they land in
-  `/var/log/daemon.log`.
+  `/var/log/daemon.log`. **A syslog line can hold more than one JSON
+  record**, separated by a space: daemon(8) on FreeBSD 15.1 sends every
+  complete line it read from the program in one go as one syslog message,
+  and syslogd turns the newline between them into a space. It happens
+  when two records are written within microseconds of each other. A
+  record longer than about 4 KB is split over two syslog lines. A parser
+  of `daemon.log` should decode the JSON values one after another (for
+  example `jq -c .` on the text after `skep-agent[pid]: `) rather than
+  assume one record per line. Details:
+  [tests/integration/rcd/daemon-log-joined-records.md](../../tests/integration/rcd/daemon-log-joined-records.md).
+
+### Upgrading
+
+[Upgrading a host](upgrading.md) has the general steps and what each
+release needs, including from b61e578 (Milestone 7b) to Milestone 7c.
 
 ### Upgrading from the Milestone 3 service
 
