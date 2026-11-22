@@ -94,16 +94,6 @@ func compute(t *testing.T, o Options, f Facts) Plan {
 	return p
 }
 
-// find returns the first item whose What contains what.
-func find(p Plan, what string) (Item, bool) {
-	for _, it := range p.Items {
-		if strings.Contains(it.What, what) {
-			return it, true
-		}
-	}
-	return Item{}, false
-}
-
 func want(t *testing.T, p Plan, kind Kind, what, detail string) Item {
 	t.Helper()
 	for _, it := range p.Items {

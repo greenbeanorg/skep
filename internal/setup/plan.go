@@ -770,7 +770,7 @@ func (b *builder) agentJSON() []byte {
 	c.Storage.Pools = append([]string{}, b.o.Pools...)
 	c.Storage.Directories = []agentDirEntry{}
 	for _, d := range b.o.DirPools {
-		c.Storage.Directories = append(c.Storage.Directories, agentDirEntry{Name: d.Name, Path: d.Path})
+		c.Storage.Directories = append(c.Storage.Directories, agentDirEntry(d))
 	}
 	c.Storage.DatasetRoot = "skep"
 	c.Storage.MediaDir = mediaDir

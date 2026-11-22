@@ -47,8 +47,3 @@ func (h HostRunner) Run(ctx context.Context, c Cmd) (string, error) {
 	}
 	return out.String(), nil
 }
-
-// sysrcCmd is the sysrc(8) call for an action on a file under root.
-func sysrcCmd(root string, a Action) Cmd {
-	return Cmd{Name: "sysrc", Args: []string{"-f", hostPath(root, a.File), a.Name + a.Op + a.Value}}
-}
