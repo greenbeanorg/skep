@@ -73,10 +73,11 @@ earlier b61e578 binary, build time 2026-11-22T01:07:06Z), health `ok`.
 
 ## For Andy: item 10
 
-Add to `/etc/rc.conf` on hearst (replacing any existing `kld_list`):
+Add to `kld_list` in `/etc/rc.conf` on hearst (appending, so an existing
+`kld_list` is kept; corrected 2026-11-22 from a line that replaced it):
 
-```
-kld_list="if_epair netgraph ng_socket ng_ether ng_bpf"
+```sh
+sysrc kld_list+="if_epair netgraph ng_socket ng_ether ng_bpf"
 ```
 
 then deploy the branch head (`scripts/deploy-test.sh hearst` from

@@ -204,3 +204,15 @@ describe("containerErrorHint for the security review codes", () => {
     expect(containerErrorHint("container_disk_quota_below_usage")).toMatch(/below what the jail's root already holds/);
   });
 });
+
+describe("kernel module hints", () => {
+  // The hints append to kld_list: a kld_list="..." line pasted into
+  // rc.conf would replace the host's existing list.
+  it("give the appending sysrc form", () => {
+    expect(containerErrorHint("epair_unavailable")).toContain('sysrc kld_list+="if_epair"');
+    expect(containerErrorHint("port_filter_unavailable")).toContain('sysrc kld_list+="netgraph ng_socket ng_ether ng_bpf"');
+    for (const code of ["epair_unavailable", "port_filter_unavailable"]) {
+      expect(containerErrorHint(code)).not.toContain('kld_list="');
+    }
+  });
+});

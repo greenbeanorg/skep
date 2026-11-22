@@ -116,7 +116,8 @@ func (h *host) PortFilterAvailable(ctx context.Context) error {
 	}
 	return &models.Error{Code: models.CodePortFilterUnavailable,
 		Message: "the netgraph modules " + strings.Join(missing, ", ") + " are not loaded, so a guest port cannot get its anti-spoofing filter; " +
-			"the operator loads them (kld_list=\"netgraph ng_socket ng_ether ng_bpf\" in rc.conf); Skep loads no modules",
+			"the operator loads them (kldload netgraph ng_socket ng_ether ng_bpf) and keeps them across reboots " +
+			"(sysrc kld_list+=\"netgraph ng_socket ng_ether ng_bpf\", which adds to an existing kld_list); Skep loads no modules",
 		Details: map[string]any{"missing_modules": missing}}
 }
 

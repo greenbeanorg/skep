@@ -318,9 +318,9 @@ export function containerErrorHint(code: string, context: "create" | "existing" 
     case "clone_addressing_required":
       return "Every interface with a static address needs new addressing for the clone.";
     case "epair_unavailable":
-      return "The if_epair module is not loaded on the host; an administrator adds it to kld_list.";
+      return 'The if_epair module is not loaded on the host; an administrator loads it and adds it to kld_list with sysrc kld_list+="if_epair".';
     case "port_filter_unavailable":
-      return "The netgraph modules that give each interface its anti-spoofing filter are not loaded on the host; an administrator adds netgraph, ng_socket, ng_ether and ng_bpf to kld_list.";
+      return 'The netgraph modules that give each interface its anti-spoofing filter are not loaded on the host; an administrator loads them and adds them to kld_list with sysrc kld_list+="netgraph ng_socket ng_ether ng_bpf".';
     case "port_filter_failed":
       return "The anti-spoofing filter could not be put on the jail's interface, so the jail was not started; an administrator checks the agent log.";
     case "devfs_ruleset_conflict":

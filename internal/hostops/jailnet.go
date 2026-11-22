@@ -229,7 +229,7 @@ func (s JailSpec) devfsRuleset() int {
 func (h *host) EpairAvailable(ctx context.Context) error {
 	if _, err := h.run.Run(ctx, kldstatBinary, "-q", "-m", "if_epair"); err != nil {
 		return &models.Error{Code: models.CodeEpairUnavailable,
-			Message: "the if_epair module is not loaded, so a jail cannot have a NIC; the operator loads it (kld_list=\"if_epair\" in rc.conf); Skep loads no modules"}
+			Message: "the if_epair module is not loaded, so a jail cannot have a NIC; the operator loads it (kldload if_epair) and keeps it across reboots (sysrc kld_list+=\"if_epair\", which adds to an existing kld_list); Skep loads no modules"}
 	}
 	return nil
 }

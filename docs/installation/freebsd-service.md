@@ -339,12 +339,16 @@ without VLAN filtering). See
 
 ## Kernel modules and bridges for guests
 
-Skep loads no kernel modules. A host that runs guests with NICs needs,
-in `/etc/rc.conf`:
+Skep loads no kernel modules. A host that runs guests with NICs needs
+these in `kld_list` in `/etc/rc.conf`:
 
+```sh
+sysrc kld_list+="if_epair netgraph ng_socket ng_ether ng_bpf"
+kldload if_epair netgraph ng_socket ng_ether ng_bpf    # now, without a reboot
 ```
-kld_list="if_epair netgraph ng_socket ng_ether ng_bpf"
-```
+
+`+=` appends to an existing `kld_list`; writing `kld_list="…"` by hand
+would replace it and drop modules the host already loads at boot.
 
 `if_epair` gives jails their interfaces. The netgraph modules filter every
 guest port (ADR 0011). `vmm` and `nmdm` go in `/boot/loader.conf`
