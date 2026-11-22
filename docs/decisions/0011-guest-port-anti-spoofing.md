@@ -513,7 +513,13 @@ live, deploy, items 1–5 and 7–9. Item 10 is left to Andy.
    nothing in `rc.conf`. Also the `bridge_vlan_unfiltered` warning before
    it is switched on.
 10. **Reboot**: needs Andy; not run in the validation run. After a reboot
-    with `kld_list` set, an autostart guest comes up filtered.
+    with `kld_list` set, an autostart guest comes up filtered. (Found in the
+    validation run: this release has no autostart, ADR 0009 decision 2c, so
+    the check is that the modules come back from `kld_list` and the next
+    start is filtered.)
+
+Results of items 1–9 (2026-11-22, all passed):
+[m7c-validation.md](../../tests/integration/jails/results/m7c-validation.md).
 
 ## Consequences
 
