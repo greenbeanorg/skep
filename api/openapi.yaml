@@ -771,9 +771,15 @@ paths:
 
         Refusals that need the host to decide (`pool_not_allowed`,
         `bridge_not_allowed`, `engine_unsupported`, `firmware_unsupported`,
-        `insufficient_space`, `media_not_found`) create no task and are
-        audited. An `Idempotency-Key` header makes a retry return the
-        first answer.
+        `insufficient_space`, `media_not_found`, `vm_mac_in_use`) create
+        no task and are audited. An `Idempotency-Key` header makes a retry
+        return the first answer.
+
+        A NIC's `mac_address` that another Skep VM or a Skep jail already
+        holds is refused with `vm_mac_in_use` (409); its details name the
+        holder (`held_by_kind` `vm` or `container`, `held_by_id`,
+        `held_by_name`) and the NIC (`slot`, `mac_address`), as
+        `container_mac_in_use` does for a jail.
       parameters:
         - $ref: "#/components/parameters/IdempotencyKey"
       requestBody:
@@ -2298,7 +2304,7 @@ components:
       description: |
         The current state of the VM or the host refuses the request:
         `vm_not_stopped`, `vm_not_provisioned`, `vm_name_taken`,
-        `insufficient_space`, `insufficient_memory`, `bhyve_unavailable`,
+        `vm_mac_in_use`, `insufficient_space`, `insufficient_memory`, `bhyve_unavailable`,
         `port_filter_unavailable`,
         `storage_unavailable`, `vm_not_running`, `vm_start_failed`,
         `stop_timeout`, `console_busy`, `resource_busy`,
@@ -2595,7 +2601,11 @@ components:
               model:
                 type: string
                 enum: [virtio-net, e1000]
-              mac_address: { type: string }
+              mac_address:
+                type: string
+                description: |
+                  Generated when left out. Must not be held by another
+                  Skep VM or by a Skep jail (`vm_mac_in_use`, 409).
               bridge: { type: string }
     VMUpdate:
       type: object

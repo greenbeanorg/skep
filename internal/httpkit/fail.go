@@ -35,6 +35,7 @@ var StatusForCode = map[string]int{
 	models.CodeStorageUnavailable:  http.StatusConflict,
 	models.CodeVMNameTaken:         http.StatusConflict,
 	models.CodeVMNotStopped:        http.StatusConflict,
+	models.CodeVMMACInUse:          http.StatusConflict,
 	models.CodeVMNotRunning:        http.StatusConflict,
 	models.CodeVMNotProvisioned:    http.StatusConflict,
 	models.CodeStopTimeout:         http.StatusConflict,
