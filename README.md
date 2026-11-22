@@ -429,6 +429,12 @@ docs/                  architecture, security, and decision records
   [0010 Storage management and jails](docs/decisions/0010-storage-and-jails.md),
   [0011 Anti-spoofing on guest ports](docs/decisions/0011-guest-port-anti-spoofing.md) (Accepted 2026-11-21)
 
+## License
+
+Skep is released under the [BSD 2-Clause License](LICENSE). The licenses
+of the Go modules and npm packages built into it, all compatible with it,
+are listed in [docs/licenses.md](docs/licenses.md).
+
 ## Trademarks
 
 FreeBSD® is a registered trademark of The FreeBSD Foundation. Skep is an
