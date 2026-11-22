@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -38,6 +39,11 @@ type Journal struct {
 	Complete   bool       `json:"complete"`
 	RolledBack *time.Time `json:"rolled_back_at,omitempty"`
 	Entries    []Entry    `json:"entries"`
+	// Unreadable is set, by LoadJournals, for a journal directory whose
+	// journal.json is missing or not JSON (a run that stopped before its
+	// first save, or a damaged file). Such a run counts as unfinished
+	// with no recorded changes; rolling it back only marks it so.
+	Unreadable string `json:"-"`
 }
 
 // Entry is one action of a run, with the state of the file it changed.
@@ -51,7 +57,11 @@ type Entry struct {
 	BeforeSHA256 string `json:"before_sha256,omitempty"`
 	AfterSHA256  string `json:"after_sha256,omitempty"`
 	Done         bool   `json:"done"`
-	Error        string `json:"error,omitempty"`
+	// Skipped is set when the action was not made because the host
+	// changed between the plan and the action (the variable was set or
+	// changed meanwhile); Done stays false.
+	Skipped bool   `json:"skipped,omitempty"`
+	Error   string `json:"error,omitempty"`
 }
 
 // JournalDir is the directory of one journal under root.
@@ -72,7 +82,13 @@ func LoadJournals(root string) ([]Journal, error) {
 			continue
 		}
 		j, err := LoadJournal(root, e.Name())
-		if err != nil {
+		var ue *unreadableError
+		if errors.As(err, &ue) {
+			// Not every command must fail on one damaged journal: it is
+			// an unfinished run, which the plans refuse on until
+			// "skep-setup rollback ID" clears it.
+			j = Journal{Format: JournalFormat, ID: e.Name(), Command: "unknown", Unreadable: ue.Error()}
+		} else if err != nil {
 			return nil, err
 		}
 		out = append(out, j)
@@ -87,17 +103,49 @@ func LoadJournal(root, id string) (Journal, error) {
 		return Journal{}, fmt.Errorf("journal %q: not a journal name (UTC timestamp such as 20261122T150000Z)", id)
 	}
 	b, err := os.ReadFile(filepath.Join(JournalDir(root, id), "journal.json"))
+	if errors.Is(err, fs.ErrNotExist) {
+		return Journal{}, &unreadableError{fmt.Errorf("journal %s: no journal.json", id)}
+	}
 	if err != nil {
 		return Journal{}, fmt.Errorf("journal %s: %w", id, err)
 	}
 	var j Journal
 	if err := json.Unmarshal(b, &j); err != nil {
+		var se *json.SyntaxError
+		if errors.As(err, &se) || errors.Is(err, io.ErrUnexpectedEOF) || len(b) == 0 {
+			return Journal{}, &unreadableError{fmt.Errorf("journal %s: journal.json is not JSON: %w", id, err)}
+		}
 		return Journal{}, fmt.Errorf("journal %s: %w", id, err)
 	}
 	if j.Format != JournalFormat || j.ID != id {
 		return Journal{}, fmt.Errorf("journal %s: format %d id %q not understood", id, j.Format, j.ID)
 	}
 	return j, nil
+}
+
+// unreadableError is a journal directory without a readable journal.json.
+type unreadableError struct{ err error }
+
+func (e *unreadableError) Error() string { return e.err.Error() }
+func (e *unreadableError) Unwrap() error { return e.err }
+
+// Describe is one line naming the run, for the operator.
+func (j Journal) Describe() string {
+	if j.Unreadable != "" {
+		return fmt.Sprintf("run %s: unfinished, no recorded changes (%s)", j.ID, j.Unreadable)
+	}
+	n := 0
+	for _, e := range j.Entries {
+		if e.Done {
+			n++
+		}
+	}
+	state := "finished"
+	if !j.Complete {
+		state = "unfinished"
+	}
+	return fmt.Sprintf("run %s: %s, started %s, %s, %d of %d change(s) made",
+		j.ID, j.Command, j.StartedAt.UTC().Format(time.RFC3339), state, n, len(j.Entries))
 }
 
 // save writes the journal atomically.

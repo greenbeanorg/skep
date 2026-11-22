@@ -21,6 +21,7 @@ import (
 	"io/fs"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -54,6 +55,46 @@ type env struct {
 	agent setup.Agent
 	sleep func(time.Duration)
 	inode func(string) (uint64, error)
+	// umask sets the process umask (syscall.Umask); nil leaves it.
+	umask func(int) int
+}
+
+// setUmask gives every command that changes the host umask 022, so what
+// it creates never depends on the caller's umask.
+func (e env) setUmask() {
+	if e.umask != nil {
+		e.umask(0o022)
+	}
+}
+
+// realRunner reports whether commands run on the host (not a test fake).
+func (e env) realRunner() bool {
+	_, ok := e.runner.(setup.HostRunner)
+	return ok
+}
+
+// agentFor is the agent's socket under root, or the test's fake.
+func (e env) agentFor(root string) setup.Agent {
+	if e.agent != nil {
+		return e.agent
+	}
+	return setup.SocketAgent{Path: filepath.Join(root, "var/run/skep/agent.sock")}
+}
+
+// refuseFixtureServices refuses, for a -root other than / with the real
+// runner, the actions that act on the running host whatever the root:
+// services, accounts (pw), and the first administrator.
+func refuseFixtureServices(root string, e env, p setup.Plan) error {
+	if root == "/" || !e.realRunner() {
+		return nil
+	}
+	for _, a := range p.Actions() {
+		switch a.Type {
+		case setup.ActServiceStart, setup.ActServiceStop, setup.ActAdminCreate, setup.ActPwDelete:
+			return &exitError{code: exitUsage, msg: fmt.Sprintf("-root %s: %q would act on this host's services or accounts, not on the root; refused", root, a.String())}
+		}
+	}
+	return nil
 }
 
 // exitError carries an exit code.
@@ -70,7 +111,7 @@ func main() {
 	e := env{
 		stdin: os.Stdin, stdout: os.Stdout, stderr: os.Stderr,
 		prober: setup.HostProber{}, runner: setup.HostRunner{Stdin: os.Stdin, Stdout: os.Stdout, Stderr: os.Stderr},
-		now: time.Now, euid: os.Geteuid(),
+		now: time.Now, euid: os.Geteuid(), umask: syscall.Umask,
 	}
 	e.confirm = func(prompt string) bool { return askYes(e.stdin, e.stdout, prompt) }
 	code := run(ctx, os.Args[1:], e)

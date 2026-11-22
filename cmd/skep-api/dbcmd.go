@@ -12,7 +12,7 @@ import (
 // it may run as root: it only reads api.db and writes the copy 0600.
 func runDB(ctx context.Context, args []string, e env) error {
 	v := version.Get()
-	return dbbackup.RunCommand(ctx, "skep-api", "api", v.Version+"-"+v.Commit, args, e.stdout, e.stderr,
+	return dbbackup.RunCommand(ctx, "skep-api", "api", dbbackup.Label(v.Version, v.Commit), args, e.stdout, e.stderr,
 		func(configPath, dataDir string) (dbbackup.Paths, error) {
 			cfg, err := config.LoadAPI(config.APILoadOptions{Path: configPath, Overrides: config.APIOverrides{DataDir: dataDir}})
 			if err != nil {

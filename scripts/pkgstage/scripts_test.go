@@ -56,7 +56,8 @@ func newScriptEnv(t *testing.T, users, groups, jails string) *scriptEnv {
 	write(filepath.Join(s.state, "groups"), groups, 0o644)
 	write(filepath.Join(s.state, "calls"), "", 0o644)
 	s.env = []string{
-		"PATH=" + s.bin + ":/usr/bin:/bin",
+		// The scripts set their own PATH; this one must not matter.
+		"PATH=/nonexistent",
 		"PWSTATE=" + s.state,
 		"FAKE_JLS=" + jails,
 		"SKEP_VMM_DIR=" + s.vmm,
@@ -64,9 +65,26 @@ func newScriptEnv(t *testing.T, users, groups, jails string) *scriptEnv {
 	return s
 }
 
+// scriptPATH is the PATH line both package scripts set.
+const scriptPATH = "\nPATH=/sbin:/bin:/usr/sbin:/usr/bin\nexport PATH\n"
+
+// run runs a copy of the script whose fixed PATH line is replaced by one
+// that finds the fakes first (the only change), with s.env.
 func (s *scriptEnv) run(script string, extra ...string) (int, string) {
 	s.t.Helper()
-	cmd := exec.Command("sh", filepath.Join(repoRoot(s.t), "packaging/pkg", script))
+	b, err := os.ReadFile(filepath.Join(repoRoot(s.t), "packaging/pkg", script))
+	if err != nil {
+		s.t.Fatal(err)
+	}
+	if strings.Count(string(b), scriptPATH) != 1 {
+		s.t.Fatalf("%s does not set its PATH (%q) exactly once", script, scriptPATH)
+	}
+	copyPath := filepath.Join(s.t.TempDir(), script)
+	body := strings.Replace(string(b), scriptPATH, "\nPATH="+s.bin+":/usr/bin:/bin\nexport PATH\n", 1)
+	if err := os.WriteFile(copyPath, []byte(body), 0o755); err != nil {
+		s.t.Fatal(err)
+	}
+	cmd := exec.Command("sh", copyPath)
 	cmd.Env = append(append([]string{}, s.env...), extra...)
 	out, err := cmd.CombinedOutput()
 	code := 0
@@ -163,6 +181,16 @@ func TestPreDeinstall(t *testing.T) {
 		code, out := s.run("pre-deinstall.sh")
 		if code == 0 || !strings.Contains(out, "jail skep-1111") || strings.Contains(out, "other") {
 			t.Fatalf("exit %d: %s", code, out)
+		}
+		// pkg 2.9.2 deletes anyway: the message is a warning that says
+		// so, and names the guard that does refuse.
+		for _, w := range []string{"WARNING", "pkg deletes the files anyway", "skep-setup remove"} {
+			if !strings.Contains(out, w) {
+				t.Errorf("output lacks %q: %s", w, out)
+			}
+		}
+		if strings.Contains(out, "refusing") {
+			t.Errorf("claims to refuse: %s", out)
 		}
 	})
 	t.Run("running VM", func(t *testing.T) {

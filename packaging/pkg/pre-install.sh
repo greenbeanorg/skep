@@ -14,6 +14,11 @@
 
 set -u
 
+# A fixed PATH: pkg runs this script, as root, with the caller's
+# environment. (The package tests replace this one line to find fakes.)
+PATH=/sbin:/bin:/usr/sbin:/usr/bin
+export PATH
+
 SKEP_NAME="skep"
 SKEP_ID="409"
 

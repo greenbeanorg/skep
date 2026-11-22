@@ -12,7 +12,7 @@ import (
 // runDB is "skep-agent db backup" (ADR 0012 Decision 5).
 func runDB(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	v := version.Get()
-	return dbbackup.RunCommand(ctx, "skep-agent", "agent", v.Version+"-"+v.Commit, args, stdout, stderr,
+	return dbbackup.RunCommand(ctx, "skep-agent", "agent", dbbackup.Label(v.Version, v.Commit), args, stdout, stderr,
 		func(configPath, dataDir string) (dbbackup.Paths, error) {
 			cfg, err := config.Load(config.LoadOptions{Path: configPath, Overrides: config.Overrides{DataDir: dataDir}})
 			if err != nil {

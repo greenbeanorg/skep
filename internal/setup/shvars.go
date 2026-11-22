@@ -174,6 +174,7 @@ func (rc RCConf) ComplexOverride() string {
 type Account struct {
 	Name  string
 	ID    string
+	GID   string // passwd only: the primary group
 	Home  string // passwd only
 	Shell string // passwd only
 }
@@ -196,7 +197,7 @@ func ReadAccounts(path string) ([]Account, error) {
 		}
 		a := Account{Name: f[0], ID: f[2]}
 		if len(f) >= 7 {
-			a.Home, a.Shell = f[5], f[6]
+			a.GID, a.Home, a.Shell = f[3], f[5], f[6]
 		}
 		out = append(out, a)
 	}

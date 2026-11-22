@@ -27,16 +27,23 @@ func Usage(program string) string {
 
 Copies the database consistently (SQLite VACUUM INTO, read-only on the
 source; the service may keep running) into DIR, by default
-<data dir>/backup/<version>-<UTC timestamp>, with its SHA-256 and a listing
+<data dir>/backup/<version>+<commit>-<UTC timestamp>, with its SHA-256 and a listing
 of the audit archive (not a copy). Keeps the newest N backups (default %d)
 and removes older ones made by this command.`, program, DefaultKeep)
 }
 
 var versionLabelRE = regexp.MustCompile(`[^A-Za-z0-9._+-]`)
 
+// Label is a backup directory's label for a build: <version>+<commit>,
+// the form skep-setup upgrade uses for the build it backs up, with any
+// character unsafe in a file name replaced by "_".
+func Label(version, commit string) string {
+	return versionLabelRE.ReplaceAllString(version+"+"+commit, "_")
+}
+
 // RunCommand is "<program> db ..." for skep-agent (name "agent") and
-// skep-api (name "api").
-func RunCommand(ctx context.Context, program, name, version string, args []string, stdout, stderr io.Writer, resolve Resolve) error {
+// skep-api (name "api"). label names the running build (Label).
+func RunCommand(ctx context.Context, program, name, label string, args []string, stdout, stderr io.Writer, resolve Resolve) error {
 	if len(args) == 0 || args[0] != "backup" {
 		fmt.Fprintln(stderr, Usage(program))
 		if len(args) == 0 {
@@ -48,7 +55,7 @@ func RunCommand(ctx context.Context, program, name, version string, args []strin
 	flags.SetOutput(stderr)
 	configPath := flags.String("config", "", "path to the JSON configuration file")
 	dataDir := flags.String("data-dir", "", "state directory")
-	dir := flags.String("dir", "", "backup directory, <data dir>/backup/<label>-<UTC timestamp> (default: a new one)")
+	dir := flags.String("dir", "", "backup directory, <data dir>/backup/<version>+<commit>-<UTC timestamp> (default: a new one)")
 	keep := flags.Int("keep", DefaultKeep, "how many backups to keep")
 	if err := flags.Parse(args[1:]); err != nil {
 		return err
@@ -63,7 +70,7 @@ func RunCommand(ctx context.Context, program, name, version string, args []strin
 	r, err := Backup(ctx, Options{
 		Name: name, DBPath: p.DBPath, ArchiveDir: p.ArchiveDir,
 		Parent: filepath.Join(p.DataDir, "backup"), Dir: *dir,
-		Label: versionLabelRE.ReplaceAllString(version, "_"), Keep: *keep,
+		Label: versionLabelRE.ReplaceAllString(label, "_"), Keep: *keep,
 	})
 	if err != nil {
 		return err

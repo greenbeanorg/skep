@@ -58,3 +58,14 @@ func TestUpgradeWaitFlag(t *testing.T) {
 		}
 	}
 }
+
+// A2: -keep must keep at least one backup; checked before anything runs.
+func TestUpgradeKeepFlag(t *testing.T) {
+	r := &versionRunner{}
+	e := env{prober: fakeProber{f: hostFacts()}, runner: r, euid: 0, confirm: func(string) bool { return true }}
+	for _, k := range []string{"0", "-2"} {
+		if res := runWith(t, e, "upgrade", "-root", t.TempDir(), "-yes", "-keep", k); res.code != exitUsage || !strings.Contains(res.stderr, "at least one backup") || len(r.calls) != 0 {
+			t.Fatalf("-keep %s: %+v %v", k, res, r.calls)
+		}
+	}
+}

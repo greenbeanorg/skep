@@ -5,7 +5,6 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"path/filepath"
 
 	"github.com/greenbeanorg/skep/internal/dbbackup"
 	"github.com/greenbeanorg/skep/internal/setup"
@@ -13,6 +12,7 @@ import (
 )
 
 func runUpgrade(ctx context.Context, args []string, e env) error {
+	e.setUmask()
 	flags := flag.NewFlagSet("skep-setup upgrade", flag.ContinueOnError)
 	flags.SetOutput(e.stderr)
 	root := flags.String("root", "/", "directory standing in for / (for tests)")
@@ -26,19 +26,22 @@ func runUpgrade(ctx context.Context, args []string, e env) error {
 	if *wait < 0 {
 		return fmt.Errorf("-wait %s: must not be negative", *wait)
 	}
+	if *keep < 1 {
+		return fmt.Errorf("-keep %d: at least one backup must be kept", *keep)
+	}
 	if flags.NArg() > 0 {
 		return fmt.Errorf("unexpected argument %q", flags.Arg(0))
 	}
 	if err := requireRoot(*root, e); err != nil {
 		return err
 	}
+	if *root != "/" && e.realRunner() {
+		return &exitError{code: exitUsage, msg: "-root " + *root + ": upgrade stops and starts this host's services; it runs only on / (tests use a fake runner)"}
+	}
 	if !*yes && !e.confirm("Stop skep_api, wait for unfinished tasks, back up both databases and restart skep_agent and skep_api? Running guests are not touched.") {
 		return &exitError{code: exitPending, msg: "not confirmed: nothing was changed"}
 	}
-	agent := e.agent
-	if agent == nil {
-		agent = setup.SocketAgent{Path: filepath.Join(*root, "var/run/skep/agent.sock")}
-	}
+	agent := e.agentFor(*root)
 	taskWait := *wait
 	if taskWait == 0 {
 		taskWait = -1 // Upgrader: 0 is the default, negative is no wait

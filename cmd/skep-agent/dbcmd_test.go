@@ -9,6 +9,8 @@ import (
 	"testing"
 
 	"github.com/greenbeanorg/skep/internal/database"
+	"github.com/greenbeanorg/skep/internal/dbbackup"
+	"github.com/greenbeanorg/skep/pkg/version"
 )
 
 func TestDBBackupCommand(t *testing.T) {
@@ -29,6 +31,10 @@ func TestDBBackupCommand(t *testing.T) {
 			t.Fatalf("%v: %s", err, errb.String())
 		}
 		if i == 0 {
+			// One label format, <version>+<commit>, as upgrade's.
+			if !strings.Contains(out.String(), "/backup/"+dbbackup.Label(version.Get().Version, version.Get().Commit)+"-") {
+				t.Fatalf("label: %q", out.String())
+			}
 			// the next backup needs another timestamp
 			os.Rename(filepath.Dir(strings.Fields(out.String())[3]), filepath.Join(data, "backup", "0.1.0-dev-unknown-20200101T000000Z"))
 		}

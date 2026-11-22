@@ -25,6 +25,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 
 	// The pure-Go SQLite driver, as everywhere in Skep.
@@ -104,9 +105,6 @@ func Backup(ctx context.Context, o Options) (Result, error) {
 	if err := os.Mkdir(dir, 0o700); err != nil && !errors.Is(err, fs.ErrExist) {
 		return Result{}, err
 	}
-	if err := os.WriteFile(filepath.Join(dir, marker), nil, 0o600); err != nil {
-		return Result{}, err
-	}
 	r := Result{Dir: dir, File: filepath.Join(dir, o.Name+".db")}
 	if _, err := os.Lstat(r.File); err == nil {
 		return Result{}, fmt.Errorf("%s exists; a backup is never overwritten", r.File)
@@ -140,6 +138,12 @@ func Backup(ctx context.Context, o Options) (Result, error) {
 				return Result{}, err
 			}
 		}
+	}
+	// The marker last: a directory with it holds a finished backup, and
+	// only such directories are counted and pruned. One that failed half
+	// way is left for the operator, never pruned as if it were complete.
+	if err := os.WriteFile(filepath.Join(dir, marker), nil, 0o600); err != nil {
+		return Result{}, err
 	}
 	r.Pruned, err = prune(o.Parent, o.Keep)
 	return r, err
@@ -188,11 +192,35 @@ func fileSum(path string) (string, error) {
 		return "", err
 	}
 	defer f.Close()
+	return readerSum(f)
+}
+
+func readerSum(r io.Reader) (string, error) {
 	h := sha256.New()
-	if _, err := io.Copy(h, f); err != nil {
+	if _, err := io.Copy(h, r); err != nil {
 		return "", err
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// archiveFileSum opens an archive file without following a symbolic link
+// (O_NOFOLLOW), requires a regular file, and returns its size and SHA-256
+// from that one open file.
+func archiveFileSum(path string) (int64, string, error) {
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return 0, "", err
+	}
+	defer f.Close()
+	st, err := f.Stat()
+	if err != nil {
+		return 0, "", err
+	}
+	if !st.Mode().IsRegular() {
+		return 0, "", fmt.Errorf("%s is not a regular file", path)
+	}
+	sum, err := readerSum(f)
+	return st.Size(), sum, err
 }
 
 // listArchive returns "<sha256>  <size>  <name>" for every file in the
@@ -210,16 +238,11 @@ func listArchive(dir string) (string, error) {
 		if !e.Type().IsRegular() {
 			continue
 		}
-		p := filepath.Join(dir, e.Name())
-		st, err := os.Stat(p)
+		size, sum, err := archiveFileSum(filepath.Join(dir, e.Name()))
 		if err != nil {
 			return "", err
 		}
-		sum, err := fileSum(p)
-		if err != nil {
-			return "", err
-		}
-		fmt.Fprintf(&b, "%s  %d  %s\n", sum, st.Size(), e.Name())
+		fmt.Fprintf(&b, "%s  %d  %s\n", sum, size, e.Name())
 	}
 	if b.Len() == 0 {
 		return "", nil

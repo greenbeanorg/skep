@@ -9,6 +9,7 @@ import (
 )
 
 func runRemove(ctx context.Context, args []string, e env) error {
+	e.setUmask()
 	flags := flag.NewFlagSet("skep-setup remove", flag.ContinueOnError)
 	flags.SetOutput(e.stderr)
 	var o setup.RemoveOptions
@@ -33,7 +34,7 @@ func runRemove(ctx context.Context, args []string, e env) error {
 	if err != nil {
 		return err
 	}
-	p, err := setup.ComputeRemove(ctx, o, f, e.runner)
+	p, err := setup.ComputeRemove(ctx, o, f, e.runner, e.agentFor(o.Root))
 	if err != nil {
 		return err
 	}
@@ -46,6 +47,9 @@ func runRemove(ctx context.Context, args []string, e env) error {
 	}
 	if *planOnly {
 		return nil
+	}
+	if err := refuseFixtureServices(o.Root, e, p); err != nil {
+		return err
 	}
 	if o.PurgeData && !e.confirm("This deletes the node identity, both databases and every audit log, and cannot be undone. Delete them?") {
 		return &exitError{code: exitPending, msg: "not confirmed: nothing was changed"}

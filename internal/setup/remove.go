@@ -2,12 +2,10 @@ package setup
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
-	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -32,15 +30,20 @@ type RemoveOptions struct {
 // dataRoot is Skep's data directory; purging keeps only setup's journals.
 const dataRoot = "/var/db/skep"
 
-// guestCounts reads how many VMs and jails the agent has, read-only.
-func guestCounts(ctx context.Context, path string) (vms, jails int, err error) {
-	if _, err := os.Stat(path); errors.Is(err, fs.ErrNotExist) {
-		return 0, 0, nil
+// guestCounts reads how many VMs and jails the agent has, read-only, from
+// the database its configuration names. A database that does not exist
+// means an agent that never started, unless the agent answers on its
+// socket (errAgentWithoutDB). A table that is missing is an error: the
+// database is not what this build expects.
+func guestCounts(ctx context.Context, root string, ag Agent) (vms, jails int, err error) {
+	path, err := AgentDBPath(root)
+	if err != nil {
+		return 0, 0, fmt.Errorf("the agent's configuration: %w", err)
 	}
-	q := url.Values{}
-	q.Set("mode", "ro")
-	q.Add("_pragma", "busy_timeout(5000)")
-	db, err := sql.Open("sqlite", "file:"+(&url.URL{Path: path}).EscapedPath()+"?"+q.Encode())
+	if !exists(path) {
+		return 0, 0, agentWithoutDB(ctx, ag, root, path)
+	}
+	db, err := openReadOnly(path)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -48,9 +51,6 @@ func guestCounts(ctx context.Context, path string) (vms, jails int, err error) {
 	count := func(table string) (int, error) {
 		var n int
 		err := db.QueryRowContext(ctx, "SELECT count(*) FROM "+table).Scan(&n)
-		if err != nil && strings.Contains(err.Error(), "no such table") {
-			return 0, nil
-		}
 		return n, err
 	}
 	if vms, err = count("virtual_machines"); err != nil {
@@ -61,9 +61,10 @@ func guestCounts(ctx context.Context, path string) (vms, jails int, err error) {
 }
 
 // ComputeRemove plans skep-setup remove. It reads files and the agent's
-// database, and runs zfs list (read-only) to name the datasets it never
-// destroys.
-func ComputeRemove(ctx context.Context, o RemoveOptions, f Facts, r Runner) (Plan, error) {
+// database, asks the agent's socket whether it answers, and runs zfs list
+// and zfs get (read-only) to name the datasets it never destroys and to
+// find encryption keys kept under /var/db/skep.
+func ComputeRemove(ctx context.Context, o RemoveOptions, f Facts, r Runner, ag Agent) (Plan, error) {
 	if o.Root == "" {
 		return Plan{}, errors.New("root must not be empty")
 	}
@@ -87,11 +88,17 @@ func ComputeRemove(ctx context.Context, o RemoveOptions, f Facts, r Runner) (Pla
 	b.editability()
 
 	// Guests.
-	vms, jails, err := guestCounts(ctx, hostPath(o.Root, agentDB))
-	if err != nil {
+	vms, jails, err := guestCounts(ctx, o.Root, ag)
+	var noDB *errAgentWithoutDB
+	if errors.As(err, &noDB) {
+		b.refuse("guests", "the agent's database", noDB.Error())
+	} else if err != nil {
 		return Plan{}, fmt.Errorf("read the agent's guests: %w", err)
 	}
 	rj, rv := f.SkepGuests()
+	if o.PurgeData && len(rj)+len(rv) > 0 {
+		b.refuse("data", "--purge-data", fmt.Sprintf("Skep guests are running (jails %v, VMs %v): purging would delete the agent's state for them while they run. Stop them first; --keep-guests does not change this", rj, rv))
+	}
 	switch {
 	case vms+jails+len(rj)+len(rv) == 0:
 		b.ok("guests", "no Skep guests", "")
@@ -106,16 +113,19 @@ func ComputeRemove(ctx context.Context, o RemoveOptions, f Facts, r Runner) (Pla
 	// Stop the services, then disable them.
 	b.add("services", "stop skep_api", "", Action{Type: ActServiceStop, Service: "skep_api"})
 	b.add("services", "stop skep_agent", "running guests keep running", Action{Type: ActServiceStop, Service: "skep_agent"})
-	reverted := map[string]bool{}
+	reported := map[string]bool{}
 	if o.RevertHost {
-		reverted = b.revertHost()
+		reported = b.revertHost()
 	} else {
 		b.ok("host", "lines setup added to rc.conf and loader.conf", "kept (use --revert-host to remove them where unchanged)")
 	}
 	for _, v := range []string{"skep_agent_enable", "skep_api_enable"} {
-		if !reverted[v] {
-			b.disable(v)
+		// revertHost has said what happens to it already, unless it left
+		// a changed value that still enables the service.
+		if reported[v] {
+			continue
 		}
+		b.disable(v)
 	}
 
 	if o.PurgeData {
@@ -125,7 +135,7 @@ func ComputeRemove(ctx context.Context, o RemoveOptions, f Facts, r Runner) (Pla
 	} else {
 		b.ok("data", dataRoot+", agent.json, api.json, the skep account", "kept (use --purge-data to delete them)")
 	}
-	b.datasets(ctx, r)
+	b.datasets(ctx, r, o.PurgeData)
 	b.item(Item{Kind: Manual, Area: "package", What: "then remove the files", Steps: []string{"pkg delete skep"}})
 	return b.plan, nil
 }
@@ -142,7 +152,7 @@ func (b *builder) disable(name string) {
 		b.ok(rcConfPath, name, "not enabled")
 		return
 	}
-	a := Action{Type: ActSysrc, File: rcConfPath, Name: name, Op: "=", Value: "NO"}
+	a := Action{Type: ActSysrc, File: rcConfPath, Name: name, Op: "=", Value: "NO", Expect: &v}
 	if b.rcOK {
 		b.add(rcConfPath, name+`="NO"`, "", a)
 	} else {
@@ -176,9 +186,10 @@ func setBefore(root string, j Journal, file, name string) bool {
 }
 
 // revertHost plans removing what setup's applies added, where unchanged,
-// and returns the variables it removes.
+// and returns the variables it has settled: removed, gone, or reported in
+// a way that needs nothing more.
 func (b *builder) revertHost() map[string]bool {
-	removed := map[string]bool{}
+	reported := map[string]bool{}
 	var added []addedVar
 	seen := map[addedVar]bool{}
 	for _, j := range b.journals {
@@ -200,7 +211,7 @@ func (b *builder) revertHost() map[string]bool {
 	}
 	if len(added) == 0 {
 		b.ok("host", "lines setup added", "none recorded")
-		return removed
+		return reported
 	}
 	bridge := false
 	for _, v := range added {
@@ -209,16 +220,25 @@ func (b *builder) revertHost() map[string]bool {
 			conf, editable = b.loader, b.loaderOK
 		}
 		cur, ok := conf.Main.Vals[v.name]
-		var act *Action
+		reported[v.name] = true
+		var acts []Action
 		switch {
+		case v.file == rcConfPath && v.name == "zfs_enable" && ok && len(b.f.Pools) > 0:
+			pools := make([]string, 0, len(b.f.Pools))
+			for p := range b.f.Pools {
+				pools = append(pools, p)
+			}
+			sort.Strings(pools)
+			b.ok(v.file, v.name, fmt.Sprintf("kept although setup added it: pools %v are imported, and without it they are not imported at boot", pools))
 		case !ok:
 			b.ok(v.file, v.name, "already gone")
 		case v.op == "=" && cur != v.value:
 			b.item(Item{Kind: Conflict, Area: v.file, What: v.name,
 				Detail: fmt.Sprintf("is %q, setup set %q; changed since, left alone", cur, v.value)})
+			// A changed skep_*_enable that still says yes is disabled.
+			reported[v.name] = !strings.EqualFold(cur, "YES")
 		case v.op == "=":
-			act = &Action{Type: ActSysrc, File: v.file, Name: v.name, Op: "-x"}
-			removed[v.name] = true
+			acts = []Action{{Type: ActSysrc, File: v.file, Name: v.name, Op: "-x", Expect: &cur}}
 		default:
 			var mine []string
 			for _, w := range strings.Fields(v.value) {
@@ -233,29 +253,32 @@ func (b *builder) revertHost() map[string]bool {
 				// 2026-11-22); a list setup created and that holds only
 				// setup's words, or nothing, is deleted, so the file
 				// returns to its bytes before apply.
-				act = &Action{Type: ActSysrc, File: v.file, Name: v.name, Op: "-x"}
+				acts = []Action{{Type: ActSysrc, File: v.file, Name: v.name, Op: "-x", Expect: &cur}}
 			case len(mine) == 0:
 				b.ok(v.file, v.name, "setup's words are gone already")
 			default:
-				act = &Action{Type: ActSysrc, File: v.file, Name: v.name, Op: "-=", Value: strings.Join(mine, " ")}
+				// One word per sysrc call: how sysrc -= treats several
+				// words at once is not something setup relies on.
+				for _, w := range mine {
+					acts = append(acts, Action{Type: ActSysrc, File: v.file, Name: v.name, Op: "-=", Value: w})
+				}
 			}
 		}
 		if strings.HasPrefix(v.name, "ifconfig_bridge") || v.name == "cloned_interfaces" {
 			bridge = true
 		}
-		if act == nil {
-			continue
-		}
-		if editable {
-			b.add(v.file, act.String(), "added by skep-setup and unchanged since", *act)
-		} else {
-			b.item(Item{Kind: Manual, Area: v.file, What: act.String(), Steps: []string{act.String()}})
+		for _, act := range acts {
+			if editable {
+				b.add(v.file, act.String(), "added by skep-setup and unchanged since", act)
+			} else {
+				b.item(Item{Kind: Manual, Area: v.file, What: act.String(), Steps: []string{act.String()}})
+			}
 		}
 	}
 	b.item(Item{Kind: Manual, Area: "host", What: "the running system",
 		Detail: "reverting boot-time lines unloads no module and destroys no interface; they go at the next boot" +
 			map[bool]string{true: ", or now with ifconfig BRIDGE destroy once nothing uses the bridge", false: ""}[bridge]})
-	return removed
+	return reported
 }
 
 // purge plans deleting Skep's data (keeping setup's journals), its
@@ -263,7 +286,8 @@ func (b *builder) revertHost() map[string]bool {
 func (b *builder) purge() error {
 	b.item(Item{Kind: Warn, Area: "data", What: "--purge-data",
 		Detail: "deletes the node identity, both databases, every audit log and archive, the database backups, the TLS key and the install media in " +
-			dataRoot + ", and agent.json and api.json. It cannot be undone; setup's journals in " + dataRoot + "/setup are kept"})
+			dataRoot + ", and agent.json and api.json. It cannot be undone; setup's journals in " + dataRoot + "/setup are kept. " +
+			"Skep keeps no ZFS encryption key (ADR 0010: the operator holds them); setup checks below that no guest dataset's keylocation is under " + dataRoot})
 	entries, err := os.ReadDir(hostPath(b.o.Root, dataRoot))
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return err
@@ -296,8 +320,10 @@ func (b *builder) purge() error {
 }
 
 // datasets lists, never destroys, Skep's datasets under each allow-listed
-// pool.
-func (b *builder) datasets(ctx context.Context, r Runner) {
+// pool, and finds the encryption keys of those datasets that are files
+// under /var/db/skep, which --purge-data would delete: refused with
+// --purge-data, a warning without.
+func (b *builder) datasets(ctx context.Context, r Runner, purge bool) {
 	raw, err := os.ReadFile(hostPath(b.o.Root, agentJSONPath))
 	if err != nil {
 		return
@@ -319,14 +345,55 @@ func (b *builder) datasets(ctx context.Context, r Runner) {
 			continue
 		}
 		root := p + "/" + c.Storage.DatasetRoot
-		out, err := r.Run(ctx, Cmd{Name: "zfs", Args: []string{"list", "-H", "-o", "name", "-r", root}})
+		out, err := r.Run(ctx, Cmd{Name: cmdZfs, Args: []string{"list", "-H", "-o", "name", "-r", root}})
 		if err != nil {
 			continue
 		}
-		if names := lines(out); len(names) > 0 {
+		names := lines(out)
+		if len(names) > 0 {
 			b.item(Item{Kind: Manual, Area: "storage", What: "datasets under " + root,
 				Detail: "setup never destroys a dataset; destroy them yourself once nothing uses them:\n" + strings.Join(names, "\n"),
 				Steps:  []string{"zfs destroy -r " + root}})
 		}
+		b.keysUnderData(ctx, r, root, purge)
+	}
+}
+
+// keysUnderData looks up the encryption roots of the datasets under root
+// and their keylocation; a key file under /var/db/skep is reported.
+func (b *builder) keysUnderData(ctx context.Context, r Runner, root string, purge bool) {
+	out, err := r.Run(ctx, Cmd{Name: cmdZfs, Args: []string{"get", "-H", "-o", "value", "-r", "encryptionroot", root}})
+	if err != nil {
+		b.warn("storage", "encryption keys under "+root, "zfs get encryptionroot failed ("+err.Error()+"); whether a key file is under "+dataRoot+" is unknown")
+		return
+	}
+	var encRoots []string
+	for _, v := range lines(out) {
+		if v != "-" && v != "" && !slices.Contains(encRoots, v) {
+			encRoots = append(encRoots, v)
+		}
+	}
+	if len(encRoots) == 0 {
+		return
+	}
+	out, err = r.Run(ctx, Cmd{Name: cmdZfs, Args: append([]string{"get", "-H", "-o", "name,value", "keylocation"}, encRoots...)})
+	if err != nil {
+		b.warn("storage", "encryption keys under "+root, "zfs get keylocation failed ("+err.Error()+"); whether a key file is under "+dataRoot+" is unknown")
+		return
+	}
+	var under []string
+	for _, l := range lines(out) {
+		name, loc, ok := strings.Cut(l, "\t")
+		if ok && strings.HasPrefix(loc, "file://"+dataRoot+"/") {
+			under = append(under, name+" ("+loc+")")
+		}
+	}
+	switch {
+	case len(under) == 0:
+		b.ok("storage", "encryption keys of "+root, "encryption roots "+strings.Join(encRoots, ", ")+"; no key file under "+dataRoot)
+	case purge:
+		b.refuse("data", "--purge-data", "the encryption key of "+strings.Join(under, ", ")+" is under "+dataRoot+" and would be deleted, making the data unreadable; move it and change keylocation first")
+	default:
+		b.warn("storage", "encryption keys under "+dataRoot, strings.Join(under, ", ")+": the key is under "+dataRoot+"; --purge-data would refuse")
 	}
 }

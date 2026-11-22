@@ -28,6 +28,9 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"syscall"
+
+	"github.com/greenbeanorg/skep/internal/config"
 )
 
 // Kind is what the plan says about one item.
@@ -64,6 +67,10 @@ type Action struct {
 	Name  string `json:"name,omitempty"`
 	Op    string `json:"op,omitempty"`
 	Value string `json:"value,omitempty"`
+	// Expect is the value the plan saw for a sysrc "=" or "-x" (nil:
+	// not set). Just before the change the variable is read again, and
+	// the action is skipped if it differs.
+	Expect *string `json:"expect,omitempty"`
 	// Content, Mode, Owner and Group describe a written file or a
 	// directory. Content is not kept in the journal.
 	Content []byte      `json:"-"`
@@ -101,7 +108,7 @@ func (a Action) String() string {
 	case ActServiceStart:
 		return "service " + a.Service + " start"
 	case ActAdminCreate:
-		return "skep-api admin create --username " + a.Username + " (asks for the password, twice, without echo)"
+		return "skep-api admin create --username " + a.Username + " (as the skep user, once skep_api has created api.db; asks for the password, twice, without echo)"
 	case ActServiceStop:
 		return "service " + a.Service + " stop"
 	case ActRemovePath:
@@ -178,6 +185,22 @@ type Options struct {
 	Start bool
 	// Admin creates the first administrator with this username.
 	Admin string
+
+	// fileOwner returns a file's owner UID; the tests, which do not run
+	// as root, replace it. Nil means the owner from stat(2).
+	fileOwner func(fs.FileInfo) (uint32, bool)
+}
+
+// owner returns the UID that owns a file.
+func (o Options) owner(st fs.FileInfo) (uint32, bool) {
+	if o.fileOwner != nil {
+		return o.fileOwner(st)
+	}
+	sys, ok := st.Sys().(*syscall.Stat_t)
+	if !ok {
+		return 0, false
+	}
+	return sys.Uid, true
 }
 
 // Fixed values (host-requirements.md, ADR 0012).
@@ -554,18 +577,31 @@ func (b *builder) storage() {
 		b.setVar(rcConfPath, b.rc, b.rcOK, "zfs_enable", "YES", "imports the pools at boot")
 	}
 	for _, d := range b.o.DirPools {
-		st, err := os.Stat(hostPath(b.o.Root, d.Path))
+		// Lstat: the root agent writes VM disks there, so the path must
+		// be a real directory that only root can change, not a link to
+		// one.
+		st, err := os.Lstat(hostPath(b.o.Root, d.Path))
+		uid, haveUID := uint32(0), false
+		if err == nil {
+			uid, haveUID = b.o.owner(st)
+		}
 		switch {
-		case err != nil:
+		case errors.Is(err, fs.ErrNotExist):
 			b.item(Item{Kind: Manual, Area: "storage", What: "directory pool " + d.Name,
 				Detail: d.Path + " does not exist; create it (root:wheel 0700)",
 				Steps:  []string{"install -d -o root -g wheel -m 0700 " + d.Path}})
+		case err != nil:
+			b.refuse("storage", "directory pool "+d.Name, err.Error())
+		case st.Mode()&fs.ModeSymlink != 0:
+			b.refuse("storage", "directory pool "+d.Name, d.Path+" is a symbolic link; name the directory itself")
 		case !st.IsDir():
 			b.refuse("storage", "directory pool "+d.Name, d.Path+" is not a directory")
+		case !haveUID || uid != 0:
+			b.refuse("storage", "directory pool "+d.Name, fmt.Sprintf("%s is owned by UID %d, not root; the root agent writes there", d.Path, uid))
 		case st.Mode().Perm()&0o022 != 0:
-			b.refuse("storage", "directory pool "+d.Name, fmt.Sprintf("%s is writable by others (%04o); the root agent writes there", d.Path, st.Mode().Perm()))
+			b.refuse("storage", "directory pool "+d.Name, fmt.Sprintf("%s is writable by its group or others (%04o); the root agent writes there", d.Path, st.Mode().Perm()))
 		default:
-			b.ok("storage", "directory pool "+d.Name, d.Path)
+			b.ok("storage", "directory pool "+d.Name, d.Path+" (root, not group or other writable)")
 		}
 	}
 }
@@ -842,7 +878,7 @@ func (b *builder) agentJSON() []byte {
 }
 
 func (b *builder) configFiles() error {
-	if err := b.configFile(agentJSONPath, b.agentJSON(), 0o600, "root", "wheel", "the agent's allow-lists"); err != nil {
+	if err := b.configFile(agentJSONPath, b.agentJSON(), 0o600, "root", "wheel", "the agent's allow-lists", b.agentJSONMatches); err != nil {
 		return err
 	}
 	listen, ok := b.listenAddress()
@@ -854,16 +890,87 @@ func (b *builder) configFiles() error {
 		b.warn(rcConfPath, "skep_api_args", fmt.Sprintf("%q sets the listen address on the command line, which wins over api.json", args))
 	}
 	content, _ := json.MarshalIndent(map[string]string{"listen_address": listen}, "", "  ")
-	return b.configFile(apiJSONPath, append(content, '\n'), 0o640, "root", skepAccount, "listen address "+listen)
+	return b.configFile(apiJSONPath, append(content, '\n'), 0o640, "root", skepAccount, "listen address "+listen,
+		func(raw []byte) (string, error) { return apiJSONMatches(raw, listen) })
+}
+
+// sameSet reports whether two lists hold the same strings, in any order.
+func sameSet(a, b []string) bool {
+	x, y := slices.Clone(a), slices.Clone(b)
+	slices.Sort(x)
+	slices.Sort(y)
+	return slices.Equal(slices.Compact(x), slices.Compact(y))
+}
+
+// agentJSONMatches compares the allow-lists of an agent.json that setup
+// did not write with the answers. It returns "" when they are the same,
+// otherwise what differs; an error when the file is not JSON.
+func (b *builder) agentJSONMatches(raw []byte) (string, error) {
+	var have, want AgentConfig
+	if err := json.Unmarshal(raw, &have); err != nil {
+		return "", err
+	}
+	if err := json.Unmarshal(b.agentJSON(), &want); err != nil {
+		return "", err
+	}
+	dirs := func(c AgentConfig) []string {
+		var out []string
+		for _, d := range c.Storage.Directories {
+			out = append(out, d.Name+"="+d.Path)
+		}
+		return out
+	}
+	var diff []string
+	for _, c := range []struct {
+		key        string
+		have, want []string
+	}{
+		{"storage.pools", have.Storage.Pools, want.Storage.Pools},
+		{"storage.directories", dirs(have), dirs(want)},
+		{"network.bridges", have.Network.Bridges, want.Network.Bridges},
+		{"network.management_interfaces", have.Network.ManagementInterfaces, want.Network.ManagementInterfaces},
+	} {
+		if !sameSet(c.have, c.want) {
+			diff = append(diff, fmt.Sprintf("%s is %q, the answers give %q", c.key, c.have, c.want))
+		}
+	}
+	return strings.Join(diff, "; "), nil
+}
+
+// apiJSONMatches compares the listen address of an api.json that setup
+// did not write with the answers (no listen_address means skep-api's
+// default).
+func apiJSONMatches(raw []byte, listen string) (string, error) {
+	var c struct {
+		ListenAddress string `json:"listen_address"`
+	}
+	if err := json.Unmarshal(raw, &c); err != nil {
+		return "", err
+	}
+	have := c.ListenAddress
+	if have == "" {
+		have = config.DefaultAPIListenAddress
+	}
+	if have == listen {
+		return "", nil
+	}
+	return fmt.Sprintf("listen_address is %q, the answers give %q", have, listen), nil
 }
 
 // configFile plans a configuration file setup writes once: created when
-// missing; left alone when present, refused when someone else wrote it.
-func (b *builder) configFile(path string, want []byte, mode fs.FileMode, owner, group, detail string) error {
+// missing, never rewritten. A file setup did not write is the
+// administrator's: it is fine when match finds its settings equal to the
+// answers, a conflict when they differ, and refused when it cannot be
+// parsed.
+func (b *builder) configFile(path string, want []byte, mode fs.FileMode, owner, group, detail string, match func([]byte) (string, error)) error {
 	full := hostPath(b.o.Root, path)
-	sum, err := fileSHA256(full)
-	if err != nil {
+	raw, err := os.ReadFile(full)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return err
+	}
+	sum := ""
+	if err == nil {
+		sum = sha256Hex(raw)
 	}
 	switch {
 	case sum == "":
@@ -874,7 +981,16 @@ func (b *builder) configFile(path string, want []byte, mode fs.FileMode, owner, 
 		b.item(Item{Kind: Conflict, Area: "config", What: path,
 			Detail: "written by an earlier apply with other answers; setup writes it once and never rewrites it. Proposed content:\n" + string(want)})
 	default:
-		b.refuse("config", path, "exists and was not written by skep-setup; it is the administrator's file. Setup's proposed version:\n"+string(want))
+		diff, err := match(raw)
+		switch {
+		case err != nil:
+			b.refuse("config", path, fmt.Sprintf("the administrator's file, and it cannot be parsed (%v); setup never rewrites it. Fix it, or move it away for setup to write:\n%s", err, want))
+		case diff == "":
+			b.ok("config", path, "the administrator's file; its settings match the answers, so it is left as it is")
+		default:
+			b.item(Item{Kind: Conflict, Area: "config", What: path,
+				Detail: "the administrator's file: " + diff + "; setup never rewrites it. Proposed content:\n" + string(want)})
+		}
 	}
 	return nil
 }

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"strings"
 
 	"github.com/greenbeanorg/skep/internal/setup"
 	"github.com/greenbeanorg/skep/pkg/version"
@@ -21,10 +22,11 @@ func requireRoot(root string, e env) error {
 
 func (e env) applier(root string) *setup.Applier {
 	return &setup.Applier{Root: root, Runner: e.runner, Now: e.now, Chown: e.chown, Out: e.stdout,
-		SkepVersion: version.Get().String()}
+		SkepVersion: version.Get().String(), Sleep: e.sleep}
 }
 
 func runApply(ctx context.Context, args []string, e env) error {
+	e.setUmask()
 	var yes bool
 	o, p, err := computePlan(ctx, "apply", args, e, func(fs *flag.FlagSet) {
 		fs.BoolVar(&yes, "yes", false, "do not ask before making the changes")
@@ -38,6 +40,9 @@ func runApply(ctx context.Context, args []string, e env) error {
 	if p.Refused() {
 		return &exitError{code: exitRefused, msg: "refused: nothing was changed"}
 	}
+	if err := refuseFixtureServices(o.Root, e, p); err != nil {
+		return err
+	}
 	acts := p.Actions()
 	if len(acts) == 0 {
 		fmt.Fprintln(e.stdout, "nothing to do: the host is already as planned")
@@ -47,6 +52,11 @@ func runApply(ctx context.Context, args []string, e env) error {
 		return &exitError{code: exitPending, msg: "not confirmed: nothing was changed"}
 	}
 	j, err := e.applier(o.Root).Apply(ctx, p)
+	var adminErr *setup.AdminCreateError
+	if errors.As(err, &adminErr) {
+		return &exitError{code: exitRefused, msg: fmt.Sprintf("%v. Create the administrator by running the same command again; it plans only what is left:\n  skep-setup apply %s",
+			err, strings.Join(args, " "))}
+	}
 	if err != nil {
 		if errors.Is(err, setup.ErrNothingToDo) {
 			fmt.Fprintln(e.stdout, err)
@@ -68,6 +78,7 @@ func runApply(ctx context.Context, args []string, e env) error {
 }
 
 func runRollback(_ context.Context, args []string, e env) error {
+	e.setUmask()
 	flags := flag.NewFlagSet("skep-setup rollback", flag.ContinueOnError)
 	flags.SetOutput(e.stderr)
 	root := flags.String("root", "/", "directory standing in for / (for tests)")
@@ -82,14 +93,15 @@ func runRollback(_ context.Context, args []string, e env) error {
 		return err
 	}
 	id := flags.Arg(0)
-	what := "the newest run"
-	if id != "" {
-		what = "run " + id
+	target, err := setup.RollbackTarget(*root, id)
+	if err != nil {
+		return &exitError{code: exitRefused, msg: err.Error()}
 	}
-	if !*yes && !e.confirm("Roll back "+what+"? Files changed since are left alone.") {
+	fmt.Fprintln(e.stdout, "rollback", target.Describe())
+	if !*yes && !e.confirm("Roll back run "+target.ID+"? Files changed since are left alone.") {
 		return &exitError{code: exitPending, msg: "not confirmed: nothing was changed"}
 	}
-	r, err := setup.Rollback(*root, id, e.now())
+	r, err := setup.Rollback(*root, target.ID, e.now())
 	for _, f := range r.Restored {
 		fmt.Fprintln(e.stdout, "  restored", f)
 	}

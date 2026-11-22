@@ -29,7 +29,38 @@ type Applier struct {
 	SkepVersion string
 	// Command names the run in its journal: "apply" (default) or "remove".
 	Command string
+	// Sleep and AdminWait pace the wait for skep_api's pid file and
+	// api.db before the first administrator is created (default
+	// time.Sleep and DefaultAdminWait).
+	Sleep     func(time.Duration)
+	AdminWait time.Duration
 }
+
+// DefaultAdminWait is how long apply waits for skep_api's pid file and
+// api.db before it creates the first administrator.
+const DefaultAdminWait = 30 * time.Second
+
+// AdminCreateError is a failed "skep-api admin create". Every other action
+// of the run was made and the journal is complete, so the same apply can
+// simply be run again: it plans only the administrator.
+type AdminCreateError struct {
+	Username string
+	Journal  string
+	Err      error
+}
+
+func (e *AdminCreateError) Error() string {
+	return fmt.Sprintf("creating the administrator %s failed: %v. Every other change was made (journal %s, complete)",
+		e.Username, e.Err, e.Journal)
+}
+
+func (e *AdminCreateError) Unwrap() error { return e.Err }
+
+// skippedError is an action not made because the host changed after the
+// plan.
+type skippedError struct{ reason string }
+
+func (e *skippedError) Error() string { return e.reason }
 
 func (a *Applier) chown(path string, uid, gid int) error {
 	if a.Chown != nil {
@@ -68,6 +99,7 @@ func (a *Applier) Apply(ctx context.Context, p Plan) (*Journal, error) {
 		return nil, err
 	}
 	backedUp := map[string]bool{}
+	var adminErr *AdminCreateError
 	for i := range j.Entries {
 		if err := ctx.Err(); err != nil {
 			return j, a.fail(j, i, err)
@@ -85,19 +117,36 @@ func (a *Applier) Apply(ctx context.Context, p Plan) (*Journal, error) {
 			}
 		}
 		a.printf("  %s\n", act)
-		if err := a.do(ctx, act); err != nil {
-			a.recordAfter(e)
-			return j, a.fail(j, i, err)
-		}
+		err := a.do(ctx, act)
 		a.recordAfter(e)
-		e.Done = true
+		var skip *skippedError
+		switch {
+		case errors.As(err, &skip):
+			a.printf("    skipped: %s\n", skip.reason)
+			e.Skipped, e.Error = true, skip.reason
+		case err != nil && act.Type == ActAdminCreate:
+			// The administrator is the one action a second apply can
+			// simply retry; the run itself is not left unfinished.
+			e.Error = err.Error()
+			adminErr = &AdminCreateError{Username: act.Username, Journal: j.ID, Err: err}
+		case err != nil:
+			return j, a.fail(j, i, err)
+		default:
+			e.Done = true
+		}
 		if err := j.save(a.Root); err != nil {
 			return j, err
 		}
 	}
 	now := a.Now().UTC()
 	j.Complete, j.FinishedAt = true, &now
-	return j, j.save(a.Root)
+	if err := j.save(a.Root); err != nil {
+		return j, err
+	}
+	if adminErr != nil {
+		return j, adminErr
+	}
+	return j, nil
 }
 
 // newJournal creates the journal directory and an incomplete journal.
@@ -178,28 +227,85 @@ func (a *Applier) do(ctx context.Context, act Action) error {
 	case ActMkdir:
 		return a.mkdir(act)
 	case ActServiceStart:
-		if _, err := a.Runner.Run(ctx, Cmd{Name: "service", Args: []string{act.Service, "status"}}); err == nil {
+		if _, err := a.Runner.Run(ctx, Cmd{Name: cmdService, Args: []string{act.Service, "status"}}); err == nil {
 			a.printf("    %s is running already\n", act.Service)
 			return nil
 		}
-		_, err := a.Runner.Run(ctx, Cmd{Name: "service", Args: []string{act.Service, "start"}})
+		_, err := a.Runner.Run(ctx, Cmd{Name: cmdService, Args: []string{act.Service, "start"}})
 		return err
 	case ActAdminCreate:
-		_, err := a.Runner.Run(ctx, Cmd{Name: hostPath(a.Root, apiBin), Args: []string{"admin", "create", "--username", act.Username}, Interactive: true})
-		return err
+		return a.adminCreate(ctx, act.Username)
 	case ActServiceStop:
-		if _, err := a.Runner.Run(ctx, Cmd{Name: "service", Args: []string{act.Service, "status"}}); err != nil {
-			a.printf("    %s is not running\n", act.Service)
-			return nil
-		}
-		_, err := a.Runner.Run(ctx, Cmd{Name: "service", Args: []string{act.Service, "stop"}})
-		return err
+		return stopService(ctx, a.Runner, act.Service, a.printf)
 	case ActRemovePath:
 		return a.removePath(act.File)
 	case ActPwDelete:
 		return a.pwDelete(ctx, act.Name)
 	}
 	return fmt.Errorf("unknown action %q", act.Type)
+}
+
+// stopService stops an rc.d service that is running; one that is not
+// ("service NAME status" fails) is left as it is, since "service NAME
+// stop" fails on it.
+func stopService(ctx context.Context, r Runner, svc string, printf func(string, ...any)) error {
+	if _, err := r.Run(ctx, Cmd{Name: cmdService, Args: []string{svc, "status"}}); err != nil {
+		printf("    %s is not running\n", svc)
+		return nil
+	}
+	_, err := r.Run(ctx, Cmd{Name: cmdService, Args: []string{svc, "stop"}})
+	return err
+}
+
+// adminCreate runs "skep-api admin create" as the skep account (its UID
+// and primary GID from the root's /etc/passwd), never as root, once
+// skep_api has written its pid file and created api.db: run earlier, or as
+// root, it could create the API's database owned by root (ADR 0012
+// amendment, build decision 8).
+func (a *Applier) adminCreate(ctx context.Context, username string) error {
+	users, err := ReadAccounts(hostPath(a.Root, "/etc/passwd"))
+	if err != nil {
+		return err
+	}
+	u, ok := findAccount(users, skepAccount)
+	if !ok {
+		return errors.New("no skep user in /etc/passwd")
+	}
+	uid, err1 := strconv.ParseUint(u.ID, 10, 32)
+	gid, err2 := strconv.ParseUint(u.GID, 10, 32)
+	if err1 != nil || err2 != nil || uid == 0 || gid == 0 {
+		return fmt.Errorf("the skep user has UID %q and GID %q; refusing to run skep-api admin create as it", u.ID, u.GID)
+	}
+	db, err := APIDBPath(a.Root)
+	if err != nil {
+		return fmt.Errorf("skep-api's configuration: %w", err)
+	}
+	wait := a.AdminWait
+	if wait <= 0 {
+		wait = DefaultAdminWait
+	}
+	sleep := a.Sleep
+	if sleep == nil {
+		sleep = time.Sleep
+	}
+	pid := hostPath(a.Root, apiPID)
+	for waited := time.Duration(0); ; waited += time.Second {
+		b, _ := os.ReadFile(pid)
+		if strings.TrimSpace(string(b)) != "" && isRegular(db) {
+			break
+		}
+		if waited >= wait {
+			return fmt.Errorf("skep_api has not written %s and created %s within %s; is it running (service skep_api status)?",
+				apiPID, strings.TrimPrefix(db, strings.TrimSuffix(a.Root, "/")), wait)
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		sleep(time.Second)
+	}
+	_, err = a.Runner.Run(ctx, Cmd{Name: hostPath(a.Root, apiBin), Args: []string{"admin", "create", "--username", username},
+		Interactive: true, As: &Credential{UID: uint32(uid), GID: uint32(gid)}})
+	return err
 }
 
 func isRegular(path string) bool {
@@ -228,7 +334,7 @@ func (a *Applier) pwDelete(ctx context.Context, name string) error {
 		if a.Root != "/" {
 			args = append([]string{"-R", a.Root}, args...)
 		}
-		return Cmd{Name: "pw", Args: args}
+		return Cmd{Name: cmdPw, Args: args}
 	}
 	users, _ := ReadAccounts(hostPath(a.Root, "/etc/passwd"))
 	if _, ok := findAccount(users, name); ok {
@@ -249,12 +355,15 @@ func (a *Applier) pwDelete(ctx context.Context, name string) error {
 // back: a value sysrc did not write as asked is an error.
 func (a *Applier) sysrc(ctx context.Context, act Action) error {
 	full := hostPath(a.Root, act.File)
+	if err := unchangedSincePlan(full, act); err != nil {
+		return err
+	}
 	if SysrcCanEdit(act.Name) {
 		args := []string{"-f", full, act.Name + act.Op + act.Value}
 		if act.Op == "-x" {
 			args = []string{"-f", full, "-x", act.Name}
 		}
-		if _, err := a.Runner.Run(ctx, Cmd{Name: "sysrc", Args: args}); err != nil {
+		if _, err := a.Runner.Run(ctx, Cmd{Name: cmdSysrc, Args: args}); err != nil {
 			return err
 		}
 	} else if err := a.editTunable(full, act); err != nil {
@@ -289,6 +398,34 @@ func (a *Applier) sysrc(ctx context.Context, act Action) error {
 				return fmt.Errorf("%s: %s is %q after sysrc, lacks %q", act.File, act.Name, got, w)
 			}
 		}
+	}
+	return nil
+}
+
+// unchangedSincePlan re-reads the variable just before a sysrc "=" or
+// "-x": an "=" is made only while the variable is as the plan saw it
+// (unset, or Expect), a "-x" only while it still has Expect. Anything
+// else means someone changed the file meanwhile, and the action is
+// skipped rather than overwriting their change. "+=" and "-=" change only
+// their own words and are not checked.
+func unchangedSincePlan(full string, act Action) error {
+	if act.Op != "=" && act.Op != "-x" {
+		return nil
+	}
+	v, err := ReadShVars(full)
+	if err != nil {
+		return err
+	}
+	cur, set := v.Vals[act.Name]
+	switch {
+	case act.Op == "-x" && !set:
+		return &skippedError{act.Name + " is gone already"}
+	case act.Expect == nil && set:
+		return &skippedError{fmt.Sprintf("%s was set to %q after the plan; left alone", act.Name, cur)}
+	case act.Expect != nil && !set:
+		return &skippedError{fmt.Sprintf("%s was removed after the plan; left alone", act.Name)}
+	case act.Expect != nil && cur != *act.Expect:
+		return &skippedError{fmt.Sprintf("%s changed to %q after the plan (was %q); left alone", act.Name, cur, *act.Expect)}
 	}
 	return nil
 }
@@ -480,6 +617,98 @@ func (a *Applier) mkdir(act Action) error {
 	return a.chown(full, uid, gid)
 }
 
+// RollbackTarget returns the run Rollback(root, id) would undo: the run
+// id, or with an empty id the newest run not rolled back.
+func RollbackTarget(root, id string) (Journal, error) {
+	js, err := LoadJournals(root)
+	if err != nil {
+		return Journal{}, err
+	}
+	for i := len(js) - 1; i >= 0; i-- {
+		if (id == "" && js[i].RolledBack == nil) || js[i].ID == id {
+			if js[i].RolledBack != nil {
+				return Journal{}, fmt.Errorf("%s was rolled back at %s", js[i].ID, js[i].RolledBack.Format(time.RFC3339))
+			}
+			return js[i], nil
+		}
+	}
+	if id == "" {
+		return Journal{}, errors.New("no run to roll back")
+	}
+	return Journal{}, fmt.Errorf("no journal %s", id)
+}
+
+// rollbackUnreadable clears a run without a readable journal.json: setup
+// cannot tell what it changed and undoes nothing. A damaged journal.json
+// is kept beside the new one as journal.json.unreadable.
+func rollbackUnreadable(root string, j *Journal, now time.Time, r RollbackReport) (RollbackReport, error) {
+	dir := JournalDir(root, j.ID)
+	p := filepath.Join(dir, "journal.json")
+	if exists(p) {
+		if err := os.Rename(p, p+".unreadable"); err != nil {
+			return r, err
+		}
+	}
+	t := now.UTC()
+	cleared := Journal{Format: JournalFormat, ID: j.ID, Command: "unknown", StartedAt: t, RolledBack: &t}
+	r.Kept = append(r.Kept, fmt.Sprintf("run %s had no readable journal (%s): setup cannot tell what it changed and undid nothing; any file copies it made are in %s",
+		j.ID, j.Unreadable, filepath.Join(dir, "files")))
+	return r, cleared.save(root)
+}
+
+// replaceFile replaces an existing regular file with data through a
+// temporary file in the same directory, keeping the file's owner and
+// mode, and syncs the file and the directory.
+func replaceFile(path string, data []byte) error {
+	st, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	if !st.Mode().IsRegular() {
+		return fmt.Errorf("%s is not a regular file; not replaced", path)
+	}
+	sys, ok := st.Sys().(*syscall.Stat_t)
+	if !ok {
+		return fmt.Errorf("%s: no owner information", path)
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".skep-setup-*")
+	if err != nil {
+		return err
+	}
+	name := tmp.Name()
+	defer os.Remove(name)
+	_, werr := tmp.Write(data)
+	if werr == nil {
+		werr = tmp.Chown(int(sys.Uid), int(sys.Gid))
+	}
+	if werr == nil {
+		werr = tmp.Chmod(st.Mode().Perm())
+	}
+	if werr == nil {
+		werr = tmp.Sync()
+	}
+	if cerr := tmp.Close(); werr == nil {
+		werr = cerr
+	}
+	if werr != nil {
+		return werr
+	}
+	if err := os.Rename(name, path); err != nil {
+		return err
+	}
+	return syncDir(filepath.Dir(path))
+}
+
+// syncDir makes a rename in dir durable.
+func syncDir(dir string) error {
+	d, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	defer d.Close()
+	return d.Sync()
+}
+
 // RollbackReport says what a rollback did and did not undo.
 type RollbackReport struct {
 	ID       string
@@ -494,27 +723,15 @@ type RollbackReport struct {
 // deletes an administrator, unloads a module, or touches an interface.
 // An empty id means the newest run not rolled back.
 func Rollback(root, id string, now time.Time) (RollbackReport, error) {
-	js, err := LoadJournals(root)
+	jj, err := RollbackTarget(root, id)
 	if err != nil {
 		return RollbackReport{}, err
 	}
-	var j *Journal
-	for i := len(js) - 1; i >= 0; i-- {
-		if (id == "" && js[i].RolledBack == nil) || js[i].ID == id {
-			j = &js[i]
-			break
-		}
-	}
-	if j == nil {
-		if id == "" {
-			return RollbackReport{}, errors.New("no run to roll back")
-		}
-		return RollbackReport{}, fmt.Errorf("no journal %s", id)
-	}
-	if j.RolledBack != nil {
-		return RollbackReport{}, fmt.Errorf("%s was rolled back at %s", j.ID, j.RolledBack.Format(time.RFC3339))
-	}
+	j := &jj
 	r := RollbackReport{ID: j.ID}
+	if j.Unreadable != "" {
+		return rollbackUnreadable(root, j, now, r)
+	}
 	type fileState struct {
 		first, last *Entry
 	}
@@ -563,8 +780,10 @@ func Rollback(root, id string, now time.Time) (RollbackReport, error) {
 			if sha256Hex(b) != before {
 				return r, fmt.Errorf("the backup of %s does not match its recorded SHA-256; nothing restored for it", path)
 			}
-			// In place: the file keeps its inode, owner, and mode.
-			if err := os.WriteFile(full, b, 0); err != nil {
+			// A new file renamed into place with the current owner and
+			// mode, so a crash leaves the old or the new content, never
+			// a part.
+			if err := replaceFile(full, b); err != nil {
 				return r, err
 			}
 			r.Restored = append(r.Restored, path)

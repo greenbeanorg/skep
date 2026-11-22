@@ -153,3 +153,52 @@ func TestBackupRefusals(t *testing.T) {
 		}
 	})
 }
+
+// The marker is written last: a backup that fails half way leaves a
+// directory without it, which is never counted or pruned as a backup.
+func TestFailedBackupHasNoMarker(t *testing.T) {
+	path, _ := liveDB(t)
+	notADir := filepath.Join(t.TempDir(), "archive")
+	os.WriteFile(notADir, []byte("x"), 0o600)
+	parent := filepath.Join(t.TempDir(), "backup")
+	dir := filepath.Join(parent, "0.1.0+dd7a8b6-20261122T160000Z")
+	if _, err := Backup(context.Background(), Options{Name: "agent", DBPath: path, ArchiveDir: notADir, Parent: parent, Dir: dir, Keep: 1}); err == nil {
+		t.Fatal("no error for an archive that is not a directory")
+	}
+	if _, err := os.Stat(filepath.Join(dir, marker)); err == nil {
+		t.Fatal("a failed backup has the marker")
+	}
+}
+
+// Archive files are opened without following a symbolic link and must be
+// regular files.
+func TestArchiveFileSumRefusesLinks(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "target")
+	os.WriteFile(target, []byte("sealed\n"), 0o400)
+	os.Symlink(target, filepath.Join(dir, "link"))
+	if _, _, err := archiveFileSum(filepath.Join(dir, "link")); err == nil {
+		t.Fatal("followed a symbolic link")
+	}
+	if _, _, err := archiveFileSum(dir); err == nil {
+		t.Fatal("accepted a directory")
+	}
+	if size, sum, err := archiveFileSum(target); err != nil || size != 7 || len(sum) != 64 {
+		t.Fatalf("%d %s %v", size, sum, err)
+	}
+	// A listing skips the link.
+	listing, err := listArchive(dir)
+	if err != nil || strings.Contains(listing, "link") || !strings.Contains(listing, "7  target") {
+		t.Fatalf("listing %q %v", listing, err)
+	}
+}
+
+// One label format for manual and upgrade backups: <version>+<commit>.
+func TestLabel(t *testing.T) {
+	if got := Label("0.1.0", "dd7a8b6"); got != "0.1.0+dd7a8b6" {
+		t.Errorf("label %q", got)
+	}
+	if got := Label("0.1.0-dev", "a/b c"); got != "0.1.0-dev+a_b_c" {
+		t.Errorf("label %q", got)
+	}
+}

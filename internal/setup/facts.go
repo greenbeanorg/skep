@@ -75,12 +75,14 @@ var ErrNotFreeBSD = errors.New("skep-setup inspects a FreeBSD host; this is not 
 // commandTimeout bounds every read-only command the prober runs.
 const commandTimeout = 10 * time.Second
 
-// output runs a fixed command (never through a shell) and returns its
-// standard output.
+// output runs a fixed command by absolute path (never through a shell),
+// with CommandEnv's environment, and returns its standard output.
 func output(ctx context.Context, name string, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, commandTimeout)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, name, args...).Output()
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Env, cmd.Dir = CommandEnv(false), "/"
+	out, err := cmd.Output()
 	return string(out), err
 }
 

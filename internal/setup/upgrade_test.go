@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -31,8 +32,18 @@ type upgradeHost struct {
 	on map[string]func()
 }
 
-func (h *upgradeHost) Run(_ context.Context, c Cmd) (string, error) {
-	s := strings.ReplaceAll(c.String(), h.root, "")
+func (h *upgradeHost) Run(ctx context.Context, c Cmd) (string, error) {
+	short, err := shortCmd(c)
+	if err != nil {
+		h.calls = append(h.calls, "RELATIVE "+c.String())
+		return "", err
+	}
+	s := strings.ReplaceAll(short, h.root, "")
+	// Like exec.CommandContext: a cancelled context runs nothing.
+	if err := ctx.Err(); err != nil {
+		h.calls = append(h.calls, "CANCELLED "+s)
+		return "", err
+	}
 	h.calls = append(h.calls, s)
 	for k, f := range h.on {
 		if strings.Contains(s, k) {
@@ -49,10 +60,14 @@ func (h *upgradeHost) Run(_ context.Context, c Cmd) (string, error) {
 		return h.builds[strings.TrimPrefix(c.Name, h.root)] + "\n", nil
 	case len(c.Args) > 1 && c.Args[0] == "db":
 		return filepath.Base(c.Name) + " db backup: done\n", nil
-	case c.Name == "service":
+	case c.Name == cmdService:
 		svc, verb := c.Args[0], c.Args[1]
 		pid := map[string]string{"skep_agent": agentPID, "skep_api": apiPID}[svc]
 		switch verb {
+		case "status":
+			if _, err := os.Stat(hostPath(h.root, pid)); err != nil {
+				return "", errors.New(svc + " is not running")
+			}
 		case "stop":
 			os.Remove(hostPath(h.root, pid))
 		case "start":
@@ -62,7 +77,7 @@ func (h *upgradeHost) Run(_ context.Context, c Cmd) (string, error) {
 				os.WriteFile(hostPath(h.root, pid), []byte(fmt.Sprintf("%d\n", 1000+h.nextPID)), 0o644)
 			}
 		}
-	case c.Name == "fstat":
+	case c.Name == cmdFstat:
 		pid := c.Args[1]
 		svc := "skep_agent"
 		if b, _ := os.ReadFile(hostPath(h.root, apiPID)); strings.TrimSpace(string(b)) == pid {
@@ -75,14 +90,38 @@ func (h *upgradeHost) Run(_ context.Context, c Cmd) (string, error) {
 }
 
 type fakeAgent struct {
-	build, health string
-	buildErr      error
+	build, health       string
+	buildErr, healthErr error
 }
 
 func (a fakeAgent) Build(context.Context) (string, error)  { return a.build, a.buildErr }
-func (a fakeAgent) Health(context.Context) (string, error) { return a.health, nil }
+func (a fakeAgent) Health(context.Context) (string, error) { return a.health, a.healthErr }
+
+// seqAgent answers Build from a sequence: an error until the sequence
+// says otherwise, the old build before the restart, the new one after.
+type seqAgent struct {
+	builds []string // "" means no answer
+	n      *int
+	health string
+}
+
+func (a seqAgent) Build(context.Context) (string, error) {
+	i := *a.n
+	*a.n++
+	if i >= len(a.builds) {
+		i = len(a.builds) - 1
+	}
+	if a.builds[i] == "" {
+		return "", errors.New("connection refused")
+	}
+	return a.builds[i], nil
+}
+func (a seqAgent) Health(context.Context) (string, error) { return a.health, nil }
 
 var newBuild = version.Info{Version: "0.1.1", Commit: "abc1234"}
+
+// testAgentDB is the agent's database with the stock configuration.
+const testAgentDB = "/var/db/skep/agent/agent.db"
 
 func newUpgrade(t *testing.T) (*Upgrader, *upgradeHost) {
 	root := t.TempDir()
@@ -94,8 +133,16 @@ func newUpgrade(t *testing.T) (*Upgrader, *upgradeHost) {
 		textInode: map[string]string{"skep_agent": "11", "skep_api": "22"},
 		fail:      map[string]error{}, noPIDFile: map[string]bool{}, on: map[string]func(){},
 	}
-	u := &Upgrader{Root: root, Runner: h, Prober: fakeProber{facts()}, Agent: fakeAgent{build: "0.1.0+dd7a8b6", health: "ok"},
-		Now: func() time.Time { return time.Date(2026, 11, 22, 17, 0, 0, 0, time.UTC) }, Self: newBuild,
+	// Both services run, and the agent has its database.
+	for _, pid := range []string{agentPID, apiPID} {
+		os.MkdirAll(filepath.Dir(hostPath(root, pid)), 0o755)
+		os.WriteFile(hostPath(root, pid), []byte("900\n"), 0o644)
+	}
+	setTasks(root)
+	n := 0
+	u := &Upgrader{Root: root, Runner: h, Prober: fakeProber{facts()},
+		Agent: seqAgent{builds: []string{"0.1.0+dd7a8b6", "0.1.1+abc1234"}, n: &n, health: "ok"},
+		Now:   func() time.Time { return time.Date(2026, 11, 22, 17, 0, 0, 0, time.UTC) }, Self: newBuild,
 		Sleep: func(time.Duration) {}, PIDWait: 3 * time.Second,
 		Inode: func(p string) (uint64, error) {
 			return map[string]uint64{hostPath(root, agentBin): 11, hostPath(root, apiBin): 22}[p], nil
@@ -115,9 +162,9 @@ func TestUpgradeInOrder(t *testing.T) {
 	dir := "/var/db/skep/backup/0.1.0+dd7a8b6-20261122T170000Z"
 	want := []string{
 		agentBin + " -version", apiBin + " -version",
-		"service skep_api stop",
+		"service skep_api status", "service skep_api stop",
 		agentBin + " db backup -dir " + dir + " -keep 3", apiBin + " db backup -dir " + dir + " -keep 3",
-		"service skep_agent stop",
+		"service skep_agent status", "service skep_agent stop",
 		"service skep_agent start", "fstat -p 1001", agentBin + " -version",
 		"service skep_api start", "fstat -p 1002", apiBin + " -version",
 	}
@@ -182,7 +229,7 @@ func TestUpgradeRefusals(t *testing.T) {
 
 // setTasks gives the agent's database one task per status.
 func setTasks(root string, statuses ...string) {
-	db, err := database.Open(context.Background(), hostPath(root, agentDB))
+	db, err := database.Open(context.Background(), hostPath(root, testAgentDB))
 	if err != nil {
 		panic(err)
 	}
@@ -284,7 +331,7 @@ func TestUpgradeProceedsWhenTasksFinishWithinTheWait(t *testing.T) {
 	if sleeps != 3 {
 		t.Errorf("slept %d times, want 3", sleeps)
 	}
-	if got := strings.Join(serviceCalls(h), ", "); got != "service skep_api stop, service skep_agent stop, service skep_agent start, service skep_api start" {
+	if got := strings.Join(serviceCalls(h), ", "); got != "service skep_api status, service skep_api stop, service skep_agent status, service skep_agent stop, service skep_agent start, service skep_api start" {
 		t.Fatalf("services: %s", got)
 	}
 }
@@ -300,7 +347,7 @@ func TestUpgradeForceInterruptsPendingAndRunning(t *testing.T) {
 	if !strings.Contains(out.String(), "--force: 1 task(s) pending and 1 running are interrupted by the agent restart and must be resubmitted") {
 		t.Fatalf("output:\n%s", out.String())
 	}
-	if got := strings.Join(serviceCalls(h), ", "); got != "service skep_api stop, service skep_agent stop, service skep_agent start, service skep_api start" {
+	if got := strings.Join(serviceCalls(h), ", "); got != "service skep_api status, service skep_api stop, service skep_agent status, service skep_agent stop, service skep_agent start, service skep_api start" {
 		t.Fatalf("services: %s", got)
 	}
 }
@@ -309,11 +356,11 @@ func TestUpgradeRecheckFailureRestartsTheAPI(t *testing.T) {
 	u, h := newUpgrade(t)
 	setTasks(h.root, "succeeded")
 	h.on["service skep_api stop"] = func() {
-		if err := os.WriteFile(hostPath(h.root, agentDB), []byte("not a database, not at all, garbage garbage garbage garbage garbage garbage garbage garbage garbage garbage"), 0o600); err != nil {
+		if err := os.WriteFile(hostPath(h.root, testAgentDB), []byte("not a database, not at all, garbage garbage garbage garbage garbage garbage garbage garbage garbage garbage"), 0o600); err != nil {
 			panic(err)
 		}
-		os.Remove(hostPath(h.root, agentDB) + "-wal")
-		os.Remove(hostPath(h.root, agentDB) + "-shm")
+		os.Remove(hostPath(h.root, testAgentDB) + "-wal")
+		os.Remove(hostPath(h.root, testAgentDB) + "-shm")
 	}
 	err := u.Upgrade(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "read the agent's tasks after stopping skep_api") ||
@@ -355,7 +402,7 @@ func TestUpgradeBackupFailureRestartsTheAPI(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "backup failed: disk full") || !strings.Contains(err.Error(), "skep_api was started again") {
 		t.Fatalf("err %v", err)
 	}
-	if got := strings.Join(serviceCalls(h), ", "); got != "service skep_api stop, service skep_api start" {
+	if got := strings.Join(serviceCalls(h), ", "); got != "service skep_api status, service skep_api stop, service skep_api start" {
 		t.Fatalf("services: %s", got)
 	}
 	apiRestarted(t, h)
@@ -370,7 +417,7 @@ func TestUpgradeVerifiesTheRunningFile(t *testing.T) {
 		t.Fatalf("err %v", err)
 	}
 	// Every failure after the API stop starts it again, once.
-	if got := strings.Join(serviceCalls(h), ", "); got != "service skep_api stop, service skep_agent stop, service skep_agent start, service skep_api start" {
+	if got := strings.Join(serviceCalls(h), ", "); got != "service skep_api status, service skep_api stop, service skep_agent status, service skep_agent stop, service skep_agent start, service skep_api start" {
 		t.Fatalf("services: %s", got)
 	}
 }
@@ -385,7 +432,8 @@ func TestUpgradeNoPIDFile(t *testing.T) {
 
 func TestUpgradeUnhealthyAfterRestart(t *testing.T) {
 	u, _ := newUpgrade(t)
-	u.Agent = fakeAgent{build: "0.1.0+dd7a8b6", health: "degraded"}
+	n := 0
+	u.Agent = seqAgent{builds: []string{"0.1.0+dd7a8b6", "0.1.1+abc1234"}, n: &n, health: "degraded"}
 	if err := u.Upgrade(context.Background()); err == nil || !strings.Contains(err.Error(), "health is degraded") {
 		t.Fatalf("err %v", err)
 	}
@@ -393,7 +441,8 @@ func TestUpgradeUnhealthyAfterRestart(t *testing.T) {
 
 func TestUpgradeUnknownOldBuild(t *testing.T) {
 	u, h := newUpgrade(t)
-	u.Agent = fakeAgent{buildErr: errors.New("connection refused"), health: "ok"}
+	n := 0
+	u.Agent = seqAgent{builds: []string{"", "0.1.1+abc1234"}, n: &n, health: "ok"}
 	if err := u.Upgrade(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -432,5 +481,211 @@ func TestSocketAgent(t *testing.T) {
 	}
 	if _, err := (SocketAgent{Path: filepath.Join(dir, "none.sock")}).Build(context.Background()); err == nil {
 		t.Fatal("no socket, no error")
+	}
+}
+
+// A1: a service that is not running is not stopped ("service stop" fails
+// on it); upgrade goes on and starts both.
+func TestUpgradeStoppedServicesAreNotStopped(t *testing.T) {
+	u, h := newUpgrade(t)
+	os.Remove(hostPath(h.root, agentPID))
+	os.Remove(hostPath(h.root, apiPID))
+	h.fail["service skep_api stop"] = errors.New("skep_api not running? (check /var/run/skep/api.pid)")
+	h.fail["service skep_agent stop"] = errors.New("skep_agent not running?")
+	var out strings.Builder
+	u.Out = &out
+	if err := u.Upgrade(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(serviceCalls(h), ", "); got != "service skep_api status, service skep_agent status, service skep_agent start, service skep_api start" {
+		t.Fatalf("services: %s", got)
+	}
+	if !strings.Contains(out.String(), "skep_api is not running") || !strings.Contains(out.String(), "skep_agent is not running") {
+		t.Fatalf("output:\n%s", out.String())
+	}
+}
+
+// A1: once skep_agent is being stopped, Ctrl-C cancels nothing: the agent
+// and the API are started and verified, and health is reported.
+func TestUpgradeCtrlCAfterTheAgentStopIsIgnored(t *testing.T) {
+	u, h := newUpgrade(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	h.on["service skep_agent stop"] = cancel
+	if err := u.Upgrade(ctx); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range h.calls {
+		if strings.HasPrefix(c, "CANCELLED") {
+			t.Fatalf("a command was cancelled: %v", h.calls)
+		}
+	}
+	if got := strings.Join(serviceCalls(h), ", "); !strings.HasSuffix(got, "service skep_agent stop, service skep_agent start, service skep_api start") {
+		t.Fatalf("services: %s", got)
+	}
+}
+
+// A1: Ctrl-C before the agent's stop (here during the backups) does stop
+// the upgrade: the agent is left alone and the API started again.
+func TestUpgradeCtrlCBeforeTheAgentStopRestoresTheAPI(t *testing.T) {
+	u, h := newUpgrade(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	h.on["skep-api db backup"] = cancel
+	err := u.Upgrade(ctx)
+	if err == nil || !strings.Contains(err.Error(), "context canceled") || !strings.Contains(err.Error(), "skep_api was started again") {
+		t.Fatalf("err %v", err)
+	}
+	for _, c := range h.calls {
+		if strings.Contains(c, "skep_agent stop") || strings.Contains(c, "skep_agent start") {
+			t.Fatalf("touched the agent: %v", h.calls)
+		}
+	}
+	apiRestarted(t, h)
+}
+
+// A1: the advice after a failed agent start does not promise that running
+// upgrade again fixes it.
+func TestUpgradeAgentStartFailureAdvice(t *testing.T) {
+	u, h := newUpgrade(t)
+	h.fail["service skep_agent start"] = errors.New("exit status 1")
+	err := u.Upgrade(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "helps only once the cause is fixed") || !strings.Contains(err.Error(), "backups in /") {
+		t.Fatalf("err %v", err)
+	}
+	apiRestarted(t, h)
+}
+
+// A2: -keep and the backup directory are checked before skep_api stops.
+func TestUpgradeChecksKeepAndBackupDirFirst(t *testing.T) {
+	t.Run("keep", func(t *testing.T) {
+		u, h := newUpgrade(t)
+		u.Keep = -1
+		err := u.Upgrade(context.Background())
+		var r *UpgradeRefusal
+		if !errors.As(err, &r) || !strings.Contains(err.Error(), "at least one backup") || len(serviceCalls(h)) != 0 {
+			t.Fatalf("err %v, services %v", err, serviceCalls(h))
+		}
+	})
+	t.Run("backup parent", func(t *testing.T) {
+		u, h := newUpgrade(t)
+		os.WriteFile(hostPath(h.root, "/var/db/skep/backup"), []byte("a file"), 0o600)
+		err := u.Upgrade(context.Background())
+		var r *UpgradeRefusal
+		if !errors.As(err, &r) || !strings.Contains(err.Error(), "cannot be created") || !strings.HasSuffix(err.Error(), "nothing was changed") {
+			t.Fatalf("err %v", err)
+		}
+		if len(serviceCalls(h)) != 0 {
+			t.Fatalf("services %v", serviceCalls(h))
+		}
+	})
+}
+
+// A3: after the starts, upgrade polls the agent's socket until it answers
+// and requires the new build before it reports health.
+func TestUpgradeWaitsForTheAgentSocket(t *testing.T) {
+	t.Run("answers after two seconds", func(t *testing.T) {
+		u, _ := newUpgrade(t)
+		n := 0
+		u.Agent = seqAgent{builds: []string{"0.1.0+dd7a8b6", "", "", "0.1.1+abc1234"}, n: &n, health: "ok"}
+		var out strings.Builder
+		u.Out = &out
+		if err := u.Upgrade(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		if n != 4 || !strings.Contains(out.String(), "agent socket: answers as 0.1.1+abc1234") {
+			t.Fatalf("asked %d times; output:\n%s", n, out.String())
+		}
+	})
+	t.Run("old build on the socket", func(t *testing.T) {
+		u, _ := newUpgrade(t)
+		n := 0
+		u.Agent = seqAgent{builds: []string{"0.1.0+dd7a8b6"}, n: &n, health: "ok"}
+		err := u.Upgrade(context.Background())
+		if err == nil || !strings.Contains(err.Error(), "reports build 0.1.0+dd7a8b6, want 0.1.1+abc1234") {
+			t.Fatalf("err %v", err)
+		}
+	})
+	t.Run("no answer", func(t *testing.T) {
+		u, _ := newUpgrade(t)
+		n := 0
+		u.Agent = seqAgent{builds: []string{"0.1.0+dd7a8b6", ""}, n: &n, health: "ok"}
+		u.SocketWait = 5 * time.Second
+		err := u.Upgrade(context.Background())
+		if err == nil || !strings.Contains(err.Error(), "did not answer on its socket within 5s") {
+			t.Fatalf("err %v", err)
+		}
+	})
+}
+
+// A6: the database is the one the agent's configuration names.
+func TestUpgradeReadsTheConfiguredDatabase(t *testing.T) {
+	u, h := newUpgrade(t)
+	os.MkdirAll(hostPath(h.root, "/usr/local/etc/skep"), 0o755)
+	os.WriteFile(hostPath(h.root, agentJSONPath), []byte(`{"database":{"path":"/srv/skep/agent.db"}}`), 0o600)
+	db, err := database.Open(context.Background(), hostPath(h.root, "/srv/skep/agent.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	db.Exec(`CREATE TABLE tasks (id TEXT, status TEXT)`)
+	db.Exec(`INSERT INTO tasks VALUES ('t1', 'running')`)
+	db.Close()
+	err = u.Upgrade(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "0 task(s) pending and 1 running") {
+		t.Fatalf("err %v: the configured database was not read", err)
+	}
+}
+
+// A6: an agent that answers on its socket has a database; if the
+// configured one is missing, setup is reading the wrong configuration.
+func TestUpgradeRefusesAnAnsweringAgentWithoutItsDatabase(t *testing.T) {
+	u, h := newUpgrade(t)
+	os.RemoveAll(hostPath(h.root, "/var/db/skep/agent"))
+	err := u.Upgrade(context.Background())
+	var r *UpgradeRefusal
+	if !errors.As(err, &r) || !strings.Contains(err.Error(), "answers on its socket, but the database") || len(serviceCalls(h)) != 0 {
+		t.Fatalf("err %v, services %v", err, serviceCalls(h))
+	}
+	// An agent that does not answer and has no database never started.
+	u, h = newUpgrade(t)
+	os.RemoveAll(hostPath(h.root, "/var/db/skep/agent"))
+	u.Agent = startedAgent{h}
+	if err := u.Upgrade(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// startedAgent answers, as the new build, only once skep_agent has been
+// started.
+type startedAgent struct{ h *upgradeHost }
+
+func (a startedAgent) up() bool { return slices.Contains(a.h.calls, "service skep_agent start") }
+
+func (a startedAgent) Build(context.Context) (string, error) {
+	if !a.up() {
+		return "", errors.New("connection refused")
+	}
+	return "0.1.1+abc1234", nil
+}
+
+func (a startedAgent) Health(context.Context) (string, error) {
+	if !a.up() {
+		return "", errors.New("connection refused")
+	}
+	return "ok", nil
+}
+
+// A6: a database without a tasks table is an error, not "no tasks".
+func TestUpgradeMissingTasksTableIsAnError(t *testing.T) {
+	u, h := newUpgrade(t)
+	db, err := database.Open(context.Background(), hostPath(h.root, testAgentDB))
+	if err != nil {
+		t.Fatal(err)
+	}
+	db.Exec(`DROP TABLE tasks`)
+	db.Close()
+	err = u.Upgrade(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "no such table") || len(serviceCalls(h)) != 0 {
+		t.Fatalf("err %v, services %v", err, serviceCalls(h))
 	}
 }

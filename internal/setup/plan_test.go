@@ -6,6 +6,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -414,18 +415,43 @@ func TestPlanConfigFiles(t *testing.T) {
 	o := func(root string) Options {
 		return Options{Root: root, Mgmt: []string{"vtnet0"}, Pools: []string{"tank"}}
 	}
-	t.Run("administrator's agent.json", func(t *testing.T) {
+	// A file setup did not write is the administrator's: parsed, never
+	// rewritten; the same allow-lists are fine, others a conflict.
+	t.Run("administrator's agent.json, other allow-lists", func(t *testing.T) {
 		root := stockHost(t)
 		appendFile(t, filepath.Join(root, "usr/local/etc/skep/agent.json"), "{\"storage\":{\"pools\":[\"x\"]}}\n")
-		it := want(t, compute(t, o(root), facts()), Refuse, agentJSONPath, "not written by skep-setup")
+		p := compute(t, o(root), facts())
+		it := want(t, p, Conflict, agentJSONPath, `storage.pools is ["x"], the answers give ["tank"]`)
+		if !strings.Contains(it.Detail, "never rewrites") || !strings.Contains(it.Detail, "Proposed content:\n{") {
+			t.Errorf("detail %q", it.Detail)
+		}
+		if p.Refused() || slices.ContainsFunc(p.Actions(), func(a Action) bool { return a.File == agentJSONPath }) {
+			t.Fatal("refused, or plans to write the administrator's agent.json")
+		}
+	})
+	t.Run("administrator's agent.json, same allow-lists", func(t *testing.T) {
+		root := stockHost(t)
+		appendFile(t, filepath.Join(root, "usr/local/etc/skep/agent.json"), `{"log":{"level":"debug"},
+  "network":{"management_interfaces":["vtnet0"],"bridges":[]},"storage":{"pools":["tank"],"directories":[]}}`+"\n")
+		want(t, compute(t, o(root), facts()), OK, agentJSONPath, "settings match the answers")
+	})
+	t.Run("administrator's agent.json, not JSON", func(t *testing.T) {
+		root := stockHost(t)
+		appendFile(t, filepath.Join(root, "usr/local/etc/skep/agent.json"), "{\"storage\":\n")
+		it := want(t, compute(t, o(root), facts()), Refuse, agentJSONPath, "cannot be parsed")
 		if !strings.Contains(it.Detail, `"tank"`) {
 			t.Error("the proposed version is not printed")
 		}
 	})
 	t.Run("administrator's api.json", func(t *testing.T) {
 		root := stockHost(t)
+		// No listen_address: skep-api's default, not the answer.
 		appendFile(t, filepath.Join(root, "usr/local/etc/skep/api.json"), "{}\n")
-		want(t, compute(t, o(root), facts()), Refuse, apiJSONPath, "not written by skep-setup")
+		want(t, compute(t, o(root), facts()), Conflict, apiJSONPath, `listen_address is "127.0.0.1:8443", the answers give "192.0.2.10:8443"`)
+		os.WriteFile(filepath.Join(root, "usr/local/etc/skep/api.json"), []byte(`{"listen_address":"192.0.2.10:8443","log":{"level":"debug"}}`), 0o640)
+		want(t, compute(t, o(root), facts()), OK, apiJSONPath, "settings match the answers")
+		os.WriteFile(filepath.Join(root, "usr/local/etc/skep/api.json"), []byte("listen"), 0o640)
+		want(t, compute(t, o(root), facts()), Refuse, apiJSONPath, "cannot be parsed")
 	})
 	t.Run("same content", func(t *testing.T) {
 		root := stockHost(t)
@@ -481,11 +507,36 @@ func TestPlanDirectoryPools(t *testing.T) {
 	os.MkdirAll(filepath.Join(root, "srv/ok"), 0o700)
 	os.MkdirAll(filepath.Join(root, "srv/open"), 0o777)
 	os.Chmod(filepath.Join(root, "srv/open"), 0o777)
-	p := compute(t, Options{Root: root, Mgmt: []string{"vtnet0"}, DirPools: []DirPool{
-		{Name: "a", Path: "/srv/ok"}, {Name: "b", Path: "/srv/missing"}, {Name: "c", Path: "/srv/open"}}}, facts())
+	os.MkdirAll(filepath.Join(root, "srv/group"), 0o770)
+	os.Chmod(filepath.Join(root, "srv/group"), 0o770)
+	os.MkdirAll(filepath.Join(root, "srv/notroot"), 0o700)
+	os.Symlink(filepath.Join(root, "srv/ok"), filepath.Join(root, "srv/link"))
+	os.WriteFile(filepath.Join(root, "srv/file"), nil, 0o600)
+	// The tests do not run as root: the fixture's directories count as
+	// root's, except srv/notroot.
+	o := Options{Root: root, Mgmt: []string{"vtnet0"}, DirPools: []DirPool{
+		{Name: "a", Path: "/srv/ok"}, {Name: "b", Path: "/srv/missing"}, {Name: "c", Path: "/srv/open"},
+		{Name: "d", Path: "/srv/group"}, {Name: "e", Path: "/srv/notroot"}, {Name: "f", Path: "/srv/link"},
+		{Name: "g", Path: "/srv/file"}},
+		fileOwner: func(st fs.FileInfo) (uint32, bool) {
+			if st.Name() == "notroot" {
+				return 1001, true
+			}
+			return 0, true
+		}}
+	p := compute(t, o, facts())
 	want(t, p, OK, "directory pool a", "/srv/ok")
 	want(t, p, Manual, "directory pool b", "does not exist")
-	want(t, p, Refuse, "directory pool c", "writable by others")
+	want(t, p, Refuse, "directory pool c", "writable by its group or others")
+	want(t, p, Refuse, "directory pool d", "writable by its group or others")
+	want(t, p, Refuse, "directory pool e", "owned by UID 1001, not root")
+	want(t, p, Refuse, "directory pool f", "symbolic link")
+	want(t, p, Refuse, "directory pool g", "not a directory")
+	// Without the stand-in, the real owner (the test user) is refused.
+	o.fileOwner = nil
+	if os.Getuid() != 0 {
+		want(t, compute(t, o, facts()), Refuse, "directory pool a", "not root")
+	}
 }
 
 func TestPlanUnparsableFiles(t *testing.T) {

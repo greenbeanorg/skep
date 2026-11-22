@@ -3,8 +3,10 @@ package setup
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -24,9 +26,12 @@ func appliedHost(t *testing.T) (*applyEnv, string, string) {
 	return e, rc0, loader0
 }
 
+// noAgent is an agent that does not answer on its socket.
+var noAgent = fakeAgent{buildErr: errors.New("no socket"), healthErr: errors.New("no socket")}
+
 func computeRemove(t *testing.T, o RemoveOptions, f Facts, r Runner) Plan {
 	t.Helper()
-	p, err := ComputeRemove(context.Background(), o, f, r)
+	p, err := ComputeRemove(context.Background(), o, f, r, noAgent)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,16 +81,31 @@ func TestRemoveKeepsDataAndHostLines(t *testing.T) {
 	}
 }
 
-func TestRemoveRefusesWhileGuestsExist(t *testing.T) {
-	e, _, _ := appliedHost(t)
-	db, err := database.Open(context.Background(), hostPath(e.root, agentDB))
+// agentGuests gives the agent's database tables with that many VMs and
+// jails.
+func agentGuests(t *testing.T, root string, vms, jails int) {
+	t.Helper()
+	db, err := database.Open(context.Background(), hostPath(root, testAgentDB))
 	if err != nil {
 		t.Fatal(err)
 	}
-	db.Exec(`CREATE TABLE virtual_machines (id TEXT)`)
-	db.Exec(`CREATE TABLE containers (id TEXT)`)
-	db.Exec(`INSERT INTO containers VALUES ('j1')`)
-	db.Close()
+	defer db.Close()
+	for _, q := range []string{`CREATE TABLE IF NOT EXISTS virtual_machines (id TEXT)`, `CREATE TABLE IF NOT EXISTS containers (id TEXT)`} {
+		if _, err := db.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for i := 0; i < vms; i++ {
+		db.Exec(`INSERT INTO virtual_machines VALUES (?)`, fmt.Sprint("v", i))
+	}
+	for i := 0; i < jails; i++ {
+		db.Exec(`INSERT INTO containers VALUES (?)`, fmt.Sprint("j", i))
+	}
+}
+
+func TestRemoveRefusesWhileGuestsExist(t *testing.T) {
+	e, _, _ := appliedHost(t)
+	agentGuests(t, e.root, 0, 1)
 	p := computeRemove(t, RemoveOptions{Root: e.root}, facts(), e.runner)
 	want(t, p, Refuse, "0 VM(s) and 1 jail(s)", "--keep-guests")
 	if _, err := e.remover().Apply(context.Background(), p); err == nil {
@@ -109,13 +129,14 @@ func TestRemoveRefusesWhileGuestsExist(t *testing.T) {
 func TestRemoveRevertHost(t *testing.T) {
 	e, rc0, loader0 := appliedHost(t)
 	// The operator added a module of their own and changed nothing else.
-	if _, err := e.runner.Run(context.Background(), Cmd{Name: "sysrc", Args: []string{"-f", filepath.Join(e.root, "etc/rc.conf"), "kld_list+=vmm_extra"}}); err != nil {
+	if _, err := e.runner.Run(context.Background(), Cmd{Name: cmdSysrc, Args: []string{"-f", filepath.Join(e.root, "etc/rc.conf"), "kld_list+=vmm_extra"}}); err != nil {
 		t.Fatal(err)
 	}
-	p := computeRemove(t, RemoveOptions{Root: e.root, RevertHost: true}, facts(), e.runner)
+	p := computeRemove(t, RemoveOptions{Root: e.root, RevertHost: true}, noPoolFacts(), e.runner)
 	got := strings.Join(actions(p), "\n")
 	for _, w := range []string{"sysrc -f /boot/loader.conf -x vmm_load", "delete the kern.racct.enable line from /boot/loader.conf",
-		`sysrc kld_list-="if_epair netgraph ng_socket ng_ether ng_bpf"`, "sysrc -x cloned_interfaces",
+		`sysrc kld_list-="if_epair"`, `sysrc kld_list-="netgraph"`, `sysrc kld_list-="ng_socket"`,
+		`sysrc kld_list-="ng_ether"`, `sysrc kld_list-="ng_bpf"`, "sysrc -x cloned_interfaces",
 		"sysrc -x ifconfig_bridge0", "sysrc -x skep_agent_enable", "sysrc -x zfs_enable"} {
 		if !strings.Contains(got, w) {
 			t.Errorf("lacks %q:\n%s", w, got)
@@ -153,10 +174,35 @@ func TestRemoveRevertHost(t *testing.T) {
 	}
 }
 
+// noPoolFacts is a host with no imported pool, where --revert-host may
+// remove zfs_enable.
+func noPoolFacts() Facts {
+	f := facts()
+	f.Pools = map[string]string{}
+	return f
+}
+
+// TestRevertHostKeepsZFSEnableWithPools: zfs_enable stays while a pool is
+// imported, and the plan says why.
+func TestRevertHostKeepsZFSEnableWithPools(t *testing.T) {
+	e, _, _ := appliedHost(t)
+	p := computeRemove(t, RemoveOptions{Root: e.root, RevertHost: true}, facts(), e.runner)
+	if strings.Contains(strings.Join(actions(p), "\n"), "zfs_enable") {
+		t.Fatalf("removes zfs_enable with pools imported:\n%s", strings.Join(actions(p), "\n"))
+	}
+	want(t, p, OK, "zfs_enable", "pools [sick tank zroot] are imported")
+	if _, err := e.remover().Apply(context.Background(), p); err != nil {
+		t.Fatal(err)
+	}
+	if rc, _ := ReadShVars(filepath.Join(e.root, "etc/rc.conf")); rc.Vals["zfs_enable"] != "YES" {
+		t.Fatalf("zfs_enable %q", rc.Vals["zfs_enable"])
+	}
+}
+
 func TestRemoveRevertLeavesChangedLines(t *testing.T) {
 	e, _, _ := appliedHost(t)
-	e.runner.Run(context.Background(), Cmd{Name: "sysrc", Args: []string{"-f", filepath.Join(e.root, "etc/rc.conf"), "ifconfig_bridge0=addm vtnet1 addm vtnet2 up"}})
-	p := computeRemove(t, RemoveOptions{Root: e.root, RevertHost: true}, facts(), e.runner)
+	e.runner.Run(context.Background(), Cmd{Name: cmdSysrc, Args: []string{"-f", filepath.Join(e.root, "etc/rc.conf"), "ifconfig_bridge0=addm vtnet1 addm vtnet2 up"}})
+	p := computeRemove(t, RemoveOptions{Root: e.root, RevertHost: true}, noPoolFacts(), e.runner)
 	want(t, p, Conflict, "ifconfig_bridge0", "changed since, left alone")
 	if strings.Contains(strings.Join(actions(p), "\n"), "-x ifconfig_bridge0") {
 		t.Fatal("removes a line changed since")
@@ -165,7 +211,8 @@ func TestRemoveRevertLeavesChangedLines(t *testing.T) {
 
 func TestRemovePurgeData(t *testing.T) {
 	e, _, _ := appliedHost(t)
-	for _, p := range []string{"agent/agent.db", "api/api.db", "api/tls/key.pem", "backup/x/agent.db", "media/install.iso"} {
+	agentGuests(t, e.root, 0, 0)
+	for _, p := range []string{"api/api.db", "api/tls/key.pem", "backup/x/agent.db", "media/install.iso"} {
 		appendFile(t, hostPath(e.root, dataRoot+"/"+p), "x")
 	}
 	p := computeRemove(t, RemoveOptions{Root: e.root, PurgeData: true}, facts(), e.runner)
@@ -291,8 +338,8 @@ func TestRevertHostKeepsTheOperatorsKldListWords(t *testing.T) {
 	t.Run("remove --revert-host, then rollbacks", func(t *testing.T) {
 		e, rc0, apply := setupHost(t)
 		afterApply := read(t, filepath.Join(e.root, "etc/rc.conf"))
-		p := computeRemove(t, RemoveOptions{Root: e.root, RevertHost: true}, facts(), e.runner)
-		if got := strings.Join(actions(p), "\n"); !strings.Contains(got, `sysrc kld_list-="netgraph ng_socket ng_bpf"`) {
+		p := computeRemove(t, RemoveOptions{Root: e.root, RevertHost: true}, noPoolFacts(), e.runner)
+		if got := strings.Join(actions(p), "\n"); !strings.Contains(got, "sysrc kld_list-=\"netgraph\"\nsysrc kld_list-=\"ng_socket\"\nsysrc kld_list-=\"ng_bpf\"") {
 			t.Fatalf("revert actions:\n%s", got)
 		}
 		rm, err := e.remover().Apply(context.Background(), p)
@@ -335,7 +382,7 @@ func TestRevertHostKeepsTheOperatorsKldListWords(t *testing.T) {
 		if _, err := e.applier().Apply(context.Background(), compute(t, newBridgeOpts(e.root), facts())); !errors.Is(err, ErrNothingToDo) {
 			t.Fatalf("second apply: %v", err)
 		}
-		if _, err := e.remover().Apply(context.Background(), computeRemove(t, RemoveOptions{Root: e.root, RevertHost: true}, facts(), e.runner)); err != nil {
+		if _, err := e.remover().Apply(context.Background(), computeRemove(t, RemoveOptions{Root: e.root, RevertHost: true}, noPoolFacts(), e.runner)); err != nil {
 			t.Fatal(err)
 		}
 		if got := kldList(t, e.root); got != operators {
@@ -361,7 +408,7 @@ func kldList(t *testing.T, root string) string {
 func TestRevertHostRestoresTheBytes(t *testing.T) {
 	e, rc0, loader0 := appliedHost(t)
 	rcPath := filepath.Join(e.root, "etc/rc.conf")
-	p := computeRemove(t, RemoveOptions{Root: e.root, RevertHost: true}, facts(), e.runner)
+	p := computeRemove(t, RemoveOptions{Root: e.root, RevertHost: true}, noPoolFacts(), e.runner)
 	got := strings.Join(actions(p), "\n")
 	for _, w := range []string{"sysrc -x kld_list", "sysrc -x cloned_interfaces"} {
 		if !strings.Contains(got, w) {
@@ -381,13 +428,13 @@ func TestRevertHostRestoresTheBytes(t *testing.T) {
 	// The leftover of an older build's revert: kld_list="" stays behind.
 	e, rc0, _ = appliedHost(t)
 	rcPath = filepath.Join(e.root, "etc/rc.conf")
-	if _, err := e.runner.Run(context.Background(), Cmd{Name: "sysrc", Args: []string{"-f", rcPath, "kld_list-=if_epair netgraph ng_socket ng_ether ng_bpf"}}); err != nil {
+	if _, err := e.runner.Run(context.Background(), Cmd{Name: cmdSysrc, Args: []string{"-f", rcPath, "kld_list-=if_epair netgraph ng_socket ng_ether ng_bpf"}}); err != nil {
 		t.Fatal(err)
 	}
 	if v, _ := ReadShVars(rcPath); v.Vals["kld_list"] != "" {
 		t.Fatalf("fake sysrc: kld_list %q", v.Vals["kld_list"])
 	}
-	p = computeRemove(t, RemoveOptions{Root: e.root, RevertHost: true}, facts(), e.runner)
+	p = computeRemove(t, RemoveOptions{Root: e.root, RevertHost: true}, noPoolFacts(), e.runner)
 	if !strings.Contains(strings.Join(actions(p), "\n"), "sysrc -x kld_list") {
 		t.Errorf("an empty kld_list setup created is not deleted:\n%s", strings.Join(actions(p), "\n"))
 	}
@@ -396,5 +443,137 @@ func TestRevertHostRestoresTheBytes(t *testing.T) {
 	}
 	if got := read(t, rcPath); got != rc0 {
 		t.Errorf("rc.conf after the leftover:\n%s\nwant:\n%s", got, rc0)
+	}
+}
+
+// A6: remove reads the database the agent's configuration names; an
+// answering agent without it, or a database without the tables, is not
+// "no guests".
+func TestRemoveGuestsFromTheConfiguredDatabase(t *testing.T) {
+	t.Run("configured path", func(t *testing.T) {
+		e, _, _ := appliedHost(t)
+		// agent.json was written by apply; skep_agent_config points
+		// elsewhere, as an operator might.
+		appendFile(t, filepath.Join(e.root, "etc/rc.conf"), "skep_agent_config=\"/srv/agent.json\"\n")
+		appendFile(t, hostPath(e.root, "/srv/agent.json"), `{"database":{"path":"/srv/db/agent.db"}}`)
+		db, err := database.Open(context.Background(), hostPath(e.root, "/srv/db/agent.db"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		db.Exec(`CREATE TABLE virtual_machines (id TEXT)`)
+		db.Exec(`CREATE TABLE containers (id TEXT)`)
+		db.Exec(`INSERT INTO virtual_machines VALUES ('v1')`)
+		db.Close()
+		want(t, computeRemove(t, RemoveOptions{Root: e.root}, facts(), e.runner), Refuse, "1 VM(s) and 0 jail(s)", "")
+	})
+	t.Run("answering agent, no database", func(t *testing.T) {
+		e, _, _ := appliedHost(t)
+		p, err := ComputeRemove(context.Background(), RemoveOptions{Root: e.root}, facts(), e.runner, fakeAgent{health: "ok"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		want(t, p, Refuse, "the agent's database", "answers on its socket")
+	})
+	t.Run("no such table", func(t *testing.T) {
+		e, _, _ := appliedHost(t)
+		db, err := database.Open(context.Background(), hostPath(e.root, testAgentDB))
+		if err != nil {
+			t.Fatal(err)
+		}
+		db.Exec(`CREATE TABLE containers (id TEXT)`)
+		db.Close()
+		if _, err := ComputeRemove(context.Background(), RemoveOptions{Root: e.root}, facts(), e.runner, noAgent); err == nil ||
+			!strings.Contains(err.Error(), "no such table") {
+			t.Fatalf("err %v", err)
+		}
+	})
+}
+
+// A7: --purge-data is refused while a Skep guest runs, --keep-guests or
+// not.
+func TestRemovePurgeRefusedWhileGuestsRun(t *testing.T) {
+	e, _, _ := appliedHost(t)
+	agentGuests(t, e.root, 0, 1)
+	f := facts()
+	f.Jails = []string{"skep-j0", "www"}
+	for _, keep := range []bool{false, true} {
+		p := computeRemove(t, RemoveOptions{Root: e.root, PurgeData: true, KeepGuests: keep}, f, e.runner)
+		want(t, p, Refuse, "--purge-data", "--keep-guests does not change this")
+	}
+	// Kept guests that are not running: allowed with --keep-guests.
+	if p := computeRemove(t, RemoveOptions{Root: e.root, PurgeData: true, KeepGuests: true}, facts(), e.runner); p.Refused() {
+		t.Fatalf("refused: %+v", p.Items)
+	}
+}
+
+// A7: an encryption key file under /var/db/skep is found; purging it is
+// refused.
+func TestRemoveFindsKeysUnderTheDataDirectory(t *testing.T) {
+	e, _, _ := appliedHost(t)
+	agentGuests(t, e.root, 0, 0)
+	e.runner.outputs = map[string]string{
+		"zfs list -H -o name -r tank/skep":                "tank/skep\ntank/skep/vm\n",
+		"zfs get -H -o value -r encryptionroot tank/skep": "tank/skep\ntank/skep\n",
+		"zfs get -H -o name,value keylocation tank/skep":  "tank/skep\tfile:///var/db/skep/keys/tank.key\n",
+	}
+	want(t, computeRemove(t, RemoveOptions{Root: e.root, PurgeData: true}, facts(), e.runner), Refuse, "--purge-data", "/var/db/skep/keys/tank.key")
+	want(t, computeRemove(t, RemoveOptions{Root: e.root}, facts(), e.runner), Warn, "encryption keys under /var/db/skep", "would refuse")
+	e.runner.outputs["zfs get -H -o name,value keylocation tank/skep"] = "tank/skep\tprompt\n"
+	p := computeRemove(t, RemoveOptions{Root: e.root, PurgeData: true}, facts(), e.runner)
+	want(t, p, OK, "encryption keys of tank/skep", "no key file under /var/db/skep")
+	want(t, p, Warn, "--purge-data", "Skep keeps no ZFS encryption key")
+	if p.Refused() {
+		t.Fatalf("refused: %+v", p.Items)
+	}
+}
+
+// B: each skep_*_enable gets one line in the revert plan.
+func TestRevertPlanHasOneLinePerEnableVariable(t *testing.T) {
+	e, _, _ := appliedHost(t)
+	rcPath := filepath.Join(e.root, "etc/rc.conf")
+	if _, err := e.runner.Run(context.Background(), Cmd{Name: cmdSysrc, Args: []string{"-f", rcPath, "-x", "skep_api_enable"}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.runner.Run(context.Background(), Cmd{Name: cmdSysrc, Args: []string{"-f", rcPath, "skep_agent_enable=yes"}}); err != nil {
+		t.Fatal(err)
+	}
+	p := computeRemove(t, RemoveOptions{Root: e.root, RevertHost: true}, noPoolFacts(), e.runner)
+	for _, v := range []string{"skep_api_enable", "skep_agent_enable"} {
+		n := 0
+		for _, it := range p.Items {
+			if it.Kind != Add && strings.HasPrefix(it.What, v) {
+				n++
+			}
+		}
+		if n != 1 {
+			t.Errorf("%s: %d non-action lines, want 1: %+v", v, n, p.Items)
+		}
+	}
+	// A changed value that still says yes is disabled.
+	if !slices.Contains(actions(p), `sysrc skep_agent_enable="NO"`) {
+		t.Errorf("actions %v", actions(p))
+	}
+}
+
+// B: a "-x" is made only while the variable still has the value the plan
+// saw.
+func TestRevertSkipsAVariableChangedAfterThePlan(t *testing.T) {
+	e, _, _ := appliedHost(t)
+	p := computeRemove(t, RemoveOptions{Root: e.root, RevertHost: true}, noPoolFacts(), e.runner)
+	rcPath := filepath.Join(e.root, "etc/rc.conf")
+	if _, err := e.runner.Run(context.Background(), Cmd{Name: cmdSysrc, Args: []string{"-f", rcPath, "ifconfig_bridge0=addm vtnet1 addm vtnet2 up"}}); err != nil {
+		t.Fatal(err)
+	}
+	j, err := e.remover().Apply(context.Background(), p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rc, _ := ReadShVars(rcPath); rc.Vals["ifconfig_bridge0"] != "addm vtnet1 addm vtnet2 up" {
+		t.Fatalf("ifconfig_bridge0 %q", rc.Vals["ifconfig_bridge0"])
+	}
+	if !slices.ContainsFunc(j.Entries, func(en Entry) bool {
+		return en.Skipped && en.Action.Name == "ifconfig_bridge0" && strings.Contains(en.Error, "changed to")
+	}) {
+		t.Fatalf("entries %+v", j.Entries)
 	}
 }
