@@ -72,9 +72,11 @@ itself. An administrator does the following once.
 5. **Load the netgraph modules** that filter every guest NIC
    (anti-spoofing, ADR 0011). In `/etc/rc.conf`:
 
+   ```sh
+   sysrc kld_list+="if_epair netgraph ng_socket ng_ether ng_bpf"
    ```
-   kld_list="if_epair netgraph ng_socket ng_ether ng_bpf"
-   ```
+
+   (`+=` appends to an existing `kld_list` instead of replacing it.)
 
    Now: `kldload netgraph ng_socket ng_ether ng_bpf`. Without them a VM
    with a NIC is refused with `port_filter_unavailable`. Each tap gets
