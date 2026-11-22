@@ -1,0 +1,63 @@
+{
+ "http": 202,
+ "body": {
+  "vm": {
+   "id": "c66cbff9-3f13-4916-9552-0561b8f66853",
+   "node_id": "97fc6968-7e82-49c9-bda8-9026775ca964",
+   "name": "rb-i10-vm",
+   "description": "",
+   "engine": "bhyve",
+   "cpu_count": 1,
+   "memory_bytes": 268435456,
+   "firmware": "uefi",
+   "config": {
+    "console": {
+     "vnc": {
+      "enabled": false
+     }
+    }
+   },
+   "provisioned": false,
+   "desired_state": "stopped",
+   "observed": {
+    "state": "unknown"
+   },
+   "drift": false,
+   "disks": [],
+   "nics": [
+    {
+     "id": "2196648b-50c8-404d-a587-246711b6640e",
+     "slot": 0,
+     "model": "virtio-net",
+     "mac_address": "02:2c:8e:4f:8b:fe",
+     "bridge": "bridge0"
+    }
+   ],
+   "created_at": "2026-11-22T15:07:19.697Z",
+   "updated_at": "2026-11-22T15:07:19.697Z"
+  },
+  "task": {
+   "id": "d0ca60dc-e708-4da4-b28b-9f01f1842f59",
+   "node_id": "97fc6968-7e82-49c9-bda8-9026775ca964",
+   "type": "vm.create",
+   "status": "pending",
+   "resource_type": "vm",
+   "resource_id": "c66cbff9-3f13-4916-9552-0561b8f66853",
+   "actor": {
+    "id": "af143ddd-2c62-4eeb-803a-2081c4fd0088",
+    "name": "s7admin"
+   },
+   "request_id": "90ee7b2440d217a736abfdef",
+   "cancellable": true,
+   "created_at": "2026-11-22T15:07:19.697Z"
+  }
+ },
+ "task": {
+  "id": "d0ca60dc-e708-4da4-b28b-9f01f1842f59",
+  "type": "vm.create",
+  "status": "succeeded",
+  "error_code": null,
+  "error_message": null,
+  "resource_id": "c66cbff9-3f13-4916-9552-0561b8f66853"
+ }
+}

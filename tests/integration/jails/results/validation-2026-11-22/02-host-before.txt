@@ -1,0 +1,81 @@
+== rc.conf
+hostname="hearst.greenbean.org"
+ifconfig_vtnet0="inet 10.79.20.170 netmask 255.255.255.0"
+defaultrouter="10.79.20.1"
+sshd_enable="YES"
+ntpd_enable="YES"
+ntpd_sync_on_start="YES"
+powerd_enable="YES"
+moused_nondefault_enable="NO"
+# Set dumpdev to "AUTO" to enable crash dumps, "NO" to disable
+dumpdev="AUTO"
+qemu_guest_agent_enable="YES"
+skep_agent_enable="YES"
+skep_api_enable="YES"
+skep_api_args="-listen 10.79.20.170:8443"
+zfs_enable="YES"
+cloned_interfaces="bridge0"
+ifconfig_vtnet1="up"
+ifconfig_bridge0="addm vtnet1 up"
+== sha256
+SHA256 (/etc/rc.conf) = a50861c4e464a7cf9043d6b606ac0a559b1dfccc3df9f99d94df670364962bca
+== rc.conf.local / rc.conf.d
+ls: /etc/rc.conf.local: No such file or directory
+/etc/rc.conf.d:
+total 8
+drwxr-xr-x   2 root wheel  512 Sep  8 18:19 .
+drwxr-xr-x  30 root wheel 3072 Nov 19 08:56 ..
+== loader.conf
+vmm_load="YES"
+nmdm_load="YES"
+vfs.zfs.arc.max="1073741824"
+hw.vmm.vmx.cap.virtual_interrupt_delivery="0"
+kern.racct.enable="1"
+== kldstat
+Id Refs Address                Size Name
+ 1   55 0xffffffff80200000  23520f8 kernel
+ 2    1 0xffffffff82553000     3988 nmdm.ko
+ 3    1 0xffffffff82558000   380270 vmm.ko
+ 4    1 0xffffffff83200000   3f2c78 zfs.ko
+ 5    1 0xffffffff83018000     21e8 hms.ko
+ 6    1 0xffffffff8301b000     30a8 hidmap.ko
+ 7    1 0xffffffff8301f000     4250 ichsmb.ko
+ 8    1 0xffffffff83024000     2178 smbus.ko
+ 9    1 0xffffffff83027000     430c virtio_console.ko
+10    1 0xffffffff8302c000     8810 if_bridge.ko
+11    1 0xffffffff83035000     6120 bridgestp.ko
+12    1 0xffffffff8303c000     2a80 mac_ntpd.ko
+13    1 0xffffffff8303f000     539c if_epair.ko
+14    4 0xffffffff83045000     abb8 netgraph.ko
+15    1 0xffffffff83050000     3918 ng_socket.ko
+16    1 0xffffffff83054000     31e0 ng_ether.ko
+17    1 0xffffffff83058000     2208 ng_bpf.ko
+== sysctl
+hw.vmm.vmx.cap.virtual_interrupt_delivery: 0
+kern.racct.enable: 1
+== ifconfig
+vtnet0: flags=1008843<UP,BROADCAST,RUNNING,SIMPLEX,MULTICAST,LOWER_UP> metric 0 mtu 1500
+	options=ec079b<RXCSUM,TXCSUM,VLAN_MTU,VLAN_HWTAGGING,VLAN_HWCSUM,TSO4,TSO6,LRO,VLAN_HWTSO,LINKSTATE,RXCSUM_IPV6,TXCSUM_IPV6,HWSTATS>
+	ether bc:24:11:a0:36:7e
+	inet 10.79.20.170 netmask 0xffffff00 broadcast 10.79.20.255
+	media: Ethernet autoselect (10Gbase-T <full-duplex>)
+	status: active
+bridge0: flags=1008843<UP,BROADCAST,RUNNING,SIMPLEX,MULTICAST,LOWER_UP> metric 0 mtu 1500
+	options=10<VLAN_HWTAGGING>
+	ether 58:9c:fc:10:9f:32
+	id 00:00:00:00:00:00 priority 32768 hellotime 2 fwddelay 15
+	maxage 20 holdcnt 6 proto rstp maxaddr 2000 timeout 1200
+	root id 00:00:00:00:00:00 priority 32768 ifcost 0 port 0
+	bridge flags=0<>
+	member: vtnet1 flags=143<LEARNING,DISCOVER,AUTOEDGE,AUTOPTP>
+	        port 2 priority 128 path cost 2000 vlan protocol 802.1q
+	groups: bridge
+	nd6 options=9<PERFORMNUD,IFDISABLED>
+Routing tables
+
+Internet:
+Destination        Gateway            Flags         Netif Expire
+default            10.79.20.1         UGS          vtnet0
+10.79.20.0/24      link#1             U            vtnet0
+10.79.20.170       link#3             UHS             lo0
+127.0.0.1          link#3             UH              lo0

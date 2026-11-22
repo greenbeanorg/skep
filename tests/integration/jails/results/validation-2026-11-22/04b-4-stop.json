@@ -1,0 +1,26 @@
+{
+ "http": 202,
+ "body": {
+  "id": "b7234354-fb32-4293-b449-926a6e2f200b",
+  "node_id": "97fc6968-7e82-49c9-bda8-9026775ca964",
+  "type": "container.stop",
+  "status": "pending",
+  "resource_type": "container",
+  "resource_id": "63c5d407-50a7-411a-9678-1c169f29e85e",
+  "actor": {
+   "id": "af143ddd-2c62-4eeb-803a-2081c4fd0088",
+   "name": "s7admin"
+  },
+  "request_id": "13f66565578aa30006222dec",
+  "cancellable": false,
+  "created_at": "2026-11-22T15:05:23.137Z"
+ },
+ "task": {
+  "id": "b7234354-fb32-4293-b449-926a6e2f200b",
+  "type": "container.stop",
+  "status": "succeeded",
+  "error_code": null,
+  "error_message": null,
+  "resource_id": "63c5d407-50a7-411a-9678-1c169f29e85e"
+ }
+}

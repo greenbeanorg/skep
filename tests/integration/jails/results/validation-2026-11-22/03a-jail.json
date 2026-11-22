@@ -1,0 +1,60 @@
+{
+ "http": 202,
+ "body": {
+  "container": {
+   "id": "710c64dd-9c01-49c8-9e36-8268c3ef2bd8",
+   "name": "rb-c1-jail",
+   "hostname": "rb-c1-jail",
+   "template_id": "f496866f-32ba-4527-bcee-5a717a2f74c0",
+   "template_name": "minimal-151",
+   "pool": "skeptest",
+   "release": "15.1-RELEASE-p6",
+   "options": {
+    "sysvipc": false,
+    "mlock": false
+   },
+   "limits": {},
+   "nics": [
+    {
+     "id": "394763d6-d1c8-49ee-b6a1-3262d48df6ec",
+     "slot": 0,
+     "bridge": "bridge0",
+     "mac_address": "02:74:cd:9d:8d:d9",
+     "interface": "skep0",
+     "ipv4": {
+      "mode": "dhcp"
+     }
+    }
+   ],
+   "provisioned": false,
+   "started_once": false,
+   "desired_state": "stopped",
+   "state": "unknown",
+   "created_at": "2026-11-22T15:04:31.867Z",
+   "updated_at": "2026-11-22T15:04:31.867Z"
+  },
+  "task": {
+   "id": "a430cb5e-e858-4379-af46-8e6e59f0a7dc",
+   "node_id": "97fc6968-7e82-49c9-bda8-9026775ca964",
+   "type": "container.create",
+   "status": "pending",
+   "resource_type": "container",
+   "resource_id": "710c64dd-9c01-49c8-9e36-8268c3ef2bd8",
+   "actor": {
+    "id": "af143ddd-2c62-4eeb-803a-2081c4fd0088",
+    "name": "s7admin"
+   },
+   "request_id": "bbfb69aa7970b1332fd06982",
+   "cancellable": false,
+   "created_at": "2026-11-22T15:04:31.867Z"
+  }
+ },
+ "task": {
+  "id": "a430cb5e-e858-4379-af46-8e6e59f0a7dc",
+  "type": "container.create",
+  "status": "succeeded",
+  "error_code": null,
+  "error_message": null,
+  "resource_id": "710c64dd-9c01-49c8-9e36-8268c3ef2bd8"
+ }
+}

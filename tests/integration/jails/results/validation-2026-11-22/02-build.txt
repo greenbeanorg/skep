@@ -1,0 +1,8 @@
+rm -rf internal/webui/dist
+cp -R web/dist internal/webui/dist
+build bin/freebsd-amd64/skep-agent -tags skep_webui
+build bin/freebsd-amd64/skep-api -tags skep_webui
+build bin/freebsd-amd64/skepctl -tags skep_webui
+e2274d044a686c79c44c79c349e95a60511b3dbfb77cf08081a00dfd6b751f93  bin/freebsd-amd64/skep-agent
+90199f290dbc6e2d5225cc4c73cf6f07cbd90c1a448647e84f92f3fa84a80b3f  bin/freebsd-amd64/skep-api
+a4cfe9b972e04ffc569857a24d5dcf77480187aa8c2662e30c3fae7de4e474f3  bin/freebsd-amd64/skepctl

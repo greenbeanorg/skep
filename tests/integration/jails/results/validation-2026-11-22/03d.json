@@ -1,0 +1,17 @@
+{
+ "http": 409,
+ "body": {
+  "error": {
+   "code": "vm_mac_in_use",
+   "message": "the MAC address 02:0e:60:b5:a8:10 of NIC slot 0 is also held by the VM rb-c1-vm (slot 0); give the NIC another address",
+   "request_id": "d1fc9e2b5a564e68e15fa6b9",
+   "details": {
+    "held_by_id": "65403651-21fc-4233-8121-94d1a100e975",
+    "held_by_kind": "vm",
+    "held_by_name": "rb-c1-vm",
+    "mac_address": "02:0e:60:b5:a8:10",
+    "slot": 0
+   }
+  }
+ }
+}

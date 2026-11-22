@@ -1,0 +1,20 @@
+  Name: skf_epair0a     Type: bpf             ID: 00000009   Num hooks: 2
+  Name: skf_tap0        Type: bpf             ID: 00000011   Num hooks: 2
+	bridge flags=1<VLANFILTER> defuntagged=1
+	member: tap0 flags=143<LEARNING,DISCOVER,AUTOEDGE,AUTOPTP>
+	        port 8 priority 128 path cost 2000000 vlan protocol 802.1q untagged 1
+	member: epair0a flags=143<LEARNING,DISCOVER,AUTOEDGE,AUTOPTP>
+	        port 5 priority 128 path cost 2000 vlan protocol 802.1q untagged 1
+	member: vtnet1 flags=143<LEARNING,DISCOVER,AUTOEDGE,AUTOPTP>
+	        port 2 priority 128 path cost 2000 vlan protocol 802.1q untagged 1
+2507 bhyve: skep-c66cbff9-3f13-4916-9552-0561b8f66853
+  Name: skf_epair0a     Type: bpf             ID: 00000009   Num hooks: 2
+  Local hook      Peer name       Peer type    Peer ID         Peer hook      
+  ----------      ---------       ---------    -------         ---------      
+  bridge          epair0a         ether        00000005        upper          
+  jail            epair0a         ether        00000005        lower          
+  Name: skf_tap0        Type: bpf             ID: 00000011   Num hooks: 2
+  Local hook      Peer name       Peer type    Peer ID         Peer hook      
+  ----------      ---------       ---------    -------         ---------      
+  bridge          tap0            ether        0000000e        upper          
+  jail            tap0            ether        0000000e        lower          

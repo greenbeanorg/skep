@@ -154,7 +154,7 @@ ports (b61e578 neither checks nor removes them) until each guest stops.
 - The modules loaded live and the agent upgrade with running guests:
   validated on `hearst`.
 - `kld_list` across a reboot (the modules come back, and the next guest
-  start is filtered; Skep has no autostart): **not run** (m7c-validation
-  item 10, needs Andy).
-- `vlanfilter` on `bridge0`: validated live only on `hearst`; the
-  `rc.conf` line is not yet set there.
+  start is filtered; Skep has no autostart): validated on `hearst`
+  2026-11-22 (`tests/integration/jails/results/validation-2026-11-22.md`).
+- `vlanfilter` on `bridge0`: set live in this order and persistent in
+  `rc.conf` on `hearst`, validated across the same reboot.

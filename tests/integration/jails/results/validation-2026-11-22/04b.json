@@ -1,0 +1,13 @@
+{
+ "http": 422,
+ "body": {
+  "error": {
+   "code": "nameservers_require_nic",
+   "message": "nameservers need a NIC with static addressing: a jail without a NIC has no network to use them on; give a NIC, or an empty nameservers list",
+   "request_id": "e4b217ef93a887111f53c925",
+   "details": {
+    "nameservers_given": 1
+   }
+  }
+ }
+}

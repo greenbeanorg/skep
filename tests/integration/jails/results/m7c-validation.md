@@ -14,7 +14,8 @@
 - Approved for this run by Andy: live `kldload` of netgraph, ng_socket,
   ng_ether, ng_bpf; live-only `vlanfilter` on `bridge0` with `vtnet1`'s PVID
   set first; a DHCP test jail on `bridge0`; agent restarts with test jails
-  running. Not done (needs Andy): item 10, reboot with `kld_list`.
+  running. Item 10 (reboot with `kld_list`) was done on 2026-11-22: **pass**,
+  see [validation-2026-11-22.md](validation-2026-11-22.md).
 
 ## Order (answer 11)
 
