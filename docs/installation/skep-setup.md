@@ -118,17 +118,35 @@ pkg upgrade skep
 skep-setup upgrade
 ```
 
-`upgrade` refuses unless the installed `skep-agent`, `skep-api` and
-`skep-setup` are one build, and while tasks are running (unless
-`-force`; they become `interrupted`). Then it:
+`upgrade` refuses, changing nothing, unless the installed `skep-agent`,
+`skep-api` and `skep-setup` are one build, and while any agent task is
+**pending or running**. A task interrupted by the agent restart is never
+resumed or re-run: it ends `interrupted` and must be resubmitted, so only
+`-force` upgrades over unfinished tasks. Then it:
 
-1. backs up both databases with `skep-agent db backup` and `skep-api db
+1. stops `skep_api`, so no new task can be submitted, and reads the
+   agent's tasks again. While any are pending or running it waits, up to
+   `-wait` (default `60s`; `-wait 0` does not wait). If some remain and
+   there is no `-force`, it **refuses** (exit 3): it starts `skep_api`
+   again, checks its pid file and that it runs the installed file, and
+   stops there;
+2. backs up both databases with `skep-agent db backup` and `skep-api db
    backup` into `/var/db/skep/backup/<running build>-<timestamp>/`
    (keeping the newest 3);
-2. stops `skep_api`, stops `skep_agent`, starts `skep_agent` (its schema
-   migrations run), starts `skep_api`, and checks each running process is
-   the installed file at the new build;
-3. reports the agent's health.
+3. stops `skep_agent`, starts it (its schema migrations run), starts
+   `skep_api`, and checks each running process is the installed file at
+   the new build;
+4. reports the agent's health.
+
+Every refusal or failure after `skep_api` was stopped (the second look
+at the tasks, the wait, a backup, the agent's stop, start or check)
+starts `skep_api` again and checks it. The `skep_api` that comes back is
+already the **new** build (pkg replaced the file), while `skep-agent` is
+still the old one if the failure came before its restart. Until a later
+`skep-setup upgrade` completes, the API then answers `503
+agent_version_mismatch` to everything that needs the agent, and its
+health is `unavailable`. The tasks keep running on the agent; run
+`skep-setup upgrade` again once they have finished.
 
 Running guests are not touched: VM runners and jails survive the agent
 restart. If only one of the two services was restarted, the API answers

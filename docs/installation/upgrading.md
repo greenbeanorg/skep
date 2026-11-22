@@ -2,7 +2,9 @@
 
 A host installed from the package (Milestone 10) is upgraded with
 `pkg upgrade skep` and then [`skep-setup upgrade`](skep-setup.md#upgrades),
-which backs up both databases (`skep-agent db backup`, `skep-api db
+which refuses while agent tasks are pending or running, stops `skep_api`
+so no new task arrives, waits up to `-wait` (60 s) for the tasks to
+finish, backs up both databases (`skep-agent db backup`, `skep-api db
 backup`), restarts the services in order and checks them. That path is
 **pending FreeBSD validation**. A host installed by hand, as every host
 is today, is upgraded as below: replace the binaries, prepare the host
@@ -36,7 +38,11 @@ another build.
 **Running guests are not stopped by an agent restart.** VMs run under
 their own runner processes, which survive it (ADR 0009 decision 7);
 jails, their interfaces, and their filters are kernel state. A task that
-was running when the agent stopped is marked `interrupted`.
+was pending or running when the agent stopped is marked `interrupted`; it
+is never resumed or re-run, and must be resubmitted. `skep-setup upgrade`
+refuses rather than do that unless given `-force`; by hand, check
+`skepctl tasks list --status pending` and `--status running` (or the
+Tasks page) first, and stop `skep_api` before the agent.
 
 ## From b61e578 (Milestone 7b) to Milestone 7c (main at 578b7d8 or later)
 

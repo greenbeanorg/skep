@@ -364,7 +364,7 @@ validated on `hearst`.
   upgrade from a Skep without filters (b61e578) was handled
   (m7c-validation item 5).
 - Tasks running when the agent stops are marked `interrupted` (ADR 0005);
-  setup refuses to upgrade while tasks are `running` unless `--force`.
+  setup refuses to upgrade while tasks are `running` unless `--force` (pending ones too since the [amendment](#amendment-2026-11-22-build-decisions-confirmed)).
 
 **Compatibility between programs.** `skep-api` and `skep-agent` come from
 one package and are upgraded together; there is no version handshake
@@ -593,6 +593,13 @@ Decisions 1, 3 and 6; nothing above them changes.
   and `TestRevertHostKeepsTheOperatorsKldListWords`
   (`internal/setup/remove_test.go`). Real `sysrc -=` and `-x` semantics
   are pending FreeBSD validation on the lab VMs.
+- **Upgrade and unfinished tasks (approved 2026-11-22):** `skep-setup
+  upgrade` refuses while tasks are pending or running, not only running;
+  it stops `skep_api`, re-reads the tasks, and waits up to `-wait` (60 s)
+  before backing up and restarting the agent. If tasks remain without
+  `-force` it refuses, and every refusal or failure after the API stop
+  starts `skep_api` again and checks it. `-force` says pending and running
+  tasks are interrupted and must be resubmitted (Decision 5).
 
 ## What Andy must provide
 
