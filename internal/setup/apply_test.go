@@ -415,7 +415,7 @@ func TestApplyStartAndAdmin(t *testing.T) {
 		}
 	}
 	want := []string{"service skep_agent status", "service skep_api status", "service skep_api start",
-		"skep-api admin create --username andy (interactive)"}
+		root + "/usr/local/sbin/skep-api admin create --username andy (interactive)"}
 	if strings.Join(tail, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("commands:\n%s", strings.Join(tail, "\n"))
 	}

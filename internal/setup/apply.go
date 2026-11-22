@@ -183,7 +183,7 @@ func (a *Applier) do(ctx context.Context, act Action) error {
 		_, err := a.Runner.Run(ctx, Cmd{Name: "service", Args: []string{act.Service, "start"}})
 		return err
 	case ActAdminCreate:
-		_, err := a.Runner.Run(ctx, Cmd{Name: "skep-api", Args: []string{"admin", "create", "--username", act.Username}, Interactive: true})
+		_, err := a.Runner.Run(ctx, Cmd{Name: hostPath(a.Root, apiBin), Args: []string{"admin", "create", "--username", act.Username}, Interactive: true})
 		return err
 	case ActServiceStop:
 		if _, err := a.Runner.Run(ctx, Cmd{Name: "service", Args: []string{act.Service, "status"}}); err != nil {
