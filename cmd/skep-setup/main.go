@@ -49,6 +49,11 @@ type env struct {
 	confirm func(prompt string) bool
 	// chown sets file owners; nil means os.Lchown.
 	chown func(path string, uid, gid int) error
+	// agent, sleep and inode replace the agent socket, time.Sleep and
+	// the inode lookup in upgrade's tests; nil means the real ones.
+	agent setup.Agent
+	sleep func(time.Duration)
+	inode func(string) (uint64, error)
 }
 
 // exitError carries an exit code.

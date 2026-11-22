@@ -376,22 +376,24 @@ func readLoader(root string) (RCConf, error) {
 
 // platform: FreeBSD 15.x amd64 only, kernel and userland at the same
 // major.minor; a warning off 15.1 (Decision 7, answer 8).
-func (b *builder) platform() {
-	f := b.f
+func (b *builder) platform() { b.item(platformItem(b.f)) }
+
+// platformItem checks the release and architecture.
+func platformItem(f Facts) Item {
 	km, um := majorMinor(f.KernelRelease), majorMinor(f.UserlandRelease)
 	switch {
 	case f.Arch != "amd64":
-		b.refuse("platform", "architecture "+f.Arch, "Skep 0.1 supports amd64 only")
+		return Item{Kind: Refuse, Area: "platform", What: "architecture " + f.Arch, Detail: "Skep 0.1 supports amd64 only"}
 	case !strings.HasPrefix(km, "15."):
-		b.refuse("platform", "FreeBSD "+f.KernelRelease, "Skep 0.1 supports FreeBSD 15.x only")
+		return Item{Kind: Refuse, Area: "platform", What: "FreeBSD " + f.KernelRelease, Detail: "Skep 0.1 supports FreeBSD 15.x only"}
 	case km != um:
-		b.refuse("platform", "kernel "+f.KernelRelease+", userland "+f.UserlandRelease,
-			"the kernel and userland are at different releases; finish the upgrade and reboot first")
+		return Item{Kind: Refuse, Area: "platform", What: "kernel " + f.KernelRelease + ", userland " + f.UserlandRelease,
+			Detail: "the kernel and userland are at different releases; finish the upgrade and reboot first"}
 	case km != qualifiedRel:
-		b.warn("platform", "FreeBSD "+f.KernelRelease, "Skep 0.1 is qualified on "+qualifiedRel+"; other 15.x releases are untested")
-	default:
-		b.ok("platform", "FreeBSD "+f.KernelRelease+" "+f.Arch, "")
+		return Item{Kind: Warn, Area: "platform", What: "FreeBSD " + f.KernelRelease,
+			Detail: "Skep 0.1 is qualified on " + qualifiedRel + "; other 15.x releases are untested"}
 	}
+	return Item{Kind: OK, Area: "platform", What: "FreeBSD " + f.KernelRelease + " " + f.Arch}
 }
 
 // majorMinor returns "15.1" from "15.1-RELEASE-p7".

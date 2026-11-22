@@ -1,0 +1,262 @@
+package setup
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"net"
+	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/greenbeanorg/skep/internal/agentproto"
+	"github.com/greenbeanorg/skep/internal/database"
+	"github.com/greenbeanorg/skep/pkg/version"
+)
+
+// upgradeHost fakes the commands upgrade runs: -version of the installed
+// programs, db backup, service, and fstat.
+type upgradeHost struct {
+	root      string
+	calls     []string
+	builds    map[string]string // bin -> "skep-agent 0.1.0 (commit x, ..."
+	textInode map[string]string // service -> inode its process runs
+	nextPID   int
+	fail      map[string]error
+	noPIDFile map[string]bool
+}
+
+func (h *upgradeHost) Run(_ context.Context, c Cmd) (string, error) {
+	s := strings.ReplaceAll(c.String(), h.root, "")
+	h.calls = append(h.calls, s)
+	for k, err := range h.fail {
+		if strings.Contains(s, k) {
+			return "", err
+		}
+	}
+	switch {
+	case len(c.Args) == 1 && c.Args[0] == "-version":
+		return h.builds[strings.TrimPrefix(c.Name, h.root)] + "\n", nil
+	case len(c.Args) > 1 && c.Args[0] == "db":
+		return filepath.Base(c.Name) + " db backup: done\n", nil
+	case c.Name == "service":
+		svc, verb := c.Args[0], c.Args[1]
+		pid := map[string]string{"skep_agent": agentPID, "skep_api": apiPID}[svc]
+		switch verb {
+		case "stop":
+			os.Remove(hostPath(h.root, pid))
+		case "start":
+			h.nextPID++
+			if !h.noPIDFile[svc] {
+				os.MkdirAll(filepath.Dir(hostPath(h.root, pid)), 0o755)
+				os.WriteFile(hostPath(h.root, pid), []byte(fmt.Sprintf("%d\n", 1000+h.nextPID)), 0o644)
+			}
+		}
+	case c.Name == "fstat":
+		pid := c.Args[1]
+		svc := "skep_agent"
+		if b, _ := os.ReadFile(hostPath(h.root, apiPID)); strings.TrimSpace(string(b)) == pid {
+			svc = "skep_api"
+		}
+		return fmt.Sprintf("USER CMD PID FD MOUNT INUM MODE SZ|DV R/W\nroot %s %s text / %s -r-xr-xr-x 1234 r\nroot %s %s wd / 2 drwxr-xr-x 512 r\n",
+			svc, pid, h.textInode[svc], svc, pid), nil
+	}
+	return "", nil
+}
+
+type fakeAgent struct {
+	build, health string
+	buildErr      error
+}
+
+func (a fakeAgent) Build(context.Context) (string, error)  { return a.build, a.buildErr }
+func (a fakeAgent) Health(context.Context) (string, error) { return a.health, nil }
+
+var newBuild = version.Info{Version: "0.1.1", Commit: "abc1234"}
+
+func newUpgrade(t *testing.T) (*Upgrader, *upgradeHost) {
+	root := t.TempDir()
+	h := &upgradeHost{root: root,
+		builds: map[string]string{
+			agentBin: "skep-agent 0.1.1 (commit abc1234, built 2026-11-22T16:00:00Z, go1.27.4 freebsd/amd64)",
+			apiBin:   "skep-api 0.1.1 (commit abc1234, built 2026-11-22T16:00:00Z, go1.27.4 freebsd/amd64)",
+		},
+		textInode: map[string]string{"skep_agent": "11", "skep_api": "22"},
+		fail:      map[string]error{}, noPIDFile: map[string]bool{},
+	}
+	u := &Upgrader{Root: root, Runner: h, Prober: fakeProber{facts()}, Agent: fakeAgent{build: "0.1.0+dd7a8b6", health: "ok"},
+		Now: func() time.Time { return time.Date(2026, 11, 22, 17, 0, 0, 0, time.UTC) }, Self: newBuild,
+		Sleep: func(time.Duration) {}, PIDWait: 3 * time.Second,
+		Inode: func(p string) (uint64, error) {
+			return map[string]uint64{hostPath(root, agentBin): 11, hostPath(root, apiBin): 22}[p], nil
+		}}
+	return u, h
+}
+
+type fakeProber struct{ f Facts }
+
+func (p fakeProber) Probe(context.Context) (Facts, error) { return p.f, nil }
+
+func TestUpgradeInOrder(t *testing.T) {
+	u, h := newUpgrade(t)
+	if err := u.Upgrade(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	dir := "/var/db/skep/backup/0.1.0+dd7a8b6-20261122T170000Z"
+	want := []string{
+		agentBin + " -version", apiBin + " -version",
+		agentBin + " db backup -dir " + dir + " -keep 3", apiBin + " db backup -dir " + dir + " -keep 3",
+		"service skep_api stop", "service skep_agent stop",
+		"service skep_agent start", "fstat -p 1001", agentBin + " -version",
+		"service skep_api start", "fstat -p 1002", apiBin + " -version",
+	}
+	if strings.Join(h.calls, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("commands:\n%s\nwant:\n%s", strings.Join(h.calls, "\n"), strings.Join(want, "\n"))
+	}
+}
+
+func serviceCalls(h *upgradeHost) []string {
+	var out []string
+	for _, c := range h.calls {
+		if strings.HasPrefix(c, "service") {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+func TestUpgradeRefusals(t *testing.T) {
+	cases := map[string]func(u *Upgrader, h *upgradeHost){
+		"platform": func(u *Upgrader, h *upgradeHost) {
+			f := facts()
+			f.KernelRelease, f.UserlandRelease = "14.3-RELEASE", "14.3-RELEASE"
+			u.Prober = fakeProber{f}
+		},
+		"agent is another build": func(u *Upgrader, h *upgradeHost) {
+			h.builds[agentBin] = "skep-agent 0.1.0 (commit dd7a8b6, built x, go freebsd/amd64)"
+		},
+		"api is another build": func(u *Upgrader, h *upgradeHost) {
+			h.builds[apiBin] = "skep-api 0.1.1 (commit fff0000, built x, go freebsd/amd64)"
+		},
+		"unreadable version": func(u *Upgrader, h *upgradeHost) { h.builds[apiBin] = "garbage" },
+		"running tasks": func(u *Upgrader, h *upgradeHost) {
+			db, err := database.Open(context.Background(), hostPath(h.root, agentDB))
+			if err != nil {
+				panic(err)
+			}
+			db.Exec(`CREATE TABLE tasks (id TEXT, status TEXT)`)
+			db.Exec(`INSERT INTO tasks VALUES ('t1', 'running'), ('t2', 'succeeded')`)
+			db.Close()
+		},
+	}
+	for name, mod := range cases {
+		t.Run(name, func(t *testing.T) {
+			u, h := newUpgrade(t)
+			mod(u, h)
+			err := u.Upgrade(context.Background())
+			var r *UpgradeRefusal
+			if !errors.As(err, &r) {
+				t.Fatalf("err %v", err)
+			}
+			for _, c := range h.calls {
+				if strings.Contains(c, "db backup") || strings.HasPrefix(c, "service") {
+					t.Fatalf("ran %q while refusing", c)
+				}
+			}
+		})
+	}
+	t.Run("running tasks with --force", func(t *testing.T) {
+		u, h := newUpgrade(t)
+		cases["running tasks"](u, h)
+		u.Force = true
+		if err := u.Upgrade(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	})
+}
+
+func TestUpgradeBackupFailureRestartsNothing(t *testing.T) {
+	u, h := newUpgrade(t)
+	h.fail["skep-api db backup"] = errors.New("disk full")
+	if err := u.Upgrade(context.Background()); err == nil || !strings.Contains(err.Error(), "nothing restarted") {
+		t.Fatalf("err %v", err)
+	}
+	if len(serviceCalls(h)) != 0 {
+		t.Fatalf("services touched: %v", serviceCalls(h))
+	}
+}
+
+func TestUpgradeVerifiesTheRunningFile(t *testing.T) {
+	u, h := newUpgrade(t)
+	h.textInode["skep_agent"] = "99" // still the old, replaced file
+	err := u.Upgrade(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "runs inode 99, not the installed") {
+		t.Fatalf("err %v", err)
+	}
+	if slices := serviceCalls(h); strings.Contains(strings.Join(slices, " "), "skep_api start") {
+		t.Fatal("started the API after the agent failed its check")
+	}
+}
+
+func TestUpgradeNoPIDFile(t *testing.T) {
+	u, h := newUpgrade(t)
+	h.noPIDFile["skep_agent"] = true
+	if err := u.Upgrade(context.Background()); err == nil || !strings.Contains(err.Error(), "wrote no pid file") {
+		t.Fatalf("err %v", err)
+	}
+}
+
+func TestUpgradeUnhealthyAfterRestart(t *testing.T) {
+	u, _ := newUpgrade(t)
+	u.Agent = fakeAgent{build: "0.1.0+dd7a8b6", health: "degraded"}
+	if err := u.Upgrade(context.Background()); err == nil || !strings.Contains(err.Error(), "health is degraded") {
+		t.Fatalf("err %v", err)
+	}
+}
+
+func TestUpgradeUnknownOldBuild(t *testing.T) {
+	u, h := newUpgrade(t)
+	u.Agent = fakeAgent{buildErr: errors.New("connection refused"), health: "ok"}
+	if err := u.Upgrade(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(strings.Join(h.calls, "\n"), "/var/db/skep/backup/unknown-20261122T170000Z") {
+		t.Fatalf("calls %v", h.calls)
+	}
+}
+
+func TestSocketAgent(t *testing.T) {
+	dir, err := os.MkdirTemp("/tmp", "sk")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(dir)
+	path := filepath.Join(dir, "a.sock")
+	ln, err := net.Listen("unix", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get(agentproto.HeaderActorID) != "skep-setup" || r.URL.Path != agentproto.Prefix+"/health" {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		w.Header().Set(agentproto.HeaderAgentVersion, "0.1.0+dd7a8b6")
+		w.Write([]byte(`{"status":"ok","checks":{}}`))
+	})}
+	go srv.Serve(ln)
+	defer srv.Close()
+	a := SocketAgent{Path: path}
+	if b, err := a.Build(context.Background()); err != nil || b != "0.1.0+dd7a8b6" {
+		t.Fatalf("build %q %v", b, err)
+	}
+	if s, err := a.Health(context.Background()); err != nil || s != "ok" {
+		t.Fatalf("health %q %v", s, err)
+	}
+	if _, err := (SocketAgent{Path: filepath.Join(dir, "none.sock")}).Build(context.Background()); err == nil {
+		t.Fatal("no socket, no error")
+	}
+}
