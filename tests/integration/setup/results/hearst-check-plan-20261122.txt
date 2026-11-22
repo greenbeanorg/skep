@@ -1,0 +1,108 @@
+== as aba: check
+skep-setup: open /usr/local/etc/skep/agent.json: permission denied
+exit 2
+== sha256 before
+2b2b74580b6bb3e6b2b56c637f95e0c1ac51d36a11584a986b0c8ad0f73b2bbd
+e8d6b50da6135ee4f0f020a4d3af9345c03f4d0d3664a284869cdd0cbbc212b2
+490bc08738a2dd835952e19c4f59e869857fd15a1a6ce8e8c0b9df1d1f3cb134
+ls: /var/db/skep/setup: No such file or directory
+== sudo check
+skep-setup check, root / (read-only; nothing was changed)
+  16 ok, 1 to add, 2 warnings, 0 conflicts, 0 for you, 1 refused
+  warn     account                            skep
+                                                exists with UID 1002 and GID 1002, not 409; it works on a single host, a cluster will need 409 on every node. Setup changes nothing
+  refuse   config                             /usr/local/etc/skep/agent.json
+                                                exists and was not written by skep-setup; it is the administrator's file. Setup's proposed version:
+                                                {
+                                                  "storage": {
+                                                    "pools": [
+                                                      "skeptest"
+                                                    ],
+                                                    "directories": [],
+                                                    "dataset_root": "skep",
+                                                    "media_dir": "/var/db/skep/media"
+                                                  },
+                                                  "network": {
+                                                    "bridges": [
+                                                      "bridge0"
+                                                    ],
+                                                    "management_interfaces": [
+                                                      "vtnet0"
+                                                    ]
+                                                  }
+                                                }
+  warn     /etc/rc.conf                       skep_api_args
+                                                "-listen 10.79.20.170:8443" sets the listen address on the command line, which wins over api.json
+  add      config                             /usr/local/etc/skep/api.json
+                                                -> write /usr/local/etc/skep/api.json (0640 root:skep)
+                                                listen address 10.79.20.170:8443
+exit 3
+== sudo plan
+skep-setup: refused: apply would change nothing until the refused items are resolved
+skep-setup plan, root / (read-only; nothing was changed)
+  ok       platform                           FreeBSD 15.1-RELEASE-p7 amd64
+  ok       /boot/loader.conf                  vmm_load
+                                                already YES
+  ok       /boot/loader.conf                  nmdm_load
+                                                already YES
+  ok       /boot/loader.conf                  kern.racct.enable
+                                                already 1
+  ok       /etc/rc.conf                       kld_list
+                                                has every module guests need
+  ok       storage                            pool skeptest
+                                                ONLINE; Skep works only under skeptest/skep, which the agent creates on use
+  ok       /etc/rc.conf                       zfs_enable
+                                                already YES
+  ok       /etc/rc.conf                       management vtnet0
+                                                has an address; setup never changes it
+  ok       network                            bridge0
+                                                exists (members [vtnet1]); setup allow-lists it and changes nothing on it
+  ok       network                            bridge0 vlanfilter
+                                                on
+  warn     account                            skep
+                                                exists with UID 1002 and GID 1002, not 409; it works on a single host, a cluster will need 409 on every node. Setup changes nothing
+  ok       /etc/rc.conf                       skep_agent_enable
+                                                already YES
+  ok       /etc/rc.conf                       skep_api_enable
+                                                already YES
+  refuse   config                             /usr/local/etc/skep/agent.json
+                                                exists and was not written by skep-setup; it is the administrator's file. Setup's proposed version:
+                                                {
+                                                  "storage": {
+                                                    "pools": [
+                                                      "skeptest"
+                                                    ],
+                                                    "directories": [],
+                                                    "dataset_root": "skep",
+                                                    "media_dir": "/var/db/skep/media"
+                                                  },
+                                                  "network": {
+                                                    "bridges": [
+                                                      "bridge0"
+                                                    ],
+                                                    "management_interfaces": [
+                                                      "vtnet0"
+                                                    ]
+                                                  }
+                                                }
+  warn     /etc/rc.conf                       skep_api_args
+                                                "-listen 10.79.20.170:8443" sets the listen address on the command line, which wins over api.json
+  add      config                             /usr/local/etc/skep/api.json
+                                                -> write /usr/local/etc/skep/api.json (0640 root:skep)
+                                                listen address 10.79.20.170:8443
+  ok       storage                            /var/db/skep/media
+                                                exists
+  ok       packages                           edk2-bhyve
+                                                /usr/local/share/edk2-bhyve
+  ok       packages                           FreeBSD-base repository
+                                                enabled
+  ok       hardware                           virtualization
+                                                VT-x with EPT and unrestricted guest, or AMD-V with nested paging
+  16 ok, 1 to add, 2 warnings, 0 conflicts, 0 for you, 1 refused
+skep-setup: refused: apply would change nothing until the refused items are resolved
+exit 3
+== sha256 after
+2b2b74580b6bb3e6b2b56c637f95e0c1ac51d36a11584a986b0c8ad0f73b2bbd
+e8d6b50da6135ee4f0f020a4d3af9345c03f4d0d3664a284869cdd0cbbc212b2
+490bc08738a2dd835952e19c4f59e869857fd15a1a6ce8e8c0b9df1d1f3cb134
+ls: /var/db/skep/setup: No such file or directory
