@@ -1,0 +1,1742 @@
+# M7c validation on hearst (ADR 0011 Decision 12), 2026-11-22, snapshot p7-plus-b61e578, build f73f4fd.
+# Concatenated from ~/skep-test-logs/20261122T003343Z-hearst-m7c-val-*.log. Test passwords never printed (tokens not shown).
+
+######## file: 20261122T003343Z-hearst-m7c-val-00-precheck.log
++ mkdir -p /tmp/m7cv/bin
++ mv /tmp/rawl2 /tmp/rawping /tmp/pfscript /tmp/cases.sh /tmp/m7cv/bin/
++ sha256 /tmp/m7cv/bin/cases.sh /tmp/m7cv/bin/pfscript /tmp/m7cv/bin/rawl2 /tmp/m7cv/bin/rawping
+SHA256 (/tmp/m7cv/bin/cases.sh) = 1739ed92e124901567c4bb8c5f1cee191e7c45d7d04801e196e9c2b806dd4e65
+SHA256 (/tmp/m7cv/bin/pfscript) = c0b6fcd451bf9e04664b41cb544bf30d7d19e0ed6a539a932a5b4cf4016bb65d
+SHA256 (/tmp/m7cv/bin/rawl2) = d872e02c3e6231b7dc05ebb7d33dc624d61f4138de003e6695a7d1bff375db28
+SHA256 (/tmp/m7cv/bin/rawping) = 4da45f4763a1dc88b2626555c9b199d3723e147e01e568e5089d0aafc157270f
++ freebsd-version -kru
+15.1-RELEASE-p7
+15.1-RELEASE-p7
+15.1-RELEASE-p7
+FreeBSD hearst.greenbean.org 15.1-RELEASE-p7 FreeBSD 15.1-RELEASE-p7 releng/15.1-n283696-bb03631fe3b7 GENERIC amd64
+Id Refs Address                Size Name
+ 1   47 0xffffffff80200000  23520f8 kernel
+ 2    1 0xffffffff82553000     3988 nmdm.ko
+ 3    1 0xffffffff82558000   380270 vmm.ko
+ 4    1 0xffffffff83200000   3f2c78 zfs.ko
+ 5    1 0xffffffff83018000     21e8 hms.ko
+ 6    1 0xffffffff8301b000     30a8 hidmap.ko
+ 7    1 0xffffffff8301f000     4250 ichsmb.ko
+ 8    1 0xffffffff83024000     2178 smbus.ko
+ 9    1 0xffffffff83027000     430c virtio_console.ko
+10    1 0xffffffff8302c000     8810 if_bridge.ko
+11    1 0xffffffff83035000     6120 bridgestp.ko
+12    1 0xffffffff8303c000     2a80 mac_ntpd.ko
+13    1 0xffffffff8303f000     539c if_epair.ko
+netgraph module: 1
+ng_bpf module: 1
++ uname -a
++ kldstat
++ kldstat -q -m netgraph
++ echo 'netgraph module: 1'
++ kldstat -q -m ng_bpf
++ echo 'ng_bpf module: 1'
++ jls
+   JID  IP Address      Hostname                      Path
++ ifconfig -l
+vtnet0 vtnet1 lo0 bridge0
++ sudo sha256 /usr/local/etc/skep/agent.json /etc/rc.conf /boot/loader.conf
+SHA256 (/usr/local/etc/skep/agent.json) = 490bc08738a2dd835952e19c4f59e869857fd15a1a6ce8e8c0b9df1d1f3cb134
+SHA256 (/etc/rc.conf) = a50861c4e464a7cf9043d6b606ac0a559b1dfccc3df9f99d94df670364962bca
+SHA256 (/boot/loader.conf) = e8d6b50da6135ee4f0f020a4d3af9345c03f4d0d3664a284869cdd0cbbc212b2
+bridge0: flags=1008843<UP,BROADCAST,RUNNING,SIMPLEX,MULTICAST,LOWER_UP> metric 0 mtu 1500
+	options=10<VLAN_HWTAGGING>
+	ether 58:9c:fc:10:9f:32
+	id 00:00:00:00:00:00 priority 32768 hellotime 2 fwddelay 15
+	maxage 20 holdcnt 6 proto rstp maxaddr 2000 timeout 1200
+	root id 00:00:00:00:00:00 priority 32768 ifcost 0 port 0
+	bridge flags=0<>
+	member: vtnet1 flags=143<LEARNING,DISCOVER,AUTOEDGE,AUTOPTP>
+	        port 2 priority 128 path cost 2000 vlan protocol 802.1q
+	groups: bridge
+	nd6 options=9<PERFORMNUD,IFDISABLED>
++ ifconfig bridge0
++ cat /tmp/m7cv/bridge0.before
++ sudo service skep_agent status
+skep_agent is running as pid 1510 (supervisor pid 1509).
++ sudo service skep_api status
+skep_api is running as pid 1553 (supervisor pid 1551).
++ /usr/local/sbin/skep-agent -version
+skep-agent 0.1.0 (commit b61e578, built 2026-11-21T18:49:45Z, go1.27.4 freebsd/amd64)
++ sudo devfs rule -s 6001 show
++ df -h /tmp
++ tail -1
+/dev/da0s1a    120G     19G     91G    18%    /
+
+######## file: 20261122T003343Z-hearst-m7c-val-01-setup-deploy.log
++ A=/usr/local/etc/skep/agent.json
++ sudo cp -p /usr/local/etc/skep/agent.json /usr/local/etc/skep/agent.json.pre-m7c-val
++ sudo sha256 -q /usr/local/etc/skep/agent.json.pre-m7c-val
+490bc08738a2dd835952e19c4f59e869857fd15a1a6ce8e8c0b9df1d1f3cb134
++ sudo sed -i '' -e 's/"bridges": \["bridge0"\],/"bridges": ["bridge0", "bridge1"],/' /usr/local/etc/skep/agent.json
++ sudo diff /usr/local/etc/skep/agent.json.pre-m7c-val /usr/local/etc/skep/agent.json
+17c17
+<     "bridges": ["bridge0"],
+---
+>     "bridges": ["bridge0", "bridge1"],
++ true
++ sudo ifconfig bridge1 create up
++ ifconfig bridge1
+bridge1: flags=1008843<UP,BROADCAST,RUNNING,SIMPLEX,MULTICAST,LOWER_UP> metric 0 mtu 1500
+	options=10<VLAN_HWTAGGING>
+	ether 58:9c:fc:10:8c:43
++ head -3
+deploy-test: hearst:/usr/local/sbin/skep-agent root:wheel 0555 13725866 bytes sha256 5958962933553dcf4b7b3dc050db74f1b92eb4f5cf10c882847deaf3adbc94cc
+deploy-test: hearst:/usr/local/sbin/skep-api root:wheel 0555 14192810 bytes sha256 3d553d7582d7469ca5f979a3cc8505866d72df6e37dce5022203f23f311eb74d
+deploy-test: synced
+deploy-test: hearst:/usr/local/bin/skepctl root:wheel 0555 7217322 bytes sha256 a850c8096571a373f420681b1babe3f6de5b44d5233b207f01673bf0e92d8ebd
+deploy-test: synced
+deploy-test: restarting skep_api and skep_agent on hearst
+Stopping skep_api.
+Waiting for PIDS: 1551.
+Stopping skep_agent.
+Waiting for PIDS: 1509.
+Starting skep_agent.
+Starting skep_api.
+deploy-test: skep_agent pid 3145 runs /usr/local/sbin/skep-agent: skep-agent 0.1.0 (commit f73f4fd, built 2026-11-22T00:31:42Z, go1.27.4 freebsd/amd64)
+deploy-test: skep_api pid 3203 runs /usr/local/sbin/skep-api: skep-api 0.1.0 (commit f73f4fd, built 2026-11-22T00:31:42Z, go1.27.4 freebsd/amd64)
+deploy-test: hearst runs f73f4fd
+
+######## file: 20261122T003343Z-hearst-m7c-val-02-module-missing.log
+######## Item 6: module missing, 2026-11-22T00:34:26Z
+login s7oper: HTTP 200 (token not shown)
+create m7c-a 202 succeeded 5cadd083-c85c-4606-a620-17c2e37d91b9
+create m7c-v 202 succeeded fc34f44b-44b1-436d-a736-a5a854a8fca4
+m7c-a 5cadd083-c85c-4606-a620-17c2e37d91b9 stopped 02:5e:00:0a:00:10
+m7c-v fc34f44b-44b1-436d-a736-a5a854a8fca4 stopped 02:5e:00:0a:00:20
+-- start m7c-a with the netgraph modules unloaded
+HTTP 409 {"error": {"code": "port_filter_unavailable", "message": "the netgraph modules netgraph, ng_socket, ng_ether, ng_bpf are not loaded, so a guest port cannot get its anti-spoofing filter; the operator loads them (kld_list=\"netgraph ng_socket ng_ether ng_bpf\" in rc.conf); Skep loads no modules", "request_id": "43a40efe67712731bd255e52", "details": {"missing_modules": ["netgraph", "ng_socket", "ng_ether", "ng_bpf"]}}}
+create m7c-vm 400 None None
+m7c-vm 
+-- start m7c-vm with the netgraph modules unloaded
+HTTP 307 ""
++ kldstat
++ grep -E 'netgraph|ng_'
+no netgraph module loaded
+   JID  IP Address      Hostname                      Path
+bridge1: no members
++ echo 'no netgraph module loaded'
++ jls
++ ifconfig -g epair
++ ifconfig -g tap
++ ifconfig bridge1
++ grep member
++ echo 'bridge1: no members'
++ sudo sqlite3 -readonly -cmd '.timeout 5000' /var/db/skep/agent/agent.db 'SELECT occurred_at, action, resource_type, outcome, json_extract(details, "$.error_code") FROM audit_log WHERE outcome = "denied" ORDER BY id DESC LIMIT 3'
+Parse error in 5th command line argument: no such column: "$.error_code" - should this be a string literal in single-quotes?
+  on, resource_type, outcome, json_extract(details, "$.error_code") FROM audit_l
+                                      error here ---^
+######## Item 6 (continued): the VM, 2026-11-22T00:34:45Z
+create m7c-vm 202 succeeded None
+m7c-vm 7e33310f-b16c-4a83-8ac1-891d1ded9bb0
+-- start m7c-vm with the netgraph modules unloaded
+HTTP 409 {"error": {"code": "port_filter_unavailable", "message": "the netgraph modules netgraph, ng_socket, ng_ether, ng_bpf are not loaded, so a guest port cannot get its anti-spoofing filter; the operator loads them (kld_list=\"netgraph ng_socket ng_ether ng_bpf\" in rc.conf); Skep loads no modules", "request_id": "e6ae07b340003d0897d27076", "details": {"missing_modules": ["netgraph", "ng_socket", "ng_ether", "ng_bpf"]}}}
++ kldstat
++ grep -E 'netgraph|ng_'
+no netgraph module loaded
++ echo 'no netgraph module loaded'
++ ifconfig -g tap
++ ifconfig bridge1
++ grep member
+bridge1: no members
++ echo 'bridge1: no members'
++ sudo sqlite3 -readonly -cmd '.timeout 5000' /var/db/skep/agent/agent.db $'SELECT occurred_at, action, resource_type, outcome, json_extract(details, \'$.error_code\') FROM audit_log WHERE outcome = \'denied\' ORDER BY id DESC LIMIT 3'
+2026-11-22T00:34:47.058Z|vm.start|vm|denied|port_filter_unavailable
+2026-11-22T00:34:29.256Z|container.start|container|denied|port_filter_unavailable
+2026-11-21T19:52:28.473Z|container.delete|container|denied|container_not_stopped
+
+######## file: 20261122T003343Z-hearst-m7c-val-03-load-start.log
+######## Load the modules live, start the static jails, 2026-11-22T00:34:59Z
++ sudo kldload netgraph ng_socket ng_ether ng_bpf
+14    4 0xffffffff83045000     abb8 netgraph.ko
+15    1 0xffffffff83050000     3918 ng_socket.ko
+16    1 0xffffffff83054000     31e0 ng_ether.ko
+17    1 0xffffffff83058000     2208 ng_bpf.ko
++ kldstat
++ grep -E 'netgraph|ng_'
+start 5cadd083-c85c-4606-a620-17c2e37d91b9 202 succeeded None None
+start fc34f44b-44b1-436d-a736-a5a854a8fca4 202 succeeded None None
+m7c-a 5cadd083-c85c-4606-a620-17c2e37d91b9 running 02:5e:00:0a:00:10 epair0a
+m7c-v fc34f44b-44b1-436d-a736-a5a854a8fca4 running 02:5e:00:0a:00:20 epair1a
++ ngctl list
+ngctl: can't create node: Operation not permitted
++ sudo ngctl show epair0a:
+  Name: epair0a         Type: ether           ID: 00000005   Num hooks: 2
+  Local hook      Peer name       Peer type    Peer ID         Peer hook      
+  ----------      ---------       ---------    -------         ---------      
+  upper           skf_epair0a     bpf          00000009        bridge         
+  lower           skf_epair0a     bpf          00000009        jail           
++ sudo ngctl show epair1a:
+  Name: epair1a         Type: ether           ID: 0000000e   Num hooks: 2
+  Local hook      Peer name       Peer type    Peer ID         Peer hook      
+  ----------      ---------       ---------    -------         ---------      
+  upper           skf_epair1a     bpf          00000012        bridge         
+  lower           skf_epair1a     bpf          00000012        jail           
++ sudo ngctl show epair0a:
++ awk '/Name:/{print $6}'
++ ID=00000005
++ sudo ngctl show epair0a:
++ awk '$1=="lower"{print $4}'
++ BPF=00000009
++ sudo ngctl msg '[00000009]:' getprogram '"jail"'
++ cat /tmp/m7cv/prog-a.txt
++ cut -c1-300
+Rec'd response "getprogram" (2) from "[9]:":
+Args:	{ thisHook="jail" ifMatch="bridge" bpf_prog_len=36 bpf_prog=[ { code=0x20 k=6 } { code=0x15 jf=33 k=39714826 } { code=0x28 k=10 } { code=0x15 jf=31 k=16 } { code=0x28 k=12 } { code=0x15 jt=1 k=2048 } { code=0x15 jt=16 jf=28 k=2054 } { code=0x30 k=14 } { code=0x54 k=240 } { code=0x15 jf=25 k=64
++ /tmp/m7cv/bin/pfscript -mac 02:5e:00:0a:00:10 -ip 192.0.2.10 -print program
++ cut -c1-200 /tmp/m7cv/want-a.txt
+{ thisHook="jail" ifMatch="bridge" ifNotMatch="" bpf_prog_len=36 bpf_prog=[ { code=32 jt=0 jf=0 k=6 } { code=21 jt=0 jf=33 k=39714826 } { code=40 jt=0 jf=0 k=10 } { code=21 jt=0 jf=31 k=16 } { code=40
++ ifconfig bridge1
++ grep -A1 member
+	member: epair1a flags=143<LEARNING,DISCOVER,AUTOEDGE,AUTOPTP>
+	        port 9 priority 128 path cost 2000 vlan protocol 802.1q
+	member: epair0a flags=143<LEARNING,DISCOVER,AUTOEDGE,AUTOPTP>
+	        port 6 priority 128 path cost 2000 vlan protocol 802.1q
+######## Health with two filtered jails, attacker prep, 2026-11-22T00:35:12Z
+degraded
+  bridge_vlan_unfiltered {'status': 'degraded', 'critical': False, 'error': 'bridge1 has no VLAN filtering (ifconfig bridge1 vlanfilter)'}
+  orphaned_interfaces {'status': 'ok', 'critical': False}
+  port_filters {'status': 'ok', 'critical': False}
++ R=/skeptest/skep/jail/5cadd083-c85c-4606-a620-17c2e37d91b9
++ J=skep-5cadd083-c85c-4606-a620-17c2e37d91b9
++ sudo install -m 0755 -o root -g wheel /tmp/m7cv/bin/rawl2 /skeptest/skep/jail/5cadd083-c85c-4606-a620-17c2e37d91b9/root/rawl2
++ sudo install -m 0755 -o root -g wheel /tmp/m7cv/bin/rawping /skeptest/skep/jail/5cadd083-c85c-4606-a620-17c2e37d91b9/root/rawping
++ sudo jexec skep-5cadd083-c85c-4606-a620-17c2e37d91b9 sha256 /root/rawl2 /root/rawping
+SHA256 (/root/rawl2) = d872e02c3e6231b7dc05ebb7d33dc624d61f4138de003e6695a7d1bff375db28
+SHA256 (/root/rawping) = 4da45f4763a1dc88b2626555c9b199d3723e147e01e568e5089d0aafc157270f
++ sudo devfs -m /skeptest/skep/jail/5cadd083-c85c-4606-a620-17c2e37d91b9/dev rule apply path 'bpf*' unhide
+2
++ sudo jexec skep-5cadd083-c85c-4606-a620-17c2e37d91b9 ls /dev
++ grep -c bpf
++ grep -E 'ether|inet'
++ sudo jexec skep-5cadd083-c85c-4606-a620-17c2e37d91b9 ifconfig skep0
+	ether 02:5e:00:0a:00:10
+	inet 192.0.2.10 netmask 0xffffff00 broadcast 192.0.2.255
++ sudo grep skep-agent /var/log/daemon.log
++ grep -iE 'port_filter|portcheck|error'
++ tail -5
+Nov 21 19:34:29 hearst skep-agent[3143]: {"time":"2026-11-21T19:34:29.255993272-05:00","level":"WARN","msg":"task refused","type":"container.start","actor_id":"f3b71fbe-2e24-4539-9ec2-8be0fcde53ed","error_code":"port_filter_unavailable"}
+Nov 21 19:34:45 hearst skep-agent[3143]: {"time":"2026-11-21T19:34:45.746315921-05:00","level":"INFO","msg":"task finished","task_id":"b150a6e1-cf6b-42fa-aa7f-70d005ec1427","type":"vm.create","status":"succeeded","error_code":""}
+Nov 21 19:34:47 hearst skep-agent[3143]: {"time":"2026-11-21T19:34:47.058385257-05:00","level":"WARN","msg":"task refused","type":"vm.start","actor_id":"af143ddd-2c62-4eeb-803a-2081c4fd0088","error_code":"port_filter_unavailable"}
+Nov 21 19:35:00 hearst skep-agent[3143]: {"time":"2026-11-21T19:35:00.761410894-05:00","level":"INFO","msg":"task finished","task_id":"0868cd02-6c72-4bad-9f40-34f901d6b7cf","type":"container.start","status":"succeeded","error_code":""}
+Nov 21 19:35:01 hearst skep-agent[3143]: {"time":"2026-11-21T19:35:01.948613099-05:00","level":"INFO","msg":"task finished","task_id":"8b35869e-7fe6-4010-8ada-16c9c7b539d6","type":"container.start","status":"succeeded","error_code":""}
+
+######## file: 20261122T003343Z-hearst-m7c-val-04-static-cases.log
+==== static D1 00:35:32
+  $ sudo jexec skep-5cadd083-c85c-4606-a620-17c2e37d91b9 ping -c 2 -t 3 192.0.2.20
+     PING 192.0.2.20 (192.0.2.20): 56 data bytes
+     64 bytes from 192.0.2.20: icmp_seq=0 ttl=64 time=0.129 ms
+     64 bytes from 192.0.2.20: icmp_seq=1 ttl=64 time=0.109 ms
+     
+     --- 192.0.2.20 ping statistics ---
+     2 packets transmitted, 2 packets received, 0.0% packet loss
+     round-trip min/avg/max/stddev = 0.109/0.119/0.129/0.010 ms
+  -- sent on epair0a (all frames): 7; on bridge1 matching [icmp and ether src 02:5e:00:0a:00:10]: 3; on epair1a matching: 3
+     br: 19:35:33.896554 02:5e:00:0a:00:10 > 02:5e:00:0a:00:20, ethertype IPv4 (0x0800), length 98: 192.0.2.10 > 192.0.2.20: ICMP echo request, id 7186, seq 0, length 64
+     br: 19:35:34.905028 02:5e:00:0a:00:10 > 02:5e:00:0a:00:20, ethertype IPv4 (0x0800), length 98: 192.0.2.10 > 192.0.2.20: ICMP echo request, id 7186, seq 1, length 64
+     br: 
+VERDICT static D1 PASS (want +, bridge 3, victim 3, sent 7)
+==== static D2 00:35:41
+  $ sudo jexec skep-fc34f44b-44b1-436d-a736-a5a854a8fca4 ping -c 2 -t 3 192.0.2.10
+     PING 192.0.2.10 (192.0.2.10): 56 data bytes
+     64 bytes from 192.0.2.10: icmp_seq=0 ttl=64 time=0.128 ms
+     64 bytes from 192.0.2.10: icmp_seq=1 ttl=64 time=0.127 ms
+     
+     --- 192.0.2.10 ping statistics ---
+     2 packets transmitted, 2 packets received, 0.0% packet loss
+     round-trip min/avg/max/stddev = 0.127/0.127/0.128/0.000 ms
+  -- sent on epair0a (all frames): 5; on bridge1 matching [icmp and ether src 02:5e:00:0a:00:20]: 3; on epair1a matching: 3
+     br: 19:35:42.921819 02:5e:00:0a:00:20 > 02:5e:00:0a:00:10, ethertype IPv4 (0x0800), length 98: 192.0.2.20 > 192.0.2.10: ICMP echo request, id 14354, seq 0, length 64
+     br: 19:35:43.984987 02:5e:00:0a:00:20 > 02:5e:00:0a:00:10, ethertype IPv4 (0x0800), length 98: 192.0.2.20 > 192.0.2.10: ICMP echo request, id 14354, seq 1, length 64
+     br: 
+VERDICT static D2 PASS (want +, bridge 3, victim 3, sent 5)
+==== static A1 00:35:50
+  $ sudo jexec skep-5cadd083-c85c-4606-a620-17c2e37d91b9 /root/rawl2 -if skep0 -mode icmp -eth-src 02:5e:00:00:00:01 -eth-dst 02:5e:00:0a:00:20 -src 192.0.2.10 -dst 192.0.2.20 -count 2
+     rawl2: icmp frame 1/2, 60 bytes, written to skep0
+     rawl2: icmp frame 2/2, 60 bytes, written to skep0
+  -- sent on epair0a (all frames): 3; on bridge1 matching [ether src 02:5e:00:00:00:01]: 1; on epair1a matching: 1
+     br: 
+VERDICT static A1 FAIL (want 0, bridge 1, victim 1, sent 3)
+==== static A2 00:35:59
+  $ sudo jexec skep-5cadd083-c85c-4606-a620-17c2e37d91b9 ifconfig skep0 ether 02:5e:00:00:00:01
+  $ sudo jexec skep-5cadd083-c85c-4606-a620-17c2e37d91b9 ping -c 2 -t 3 192.0.2.20
+     PING 192.0.2.20 (192.0.2.20): 56 data bytes
+     
+     --- 192.0.2.20 ping statistics ---
+     2 packets transmitted, 0 packets received, 100.0% packet loss
+  $ sudo jexec skep-5cadd083-c85c-4606-a620-17c2e37d91b9 ifconfig skep0 ether 02:5e:00:0a:00:10
+  -- sent on epair0a (all frames): 5; on bridge1 matching [ether src 02:5e:00:00:00:01]: 1; on epair1a matching: 1
+     br: 
+VERDICT static A2 FAIL (want 0, bridge 1, victim 1, sent 5)
+==== static B1 00:36:08
+  $ sudo jexec skep-5cadd083-c85c-4606-a620-17c2e37d91b9 /root/rawping -src 192.0.2.50 -dst 192.0.2.20 -count 2
+     00:36:09.976Z seq 0 192.0.2.50 -> 192.0.2.20: sent 37 bytes
+     00:36:11.041Z seq 1 192.0.2.50 -> 192.0.2.20: sent 37 bytes
+  -- sent on epair0a (all frames): 3; on bridge1 matching [ip src 192.0.2.50]: 1; on epair1a matching: 1
+     br: 
+VERDICT static B1 FAIL (want 0, bridge 1, victim 1, sent 3)
+==== static B2 00:36:17
+  $ sudo jexec skep-5cadd083-c85c-4606-a620-17c2e37d91b9 /root/rawping -src 198.51.100.10 -dst 192.0.2.20 -count 2
+     00:36:18.991Z seq 0 198.51.100.10 -> 192.0.2.20: sent 37 bytes
+     00:36:20.061Z seq 1 198.51.100.10 -> 192.0.2.20: sent 37 bytes
+  -- sent on epair0a (all frames): 3; on bridge1 matching [ip src 198.51.100.10]: 1; on epair1a matching: 1
+     br: 
+VERDICT static B2 FAIL (want 0, bridge 1, victim 1, sent 3)
+==== static C1 00:36:26
+  $ sudo jexec skep-5cadd083-c85c-4606-a620-17c2e37d91b9 /root/rawl2 -if skep0 -mode arp -op reply -eth-src 02:5e:00:0a:00:10 -eth-dst 02:5e:00:0a:00:20 -sha 02:5e:00:0a:00:10 -spa 192.0.2.50 -tha 02:5e:00:0a:00:20 -tpa 192.0.2.20 -count 2
+     rawl2: arp frame 1/2, 60 bytes, written to skep0
+     rawl2: arp frame 2/2, 60 bytes, written to skep0
+  -- sent on epair0a (all frames): 3; on bridge1 matching [arp and ether src 02:5e:00:0a:00:10 and arp[14:4] = 0xc0000232]: 1; on epair1a matching: 1
+     br: 
+VERDICT static C1 FAIL (want 0, bridge 1, victim 1, sent 3)
+==== static C2 00:36:36
+  $ sudo jexec skep-5cadd083-c85c-4606-a620-17c2e37d91b9 /root/rawl2 -if skep0 -mode arp -op reply -eth-src 02:5e:00:0a:00:10 -eth-dst 02:5e:00:0a:00:20 -sha 02:5e:00:00:00:01 -spa 192.0.2.10 -tha 02:5e:00:0a:00:20 -tpa 192.0.2.20 -count 2
+     rawl2: arp frame 1/2, 60 bytes, written to skep0
+     rawl2: arp frame 2/2, 60 bytes, written to skep0
+  $ sudo jexec skep-fc34f44b-44b1-436d-a736-a5a854a8fca4 arp -an
+     ? (192.0.2.10) at 02:5e:00:0a:00:10 on skep0 expires in 1166 seconds [ethernet]
+     ? (192.0.2.20) at 02:5e:00:0a:00:20 on skep0 permanent [ethernet]
+  -- sent on epair0a (all frames): 3; on bridge1 matching [arp and arp[8:4] = 0x025e0000 and arp[12:2] = 0x0001]: 1; on epair1a matching: 1
+     br: 
+VERDICT static C2 FAIL (want 0, bridge 1, victim 1, sent 3)
+==== static C3 00:36:45
+  $ sudo jexec skep-5cadd083-c85c-4606-a620-17c2e37d91b9 ifconfig skep0 inet 192.0.2.50/32 alias
+  $ sudo jexec skep-5cadd083-c85c-4606-a620-17c2e37d91b9 ping -c 2 -t 3 -S 192.0.2.50 192.0.2.20
+     PING 192.0.2.20 (192.0.2.20) from 192.0.2.50: 56 data bytes
+     
+     --- 192.0.2.20 ping statistics ---
+     2 packets transmitted, 0 packets received, 100.0% packet loss
+  $ sudo jexec skep-5cadd083-c85c-4606-a620-17c2e37d91b9 ifconfig skep0 inet 192.0.2.50 -alias
+  -- sent on epair0a (all frames): 4; on bridge1 matching [ether src 02:5e:00:0a:00:10 and (ip src 192.0.2.50 or (arp and arp[14:4] = 0xc0000232))]: 1; on epair1a matching: 1
+     br: 
+VERDICT static C3 FAIL (want 0, bridge 1, victim 1, sent 4)
+==== static C4 00:36:54
+  $ sudo jexec skep-5cadd083-c85c-4606-a620-17c2e37d91b9 /root/rawl2 -if skep0 -mode arp -op request -eth-src 02:5e:00:0a:00:10 -sha 02:5e:00:0a:00:10 -spa 192.0.2.20 -tpa 192.0.2.20 -count 2
+     rawl2: arp frame 1/2, 60 bytes, written to skep0
+     rawl2: arp frame 2/2, 60 bytes, written to skep0
+  -- sent on epair0a (all frames): 3; on bridge1 matching [ether src 02:5e:00:0a:00:10 and arp and arp[14:4] = 0xc0000214]: 1; on epair1a matching: 1
+     br: 
+VERDICT static C4 FAIL (want 0, bridge 1, victim 1, sent 3)
+==== static C5 00:37:03
+  $ sudo jexec skep-5cadd083-c85c-4606-a620-17c2e37d91b9 arp -s 192.0.2.50 02:5e:00:00:00:01 pub
+  $ sudo jexec skep-fc34f44b-44b1-436d-a736-a5a854a8fca4 ping -c 1 -t 2 192.0.2.50
+     PING 192.0.2.50 (192.0.2.50): 56 data bytes
+     
+     --- 192.0.2.50 ping statistics ---
+     1 packets transmitted, 0 packets received, 100.0% packet loss
+  $ sudo jexec skep-5cadd083-c85c-4606-a620-17c2e37d91b9 arp -d 192.0.2.50
+     192.0.2.50 (192.0.2.50) deleted
+  $ sudo jexec skep-fc34f44b-44b1-436d-a736-a5a854a8fca4 arp -an
+     ? (192.0.2.10) at 02:5e:00:0a:00:10 on skep0 expires in 1138 seconds [ethernet]
+     ? (192.0.2.50) at (incomplete) on skep0 expired [ethernet]
+     ? (192.0.2.20) at 02:5e:00:0a:00:20 on skep0 permanent [ethernet]
+  -- sent on epair0a (all frames): 4; on bridge1 matching [ether src 02:5e:00:0a:00:10 and arp and arp[14:4] = 0xc0000232]: 1; on epair1a matching: 1
+     br: 
+VERDICT static C5 FAIL (want 0, bridge 1, victim 1, sent 4)
+==== static T5 00:37:12
+  $ sudo jexec skep-5cadd083-c85c-4606-a620-17c2e37d91b9 ifconfig skep0 inet 192.0.2.60/24 alias
+  $ sudo jexec skep-5cadd083-c85c-4606-a620-17c2e37d91b9 ping -c 2 -t 3 -S 192.0.2.60 192.0.2.20
+     PING 192.0.2.20 (192.0.2.20) from 192.0.2.60: 56 data bytes
+     
+     --- 192.0.2.20 ping statistics ---
+     2 packets transmitted, 0 packets received, 100.0% packet loss
+  $ sudo jexec skep-5cadd083-c85c-4606-a620-17c2e37d91b9 ifconfig skep0 inet 192.0.2.60 -alias
+  -- sent on epair0a (all frames): 4; on bridge1 matching [ether src 02:5e:00:0a:00:10 and (ip src 192.0.2.60 or (arp and arp[14:4] = 0xc000023c))]: 1; on epair1a matching: 1
+     br: 
+VERDICT static T5 FAIL (want 0, bridge 1, victim 1, sent 4)
+==== static E1 00:37:21
+  $ sudo jexec skep-5cadd083-c85c-4606-a620-17c2e37d91b9 /root/rawl2 -if skep0 -mode dhcp -eth-src 02:5e:00:0a:00:10 -count 2
+     rawl2: dhcp frame 1/2, 286 bytes, written to skep0
+     rawl2: dhcp frame 2/2, 286 bytes, written to skep0
+  -- sent on epair0a (all frames): 3; on bridge1 matching [ether src 02:5e:00:0a:00:10 and udp dst port 67]: 1; on epair1a matching: 1
+     br: 
+VERDICT static E1 FAIL (want 0, bridge 1, victim 1, sent 3)
+==== static E2 00:37:30
+  $ sudo jexec skep-5cadd083-c85c-4606-a620-17c2e37d91b9 /root/rawl2 -if skep0 -mode dhcp -eth-src 02:5e:00:00:00:01 -count 2
+     rawl2: dhcp frame 1/2, 286 bytes, written to skep0
+     rawl2: dhcp frame 2/2, 286 bytes, written to skep0
+  -- sent on epair0a (all frames): 3; on bridge1 matching [ether src 02:5e:00:00:00:01]: 1; on epair1a matching: 1
+     br: 
+VERDICT static E2 FAIL (want 0, bridge 1, victim 1, sent 3)
+==== static E3 00:37:39
+  $ sudo jexec skep-5cadd083-c85c-4606-a620-17c2e37d91b9 /root/rawl2 -if skep0 -mode arp -op request -eth-src 02:5e:00:0a:00:10 -sha 02:5e:00:00:00:01 -spa 192.0.2.10 -tpa 192.0.2.20 -count 2
+     rawl2: arp frame 1/2, 60 bytes, written to skep0
+     rawl2: arp frame 2/2, 60 bytes, written to skep0
+  -- sent on epair0a (all frames): 3; on bridge1 matching [arp and arp[8:4] = 0x025e0000 and arp[12:2] = 0x0001]: 1; on epair1a matching: 1
+     br: 
+VERDICT static E3 FAIL (want 0, bridge 1, victim 1, sent 3)
+==== static F1 00:37:48
+  $ sudo jexec skep-5cadd083-c85c-4606-a620-17c2e37d91b9 /root/rawl2 -if skep0 -mode ipv6 -eth-src 02:5e:00:0a:00:10 -count 2
+     rawl2: ipv6 frame 1/2, 78 bytes, written to skep0
+     rawl2: ipv6 frame 2/2, 78 bytes, written to skep0
+  -- sent on epair0a (all frames): 3; on bridge1 matching [ip6]: 1; on epair1a matching: 1
+     br: 
+VERDICT static F1 FAIL (want 0, bridge 1, victim 1, sent 3)
+==== static G1 00:37:57
+  $ sudo jexec skep-5cadd083-c85c-4606-a620-17c2e37d91b9 /root/rawl2 -if skep0 -mode dhcpoffer -eth-src 02:5e:00:0a:00:10 -src 192.0.2.10 -count 2
+     rawl2: dhcpoffer frame 1/2, 286 bytes, written to skep0
+     rawl2: dhcpoffer frame 2/2, 286 bytes, written to skep0
+  -- sent on epair0a (all frames): 3; on bridge1 matching [udp src port 67]: 1; on epair1a matching: 1
+     br: 
+VERDICT static G1 FAIL (want 0, bridge 1, victim 1, sent 3)
+==== static G2 00:38:06
+  $ sudo jexec skep-5cadd083-c85c-4606-a620-17c2e37d91b9 /root/rawl2 -if skep0 -mode ra -eth-src 02:5e:00:0a:00:10 -count 2
+     rawl2: ra frame 1/2, 70 bytes, written to skep0
+     rawl2: ra frame 2/2, 70 bytes, written to skep0
+  -- sent on epair0a (all frames): 3; on bridge1 matching [ip6]: 1; on epair1a matching: 1
+     br: 
+VERDICT static G2 FAIL (want 0, bridge 1, victim 1, sent 3)
+==== static L1 00:38:15
+  $ sudo jexec skep-5cadd083-c85c-4606-a620-17c2e37d91b9 /root/rawl2 -if skep0 -mode lldp -eth-src 02:5e:00:0a:00:10 -count 2
+     rawl2: lldp frame 1/2, 60 bytes, written to skep0
+     rawl2: lldp frame 2/2, 60 bytes, written to skep0
+  -- sent on epair0a (all frames): 3; on bridge1 matching [ether src 02:5e:00:0a:00:10 and ether proto 0x88cc]: 1; on epair1a matching: 1
+     br: 
+VERDICT static L1 FAIL (want 0, bridge 1, victim 1, sent 3)
+==== static L2 00:38:24
+  $ sudo jexec skep-5cadd083-c85c-4606-a620-17c2e37d91b9 /root/rawl2 -if skep0 -mode stp -eth-src 02:5e:00:0a:00:10 -count 2
+     rawl2: stp frame 1/2, 60 bytes, written to skep0
+     rawl2: stp frame 2/2, 60 bytes, written to skep0
+  -- sent on epair0a (all frames): 3; on bridge1 matching [ether src 02:5e:00:0a:00:10 and stp]: 1; on epair1a matching: 1
+     br: 
+VERDICT static L2 FAIL (want 0, bridge 1, victim 1, sent 3)
+==== static V1 00:38:33
+  $ sudo jexec skep-5cadd083-c85c-4606-a620-17c2e37d91b9 /root/rawl2 -if skep0 -mode icmp -vlan 5 -eth-src 02:5e:00:0a:00:10 -eth-dst 02:5e:00:0a:00:20 -src 192.0.2.10 -dst 192.0.2.20 -count 2
+     rawl2: icmp frame 1/2, 64 bytes, written to skep0
+     rawl2: icmp frame 2/2, 64 bytes, written to skep0
+  -- sent on epair0a (all frames): 3; on bridge1 matching [vlan 5]: 3; on epair1a matching: 1
+     br: 19:38:34.440263 02:5e:00:0a:00:10 > 02:5e:00:0a:00:20, ethertype 802.1Q (0x8100), length 64: vlan 5, p 0, ethertype IPv4 (0x0800), 192.0.2.10 > 192.0.2.20: ICMP echo request, id 21251, seq 1, length 24
+     br: 19:38:35.511216 02:5e:00:0a:00:10 > 02:5e:00:0a:00:20, ethertype 802.1Q (0x8100), length 64: vlan 5, p 0, ethertype IPv4 (0x0800), 192.0.2.10 > 192.0.2.20: ICMP echo request, id 21251, seq 1, length 24
+     br: 
+VERDICT static V1 PASS (want +, bridge 3, victim 1, sent 3)
+==== static V2 00:38:42
+  $ sudo jexec skep-5cadd083-c85c-4606-a620-17c2e37d91b9 /root/rawl2 -if skep0 -mode icmp -vlan 5 -eth-src 02:5e:00:00:00:01 -eth-dst 02:5e:00:0a:00:20 -src 192.0.2.10 -dst 192.0.2.20 -count 2
+     rawl2: icmp frame 1/2, 64 bytes, written to skep0
+     rawl2: icmp frame 2/2, 64 bytes, written to skep0
+  -- sent on epair0a (all frames): 3; on bridge1 matching [ether src 02:5e:00:00:00:01]: 1; on epair1a matching: 1
+     br: 
+VERDICT static V2 FAIL (want 0, bridge 1, victim 1, sent 3)
+==== static V3 00:38:51
+  $ sudo jexec skep-5cadd083-c85c-4606-a620-17c2e37d91b9 /root/rawl2 -if skep0 -mode icmp -vlan 5,7 -eth-src 02:5e:00:0a:00:10 -eth-dst 02:5e:00:0a:00:20 -src 192.0.2.10 -dst 192.0.2.20 -count 2
+     rawl2: icmp frame 1/2, 68 bytes, written to skep0
+     rawl2: icmp frame 2/2, 68 bytes, written to skep0
+  -- sent on epair0a (all frames): 3; on bridge1 matching [vlan]: 1; on epair1a matching: 1
+     br: 
+VERDICT static V3 FAIL (want 0, bridge 1, victim 1, sent 3)
+SUMMARY static1 static: 3 passed, 20 failed
+
+-- filter counters on the attacker port
+Rec'd response "getstats" (3) from "[9]:":
+Args:	{ recvFrames=52 recvOctets=4740 recvMatchFrames=9 recvMatchOctets=638 }
+
+######## file: 20261122T003343Z-hearst-m7c-val-05-static-cases-rerun.log
+SHA256 (/tmp/m7cv/bin/cases.sh) = 5e67ec56d91cd1f496d202e631d4848448d3ca7d6da0d7bce64cfaf369eb871b
+==== static D1 00:39:19
+  $ sudo jexec skep-5cadd083-c85c-4606-a620-17c2e37d91b9 ping -c 2 -t 3 192.0.2.20
+     PING 192.0.2.20 (192.0.2.20): 56 data bytes
+     64 bytes from 192.0.2.20: icmp_seq=0 ttl=64 time=0.094 ms
+     64 bytes from 192.0.2.20: icmp_seq=1 ttl=64 time=0.153 ms
+     
+     --- 192.0.2.20 ping statistics ---
+     2 packets transmitted, 2 packets received, 0.0% packet loss
+     round-trip min/avg/max/stddev = 0.094/0.123/0.153/0.030 ms
+  -- sent on epair0a (all frames): 4; on bridge1 matching [icmp and ether src 02:5e:00:0a:00:10]: 2; on epair1a matching: 2
+     br: 19:39:20.649771 02:5e:00:0a:00:10 > 02:5e:00:0a:00:20, ethertype IPv4 (0x0800), length 98: 192.0.2.10 > 192.0.2.20: ICMP echo request, id 50198, seq 0, length 64
+     br: 19:39:21.685016 02:5e:00:0a:00:10 > 02:5e:00:0a:00:20, ethertype IPv4 (0x0800), length 98: 192.0.2.10 > 192.0.2.20: ICMP echo request, id 50198, seq 1, length 64
+     br: 
+VERDICT static D1 PASS (want +, bridge 2, victim 2, sent 4)
+==== static D2 00:39:28
+  $ sudo jexec skep-fc34f44b-44b1-436d-a736-a5a854a8fca4 ping -c 2 -t 3 192.0.2.10
+     PING 192.0.2.10 (192.0.2.10): 56 data bytes
+     64 bytes from 192.0.2.10: icmp_seq=0 ttl=64 time=0.077 ms
+     64 bytes from 192.0.2.10: icmp_seq=1 ttl=64 time=0.176 ms
+     
+     --- 192.0.2.10 ping statistics ---
+     2 packets transmitted, 2 packets received, 0.0% packet loss
+     round-trip min/avg/max/stddev = 0.077/0.127/0.176/0.049 ms
+  -- sent on epair0a (all frames): 4; on bridge1 matching [icmp and ether src 02:5e:00:0a:00:20]: 2; on epair1a matching: 2
+     br: 19:39:29.701290 02:5e:00:0a:00:20 > 02:5e:00:0a:00:10, ethertype IPv4 (0x0800), length 98: 192.0.2.20 > 192.0.2.10: ICMP echo request, id 60950, seq 0, length 64
+     br: 19:39:30.771123 02:5e:00:0a:00:20 > 02:5e:00:0a:00:10, ethertype IPv4 (0x0800), length 98: 192.0.2.20 > 192.0.2.10: ICMP echo request, id 60950, seq 1, length 64
+     br: 
+VERDICT static D2 PASS (want +, bridge 2, victim 2, sent 4)
+==== static A1 00:39:37
+  $ sudo jexec skep-5cadd083-c85c-4606-a620-17c2e37d91b9 /root/rawl2 -if skep0 -mode icmp -eth-src 02:5e:00:00:00:01 -eth-dst 02:5e:00:0a:00:20 -src 192.0.2.10 -dst 192.0.2.20 -count 2
+     rawl2: icmp frame 1/2, 60 bytes, written to skep0
+     rawl2: icmp frame 2/2, 60 bytes, written to skep0
+  -- sent on epair0a (all frames): 2; on bridge1 matching [ether src 02:5e:00:00:00:01]: 0; on epair1a matching: 0
+     br: 
+VERDICT static A1 PASS (want 0, bridge 0, victim 0, sent 2)
+==== static A2 00:39:46
+  $ sudo jexec skep-5cadd083-c85c-4606-a620-17c2e37d91b9 ifconfig skep0 ether 02:5e:00:00:00:01
+  $ sudo jexec skep-5cadd083-c85c-4606-a620-17c2e37d91b9 ping -c 2 -t 3 192.0.2.20
+     PING 192.0.2.20 (192.0.2.20): 56 data bytes
+     
+     --- 192.0.2.20 ping statistics ---
+     2 packets transmitted, 0 packets received, 100.0% packet loss
+  $ sudo jexec skep-5cadd083-c85c-4606-a620-17c2e37d91b9 ifconfig skep0 ether 02:5e:00:0a:00:10
+  -- sent on epair0a (all frames): 4; on bridge1 matching [ether src 02:5e:00:00:00:01]: 0; on epair1a matching: 0
+     br: 
+VERDICT static A2 PASS (want 0, bridge 0, victim 0, sent 4)
+==== static B1 00:39:55
+  $ sudo jexec skep-5cadd083-c85c-4606-a620-17c2e37d91b9 /root/rawping -src 192.0.2.50 -dst 192.0.2.20 -count 2
+     00:39:56.937Z seq 0 192.0.2.50 -> 192.0.2.20: sent 37 bytes
+     00:39:58.003Z seq 1 192.0.2.50 -> 192.0.2.20: sent 37 bytes
+  -- sent on epair0a (all frames): 2; on bridge1 matching [ip src 192.0.2.50]: 0; on epair1a matching: 0
+     br: 
+VERDICT static B1 PASS (want 0, bridge 0, victim 0, sent 2)
+==== static B2 00:40:04
+  $ sudo jexec skep-5cadd083-c85c-4606-a620-17c2e37d91b9 /root/rawping -src 198.51.100.10 -dst 192.0.2.20 -count 2
+     00:40:05.966Z seq 0 198.51.100.10 -> 192.0.2.20: sent 37 bytes
+     00:40:07.031Z seq 1 198.51.100.10 -> 192.0.2.20: sent 37 bytes
+  -- sent on epair0a (all frames): 2; on bridge1 matching [ip src 198.51.100.10]: 0; on epair1a matching: 0
+     br: 
+VERDICT static B2 PASS (want 0, bridge 0, victim 0, sent 2)
+==== static C1 00:40:13
+  $ sudo jexec skep-5cadd083-c85c-4606-a620-17c2e37d91b9 /root/rawl2 -if skep0 -mode arp -op reply -eth-src 02:5e:00:0a:00:10 -eth-dst 02:5e:00:0a:00:20 -sha 02:5e:00:0a:00:10 -spa 192.0.2.50 -tha 02:5e:00:0a:00:20 -tpa 192.0.2.20 -count 2
+     rawl2: arp frame 1/2, 60 bytes, written to skep0
+     rawl2: arp frame 2/2, 60 bytes, written to skep0
+  -- sent on epair0a (all frames): 2; on bridge1 matching [arp and ether src 02:5e:00:0a:00:10 and arp[14:4] = 0xc0000232]: 0; on epair1a matching: 0
+     br: 
+VERDICT static C1 PASS (want 0, bridge 0, victim 0, sent 2)
+==== static C2 00:40:23
+  $ sudo jexec skep-5cadd083-c85c-4606-a620-17c2e37d91b9 /root/rawl2 -if skep0 -mode arp -op reply -eth-src 02:5e:00:0a:00:10 -eth-dst 02:5e:00:0a:00:20 -sha 02:5e:00:00:00:01 -spa 192.0.2.10 -tha 02:5e:00:0a:00:20 -tpa 192.0.2.20 -count 2
+     rawl2: arp frame 1/2, 60 bytes, written to skep0
+     rawl2: arp frame 2/2, 60 bytes, written to skep0
+  $ sudo jexec skep-fc34f44b-44b1-436d-a736-a5a854a8fca4 arp -an
+     ? (192.0.2.10) at 02:5e:00:0a:00:10 on skep0 expires in 1166 seconds [ethernet]
+     ? (192.0.2.20) at 02:5e:00:0a:00:20 on skep0 permanent [ethernet]
+  -- sent on epair0a (all frames): 2; on bridge1 matching [arp and arp[8:4] = 0x025e0000 and arp[12:2] = 0x0001]: 0; on epair1a matching: 0
+     br: 
+VERDICT static C2 PASS (want 0, bridge 0, victim 0, sent 2)
+==== static C3 00:40:32
+  $ sudo jexec skep-5cadd083-c85c-4606-a620-17c2e37d91b9 ifconfig skep0 inet 192.0.2.50/32 alias
+  $ sudo jexec skep-5cadd083-c85c-4606-a620-17c2e37d91b9 ping -c 2 -t 3 -S 192.0.2.50 192.0.2.20
+     PING 192.0.2.20 (192.0.2.20) from 192.0.2.50: 56 data bytes
+     
+     --- 192.0.2.20 ping statistics ---
+     2 packets transmitted, 0 packets received, 100.0% packet loss
+  $ sudo jexec skep-5cadd083-c85c-4606-a620-17c2e37d91b9 ifconfig skep0 inet 192.0.2.50 -alias
+  -- sent on epair0a (all frames): 3; on bridge1 matching [ether src 02:5e:00:0a:00:10 and (ip src 192.0.2.50 or (arp and arp[14:4] = 0xc0000232))]: 0; on epair1a matching: 0
+     br: 
+VERDICT static C3 PASS (want 0, bridge 0, victim 0, sent 3)
+==== static C4 00:40:41
+  $ sudo jexec skep-5cadd083-c85c-4606-a620-17c2e37d91b9 /root/rawl2 -if skep0 -mode arp -op request -eth-src 02:5e:00:0a:00:10 -sha 02:5e:00:0a:00:10 -spa 192.0.2.20 -tpa 192.0.2.20 -count 2
+     rawl2: arp frame 1/2, 60 bytes, written to skep0
+     rawl2: arp frame 2/2, 60 bytes, written to skep0
+  -- sent on epair0a (all frames): 2; on bridge1 matching [ether src 02:5e:00:0a:00:10 and arp and arp[14:4] = 0xc0000214]: 0; on epair1a matching: 0
+     br: 
+VERDICT static C4 PASS (want 0, bridge 0, victim 0, sent 2)
+==== static C5 00:40:50
+  $ sudo jexec skep-5cadd083-c85c-4606-a620-17c2e37d91b9 arp -s 192.0.2.50 02:5e:00:00:00:01 pub
+  $ sudo jexec skep-fc34f44b-44b1-436d-a736-a5a854a8fca4 ping -c 1 -t 2 192.0.2.50
+     PING 192.0.2.50 (192.0.2.50): 56 data bytes
+     
+     --- 192.0.2.50 ping statistics ---
+     1 packets transmitted, 0 packets received, 100.0% packet loss
+  $ sudo jexec skep-5cadd083-c85c-4606-a620-17c2e37d91b9 arp -d 192.0.2.50
+     192.0.2.50 (192.0.2.50) deleted
+  $ sudo jexec skep-fc34f44b-44b1-436d-a736-a5a854a8fca4 arp -an
+     ? (192.0.2.10) at 02:5e:00:0a:00:10 on skep0 expires in 1138 seconds [ethernet]
+     ? (192.0.2.50) at (incomplete) on skep0 expired [ethernet]
+     ? (192.0.2.20) at 02:5e:00:0a:00:20 on skep0 permanent [ethernet]
+  -- sent on epair0a (all frames): 3; on bridge1 matching [ether src 02:5e:00:0a:00:10 and arp and arp[14:4] = 0xc0000232]: 0; on epair1a matching: 0
+     br: 
+VERDICT static C5 PASS (want 0, bridge 0, victim 0, sent 3)
+==== static T5 00:40:59
+  $ sudo jexec skep-5cadd083-c85c-4606-a620-17c2e37d91b9 ifconfig skep0 inet 192.0.2.60/24 alias
+  $ sudo jexec skep-5cadd083-c85c-4606-a620-17c2e37d91b9 ping -c 2 -t 3 -S 192.0.2.60 192.0.2.20
+     PING 192.0.2.20 (192.0.2.20) from 192.0.2.60: 56 data bytes
+     
+     --- 192.0.2.20 ping statistics ---
+     2 packets transmitted, 0 packets received, 100.0% packet loss
+  $ sudo jexec skep-5cadd083-c85c-4606-a620-17c2e37d91b9 ifconfig skep0 inet 192.0.2.60 -alias
+  -- sent on epair0a (all frames): 3; on bridge1 matching [ether src 02:5e:00:0a:00:10 and (ip src 192.0.2.60 or (arp and arp[14:4] = 0xc000023c))]: 0; on epair1a matching: 0
+     br: 
+VERDICT static T5 PASS (want 0, bridge 0, victim 0, sent 3)
+==== static E1 00:41:08
+  $ sudo jexec skep-5cadd083-c85c-4606-a620-17c2e37d91b9 /root/rawl2 -if skep0 -mode dhcp -eth-src 02:5e:00:0a:00:10 -count 2
+     rawl2: dhcp frame 1/2, 286 bytes, written to skep0
+     rawl2: dhcp frame 2/2, 286 bytes, written to skep0
+  -- sent on epair0a (all frames): 2; on bridge1 matching [ether src 02:5e:00:0a:00:10 and udp dst port 67]: 0; on epair1a matching: 0
+     br: 
+VERDICT static E1 PASS (want 0, bridge 0, victim 0, sent 2)
+==== static E2 00:41:17
+  $ sudo jexec skep-5cadd083-c85c-4606-a620-17c2e37d91b9 /root/rawl2 -if skep0 -mode dhcp -eth-src 02:5e:00:00:00:01 -count 2
+     rawl2: dhcp frame 1/2, 286 bytes, written to skep0
+     rawl2: dhcp frame 2/2, 286 bytes, written to skep0
+  -- sent on epair0a (all frames): 2; on bridge1 matching [ether src 02:5e:00:00:00:01]: 0; on epair1a matching: 0
+     br: 
+VERDICT static E2 PASS (want 0, bridge 0, victim 0, sent 2)
+==== static E3 00:41:26
+  $ sudo jexec skep-5cadd083-c85c-4606-a620-17c2e37d91b9 /root/rawl2 -if skep0 -mode arp -op request -eth-src 02:5e:00:0a:00:10 -sha 02:5e:00:00:00:01 -spa 192.0.2.10 -tpa 192.0.2.20 -count 2
+     rawl2: arp frame 1/2, 60 bytes, written to skep0
+     rawl2: arp frame 2/2, 60 bytes, written to skep0
+  -- sent on epair0a (all frames): 2; on bridge1 matching [arp and arp[8:4] = 0x025e0000 and arp[12:2] = 0x0001]: 0; on epair1a matching: 0
+     br: 
+VERDICT static E3 PASS (want 0, bridge 0, victim 0, sent 2)
+==== static F1 00:41:35
+  $ sudo jexec skep-5cadd083-c85c-4606-a620-17c2e37d91b9 /root/rawl2 -if skep0 -mode ipv6 -eth-src 02:5e:00:0a:00:10 -count 2
+     rawl2: ipv6 frame 1/2, 78 bytes, written to skep0
+     rawl2: ipv6 frame 2/2, 78 bytes, written to skep0
+  -- sent on epair0a (all frames): 2; on bridge1 matching [ip6]: 0; on epair1a matching: 0
+     br: 
+VERDICT static F1 PASS (want 0, bridge 0, victim 0, sent 2)
+==== static G1 00:41:44
+  $ sudo jexec skep-5cadd083-c85c-4606-a620-17c2e37d91b9 /root/rawl2 -if skep0 -mode dhcpoffer -eth-src 02:5e:00:0a:00:10 -src 192.0.2.10 -count 2
+     rawl2: dhcpoffer frame 1/2, 286 bytes, written to skep0
+     rawl2: dhcpoffer frame 2/2, 286 bytes, written to skep0
+  -- sent on epair0a (all frames): 2; on bridge1 matching [udp src port 67]: 0; on epair1a matching: 0
+     br: 
+VERDICT static G1 PASS (want 0, bridge 0, victim 0, sent 2)
+==== static G2 00:41:53
+  $ sudo jexec skep-5cadd083-c85c-4606-a620-17c2e37d91b9 /root/rawl2 -if skep0 -mode ra -eth-src 02:5e:00:0a:00:10 -count 2
+     rawl2: ra frame 1/2, 70 bytes, written to skep0
+     rawl2: ra frame 2/2, 70 bytes, written to skep0
+  -- sent on epair0a (all frames): 2; on bridge1 matching [ip6]: 0; on epair1a matching: 0
+     br: 
+VERDICT static G2 PASS (want 0, bridge 0, victim 0, sent 2)
+==== static L1 00:42:02
+  $ sudo jexec skep-5cadd083-c85c-4606-a620-17c2e37d91b9 /root/rawl2 -if skep0 -mode lldp -eth-src 02:5e:00:0a:00:10 -count 2
+     rawl2: lldp frame 1/2, 60 bytes, written to skep0
+     rawl2: lldp frame 2/2, 60 bytes, written to skep0
+  -- sent on epair0a (all frames): 2; on bridge1 matching [ether src 02:5e:00:0a:00:10 and ether proto 0x88cc]: 0; on epair1a matching: 0
+     br: 
+VERDICT static L1 PASS (want 0, bridge 0, victim 0, sent 2)
+==== static L2 00:42:11
+  $ sudo jexec skep-5cadd083-c85c-4606-a620-17c2e37d91b9 /root/rawl2 -if skep0 -mode stp -eth-src 02:5e:00:0a:00:10 -count 2
+     rawl2: stp frame 1/2, 60 bytes, written to skep0
+     rawl2: stp frame 2/2, 60 bytes, written to skep0
+  -- sent on epair0a (all frames): 2; on bridge1 matching [ether src 02:5e:00:0a:00:10 and stp]: 0; on epair1a matching: 0
+     br: 
+VERDICT static L2 PASS (want 0, bridge 0, victim 0, sent 2)
+==== static V1 00:42:20
+  $ sudo jexec skep-5cadd083-c85c-4606-a620-17c2e37d91b9 /root/rawl2 -if skep0 -mode icmp -vlan 5 -eth-src 02:5e:00:0a:00:10 -eth-dst 02:5e:00:0a:00:20 -src 192.0.2.10 -dst 192.0.2.20 -count 2
+     rawl2: icmp frame 1/2, 64 bytes, written to skep0
+     rawl2: icmp frame 2/2, 64 bytes, written to skep0
+  -- sent on epair0a (all frames): 2; on bridge1 matching [vlan 5]: 2; on epair1a matching: 0
+     br: 19:42:21.627431 02:5e:00:0a:00:10 > 02:5e:00:0a:00:20, ethertype 802.1Q (0x8100), length 64: vlan 5, p 0, ethertype IPv4 (0x0800), 192.0.2.10 > 192.0.2.20: ICMP echo request, id 21251, seq 1, length 24
+     br: 19:42:22.631169 02:5e:00:0a:00:10 > 02:5e:00:0a:00:20, ethertype 802.1Q (0x8100), length 64: vlan 5, p 0, ethertype IPv4 (0x0800), 192.0.2.10 > 192.0.2.20: ICMP echo request, id 21251, seq 1, length 24
+     br: 
+VERDICT static V1 PASS (want +, bridge 2, victim 0, sent 2)
+==== static V2 00:42:29
+  $ sudo jexec skep-5cadd083-c85c-4606-a620-17c2e37d91b9 /root/rawl2 -if skep0 -mode icmp -vlan 5 -eth-src 02:5e:00:00:00:01 -eth-dst 02:5e:00:0a:00:20 -src 192.0.2.10 -dst 192.0.2.20 -count 2
+     rawl2: icmp frame 1/2, 64 bytes, written to skep0
+     rawl2: icmp frame 2/2, 64 bytes, written to skep0
+  -- sent on epair0a (all frames): 2; on bridge1 matching [ether src 02:5e:00:00:00:01]: 0; on epair1a matching: 0
+     br: 
+VERDICT static V2 PASS (want 0, bridge 0, victim 0, sent 2)
+==== static V3 00:42:38
+  $ sudo jexec skep-5cadd083-c85c-4606-a620-17c2e37d91b9 /root/rawl2 -if skep0 -mode icmp -vlan 5,7 -eth-src 02:5e:00:0a:00:10 -eth-dst 02:5e:00:0a:00:20 -src 192.0.2.10 -dst 192.0.2.20 -count 2
+     rawl2: icmp frame 1/2, 68 bytes, written to skep0
+     rawl2: icmp frame 2/2, 68 bytes, written to skep0
+  -- sent on epair0a (all frames): 2; on bridge1 matching [vlan]: 0; on epair1a matching: 0
+     br: 
+VERDICT static V3 PASS (want 0, bridge 0, victim 0, sent 2)
+SUMMARY static2 static: 23 passed, 0 failed
+-- filter counters
+Rec'd response "getstats" (3) from "[9]:":
+Args:	{ recvFrames=102 recvOctets=9396 recvMatchFrames=16 recvMatchOctets=1192 }
+-- victim arp table
+? (192.0.2.10) at 02:5e:00:0a:00:10 on skep0 expires in 1023 seconds [ethernet]
+? (192.0.2.20) at 02:5e:00:0a:00:20 on skep0 permanent [ethernet]
+
+######## file: 20261122T003343Z-hearst-m7c-val-06-dhcp-bridge1.log
+######## DHCP jail on bridge1 (no DHCP server there), 2026-11-22T00:43:11Z
+create 202 succeeded
+start 202 succeeded None
+
+real	1m31.962s
+user	0m0.187s
+sys	0m0.025s
+m7c-a 5cadd083-c85c-4606-a620-17c2e37d91b9 running 02:5e:00:0a:00:10 epair0a
+m7c-d1 f2229564-3e6c-4464-9336-6a27c4c09e48 running 02:5e:00:0a:00:30 epair2a
+m7c-v fc34f44b-44b1-436d-a736-a5a854a8fca4 running 02:5e:00:0a:00:20 epair1a
++ sudo ngctl show epair2a:
+  Name: epair2a         Type: ether           ID: 00000144   Num hooks: 2
+  Local hook      Peer name       Peer type    Peer ID         Peer hook      
+  ----------      ---------       ---------    -------         ---------      
+  upper           skf_epair2a     bpf          00000148        bridge         
+  lower           skf_epair2a     bpf          00000148        jail           
++ sudo ngctl show epair2a:
++ awk '$1=="lower"{print $4}'
++ BPF=00000148
++ sudo ngctl msg '[00000148]:' getprogram '"jail"'
++ grep -o 'bpf_prog_len=[0-9]*'
+bpf_prog_len=31
+bpf_prog_len=31
++ /tmp/m7cv/bin/pfscript -mac 02:5e:00:0a:00:30 -print program
++ grep -o 'bpf_prog_len=[0-9]*'
++ R=/skeptest/skep/jail/f2229564-3e6c-4464-9336-6a27c4c09e48
++ J=skep-f2229564-3e6c-4464-9336-6a27c4c09e48
++ sudo install -m 0755 -o root -g wheel /tmp/m7cv/bin/rawl2 /skeptest/skep/jail/f2229564-3e6c-4464-9336-6a27c4c09e48/root/rawl2
++ sudo install -m 0755 -o root -g wheel /tmp/m7cv/bin/rawping /skeptest/skep/jail/f2229564-3e6c-4464-9336-6a27c4c09e48/root/rawping
++ sudo jexec skep-f2229564-3e6c-4464-9336-6a27c4c09e48 ls /dev
++ grep -c bpf
+2
++ sudo jexec skep-f2229564-3e6c-4464-9336-6a27c4c09e48 ifconfig skep0 inet 192.0.2.30/24
++ sudo jexec skep-f2229564-3e6c-4464-9336-6a27c4c09e48 ifconfig skep0
++ grep -E 'ether|inet'
+	ether 02:5e:00:0a:00:30
+	inet 192.0.2.30 netmask 0xffffff00 broadcast 192.0.2.255
+
+######## file: 20261122T003343Z-hearst-m7c-val-07-dhcp-cases.log
+SHA256 (/tmp/m7cv/bin/cases.sh) = 034473dc1d325ccbf214c477dc19c5dbf87cbb87f53c5605bf375c84180f5a41
+==== dhcp D1 00:44:56
+  $ sudo jexec skep-f2229564-3e6c-4464-9336-6a27c4c09e48 ping -c 2 -t 3 192.0.2.20
+     PING 192.0.2.20 (192.0.2.20): 56 data bytes
+     64 bytes from 192.0.2.20: icmp_seq=0 ttl=64 time=0.135 ms
+     64 bytes from 192.0.2.20: icmp_seq=1 ttl=64 time=0.160 ms
+     
+     --- 192.0.2.20 ping statistics ---
+     2 packets transmitted, 2 packets received, 0.0% packet loss
+     round-trip min/avg/max/stddev = 0.135/0.148/0.160/0.013 ms
+  -- sent on epair2a (all frames): 6; on bridge1 matching [icmp and ether src 02:5e:00:0a:00:30]: 2; on epair1a matching: 2
+     br: 19:44:57.594655 02:5e:00:0a:00:30 > 02:5e:00:0a:00:20, ethertype IPv4 (0x0800), length 98: 192.0.2.30 > 192.0.2.20: ICMP echo request, id 55838, seq 0, length 64
+     br: 19:44:58.631281 02:5e:00:0a:00:30 > 02:5e:00:0a:00:20, ethertype IPv4 (0x0800), length 98: 192.0.2.30 > 192.0.2.20: ICMP echo request, id 55838, seq 1, length 64
+     br: 
+VERDICT dhcp D1 PASS (want +, bridge 2, victim 2, sent 6)
+==== dhcp D2 00:45:05
+  $ sudo jexec skep-fc34f44b-44b1-436d-a736-a5a854a8fca4 ping -c 2 -t 3 192.0.2.30
+     PING 192.0.2.30 (192.0.2.30): 56 data bytes
+     64 bytes from 192.0.2.30: icmp_seq=0 ttl=64 time=0.099 ms
+     64 bytes from 192.0.2.30: icmp_seq=1 ttl=64 time=0.152 ms
+     
+     --- 192.0.2.30 ping statistics ---
+     2 packets transmitted, 2 packets received, 0.0% packet loss
+     round-trip min/avg/max/stddev = 0.099/0.125/0.152/0.026 ms
+  -- sent on epair2a (all frames): 4; on bridge1 matching [icmp and ether src 02:5e:00:0a:00:20]: 2; on epair1a matching: 2
+     br: 19:45:06.609375 02:5e:00:0a:00:20 > 02:5e:00:0a:00:30, ethertype IPv4 (0x0800), length 98: 192.0.2.20 > 192.0.2.30: ICMP echo request, id 7967, seq 0, length 64
+     br: 19:45:07.681120 02:5e:00:0a:00:20 > 02:5e:00:0a:00:30, ethertype IPv4 (0x0800), length 98: 192.0.2.20 > 192.0.2.30: ICMP echo request, id 7967, seq 1, length 64
+     br: 
+VERDICT dhcp D2 PASS (want +, bridge 2, victim 2, sent 4)
+==== dhcp A1 00:45:14
+  $ sudo jexec skep-f2229564-3e6c-4464-9336-6a27c4c09e48 /root/rawl2 -if skep0 -mode icmp -eth-src 02:5e:00:00:00:01 -eth-dst 02:5e:00:0a:00:20 -src 192.0.2.30 -dst 192.0.2.20 -count 2
+     rawl2: icmp frame 1/2, 60 bytes, written to skep0
+     rawl2: icmp frame 2/2, 60 bytes, written to skep0
+  -- sent on epair2a (all frames): 2; on bridge1 matching [ether src 02:5e:00:00:00:01]: 0; on epair1a matching: 0
+     br: 
+VERDICT dhcp A1 PASS (want 0, bridge 0, victim 0, sent 2)
+==== dhcp A2 00:45:23
+  $ sudo jexec skep-f2229564-3e6c-4464-9336-6a27c4c09e48 ifconfig skep0 ether 02:5e:00:00:00:01
+  $ sudo jexec skep-f2229564-3e6c-4464-9336-6a27c4c09e48 ping -c 2 -t 3 192.0.2.20
+     PING 192.0.2.20 (192.0.2.20): 56 data bytes
+     
+     --- 192.0.2.20 ping statistics ---
+     2 packets transmitted, 0 packets received, 100.0% packet loss
+  $ sudo jexec skep-f2229564-3e6c-4464-9336-6a27c4c09e48 ifconfig skep0 ether 02:5e:00:0a:00:30
+  -- sent on epair2a (all frames): 4; on bridge1 matching [ether src 02:5e:00:00:00:01]: 0; on epair1a matching: 0
+     br: 
+VERDICT dhcp A2 PASS (want 0, bridge 0, victim 0, sent 4)
+==== dhcp B1 00:45:32
+  $ sudo jexec skep-f2229564-3e6c-4464-9336-6a27c4c09e48 /root/rawping -src 192.0.2.50 -dst 192.0.2.20 -count 2
+     00:45:33.711Z seq 0 192.0.2.50 -> 192.0.2.20: sent 37 bytes
+     00:45:34.723Z seq 1 192.0.2.50 -> 192.0.2.20: sent 37 bytes
+  -- sent on epair2a (all frames): 4; on bridge1 matching [ip src 192.0.2.50]: 2; on epair1a matching: 2
+     br: 19:45:33.711718 02:5e:00:0a:00:30 > 02:5e:00:0a:00:20, ethertype IPv4 (0x0800), length 51: 192.0.2.50 > 192.0.2.20: ICMP echo request, id 21250, seq 0, length 17
+     br: 19:45:34.723293 02:5e:00:0a:00:30 > 02:5e:00:0a:00:20, ethertype IPv4 (0x0800), length 51: 192.0.2.50 > 192.0.2.20: ICMP echo request, id 21250, seq 1, length 17
+     br: 
+VERDICT dhcp B1 PASS (want +, bridge 2, victim 2, sent 4)
+==== dhcp B2 00:45:41
+  $ sudo jexec skep-f2229564-3e6c-4464-9336-6a27c4c09e48 /root/rawping -src 198.51.100.10 -dst 192.0.2.20 -count 2
+     00:45:42.723Z seq 0 198.51.100.10 -> 192.0.2.20: sent 37 bytes
+     00:45:43.775Z seq 1 198.51.100.10 -> 192.0.2.20: sent 37 bytes
+  -- sent on epair2a (all frames): 2; on bridge1 matching [ip src 198.51.100.10]: 2; on epair1a matching: 2
+     br: 19:45:42.723104 02:5e:00:0a:00:30 > 02:5e:00:0a:00:20, ethertype IPv4 (0x0800), length 51: 198.51.100.10 > 192.0.2.20: ICMP echo request, id 21250, seq 0, length 17
+     br: 19:45:43.775090 02:5e:00:0a:00:30 > 02:5e:00:0a:00:20, ethertype IPv4 (0x0800), length 51: 198.51.100.10 > 192.0.2.20: ICMP echo request, id 21250, seq 1, length 17
+     br: 
+VERDICT dhcp B2 PASS (want +, bridge 2, victim 2, sent 2)
+==== dhcp C1 00:45:50
+  $ sudo jexec skep-f2229564-3e6c-4464-9336-6a27c4c09e48 /root/rawl2 -if skep0 -mode arp -op reply -eth-src 02:5e:00:0a:00:30 -eth-dst 02:5e:00:0a:00:20 -sha 02:5e:00:0a:00:30 -spa 192.0.2.50 -tha 02:5e:00:0a:00:20 -tpa 192.0.2.20 -count 2
+     rawl2: arp frame 1/2, 60 bytes, written to skep0
+     rawl2: arp frame 2/2, 60 bytes, written to skep0
+  -- sent on epair2a (all frames): 4; on bridge1 matching [arp and ether src 02:5e:00:0a:00:30 and arp[14:4] = 0xc0000232]: 2; on epair1a matching: 2
+     br: 19:45:51.748155 02:5e:00:0a:00:30 > 02:5e:00:0a:00:20, ethertype ARP (0x0806), length 60: Reply 192.0.2.50 is-at 02:5e:00:0a:00:30, length 46
+     br: 19:45:52.754975 02:5e:00:0a:00:30 > 02:5e:00:0a:00:20, ethertype ARP (0x0806), length 60: Reply 192.0.2.50 is-at 02:5e:00:0a:00:30, length 46
+     br: 
+VERDICT dhcp C1 PASS (want +, bridge 2, victim 2, sent 4)
+==== dhcp C2 00:45:59
+  $ sudo jexec skep-f2229564-3e6c-4464-9336-6a27c4c09e48 /root/rawl2 -if skep0 -mode arp -op reply -eth-src 02:5e:00:0a:00:30 -eth-dst 02:5e:00:0a:00:20 -sha 02:5e:00:00:00:01 -spa 192.0.2.30 -tha 02:5e:00:0a:00:20 -tpa 192.0.2.20 -count 2
+     rawl2: arp frame 1/2, 60 bytes, written to skep0
+     rawl2: arp frame 2/2, 60 bytes, written to skep0
+  $ sudo jexec skep-fc34f44b-44b1-436d-a736-a5a854a8fca4 arp -an
+     ? (192.0.2.10) at 02:5e:00:0a:00:10 on skep0 expires in 829 seconds [ethernet]
+     ? (192.0.2.50) at 02:5e:00:0a:00:30 on skep0 expires in 1191 seconds [ethernet]
+     ? (192.0.2.20) at 02:5e:00:0a:00:20 on skep0 permanent [ethernet]
+     ? (192.0.2.30) at 02:5e:00:0a:00:30 on skep0 expires in 1166 seconds [ethernet]
+  -- sent on epair2a (all frames): 2; on bridge1 matching [arp and arp[8:4] = 0x025e0000 and arp[12:2] = 0x0001]: 0; on epair1a matching: 0
+     br: 
+VERDICT dhcp C2 PASS (want 0, bridge 0, victim 0, sent 2)
+==== dhcp C3 00:46:08
+  $ sudo jexec skep-f2229564-3e6c-4464-9336-6a27c4c09e48 ifconfig skep0 inet 192.0.2.50/32 alias
+  $ sudo jexec skep-f2229564-3e6c-4464-9336-6a27c4c09e48 ping -c 2 -t 3 -S 192.0.2.50 192.0.2.20
+     PING 192.0.2.20 (192.0.2.20) from 192.0.2.50: 56 data bytes
+     64 bytes from 192.0.2.20: icmp_seq=0 ttl=64 time=0.075 ms
+     64 bytes from 192.0.2.20: icmp_seq=1 ttl=64 time=0.222 ms
+     
+     --- 192.0.2.20 ping statistics ---
+     2 packets transmitted, 2 packets received, 0.0% packet loss
+     round-trip min/avg/max/stddev = 0.075/0.148/0.222/0.074 ms
+  $ sudo jexec skep-f2229564-3e6c-4464-9336-6a27c4c09e48 ifconfig skep0 inet 192.0.2.50 -alias
+  -- sent on epair2a (all frames): 5; on bridge1 matching [ether src 02:5e:00:0a:00:30 and (ip src 192.0.2.50 or (arp and arp[14:4] = 0xc0000232))]: 3; on epair1a matching: 3
+     br: 19:46:09.830329 02:5e:00:0a:00:30 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806), length 42: Request who-has 192.0.2.50 tell 192.0.2.50, length 28
+     br: 19:46:09.840040 02:5e:00:0a:00:30 > 02:5e:00:0a:00:20, ethertype IPv4 (0x0800), length 98: 192.0.2.50 > 192.0.2.20: ICMP echo request, id 27680, seq 0, length 64
+     br: 19:46:10.911142 02:5e:00:0a:00:30 > 02:5e:00:0a:00:20, ethertype IPv4 (0x0800), length 98: 192.0.2.50 > 192.0.2.20: ICMP echo request, id 27680, seq 1, length 64
+     br: 
+VERDICT dhcp C3 PASS (want +, bridge 3, victim 3, sent 5)
+==== dhcp C4 00:46:17
+  $ sudo jexec skep-f2229564-3e6c-4464-9336-6a27c4c09e48 /root/rawl2 -if skep0 -mode arp -op request -eth-src 02:5e:00:0a:00:30 -sha 02:5e:00:0a:00:30 -spa 192.0.2.20 -tpa 192.0.2.20 -count 2
+     rawl2: arp frame 1/2, 60 bytes, written to skep0
+     rawl2: arp frame 2/2, 60 bytes, written to skep0
+  -- sent on epair2a (all frames): 4; on bridge1 matching [ether src 02:5e:00:0a:00:30 and arp and arp[14:4] = 0xc0000214]: 2; on epair1a matching: 2
+     br: 19:46:18.847170 02:5e:00:0a:00:30 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806), length 60: Request who-has 192.0.2.20 tell 192.0.2.20, length 46
+     br: 19:46:19.850761 02:5e:00:0a:00:30 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806), length 60: Request who-has 192.0.2.20 tell 192.0.2.20, length 46
+     br: 
+VERDICT dhcp C4 PASS (want +, bridge 2, victim 2, sent 4)
+==== dhcp C5 00:46:26
+  $ sudo jexec skep-f2229564-3e6c-4464-9336-6a27c4c09e48 arp -s 192.0.2.50 02:5e:00:00:00:01 pub
+  $ sudo jexec skep-fc34f44b-44b1-436d-a736-a5a854a8fca4 ping -c 1 -t 2 192.0.2.50
+     PING 192.0.2.50 (192.0.2.50): 56 data bytes
+     
+     --- 192.0.2.50 ping statistics ---
+     1 packets transmitted, 0 packets received, 100.0% packet loss
+  $ sudo jexec skep-f2229564-3e6c-4464-9336-6a27c4c09e48 arp -d 192.0.2.50
+     192.0.2.50 (192.0.2.50) deleted
+  $ sudo jexec skep-fc34f44b-44b1-436d-a736-a5a854a8fca4 arp -an
+     ? (192.0.2.10) at 02:5e:00:0a:00:10 on skep0 expires in 800 seconds [ethernet]
+     ? (192.0.2.50) at 02:5e:00:0a:00:30 on skep0 expires in 1179 seconds [ethernet]
+     ? (192.0.2.20) at 02:5e:00:0a:00:20 on skep0 permanent [ethernet]
+     ? (192.0.2.30) at 02:5e:00:0a:00:30 on skep0 expires in 1137 seconds [ethernet]
+  -- sent on epair2a (all frames): 2; on bridge1 matching [ether src 02:5e:00:0a:00:30 and arp and arp[14:4] = 0xc0000232]: 0; on epair1a matching: 0
+     br: 
+VERDICT dhcp C5 PASS (want 0, bridge 0, victim 0, sent 2)
+==== dhcp T5 00:46:35
+  $ sudo jexec skep-f2229564-3e6c-4464-9336-6a27c4c09e48 ifconfig skep0 inet 192.0.2.60/24 alias
+  $ sudo jexec skep-f2229564-3e6c-4464-9336-6a27c4c09e48 ping -c 2 -t 3 -S 192.0.2.60 192.0.2.20
+     PING 192.0.2.20 (192.0.2.20) from 192.0.2.60: 56 data bytes
+     64 bytes from 192.0.2.20: icmp_seq=0 ttl=64 time=0.090 ms
+     64 bytes from 192.0.2.20: icmp_seq=1 ttl=64 time=0.143 ms
+     
+     --- 192.0.2.20 ping statistics ---
+     2 packets transmitted, 2 packets received, 0.0% packet loss
+     round-trip min/avg/max/stddev = 0.090/0.116/0.143/0.027 ms
+  $ sudo jexec skep-f2229564-3e6c-4464-9336-6a27c4c09e48 ifconfig skep0 inet 192.0.2.60 -alias
+  -- sent on epair2a (all frames): 7; on bridge1 matching [ether src 02:5e:00:0a:00:30 and (ip src 192.0.2.60 or (arp and arp[14:4] = 0xc000023c))]: 4; on epair1a matching: 4
+     br: 19:46:37.009296 02:5e:00:0a:00:30 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806), length 42: Request who-has 192.0.2.60 tell 192.0.2.60, length 28
+     br: 19:46:37.017890 02:5e:00:0a:00:30 > 02:5e:00:0a:00:20, ethertype IPv4 (0x0800), length 98: 192.0.2.60 > 192.0.2.20: ICMP echo request, id 5409, seq 0, length 64
+     br: 19:46:37.017928 02:5e:00:0a:00:30 > 02:5e:00:0a:00:20, ethertype ARP (0x0806), length 42: Reply 192.0.2.60 is-at 02:5e:00:0a:00:30, length 28
+     br: 19:46:38.081155 02:5e:00:0a:00:30 > 02:5e:00:0a:00:20, ethertype IPv4 (0x0800), length 98: 192.0.2.60 > 192.0.2.20: ICMP echo request, id 5409, seq 1, length 64
+VERDICT dhcp T5 PASS (want +, bridge 4, victim 4, sent 7)
+==== dhcp E1 00:46:45
+  $ sudo jexec skep-f2229564-3e6c-4464-9336-6a27c4c09e48 /root/rawl2 -if skep0 -mode dhcp -eth-src 02:5e:00:0a:00:30 -count 2
+     rawl2: dhcp frame 1/2, 286 bytes, written to skep0
+     rawl2: dhcp frame 2/2, 286 bytes, written to skep0
+  -- sent on epair2a (all frames): 2; on bridge1 matching [ether src 02:5e:00:0a:00:30 and udp dst port 67]: 2; on epair1a matching: 2
+     br: 19:46:46.024624 02:5e:00:0a:00:30 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800), length 286: 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:5e:00:0a:00:30, length 244
+     br: 19:46:47.031211 02:5e:00:0a:00:30 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800), length 286: 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:5e:00:0a:00:30, length 244
+     br: 
+VERDICT dhcp E1 PASS (want +, bridge 2, victim 2, sent 2)
+==== dhcp E2 00:46:54
+  $ sudo jexec skep-f2229564-3e6c-4464-9336-6a27c4c09e48 /root/rawl2 -if skep0 -mode dhcp -eth-src 02:5e:00:00:00:01 -count 2
+     rawl2: dhcp frame 1/2, 286 bytes, written to skep0
+     rawl2: dhcp frame 2/2, 286 bytes, written to skep0
+  -- sent on epair2a (all frames): 2; on bridge1 matching [ether src 02:5e:00:00:00:01]: 0; on epair1a matching: 0
+     br: 
+VERDICT dhcp E2 PASS (want 0, bridge 0, victim 0, sent 2)
+==== dhcp E3 00:47:03
+  $ sudo jexec skep-f2229564-3e6c-4464-9336-6a27c4c09e48 /root/rawl2 -if skep0 -mode arp -op request -eth-src 02:5e:00:0a:00:30 -sha 02:5e:00:00:00:01 -spa 192.0.2.30 -tpa 192.0.2.20 -count 2
+     rawl2: arp frame 1/2, 60 bytes, written to skep0
+     rawl2: arp frame 2/2, 60 bytes, written to skep0
+  -- sent on epair2a (all frames): 2; on bridge1 matching [arp and arp[8:4] = 0x025e0000 and arp[12:2] = 0x0001]: 0; on epair1a matching: 0
+     br: 
+VERDICT dhcp E3 PASS (want 0, bridge 0, victim 0, sent 2)
+==== dhcp F1 00:47:12
+  $ sudo jexec skep-f2229564-3e6c-4464-9336-6a27c4c09e48 /root/rawl2 -if skep0 -mode ipv6 -eth-src 02:5e:00:0a:00:30 -count 2
+     rawl2: ipv6 frame 1/2, 78 bytes, written to skep0
+     rawl2: ipv6 frame 2/2, 78 bytes, written to skep0
+  -- sent on epair2a (all frames): 2; on bridge1 matching [ip6]: 0; on epair1a matching: 0
+     br: 
+VERDICT dhcp F1 PASS (want 0, bridge 0, victim 0, sent 2)
+==== dhcp G1 00:47:21
+  $ sudo jexec skep-f2229564-3e6c-4464-9336-6a27c4c09e48 /root/rawl2 -if skep0 -mode dhcpoffer -eth-src 02:5e:00:0a:00:30 -src 192.0.2.30 -count 2
+     rawl2: dhcpoffer frame 1/2, 286 bytes, written to skep0
+     rawl2: dhcpoffer frame 2/2, 286 bytes, written to skep0
+  -- sent on epair2a (all frames): 2; on bridge1 matching [udp src port 67]: 0; on epair1a matching: 0
+     br: 
+VERDICT dhcp G1 PASS (want 0, bridge 0, victim 0, sent 2)
+==== dhcp G2 00:47:30
+  $ sudo jexec skep-f2229564-3e6c-4464-9336-6a27c4c09e48 /root/rawl2 -if skep0 -mode ra -eth-src 02:5e:00:0a:00:30 -count 2
+     rawl2: ra frame 1/2, 70 bytes, written to skep0
+     rawl2: ra frame 2/2, 70 bytes, written to skep0
+  -- sent on epair2a (all frames): 2; on bridge1 matching [ip6]: 0; on epair1a matching: 0
+     br: 
+VERDICT dhcp G2 PASS (want 0, bridge 0, victim 0, sent 2)
+==== dhcp L1 00:47:39
+  $ sudo jexec skep-f2229564-3e6c-4464-9336-6a27c4c09e48 /root/rawl2 -if skep0 -mode lldp -eth-src 02:5e:00:0a:00:30 -count 2
+     rawl2: lldp frame 1/2, 60 bytes, written to skep0
+     rawl2: lldp frame 2/2, 60 bytes, written to skep0
+  -- sent on epair2a (all frames): 2; on bridge1 matching [ether src 02:5e:00:0a:00:30 and ether proto 0x88cc]: 0; on epair1a matching: 0
+     br: 
+VERDICT dhcp L1 PASS (want 0, bridge 0, victim 0, sent 2)
+==== dhcp L2 00:47:48
+  $ sudo jexec skep-f2229564-3e6c-4464-9336-6a27c4c09e48 /root/rawl2 -if skep0 -mode stp -eth-src 02:5e:00:0a:00:30 -count 2
+     rawl2: stp frame 1/2, 60 bytes, written to skep0
+     rawl2: stp frame 2/2, 60 bytes, written to skep0
+  -- sent on epair2a (all frames): 2; on bridge1 matching [ether src 02:5e:00:0a:00:30 and stp]: 0; on epair1a matching: 0
+     br: 
+VERDICT dhcp L2 PASS (want 0, bridge 0, victim 0, sent 2)
+==== dhcp V2 00:47:57
+  $ sudo jexec skep-f2229564-3e6c-4464-9336-6a27c4c09e48 /root/rawl2 -if skep0 -mode icmp -vlan 5 -eth-src 02:5e:00:00:00:01 -eth-dst 02:5e:00:0a:00:20 -src 192.0.2.30 -dst 192.0.2.20 -count 2
+     rawl2: icmp frame 1/2, 64 bytes, written to skep0
+     rawl2: icmp frame 2/2, 64 bytes, written to skep0
+  -- sent on epair2a (all frames): 2; on bridge1 matching [ether src 02:5e:00:00:00:01]: 0; on epair1a matching: 0
+     br: 
+VERDICT dhcp V2 PASS (want 0, bridge 0, victim 0, sent 2)
+==== dhcp V3 00:48:06
+  $ sudo jexec skep-f2229564-3e6c-4464-9336-6a27c4c09e48 /root/rawl2 -if skep0 -mode icmp -vlan 5,7 -eth-src 02:5e:00:0a:00:30 -eth-dst 02:5e:00:0a:00:20 -src 192.0.2.30 -dst 192.0.2.20 -count 2
+     rawl2: icmp frame 1/2, 68 bytes, written to skep0
+     rawl2: icmp frame 2/2, 68 bytes, written to skep0
+  -- sent on epair2a (all frames): 2; on bridge1 matching [vlan]: 0; on epair1a matching: 0
+     br: 
+VERDICT dhcp V3 PASS (want 0, bridge 0, victim 0, sent 2)
+SUMMARY dhcp1 dhcp: 22 passed, 0 failed
+-- filter counters
+Rec'd response "getstats" (3) from "[148]:":
+Args:	{ recvFrames=55 recvOctets=6330 recvMatchFrames=29 recvMatchOctets=3762 }
+-- victim arp
+? (192.0.2.10) at 02:5e:00:0a:00:10 on skep0 expires in 695 seconds [ethernet]
+? (192.0.2.50) at 02:5e:00:0a:00:30 on skep0 expires in 1074 seconds [ethernet]
+? (192.0.2.20) at 02:5e:00:0a:00:20 on skep0 permanent [ethernet]
+? (192.0.2.30) at 02:5e:00:0a:00:30 on skep0 expires in 1032 seconds [ethernet]
+? (192.0.2.60) at 02:5e:00:0a:00:30 on skep0 expires in 1101 seconds [ethernet]
+
+######## file: 20261122T003343Z-hearst-m7c-val-08-vm.log
+######## Item 7: m7c-vm on bridge1, 2026-11-22T00:48:39Z
+start 202 succeeded None
+{'state': 'running', 'pid': 9111, 'at': '2026-11-22T00:48:41.529Z'} [('bridge1', '02:5e:00:0a:00:40', 'tap0')]
++ sudo ngctl show tap0:
+  Name: tap0            Type: ether           ID: 0000025c   Num hooks: 2
+  Local hook      Peer name       Peer type    Peer ID         Peer hook      
+  ----------      ---------       ---------    -------         ---------      
+  upper           skf_tap0        bpf          0000025f        bridge         
+  lower           skf_tap0        bpf          0000025f        jail           
++ sudo ngctl show tap0:
++ awk '$1=="lower"{print $4}'
++ BPF=0000025f
++ sed -n 's/^Args:\t//p'
++ sudo ngctl msg '[0000025f]:' getprogram '"jail"'
+/tmp/m7cv/vm-got.txt:bpf_prog_len=36
+/tmp/m7cv/vm-want.txt:bpf_prog_len=36
+	member: tap0 flags=143<LEARNING,DISCOVER,AUTOEDGE,AUTOPTP>
+	        port 15 priority 128 path cost 2000000 vlan protocol 802.1q
++ /tmp/m7cv/bin/pfscript -mac 02:5e:00:0a:00:40 -ipv6 -print program
++ grep -o 'bpf_prog_len=[0-9]*' /tmp/m7cv/vm-got.txt /tmp/m7cv/vm-want.txt
++ ifconfig bridge1
++ grep -A1 'member: tap0'
++ sudo grep skep-agent /var/log/daemon.log
++ grep -E 'vm_id.*7e33310f-b16c-4a83-8ac1-891d1ded9bb0'
++ tail -5
++ cut -c1-250
++ grep -iE 'runner|tap|filter'
+Nov 21 19:48:41 hearst skep-agent[3143]: {"time":"2026-11-21T19:48:41.183667792-05:00","level":"INFO","msg":"bhyve: runner started","vm_id":"7e33310f-b16c-4a83-8ac1-891d1ded9bb0","runner_pid":9078}
+-- frames from the VM MAC on bridge1 during its first 75 s
+19:48:46.881271 02:5e:00:0a:00:40 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800), length 389: 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:5e:00:0a:00:40, length 347
+19:48:47.217054 02:5e:00:0a:00:40 > 33:33:ff:0a:00:40, ethertype IPv6 (0x86dd), length 86: :: > ff02::1:ff0a:40: HBH ICMP6, multicast listener reportmax resp delay: 0 addr: ff02::1:ff0a:40, length 24
+19:48:48.139645 02:5e:00:0a:00:40 > 33:33:ff:0a:00:40, ethertype IPv6 (0x86dd), length 78: :: > ff02::1:ff0a:40: ICMP6, neighbor solicitation, who has fe80::5e:ff:fe0a:40, length 24
+19:48:50.639297 02:5e:00:0a:00:40 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800), length 389: 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:5e:00:0a:00:40, length 347
+19:48:56.773658 02:5e:00:0a:00:40 > 33:33:ff:0a:00:40, ethertype IPv6 (0x86dd), length 86: fe80::5e:ff:fe0a:40 > ff02::1:ff0a:40: HBH ICMP6, multicast listener reportmax resp delay: 0 addr: ff02::1:ff0a:40, length 24
+19:48:58.774073 02:5e:00:0a:00:40 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800), length 389: 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:5e:00:0a:00:40, length 347
+19:49:15.029108 02:5e:00:0a:00:40 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800), length 389: 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:5e:00:0a:00:40, length 347
+19:49:47.572343 02:5e:00:0a:00:40 > 33:33:00:01:00:02, ethertype IPv6 (0x86dd), length 177: fe80::5e:ff:fe0a:40.546 > ff02::1:2.547: dhcp6 solicit
+19:49:48.480553 02:5e:00:0a:00:40 > 33:33:00:00:00:02, ethertype IPv6 (0x86dd), length 62: :: > ff02::2: ICMP6, router solicitation, length 8
+19:49:51.641425 02:5e:00:0a:00:40 > 33:33:00:01:00:02, ethertype IPv6 (0x86dd), length 177: fe80::5e:ff:fe0a:40.546 > ff02::1:2.547: dhcp6 solicit
+19:49:52.543532 02:5e:00:0a:00:40 > 33:33:00:00:00:02, ethertype IPv6 (0x86dd), length 62: :: > ff02::2: ICMP6, router solicitation, length 8
+total: 11
+Rec'd response "getstats" (3) from "[25f]:":
+Args:	{ recvFrames=11 recvOctets=2284 recvMatchFrames=11 recvMatchOctets=2284 }
+VM tap0 vs pfscript -ipv6: 36 vs 36 instructions, identical=True
+static epair0a vs pfscript -ip: 36 vs 36 instructions, identical=True
+
+######## file: 20261122T003343Z-hearst-m7c-val-09-vm-program-emulated.log
+######## Item 7b: the VM program on a hand-made epair, frames from inside a jail, 2026-11-22T00:50:22Z
++ sudo ifconfig epair create
++ E=epair3a
++ B=epair3b
++ echo epair3a
++ sudo ifconfig epair3a description m7c-handmade-vm-program up
++ sudo ngctl show epair3a:
++ awk '/Name:/{print $6}'
++ ID=000002e0
++ /tmp/m7cv/bin/pfscript -id 000002e0 -mac 02:5e:00:0a:00:41 -ipv6
++ sudo ngctl -f /tmp/m7cv/handmade.ngctl
++ sudo ngctl name '[000002e0]:lower' skf_epair3a
++ sudo ngctl show epair3a:
+  Name: epair3a         Type: ether           ID: 000002e0   Num hooks: 2
+  Local hook      Peer name       Peer type    Peer ID         Peer hook      
+  ----------      ---------       ---------    -------         ---------      
+  upper           skf_epair3a     bpf          000002e4        bridge         
+  lower           skf_epair3a     bpf          000002e4        jail           
++ sudo ifconfig bridge1 addm epair3a
++ sudo ifconfig epair3b vnet skep-5cadd083-c85c-4606-a620-17c2e37d91b9
++ sudo jexec skep-5cadd083-c85c-4606-a620-17c2e37d91b9 ifconfig epair3b ether 02:5e:00:0a:00:41 inet 192.0.2.41/32 up
+ifconfig: can't set link-level netmask or broadcast
++ sudo jexec skep-5cadd083-c85c-4606-a620-17c2e37d91b9 ifconfig epair3b ether 02:5e:00:0a:00:41
++ sudo jexec skep-5cadd083-c85c-4606-a620-17c2e37d91b9 ifconfig epair3b inet 192.0.2.41/32 up
++ sudo jexec skep-5cadd083-c85c-4606-a620-17c2e37d91b9 ifconfig epair3b
++ grep -E 'ether|inet'
+	ether 02:5e:00:0a:00:41
+	inet 192.0.2.41 netmask 0xffffffff broadcast 192.0.2.41
++ set +x
+==== vm A1 00:50:37
+  $ sudo jexec skep-5cadd083-c85c-4606-a620-17c2e37d91b9 /root/rawl2 -if epair3b -mode icmp -eth-src 02:5e:00:00:00:01 -eth-dst 02:5e:00:0a:00:20 -src 192.0.2.41 -dst 192.0.2.20 -count 2
+     rawl2: icmp frame 1/2, 60 bytes, written to epair3b
+     rawl2: icmp frame 2/2, 60 bytes, written to epair3b
+  -- sent on epair3a (all frames): 2; on bridge1 matching [ether src 02:5e:00:00:00:01]: 0; on epair1a matching: 0
+     br: 
+VERDICT vm A1 PASS (want 0, bridge 0, victim 0, sent 2)
+==== vm C1 00:50:46
+  $ sudo jexec skep-5cadd083-c85c-4606-a620-17c2e37d91b9 /root/rawl2 -if epair3b -mode arp -op reply -eth-src 02:5e:00:0a:00:41 -eth-dst 02:5e:00:0a:00:20 -sha 02:5e:00:0a:00:41 -spa 192.0.2.50 -tha 02:5e:00:0a:00:20 -tpa 192.0.2.20 -count 2
+     rawl2: arp frame 1/2, 60 bytes, written to epair3b
+     rawl2: arp frame 2/2, 60 bytes, written to epair3b
+  -- sent on epair3a (all frames): 3; on bridge1 matching [arp and ether src 02:5e:00:0a:00:41 and arp[14:4] = 0xc0000232]: 2; on epair1a matching: 2
+     br: 19:50:47.138358 02:5e:00:0a:00:41 > 02:5e:00:0a:00:20, ethertype ARP (0x0806), length 60: Reply 192.0.2.50 is-at 02:5e:00:0a:00:41, length 46
+     br: 19:50:48.138715 02:5e:00:0a:00:41 > 02:5e:00:0a:00:20, ethertype ARP (0x0806), length 60: Reply 192.0.2.50 is-at 02:5e:00:0a:00:41, length 46
+     br: 
+VERDICT vm C1 PASS (want +, bridge 2, victim 2, sent 3)
+==== vm C2 00:50:55
+  $ sudo jexec skep-5cadd083-c85c-4606-a620-17c2e37d91b9 /root/rawl2 -if epair3b -mode arp -op reply -eth-src 02:5e:00:0a:00:41 -eth-dst 02:5e:00:0a:00:20 -sha 02:5e:00:00:00:01 -spa 192.0.2.41 -tha 02:5e:00:0a:00:20 -tpa 192.0.2.20 -count 2
+     rawl2: arp frame 1/2, 60 bytes, written to epair3b
+     rawl2: arp frame 2/2, 60 bytes, written to epair3b
+  $ sudo jexec skep-fc34f44b-44b1-436d-a736-a5a854a8fca4 arp -an
+     ? (192.0.2.10) at 02:5e:00:0a:00:10 on skep0 expires in 534 seconds [ethernet]
+     ? (192.0.2.50) at 02:5e:00:0a:00:41 on skep0 expires in 1191 seconds [ethernet]
+     ? (192.0.2.20) at 02:5e:00:0a:00:20 on skep0 permanent [ethernet]
+     ? (192.0.2.30) at 02:5e:00:0a:00:30 on skep0 expires in 871 seconds [ethernet]
+     ? (192.0.2.60) at 02:5e:00:0a:00:30 on skep0 expires in 940 seconds [ethernet]
+  -- sent on epair3a (all frames): 4; on bridge1 matching [arp and arp[8:4] = 0x025e0000 and arp[12:2] = 0x0001]: 0; on epair1a matching: 0
+     br: 
+VERDICT vm C2 PASS (want 0, bridge 0, victim 0, sent 4)
+==== vm E1 00:51:04
+  $ sudo jexec skep-5cadd083-c85c-4606-a620-17c2e37d91b9 /root/rawl2 -if epair3b -mode dhcp -eth-src 02:5e:00:0a:00:41 -count 2
+     rawl2: dhcp frame 1/2, 286 bytes, written to epair3b
+     rawl2: dhcp frame 2/2, 286 bytes, written to epair3b
+  -- sent on epair3a (all frames): 2; on bridge1 matching [ether src 02:5e:00:0a:00:41 and udp dst port 67]: 2; on epair1a matching: 2
+     br: 19:51:05.176641 02:5e:00:0a:00:41 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800), length 286: 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:5e:00:0a:00:41, length 244
+     br: 19:51:06.183229 02:5e:00:0a:00:41 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800), length 286: 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:5e:00:0a:00:41, length 244
+     br: 
+VERDICT vm E1 PASS (want +, bridge 2, victim 2, sent 2)
+==== vm E2 00:51:13
+  $ sudo jexec skep-5cadd083-c85c-4606-a620-17c2e37d91b9 /root/rawl2 -if epair3b -mode dhcp -eth-src 02:5e:00:00:00:01 -count 2
+     rawl2: dhcp frame 1/2, 286 bytes, written to epair3b
+     rawl2: dhcp frame 2/2, 286 bytes, written to epair3b
+  -- sent on epair3a (all frames): 3; on bridge1 matching [ether src 02:5e:00:00:00:01]: 0; on epair1a matching: 0
+     br: 
+VERDICT vm E2 PASS (want 0, bridge 0, victim 0, sent 3)
+==== vm E3 00:51:22
+  $ sudo jexec skep-5cadd083-c85c-4606-a620-17c2e37d91b9 /root/rawl2 -if epair3b -mode arp -op request -eth-src 02:5e:00:0a:00:41 -sha 02:5e:00:00:00:01 -spa 192.0.2.41 -tpa 192.0.2.20 -count 2
+     rawl2: arp frame 1/2, 60 bytes, written to epair3b
+     rawl2: arp frame 2/2, 60 bytes, written to epair3b
+  -- sent on epair3a (all frames): 2; on bridge1 matching [arp and arp[8:4] = 0x025e0000 and arp[12:2] = 0x0001]: 0; on epair1a matching: 0
+     br: 
+VERDICT vm E3 PASS (want 0, bridge 0, victim 0, sent 2)
+==== vm F1 00:51:31
+  $ sudo jexec skep-5cadd083-c85c-4606-a620-17c2e37d91b9 /root/rawl2 -if epair3b -mode ipv6 -eth-src 02:5e:00:0a:00:41 -count 2
+     rawl2: ipv6 frame 1/2, 78 bytes, written to epair3b
+     rawl2: ipv6 frame 2/2, 78 bytes, written to epair3b
+  -- sent on epair3a (all frames): 5; on bridge1 matching [ip6 and ether src 02:5e:00:0a:00:41]: 2; on epair1a matching: 2
+     br: 19:51:32.226734 02:5e:00:0a:00:41 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd), length 78: fe80::5e:ff:fe0a:41 > ff02::1: ICMP6, echo request, id 21253, seq 1, length 24
+     br: 19:51:33.291191 02:5e:00:0a:00:41 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd), length 78: fe80::5e:ff:fe0a:41 > ff02::1: ICMP6, echo request, id 21253, seq 1, length 24
+     br: 
+VERDICT vm F1 PASS (want +, bridge 2, victim 2, sent 5)
+==== vm G1 00:51:40
+  $ sudo jexec skep-5cadd083-c85c-4606-a620-17c2e37d91b9 /root/rawl2 -if epair3b -mode dhcpoffer -eth-src 02:5e:00:0a:00:41 -src 192.0.2.41 -count 2
+     rawl2: dhcpoffer frame 1/2, 286 bytes, written to epair3b
+     rawl2: dhcpoffer frame 2/2, 286 bytes, written to epair3b
+  -- sent on epair3a (all frames): 2; on bridge1 matching [udp src port 67]: 0; on epair1a matching: 0
+     br: 
+VERDICT vm G1 PASS (want 0, bridge 0, victim 0, sent 2)
+==== vm G2 00:51:49
+  $ sudo jexec skep-5cadd083-c85c-4606-a620-17c2e37d91b9 /root/rawl2 -if epair3b -mode ra -eth-src 02:5e:00:0a:00:41 -count 2
+     rawl2: ra frame 1/2, 70 bytes, written to epair3b
+     rawl2: ra frame 2/2, 70 bytes, written to epair3b
+  -- sent on epair3a (all frames): 4; on bridge1 matching [ip6]: 2; on epair1a matching: 2
+     br: 19:51:52.499686 02:5e:00:0a:00:40 > 33:33:00:01:00:02, ethertype IPv6 (0x86dd), length 178: fe80::5e:ff:fe0a:40.546 > ff02::1:2.547: dhcp6 solicit
+     br: 19:51:56.575020 02:5e:00:0a:00:40 > 33:33:00:01:00:02, ethertype IPv6 (0x86dd), length 178: fe80::5e:ff:fe0a:40.546 > ff02::1:2.547: dhcp6 solicit
+     br: 
+VERDICT vm G2 FAIL (want 0, bridge 2, victim 2, sent 4)
+==== vm L1 00:51:58
+  $ sudo jexec skep-5cadd083-c85c-4606-a620-17c2e37d91b9 /root/rawl2 -if epair3b -mode lldp -eth-src 02:5e:00:0a:00:41 -count 2
+     rawl2: lldp frame 1/2, 60 bytes, written to epair3b
+     rawl2: lldp frame 2/2, 60 bytes, written to epair3b
+  -- sent on epair3a (all frames): 3; on bridge1 matching [ether src 02:5e:00:0a:00:41 and ether proto 0x88cc]: 0; on epair1a matching: 0
+     br: 
+VERDICT vm L1 PASS (want 0, bridge 0, victim 0, sent 3)
+==== vm L2 00:52:07
+  $ sudo jexec skep-5cadd083-c85c-4606-a620-17c2e37d91b9 /root/rawl2 -if epair3b -mode stp -eth-src 02:5e:00:0a:00:41 -count 2
+     rawl2: stp frame 1/2, 60 bytes, written to epair3b
+     rawl2: stp frame 2/2, 60 bytes, written to epair3b
+  -- sent on epair3a (all frames): 2; on bridge1 matching [ether src 02:5e:00:0a:00:41 and stp]: 0; on epair1a matching: 0
+     br: 
+VERDICT vm L2 PASS (want 0, bridge 0, victim 0, sent 2)
+==== vm V2 00:52:16
+  $ sudo jexec skep-5cadd083-c85c-4606-a620-17c2e37d91b9 /root/rawl2 -if epair3b -mode icmp -vlan 5 -eth-src 02:5e:00:00:00:01 -eth-dst 02:5e:00:0a:00:20 -src 192.0.2.41 -dst 192.0.2.20 -count 2
+     rawl2: icmp frame 1/2, 64 bytes, written to epair3b
+     rawl2: icmp frame 2/2, 64 bytes, written to epair3b
+  -- sent on epair3a (all frames): 3; on bridge1 matching [ether src 02:5e:00:00:00:01]: 0; on epair1a matching: 0
+     br: 
+VERDICT vm V2 PASS (want 0, bridge 0, victim 0, sent 3)
+==== vm V3 00:52:25
+  $ sudo jexec skep-5cadd083-c85c-4606-a620-17c2e37d91b9 /root/rawl2 -if epair3b -mode icmp -vlan 5,7 -eth-src 02:5e:00:0a:00:41 -eth-dst 02:5e:00:0a:00:20 -src 192.0.2.41 -dst 192.0.2.20 -count 2
+     rawl2: icmp frame 1/2, 68 bytes, written to epair3b
+     rawl2: icmp frame 2/2, 68 bytes, written to epair3b
+  -- sent on epair3a (all frames): 2; on bridge1 matching [vlan]: 0; on epair1a matching: 0
+     br: 
+VERDICT vm V3 PASS (want 0, bridge 0, victim 0, sent 2)
+SUMMARY vmprog vm: 12 passed, 1 failed
+Rec'd response "getstats" (3) from "[2e4]:":
+Args:	{ recvFrames=27 recvOctets=3022 recvMatchFrames=7 recvMatchOctets=890 }
++ sudo ifconfig epair3a destroy
++ ifconfig epair3a
++ head -1
+ifconfig: interface epair3a does not exist
++ sudo ngctl show skf_epair3a:
++ head -1
+ngctl: send msg: No such file or directory
++ sudo jexec skep-5cadd083-c85c-4606-a620-17c2e37d91b9 ifconfig -l
+lo0 skep0
+######## Item 7b rerun of G2 (filter narrowed to RAs from the sender) and F1, 2026-11-22T00:52:49Z
++ sudo ifconfig epair create
++ E=epair3a
++ B=epair3b
++ sudo ifconfig epair3a description m7c-handmade-vm-program up
++ sudo ngctl show epair3a:
++ awk '/Name:/{print $6}'
++ ID=0000039d
++ /tmp/m7cv/bin/pfscript -id 0000039d -mac 02:5e:00:0a:00:41 -ipv6
++ sudo ngctl -f /tmp/m7cv/handmade.ngctl
++ sudo ifconfig bridge1 addm epair3a
++ sudo ifconfig epair3b vnet skep-5cadd083-c85c-4606-a620-17c2e37d91b9
++ sudo jexec skep-5cadd083-c85c-4606-a620-17c2e37d91b9 ifconfig epair3b ether 02:5e:00:0a:00:41
++ sudo jexec skep-5cadd083-c85c-4606-a620-17c2e37d91b9 ifconfig epair3b up
++ set +x
+==== vm F1 00:52:49
+  $ sudo jexec skep-5cadd083-c85c-4606-a620-17c2e37d91b9 /root/rawl2 -if epair3b -mode ipv6 -eth-src 02:5e:00:0a:00:41 -count 2
+     rawl2: ipv6 frame 1/2, 78 bytes, written to epair3b
+     rawl2: ipv6 frame 2/2, 78 bytes, written to epair3b
+  -- sent on epair3a (all frames): 5; on bridge1 matching [ip6 and ether src 02:5e:00:0a:00:41]: 2; on epair1a matching: 2
+     br: 19:52:50.629649 02:5e:00:0a:00:41 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd), length 78: fe80::5e:ff:fe0a:41 > ff02::1: ICMP6, echo request, id 21253, seq 1, length 24
+     br: 19:52:51.643043 02:5e:00:0a:00:41 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd), length 78: fe80::5e:ff:fe0a:41 > ff02::1: ICMP6, echo request, id 21253, seq 1, length 24
+     br: 
+VERDICT vm F1 PASS (want +, bridge 2, victim 2, sent 5)
+==== vm G2 00:52:58
+  $ sudo jexec skep-5cadd083-c85c-4606-a620-17c2e37d91b9 /root/rawl2 -if epair3b -mode ra -eth-src 02:5e:00:0a:00:41 -count 2
+     rawl2: ra frame 1/2, 70 bytes, written to epair3b
+     rawl2: ra frame 2/2, 70 bytes, written to epair3b
+  -- sent on epair3a (all frames): 2; on bridge1 matching [icmp6 and ether src 02:5e:00:0a:00:41 and ip6[40] = 134]: 0; on epair1a matching: 0
+     br: 
+VERDICT vm G2 PASS (want 0, bridge 0, victim 0, sent 2)
+SUMMARY vmprog2 vm: 2 passed, 0 failed
+-- what the jail sent in G2 (pre-filter capture):
+19:52:59.644752 02:5e:00:0a:00:41 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd), length 70: fe80::5e:ff:fe0a:41 > ff02::1: ICMP6, router advertisement, length 16
+19:53:00.651248 02:5e:00:0a:00:41 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd), length 70: fe80::5e:ff:fe0a:41 > ff02::1: ICMP6, router advertisement, length 16
+
++ sudo ifconfig epair3a destroy
+
+######## file: 20261122T003343Z-hearst-m7c-val-10-ordering.log
+######## Item 3: ordering, a forged sender in rc.local, 2026-11-22T00:53:29Z
+create 202 succeeded
+m7c-o f33c5fcd-7b48-4a22-94eb-38d3e2878205
++ R=/skeptest/skep/jail/f33c5fcd-7b48-4a22-94eb-38d3e2878205
++ sudo install -m 0755 -o root -g wheel /tmp/m7cv/rc.local.m7c /skeptest/skep/jail/f33c5fcd-7b48-4a22-94eb-38d3e2878205/etc/rc.local
++ sudo install -m 0755 -o root -g wheel /tmp/m7cv/bin/rawping /skeptest/skep/jail/f33c5fcd-7b48-4a22-94eb-38d3e2878205/root/rawping
++ sudo cat /skeptest/skep/jail/f33c5fcd-7b48-4a22-94eb-38d3e2878205/etc/rc.local
++ head -3
+#!/bin/sh
+# M7c ordering test: forge from the earliest point the guest controls.
+echo "m7c rc.local: forging from $(date -u +%T)" > /dev/console
++ sudo timeout 50 tcpdump -n -e -l -i bridge1 'ether src 02:5e:00:00:00:01 or ip src 192.0.2.50'
++ sudo timeout 50 tcpdump -n -e -l -i epair1a 'ether src 02:5e:00:00:00:01 or ip src 192.0.2.50'
+start 202 succeeded None
+m7c-o port epair3a
++ R=/skeptest/skep/jail/f33c5fcd-7b48-4a22-94eb-38d3e2878205
++ sudo cat /skeptest/skep/jail/f33c5fcd-7b48-4a22-94eb-38d3e2878205/root/rc-local-ping.txt /skeptest/skep/jail/f33c5fcd-7b48-4a22-94eb-38d3e2878205/root/rc-local-rawping.txt
++ head -12
+PING 192.0.2.20 (192.0.2.20): 56 data bytes
+
+--- 192.0.2.20 ping statistics ---
+6 packets transmitted, 0 packets received, 100.0% packet loss
+00:53:34.091Z seq 0 192.0.2.50 -> 192.0.2.20: sent 37 bytes
+00:53:35.138Z seq 1 192.0.2.50 -> 192.0.2.20: sent 37 bytes
+00:53:36.148Z seq 2 192.0.2.50 -> 192.0.2.20: sent 37 bytes
+00:53:37.167Z seq 3 192.0.2.50 -> 192.0.2.20: sent 37 bytes
++ sudo ngctl msg skf_epair3a: getstats '"jail"'
+Rec'd response "getstats" (3) from "[3e2]:":
+Args:	{ recvFrames=6 recvOctets=252 recvMatchFrames=1 recvMatchOctets=42 }
+forged frames on bridge1: 0
+
+forged frames on the victim port: 0
+
++ grep -c . /tmp/m7cv/order-bridge1.txt
++ echo 'forged frames on bridge1: 0'
++ cat /tmp/m7cv/order-bridge1.txt
++ grep -c . /tmp/m7cv/order-victim.txt
++ echo 'forged frames on the victim port: 0'
++ cat /tmp/m7cv/order-victim.txt
++ sudo jexec skep-f33c5fcd-7b48-4a22-94eb-38d3e2878205 ifconfig skep0
++ grep ether
+	ether 02:5e:00:00:00:01
+
+######## file: 20261122T003343Z-hearst-m7c-val-11-failopen.log
+######## Item 4: fail-open detection on epair0a (m7c-a), 2026-11-22T00:54:55Z
+==== rmhook-lower on epair0a (filter node [00000009]) 00:54:55
+  after the change:
+      Name: epair0a         Type: ether           ID: 00000005   Num hooks: 1
+      Local hook      Peer name       Peer type    Peer ID         Peer hook      
+      ----------      ---------       ---------    -------         ---------      
+      upper           skf_epair0a     bpf          00000009        bridge         
+  reaction (port_filter.restored) after about 8 s
+  audit: 2026-11-22T00:55:03.565Z|port_filter.missing|failure|the lower hook is not connected: frames from the guest bypass the filter|1|
+  audit: 2026-11-22T00:55:03.581Z|port_filter.restored|success|the lower hook is not connected: frames from the guest bypass the filter|1|
+  after the reaction:
+      Name: epair0a         Type: ether           ID: 00000005   Num hooks: 2
+      Local hook      Peer name       Peer type    Peer ID         Peer hook      
+      ----------      ---------       ---------    -------         ---------      
+      upper           skf_epair0a     bpf          00000467        bridge         
+      lower           skf_epair0a     bpf          00000467        jail           
+  epair0a is a member of bridge1
+  health: degraded port_filters degraded jail 5cadd083-c85c-4606-a620-17c2e37d91b9 NIC 0 (epair0a): its filter was missing or wrong and was reinstalled (the lower hook is not connected: frames from the guest bypass the filter)
+  -- A1 again after the repair:
+VERDICT static D1 PASS (want +, bridge 2, victim 2, sent 4)
+VERDICT static A1 PASS (want 0, bridge 0, victim 0, sent 4)
+  health: degraded port_filters ok 
+==== shutdown-node on epair0a (filter node [00000467]) 00:55:33
+  after the change:
+      Name: epair0a         Type: ether           ID: 00000005   Num hooks: 0
+  reaction (port_filter.restored) after about 10 s
+  audit: 2026-11-22T00:55:43.542Z|port_filter.missing|failure|no filter: the lower and upper hooks are not connected|1|
+  audit: 2026-11-22T00:55:43.551Z|port_filter.restored|success|no filter: the lower and upper hooks are not connected|1|
+  after the reaction:
+      Name: epair0a         Type: ether           ID: 00000005   Num hooks: 2
+      Local hook      Peer name       Peer type    Peer ID         Peer hook      
+      ----------      ---------       ---------    -------         ---------      
+      upper           skf_epair0a     bpf          000004ac        bridge         
+      lower           skf_epair0a     bpf          000004ac        jail           
+  epair0a is a member of bridge1
+  health: degraded port_filters degraded jail 5cadd083-c85c-4606-a620-17c2e37d91b9 NIC 0 (epair0a): its filter was missing or wrong and was reinstalled (no filter: the lower and upper hooks are not connected)
+  -- A1 again after the repair:
+VERDICT static D1 PASS (want +, bridge 2, victim 2, sent 4)
+VERDICT static A1 PASS (want 0, bridge 0, victim 0, sent 3)
+  health: degraded port_filters ok 
+==== pass-all on epair0a (filter node [000004ac]) 00:56:13
+  after the change:
+      Name: epair0a         Type: ether           ID: 00000005   Num hooks: 2
+      Local hook      Peer name       Peer type    Peer ID         Peer hook      
+      ----------      ---------       ---------    -------         ---------      
+      upper           skf_epair0a     bpf          000004ac        bridge         
+      lower           skf_epair0a     bpf          000004ac        jail           
+  reaction (port_filter.restored) after about 10 s
+  audit: 2026-11-22T00:56:23.546Z|port_filter.missing|failure|the filter's program is not the one generated for this port|1|
+  audit: 2026-11-22T00:56:23.557Z|port_filter.restored|success|the filter's program is not the one generated for this port|1|
+  after the reaction:
+      Name: epair0a         Type: ether           ID: 00000005   Num hooks: 2
+      Local hook      Peer name       Peer type    Peer ID         Peer hook      
+      ----------      ---------       ---------    -------         ---------      
+      upper           skf_epair0a     bpf          000004f5        bridge         
+      lower           skf_epair0a     bpf          000004f5        jail           
+  epair0a is a member of bridge1
+  health: degraded port_filters degraded jail 5cadd083-c85c-4606-a620-17c2e37d91b9 NIC 0 (epair0a): its filter was missing or wrong and was reinstalled (the filter's program is not the one generated for this port)
+  -- A1 again after the repair:
+VERDICT static D1 PASS (want +, bridge 2, victim 2, sent 4)
+VERDICT static A1 PASS (want 0, bridge 0, victim 0, sent 2)
+  health: degraded port_filters ok 
+==== rmhook-upper on epair0a (filter node [000004f5]) 00:56:53
+  after the change:
+      Name: epair0a         Type: ether           ID: 00000005   Num hooks: 1
+      Local hook      Peer name       Peer type    Peer ID         Peer hook      
+      ----------      ---------       ---------    -------         ---------      
+      lower           skf_epair0a     bpf          000004f5        jail           
+  reaction (port_filter.restored) after about 10 s
+  audit: 2026-11-22T00:57:03.544Z|port_filter.missing|failure|the upper hook is not connected|1|
+  audit: 2026-11-22T00:57:03.555Z|port_filter.restored|success|the upper hook is not connected|1|
+  after the reaction:
+      Name: epair0a         Type: ether           ID: 00000005   Num hooks: 2
+      Local hook      Peer name       Peer type    Peer ID         Peer hook      
+      ----------      ---------       ---------    -------         ---------      
+      upper           skf_epair0a     bpf          0000053d        bridge         
+      lower           skf_epair0a     bpf          0000053d        jail           
+  epair0a is a member of bridge1
+  health: degraded port_filters degraded jail 5cadd083-c85c-4606-a620-17c2e37d91b9 NIC 0 (epair0a): its filter was missing or wrong and was reinstalled (the upper hook is not connected)
+  -- A1 again after the repair:
+VERDICT static D1 PASS (want +, bridge 2, victim 2, sent 4)
+VERDICT static A1 PASS (want 0, bridge 0, victim 0, sent 2)
+  health: degraded port_filters ok 
+######## Item 4d: reinstall failure (a foreign node on lower) on epair0a, 2026-11-22T00:57:51Z
+==== foreign-lower on epair0a (filter node [0000053d]) 00:57:52
+  after the change:
+      Name: epair0a         Type: ether           ID: 00000005   Num hooks: 2
+      Local hook      Peer name       Peer type    Peer ID         Peer hook      
+      ----------      ---------       ---------    -------         ---------      
+      lower           <unnamed>       socket       0000058d        hook           
+      upper           skf_epair0a     bpf          0000053d        bridge         
+  reaction (port_filter.detached) after about 1 s
+  audit: 2026-11-22T00:57:53.547Z|port_filter.missing|failure|the lower hook is not connected to a filter's jail hook|1|
+  audit: 2026-11-22T00:57:53.554Z|port_filter.detached|success|the lower hook is not connected to a filter's jail hook|1|the filter could not be reinstalled: port_filter_failed: the anti-spoofing filter could not be installed on epair0a (install): ngctl: exit status 71: ngctl: send msg: File exists
+  after the reaction:
+      Name: epair0a         Type: ether           ID: 00000005   Num hooks: 1
+      Local hook      Peer name       Peer type    Peer ID         Peer hook      
+      ----------      ---------       ---------    -------         ---------      
+      lower           <unnamed>       socket       0000058d        hook           
+  epair0a is NOT a member of bridge1
+  health: degraded port_filters degraded jail 5cadd083-c85c-4606-a620-17c2e37d91b9 NIC 0 (epair0a): detached from bridge1; the guest has no network on it until it is restarted
+  -- a ping from the detached jail (must fail: cut off, not unfiltered):
+--- 192.0.2.20 ping statistics ---
+2 packets transmitted, 0 packets received, 100.0% packet loss
+  after the foreign node is gone, 12 s later:
+  still detached: no reinstall until the guest restarts
+  port_filter audit entries in those 12 s: 0
+  health: degraded port_filters degraded jail 5cadd083-c85c-4606-a620-17c2e37d91b9 NIC 0 (epair0a): detached from bridge1; the guest has no network on it until it is restarted
+######## Item 4e: three failed checks in a row on epair2a (m7c-d1), 2026-11-22T00:59:07Z
+  round 1: lower removed at 00:59:07
+  round 2: lower removed at 00:59:13
+  round 3: lower removed at 00:59:23
+  audit: 2026-11-22T00:59:13.670Z|port_filter.missing|failure|1|
+  audit: 2026-11-22T00:59:13.681Z|port_filter.restored|success|1|
+  audit: 2026-11-22T00:59:23.553Z|port_filter.missing|failure|2|
+  audit: 2026-11-22T00:59:23.564Z|port_filter.restored|success|2|
+  audit: 2026-11-22T00:59:33.562Z|port_filter.missing|failure|3|
+  audit: 2026-11-22T00:59:33.565Z|port_filter.detached|success|3|the filter failed 3 checks in a row
+  epair2a detached from bridge1
+  health: degraded port_filters degraded jail 5cadd083-c85c-4606-a620-17c2e37d91b9 NIC 0 (epair0a): detached from bridge1; the guest has no network on it until it is restarted; jail f2229564-3e6c-4464-9336-6a27c4c09e48 NIC 0 (epair2a): detached from bridge1: the filter failed 3 checks in a row; the guest has no network on it until it is restarted
+
+######## file: 20261122T003343Z-hearst-m7c-val-12-agent-restart.log
+######## Restart the two detached jails (new ports), 2026-11-22T01:00:01Z
+restart 5cadd083-c85c-4606-a620-17c2e37d91b9 202 succeeded None
+restart f2229564-3e6c-4464-9336-6a27c4c09e48 202 succeeded None
+m7c-a 5cadd083-c85c-4606-a620-17c2e37d91b9 running 02:5e:00:0a:00:10 epair0a
+m7c-d1 f2229564-3e6c-4464-9336-6a27c4c09e48 running 02:5e:00:0a:00:30 epair2a
+m7c-o f33c5fcd-7b48-4a22-94eb-38d3e2878205 running 02:5e:00:0a:00:11 epair3a
+m7c-v fc34f44b-44b1-436d-a736-a5a854a8fca4 running 02:5e:00:0a:00:20 epair1a
+health port_filters ok 
+######## Item 5a: agent restart with four filtered jails and a VM running, 2026-11-22T01:01:46Z
++ ifconfig -g epair
++ grep 'a$'
++ printf '%s ' epair1a
++ sudo ngctl show epair1a:
++ awk '$1=="lower"{print $4}'
++ printf '%s ' epair3a
++ sudo ngctl show epair3a:
++ awk '$1=="lower"{print $4}'
++ printf '%s ' epair0a
++ sudo ngctl show epair0a:
++ awk '$1=="lower"{print $4}'
++ printf '%s ' epair2a
++ sudo ngctl show epair2a:
++ awk '$1=="lower"{print $4}'
++ printf '%s ' tap0
++ sudo ngctl show tap0:
++ awk '$1=="lower"{print $4}'
++ cat /tmp/m7cv/ids-before.txt
+epair1a 00000012
+epair3a 000003e2
+epair0a 0000063c
+epair2a 00000645
+tap0 0000025f
++ sudo sqlite3 -readonly -cmd '.timeout 5000' /var/db/skep/agent/agent.db 'SELECT max(id) FROM audit_log'
+       5
++ mark=1381
++ echo 1381
++ jls
++ wc -l
++ sudo service skep_api stop
+Stopping skep_api.
+Waiting for PIDS: 3202.
++ sudo service skep_agent stop
+Stopping skep_agent.
+Waiting for PIDS: 3143.
++ sudo service skep_agent start
+Starting skep_agent.
++ sudo service skep_api start
+Starting skep_api.
++ sleep 15
++ sudo service skep_agent status
+skep_agent is running as pid 16327 (supervisor pid 16325).
++ sudo service skep_api status
+skep_api is running as pid 16388 (supervisor pid 16386).
++ ifconfig -g epair
++ grep 'a$'
++ printf '%s ' epair1a
++ sudo ngctl show epair1a:
++ awk '$1=="lower"{print $4}'
++ printf '%s ' epair3a
++ sudo ngctl show epair3a:
++ awk '$1=="lower"{print $4}'
++ printf '%s ' epair0a
++ sudo ngctl show epair0a:
++ awk '$1=="lower"{print $4}'
++ printf '%s ' epair2a
++ sudo ngctl show epair2a:
++ awk '$1=="lower"{print $4}'
++ printf '%s ' tap0
+epair1a 00000012
+epair3a 000003e2
+epair0a 0000063c
+epair2a 00000645
+tap0 0000025f
++ sudo ngctl show tap0:
++ awk '$1=="lower"{print $4}'
++ cat /tmp/m7cv/ids-after.txt
++ cmp /tmp/m7cv/ids-before.txt /tmp/m7cv/ids-after.txt
+filters untouched across the restart (same node IDs)
++ echo 'filters untouched across the restart (same node IDs)'
++ sudo sqlite3 -readonly -cmd '.timeout 5000' /var/db/skep/agent/agent.db 'SELECT count(*) FROM audit_log WHERE id > 1381 AND action LIKE "port_filter.%"'
++ sed 's/^/port_filter audit entries since the restart: /'
+Parse error in 5th command line argument: no such column: "port_filter.%" - should this be a string literal in single-quotes?
+  *) FROM audit_log WHERE id > 1381 AND action LIKE "port_filter.%"
+                                      error here ---^
++ jls
++ wc -l
+       5
+health port_filters ok 
+######## Item 5b: a filter removed while the agent is down is restored before the socket is served, 2026-11-22T01:02:02Z
++ sudo sqlite3 -readonly -cmd '.timeout 5000' /var/db/skep/agent/agent.db 'SELECT max(id) FROM audit_log'
++ mark=1385
++ sudo service skep_api stop
+Stopping skep_api.
+Waiting for PIDS: 16386.
++ sudo service skep_agent stop
+Stopping skep_agent.
+Waiting for PIDS: 16325.
++ sudo ngctl rmhook epair1a: lower
++ sudo ngctl show epair1a:
++ head -1
+  Name: epair1a         Type: ether           ID: 0000000e   Num hooks: 1
++ sudo service skep_agent start
+Starting skep_agent.
++ sleep 8
++ sudo service skep_api start
+Starting skep_api.
++ sleep 3
++ sudo sqlite3 -readonly -cmd '.timeout 5000' /var/db/skep/agent/agent.db $'SELECT occurred_at, action, outcome, json_extract(details, \'$.problem\') FROM audit_log WHERE id > 1385 AND action LIKE \'port_filter.%\''
+2026-11-22T01:02:03.094Z|port_filter.missing|failure|the lower hook is not connected: frames from the guest bypass the filter
+2026-11-22T01:02:03.104Z|port_filter.restored|success|the lower hook is not connected: frames from the guest bypass the filter
++ sudo grep skep-agent /var/log/daemon.log
++ grep -E 'internal API listening|anti-spoofing filter|reinstalled'
++ tail -3
++ sed -E 's/.*"time":"([^"]*)","level":"([A-Z]*)","msg":"([^"]*)".*/\1 \2 \3/'
+2026-11-21T20:02:03.093972435-05:00 ERROR portcheck: a guest port's anti-spoofing filter is missing or wrong
+2026-11-21T20:02:03.104763822-05:00 WARN portcheck: reinstalled a guest port's anti-spoofing filter
+2026-11-21T20:02:03.117145974-05:00 INFO internal API listening
+  Name: epair1a         Type: ether           ID: 0000000e   Num hooks: 2
++ sudo ngctl show epair1a:
++ head -1
+5a audit entries 1382-1385: 1382|2026-11-22T01:01:47.176Z|discovery.refresh|success
+5a audit entries 1382-1385: 1383|2026-11-22T01:01:47.179Z|maintenance.retention|success
+5a audit entries 1382-1385: 1384|2026-11-22T01:01:47.188Z|discovery.refresh|success
+5a audit entries 1382-1385: 1385|2026-11-22T01:01:47.193Z|maintenance.retention|success
+
+######## file: 20261122T003343Z-hearst-m7c-val-13-dhcp-bridge0.log
+######## Item 8: DHCP jail on bridge0, real lease and renewal through the filter, 2026-11-22T01:02:41Z
+create 202 succeeded
+start 202 succeeded None
+
+real	0m1.231s
+user	0m0.064s
+sys	0m0.004s
+m7c-a 5cadd083-c85c-4606-a620-17c2e37d91b9 running 02:5e:00:0a:00:10 epair0a
+m7c-d0 6a64a439-2d13-4640-b515-c3ba13264a61 running 02:5e:00:0a:00:50 epair4a
+m7c-d1 f2229564-3e6c-4464-9336-6a27c4c09e48 running 02:5e:00:0a:00:30 epair2a
+m7c-o f33c5fcd-7b48-4a22-94eb-38d3e2878205 running 02:5e:00:0a:00:11 epair3a
+m7c-v fc34f44b-44b1-436d-a736-a5a854a8fca4 running 02:5e:00:0a:00:20 epair1a
++ J=skep-6a64a439-2d13-4640-b515-c3ba13264a61
++ sudo jexec skep-6a64a439-2d13-4640-b515-c3ba13264a61 ifconfig skep0
++ grep -E 'ether|inet '
+	ether 02:5e:00:0a:00:50
+	inet 10.79.60.116 netmask 0xffffff00 broadcast 10.79.60.255
++ sudo ngctl show epair4a:
++ head -6
+  Name: epair4a         Type: ether           ID: 0000074d   Num hooks: 2
+  Local hook      Peer name       Peer type    Peer ID         Peer hook      
+  ----------      ---------       ---------    -------         ---------      
+  upper           skf_epair4a     bpf          00000751        bridge         
+  lower           skf_epair4a     bpf          00000751        jail           
++ sudo ngctl msg skf_epair4a: getstats '"jail"'
+Rec'd response "getstats" (3) from "[751]:":
+Args:	{ recvFrames=3 recvOctets=726 recvMatchFrames=3 recvMatchOctets=726 }
++ sleep 5
+-- the lease exchange on vtnet1 (the LAN side of bridge0):
++ echo '-- the lease exchange on vtnet1 (the LAN side of bridge0):'
++ cat /tmp/m7cv/d0-lease.txt
+20:02:44.709975 02:5e:00:0a:00:50 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800), length 342: 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:5e:00:0a:00:50, length 300
+20:02:44.711307 bc:24:11:65:45:98 > 02:5e:00:0a:00:50, ethertype IPv4 (0x0800), length 352: 10.79.60.1.67 > 10.79.60.116.68: BOOTP/DHCP, Reply, length 310
+20:02:44.972315 02:5e:00:0a:00:50 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800), length 342: 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:5e:00:0a:00:50, length 300
+20:02:44.973817 bc:24:11:65:45:98 > 02:5e:00:0a:00:50, ethertype IPv4 (0x0800), length 352: 10.79.60.1.67 > 10.79.60.116.68: BOOTP/DHCP, Reply, length 310
+-- renewal: dhclient restarted inside the jail
++ echo '-- renewal: dhclient restarted inside the jail'
++ sleep 1
++ sudo timeout 25 tcpdump -n -e -l -i vtnet1 'ether host 02:5e:00:0a:00:50 and (udp port 67 or udp port 68)'
++ sudo jexec skep-6a64a439-2d13-4640-b515-c3ba13264a61 service dhclient restart skep0
++ tail -3
+DHCPREQUEST on skep0 to 255.255.255.255 port 67
+DHCPACK from 10.79.60.1
+bound to 10.79.60.116 -- renewal in 1996 seconds.
++ sleep 8
+20:02:51.945826 02:5e:00:0a:00:50 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800), length 342: 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:5e:00:0a:00:50, length 300
+20:02:51.947671 bc:24:11:65:45:98 > 02:5e:00:0a:00:50, ethertype IPv4 (0x0800), length 352: 10.79.60.1.67 > 10.79.60.116.68: BOOTP/DHCP, Reply, length 310
++ cat /tmp/m7cv/d0-renew.txt
++ sudo jexec skep-6a64a439-2d13-4640-b515-c3ba13264a61 ifconfig skep0
++ grep 'inet '
+	inet 10.79.60.116 netmask 0xffffff00 broadcast 10.79.60.255
++ R=/skeptest/skep/jail/6a64a439-2d13-4640-b515-c3ba13264a61
++ sudo install -m 0755 -o root -g wheel /tmp/m7cv/bin/rawl2 /skeptest/skep/jail/6a64a439-2d13-4640-b515-c3ba13264a61/root/rawl2
+-- A1 on bridge0: forged source MAC, captured on vtnet1 (must be 0)
++ echo '-- A1 on bridge0: forged source MAC, captured on vtnet1 (must be 0)'
++ sudo timeout 6 tcpdump -n -e -l -i vtnet1 'ether src 02:5e:00:00:00:01'
++ sleep 1
++ sudo jexec skep-6a64a439-2d13-4640-b515-c3ba13264a61 /root/rawl2 -if skep0 -mode dhcp -eth-src 02:5e:00:00:00:01 -count 2
+rawl2: dhcp frame 1/2, 286 bytes, written to skep0
+rawl2: dhcp frame 2/2, 286 bytes, written to skep0
++ sleep 5
+forged frames on vtnet1: 0
++ grep -c . /tmp/m7cv/d0-a1.txt
++ echo 'forged frames on vtnet1: 0'
++ sudo ngctl msg skf_epair4a: getstats '"jail"'
+Rec'd response "getstats" (3) from "[751]:":
+Args:	{ recvFrames=9 recvOctets=2104 recvMatchFrames=7 recvMatchOctets=1532 }
+
+######## file: 20261122T003343Z-hearst-m7c-val-14-vlan.log
+######## Item 9: VLAN filtering, 2026-11-22T01:03:27Z
+  health: degraded | bridge_vlan_unfiltered degraded bridge0 has no VLAN filtering (ifconfig bridge0 vlanfilter); bridge1 has no VLAN filtering (ifconfig bridge1 vlanfilter) | port_filters ok
+-- bridge1: defuntagged 1, a PVID for every member, then vlanfilter
++ sudo ifconfig bridge1 defuntagged 1
++ ifconfig bridge1
++ awk '/member:/{print $2}'
++ sudo ifconfig bridge1 ifuntagged epair2a 1
++ sudo ifconfig bridge1 ifuntagged epair0a 1
++ sudo ifconfig bridge1 ifuntagged epair3a 1
++ sudo ifconfig bridge1 ifuntagged tap0 1
++ sudo ifconfig bridge1 ifuntagged epair1a 1
++ sudo ifconfig bridge1 vlanfilter
+	bridge flags=1<VLANFILTER> defuntagged=1
+	member: epair2a flags=143<LEARNING,DISCOVER,AUTOEDGE,AUTOPTP>
+	        port 12 priority 128 path cost 2000 vlan protocol 802.1q untagged 1
+	member: epair0a flags=143<LEARNING,DISCOVER,AUTOEDGE,AUTOPTP>
+	        port 6 priority 128 path cost 2000 vlan protocol 802.1q untagged 1
+	member: epair3a flags=143<LEARNING,DISCOVER,AUTOEDGE,AUTOPTP>
+	        port 16 priority 128 path cost 2000 vlan protocol 802.1q untagged 1
+	member: tap0 flags=143<LEARNING,DISCOVER,AUTOEDGE,AUTOPTP>
+	        port 15 priority 128 path cost 2000000 vlan protocol 802.1q untagged 1
+	member: epair1a flags=143<LEARNING,DISCOVER,AUTOEDGE,AUTOPTP>
+	        port 9 priority 128 path cost 2000 vlan protocol 802.1q untagged 1
++ ifconfig bridge1
++ grep -E 'bridge flags|member|untagged'
+  health: degraded | bridge_vlan_unfiltered degraded bridge0 has no VLAN filtering (ifconfig bridge0 vlanfilter) | port_filters ok
+VERDICT static D1 FAIL (want +, bridge 0, victim 2, sent 6)
+VERDICT static D2 FAIL (want +, bridge 0, victim 2, sent 4)
+VERDICT static V1 PASS (want 0, bridge 0, victim 0, sent 0)
+VERDICT static V2 PASS (want 0, bridge 0, victim 0, sent 0)
+VERDICT static V3 PASS (want 0, bridge 0, victim 0, sent 0)
+SUMMARY vlan1 static: 3 passed, 2 failed
+-- a new member gets its PVID from defuntagged: restart m7c-o (new port)
+restart m7c-o 202 succeeded
+  	member: epair3a flags=143<LEARNING,DISCOVER,AUTOEDGE,AUTOPTP>
+  	        port 16 priority 128 path cost 2000 vlan protocol 802.1q untagged 1
+  health: degraded | bridge_vlan_unfiltered degraded bridge0 has no VLAN filtering (ifconfig bridge0 vlanfilter) | port_filters ok
+-- bridge0, live only: vtnet1's PVID FIRST, then the DHCP jail's port, then vlanfilter
++ sudo ifconfig bridge0 ifuntagged vtnet1 1
++ sudo ifconfig bridge0 ifuntagged epair4a 1
++ sudo ifconfig bridge0 vlanfilter
+	bridge flags=1<VLANFILTER>
+	member: epair4a flags=143<LEARNING,DISCOVER,AUTOEDGE,AUTOPTP>
+	        port 19 priority 128 path cost 2000 vlan protocol 802.1q untagged 1
+	member: vtnet1 flags=143<LEARNING,DISCOVER,AUTOEDGE,AUTOPTP>
+	        port 2 priority 128 path cost 2000 vlan protocol 802.1q untagged 1
++ ifconfig bridge0
++ grep -E 'bridge flags|member|untagged'
++ ping -c 2 -t 3 10.79.20.1
++ tail -1
+round-trip min/avg/max/stddev = 0.240/0.258/0.276/0.018 ms
++ sudo timeout 25 tcpdump -n -e -l -i vtnet1 'ether host 02:5e:00:0a:00:50 and (udp port 67 or udp port 68)'
++ sleep 1
++ sudo jexec skep-6a64a439-2d13-4640-b515-c3ba13264a61 service dhclient restart skep0
++ tail -2
+DHCPACK from 10.79.60.1
+bound to 10.79.60.116 -- renewal in 1940 seconds.
++ sleep 6
+20:04:43.186619 02:5e:00:0a:00:50 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800), length 342: 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:5e:00:0a:00:50, length 300
+20:04:43.187961 bc:24:11:65:45:98 > 02:5e:00:0a:00:50, ethertype IPv4 (0x0800), length 352: 10.79.60.1.67 > 10.79.60.116.68: BOOTP/DHCP, Reply, length 310
++ cat /tmp/m7cv/d0-renew-vf.txt
++ sudo jexec skep-6a64a439-2d13-4640-b515-c3ba13264a61 ping -c 2 -t 3 10.79.60.1
++ tail -1
+round-trip min/avg/max/stddev = 0.292/0.394/0.496/0.102 ms
+  health: ok | bridge_vlan_unfiltered ok  | port_filters ok
+######## Item 9 rerun: bpf unhidden again in m7c-a (its restart in item 5 remounted /dev), counting at the victim port, 2026-11-22T01:05:25Z
++ sudo devfs -m /skeptest/skep/jail/5cadd083-c85c-4606-a620-17c2e37d91b9/dev rule apply path 'bpf*' unhide
++ sudo jexec skep-5cadd083-c85c-4606-a620-17c2e37d91b9 ls /dev
++ grep -c bpf
+2
++ :
++ :
++ :
++ set +x
+VERDICT static D1 PASS (want +, bridge 2, victim 2, sent 4)
+VERDICT static D2 PASS (want +, bridge 2, victim 2, sent 4)
+VERDICT static V2 PASS (want 0, bridge 0, victim 0, sent 2)
+SUMMARY vlan2 static: 3 passed, 0 failed
+-- V1 and V3 with vlanfilter, counted at the victim port (frames arrive there untagged, so the filter is icmp from the attacker):
+VERDICT vlanfilter V(5) PASS (sent 2, delivered to the victim 0)
+VERDICT vlanfilter V(5,7) PASS (sent 3, delivered to the victim 0)
+######## Item 9 control: V(5) with bridge1 -vlanfilter, then vlanfilter again
+bridge1 -vlanfilter: V(5) delivered to the victim port: 2
+bridge1 vlanfilter: V(5) delivered to the victim port: 0
+	bridge flags=1<VLANFILTER> defuntagged=1
+
+######## file: 20261122T003343Z-hearst-m7c-val-15-upgrade.log
+######## Item 5c: upgrade from b61e578 with a running jail, 2026-11-22T01:07:30Z
+-- deploy b61e578 (test jails keep running)
+deploy-test: skep_agent pid 20768 runs /usr/local/sbin/skep-agent: skep-agent 0.1.0 (commit b61e578, built 2026-11-22T01:07:06Z, go1.27.4 freebsd/amd64)
+deploy-test: skep_api pid 20829 runs /usr/local/sbin/skep-api: skep-api 0.1.0 (commit b61e578, built 2026-11-22T01:07:06Z, go1.27.4 freebsd/amd64)
+deploy-test: hearst runs b61e578
+create m7c-u under b61e578 202 succeeded
+start m7c-u under b61e578 202 succeeded None
+m7c-u b64aceae-d854-42bf-8355-d57a93a5aff3 epair5a
++ /usr/local/sbin/skep-agent -version
+skep-agent 0.1.0 (commit b61e578, built 2026-11-22T01:07:06Z, go1.27.4 freebsd/amd64)
++ sudo ngctl show epair5a:
++ head -2
+  Name: epair5a         Type: ether           ID: 0000096c   Num hooks: 0
+	member: epair5a flags=143<LEARNING,DISCOVER,AUTOEDGE,AUTOPTP>
+	        port 22 priority 128 path cost 2000 vlan protocol 802.1q untagged 1
++ ifconfig bridge1
++ grep -A1 'member: epair5a '
++ sudo sqlite3 -readonly -cmd '.timeout 5000' /var/db/skep/agent/agent.db 'SELECT max(id) FROM audit_log'
++ mark=1405
++ echo 1405
+-- deploy the new build (f73f4fd) with m7c-u running unfiltered
+deploy-test: skep_api pid 21773 runs /usr/local/sbin/skep-api: skep-api 0.1.0 (commit f73f4fd, built 2026-11-22T00:31:42Z, go1.27.4 freebsd/amd64)
+deploy-test: hearst runs f73f4fd
++ cat /tmp/m7cv/mark-upgrade
++ mark=1405
++ sudo sqlite3 -readonly -cmd '.timeout 5000' /var/db/skep/agent/agent.db $'SELECT occurred_at, action, outcome, resource_id, json_extract(details, \'$.problem\') FROM audit_log WHERE id > 1405 AND action LIKE \'port_filter.%\''
+2026-11-22T01:07:47.190Z|port_filter.missing|failure|b64aceae-d854-42bf-8355-d57a93a5aff3|no filter: the lower and upper hooks are not connected
+2026-11-22T01:07:47.200Z|port_filter.restored|success|b64aceae-d854-42bf-8355-d57a93a5aff3|no filter: the lower and upper hooks are not connected
++ sudo grep skep-agent /var/log/daemon.log
++ grep -E 'internal API listening|anti-spoofing filter|reinstalled'
++ tail -3
++ sed -E 's/.*"time":"([^"]*)","level":"([A-Z]*)","msg":"([^"]*)".*"resource_id":"([^"]*)".*/\1 \2 \3 \4/; s/.*"time":"([^"]*)","level":"([A-Z]*)","msg":"([^"]*)".*/\1 \2 \3/'
+2026-11-21T20:07:47.190530876-05:00 ERROR portcheck: a guest port's anti-spoofing filter is missing or wrong b64aceae-d854-42bf-8355-d57a93a5aff3
+2026-11-21T20:07:47.200275014-05:00 WARN portcheck: reinstalled a guest port's anti-spoofing filter b64aceae-d854-42bf-8355-d57a93a5aff3
+2026-11-21T20:07:47.227378877-05:00 INFO internal API listening
+  Name: epair5a         Type: ether           ID: 0000096c   Num hooks: 2
+  Local hook      Peer name       Peer type    Peer ID         Peer hook      
+  ----------      ---------       ---------    -------         ---------      
+  upper           skf_epair5a     bpf          0000097e        bridge         
+  lower           skf_epair5a     bpf          0000097e        jail           
++ sudo ngctl show epair5a:
++ head -6
++ sudo ngctl show epair5a:
++ awk '$1=="lower"{print $4}'
++ BPF=0000097e
++ sed -n 's/^Args:\t//p'
++ sudo ngctl msg '[0000097e]:' getprogram '"jail"'
++ /tmp/m7cv/bin/pfscript -mac 02:5e:00:0a:00:12 -ip 192.0.2.12 -print program
+-- A2 on m7c-u after the upgrade (forged MAC from the jail stack, no bpf needed): must be 0 on bridge1
++ echo '-- A2 on m7c-u after the upgrade (forged MAC from the jail stack, no bpf needed): must be 0 on bridge1'
++ sudo timeout 8 tcpdump -n -e -l -i epair5a ''
++ sudo timeout 8 tcpdump -n -e -l -i epair1a 'ether src 02:5e:00:00:00:01'
++ sleep 1
++ sudo jexec skep-b64aceae-d854-42bf-8355-d57a93a5aff3 ifconfig skep0 ether 02:5e:00:00:00:01
++ sudo jexec skep-b64aceae-d854-42bf-8355-d57a93a5aff3 ping -c 2 -t 3 192.0.2.20
++ tail -1
+2 packets transmitted, 0 packets received, 100.0% packet loss
++ sudo jexec skep-b64aceae-d854-42bf-8355-d57a93a5aff3 ifconfig skep0 ether 02:5e:00:0a:00:12
++ sleep 4
++ grep -c . /tmp/m7cv/u-pre.txt
+sent: 4; forged delivered to the victim: 0
++ grep -c . /tmp/m7cv/u-victim.txt
++ echo 'sent: 4; forged delivered to the victim: 0'
+m7c-u program after the upgrade: 36 instructions, identical to the generated one: True
+
+######## file: 20261122T003343Z-hearst-m7c-val-20-cleanup.log
+######## Cleanup: test jails and the test VM, 2026-11-22T01:08:26Z
+stop 5cadd083-c85c-4606-a620-17c2e37d91b9 202 succeeded
+delete 5cadd083-c85c-4606-a620-17c2e37d91b9 202 succeeded
+stop 6a64a439-2d13-4640-b515-c3ba13264a61 202 succeeded
+delete 6a64a439-2d13-4640-b515-c3ba13264a61 202 succeeded
+stop b64aceae-d854-42bf-8355-d57a93a5aff3 202 succeeded
+delete b64aceae-d854-42bf-8355-d57a93a5aff3 202 succeeded
+stop f2229564-3e6c-4464-9336-6a27c4c09e48 202 succeeded
+delete f2229564-3e6c-4464-9336-6a27c4c09e48 202 succeeded
+stop f33c5fcd-7b48-4a22-94eb-38d3e2878205 202 succeeded
+delete f33c5fcd-7b48-4a22-94eb-38d3e2878205 202 succeeded
+stop fc34f44b-44b1-436d-a736-a5a854a8fca4 202 succeeded
+delete fc34f44b-44b1-436d-a736-a5a854a8fca4 202 succeeded
+force_stop m7c-vm 202 succeeded
+delete m7c-vm 202 succeeded
+containers left: []
+VMs left: ['fbsd1', 'snaptest']
+######## Restore: bridges, agent.json, devfs ruleset, build, 2026-11-22T01:08:54Z
+   JID  IP Address      Hostname                      Path
++ jls
++ ifconfig -g epair
++ ifconfig -g tap
++ sudo ngctl list
++ grep -c bpf
+bpf nodes left: 0
++ ngctl_nodes=0
++ echo 'bpf nodes left: 0'
++ sudo ifconfig bridge0 -vlanfilter
++ sudo ifconfig bridge0 -ifuntagged vtnet1
++ ifconfig bridge0
+bridge0 identical to before
++ diff /tmp/m7cv/bridge0.before /tmp/m7cv/bridge0.after
++ echo 'bridge0 identical to before'
++ sudo ifconfig bridge1 destroy
+vtnet0 vtnet1 lo0 bridge0
++ ifconfig -l
++ A=/usr/local/etc/skep/agent.json
++ sudo cp -p /usr/local/etc/skep/agent.json.pre-m7c-val /usr/local/etc/skep/agent.json
++ sudo sha256 -q /usr/local/etc/skep/agent.json
+490bc08738a2dd835952e19c4f59e869857fd15a1a6ce8e8c0b9df1d1f3cb134
++ sudo rm /usr/local/etc/skep/agent.json.pre-m7c-val
++ sudo devfs rule -s 6001 show
+100 include 1
+200 include 2
+300 include 3
+400 include 4
+500 path pf unhide
+600 path bpf* unhide
++ sudo devfs rule -s 6001 delset
++ sudo devfs rule -s 6001 show
++ wc -l
+       0
+-- redeploy b61e578 (the build before this run), no jails running
+deploy-test: skep_agent pid 23188 runs /usr/local/sbin/skep-agent: skep-agent 0.1.0 (commit b61e578, built 2026-11-22T01:07:06Z, go1.27.4 freebsd/amd64)
+deploy-test: skep_api pid 23247 runs /usr/local/sbin/skep-api: skep-api 0.1.0 (commit b61e578, built 2026-11-22T01:07:06Z, go1.27.4 freebsd/amd64)
+deploy-test: hearst runs b61e578
++ sudo sha256 /usr/local/etc/skep/agent.json /etc/rc.conf /boot/loader.conf
+SHA256 (/usr/local/etc/skep/agent.json) = 490bc08738a2dd835952e19c4f59e869857fd15a1a6ce8e8c0b9df1d1f3cb134
+SHA256 (/etc/rc.conf) = a50861c4e464a7cf9043d6b606ac0a559b1dfccc3df9f99d94df670364962bca
+SHA256 (/boot/loader.conf) = e8d6b50da6135ee4f0f020a4d3af9345c03f4d0d3664a284869cdd0cbbc212b2
+14    4 0xffffffff83045000     abb8 netgraph.ko
+15    1 0xffffffff83050000     3918 ng_socket.ko
+16    1 0xffffffff83054000     31e0 ng_ether.ko
+17    1 0xffffffff83058000     2208 ng_bpf.ko
++ kldstat
++ grep -E 'netgraph|ng_'
++ jls
+   JID  IP Address      Hostname                      Path
+vtnet0 vtnet1 lo0 bridge0
++ ifconfig -l
++ sudo service skep_agent status
+skep_agent is running as pid 23188 (supervisor pid 23186).
++ sudo service skep_api status
+skep_api is running as pid 23247 (supervisor pid 23246).
++ rm -rf /tmp/m7cv
+ls: /tmp/m7cv: No such file or directory
++ ls /tmp/m7cv
++ head -1
+health: ok {'access_audit_archive': 'ok', 'agent': 'ok', 'audit_archive': 'ok', 'database': 'ok', 'orphaned_interfaces': 'ok', 'storage_capacity': 'ok', 'storage_locked': 'ok'}

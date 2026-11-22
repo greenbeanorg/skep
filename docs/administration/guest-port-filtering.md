@@ -6,10 +6,10 @@ the MAC address Skep recorded for that NIC, and, on a static jail NIC,
 only from its configured IPv4 address. This closes SR-02 (ADR 0010
 amendment y). The design is [ADR 0011](../decisions/0011-guest-port-anti-spoofing.md).
 
-Status: built in Milestone 7c. The behaviour on FreeBSD is validated on
-`hearst` as recorded in
-`tests/integration/jails/results/m7c-validation.md`. Anything not listed
-there is pending FreeBSD validation.
+Status: built in Milestone 7c and validated on FreeBSD 15.1 (`hearst`,
+2026-11-22) as recorded in
+`tests/integration/jails/results/m7c-validation.md`. Pending: the reboot
+check with `kld_list`.
 
 ## What is enforced
 
