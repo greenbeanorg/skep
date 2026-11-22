@@ -9,6 +9,38 @@ hearst was powered off and not contacted. Andy away; run unattended. Logs are in
 (An earlier run the same day could not validate anything: the VMs were not at
 `fresh-151` and hearst was unreachable. This file replaces its record.)
 
+**Result.** The raw `zfs` probe passed every check on both VMs: the miss rate is
+90 % and 86 %, none→dev restored every missing node (plain, clone, encrypted), and
+nothing reached GEOM. The agent's hostops code, driven on real ZFS by a harness, ended
+every one of 50 creates, 20 clones, and 20 rollbacks with a node, and refused both
+cases it must refuse. **Through the API nothing ran:** `vm.create` needs the
+`edk2-bhyve` firmware, which this run could not install, so the API loops, the real
+VM start, and the `vm.start` refusal stay **pending FreeBSD validation**. One code fix
+(Part 1b c).
+
+## Decisions taken unattended
+
+1. **zfs.ko loaded by `zpool create tank da1`** on smith, as in the clean-install run;
+   no explicit kldload.
+2. **`skep-setup apply` with `-no-racct` and no bridge.** The approval was to install
+   with skep-setup; apply also writes `vmm_load` and `nmdm_load` to
+   `/boot/loader.conf` and `kld_list+=` to `rc.conf`, which take effect only at a boot
+   (none happened). `-no-racct` and no `-create-bridge` kept those changes to the
+   minimum apply makes. Nothing was kldloaded and no sysctl was set.
+3. **No `edk2-bhyve`, no `kldload vmm`.** Package installs other than Skep's were not
+   in the approval, and kld changes were excluded, so the API part of Part 3 stopped
+   at the first `vm.create` (`bhyve_unavailable`).
+4. **A hostops harness instead.** To still measure the repair code on FreeBSD, a
+   cross-compiled test program ran the agent's hostops under `<pool>/zvolprobe` (the
+   approved scratch name), destroyed at the end. It is not a substitute for the API
+   run and is not reported as one.
+5. **Probe (c) run three times.** The first run's reader status (124 under
+   `timeout`) did not fit; the second had a wrong `ps` format; the third (dd started
+   directly, SIGINFO, `procstat`) is the one reported.
+6. **Rollback probe on zvols that had a node.** (b) asked whether none→dev restores the
+   node after a rollback; no rollback lost one (0/20 on each host), so the toggle was
+   also tried on a rolled-back zvol that had its node, and it came back.
+
 ## Part 1: clean?
 
 | Check | smith | langrishe |
@@ -176,3 +208,23 @@ reason was not investigated.
 
 1. `toggleVolMode`: a failed `volmode=none` with `volmode=dev` set back is
    `disk_device_missing`/`repair_failed` with the error in details (Part 1b c, asked for).
+
+## Not validated
+
+- Through the API (`vm.create`, `vm.clone`, `vm.snapshot.rollback` loops), a real VM
+  started from a disk whose node was missing, and `vm.start` refused with
+  `disk_device_missing` and the command: need `edk2-bhyve` and vmm (backlog, before 0.1).
+- bhyve `Adapter.Start` calling `EnsureDevice` on FreeBSD (unit tests only).
+- The miss rate on a file-backed pool (hearst's `skeptest`; hearst was off).
+- What sends SIGTERM to a reader when `volmode=none` is set under it.
+
+## End state
+
+- **smith:** `tank` on da1, empty but for the agent's `tank/skep/vm`; skep 0.1.0 (from
+  64de929) installed and running; apply journal `/var/db/skep/setup/20261122T234046Z`;
+  `/boot/loader.conf` + `vmm_load`, `nmdm_load`; `rc.conf` + `kld_list+=…`,
+  `zfs_enable`, `skep_agent_enable`, `skep_api_enable`. No zvolprobe, no key file;
+  `/var/tmp/probe.sh` and the GPT image removed.
+- **langrishe:** the same on `zroot` (journal `20261122T234048Z`), without the
+  `zfs_enable` line (it was already there).
+- No VM, no bridge, no probe dataset on either; `kern.geom.conftxt` has no `zvol` line.

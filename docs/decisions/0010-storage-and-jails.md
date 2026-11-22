@@ -2351,16 +2351,21 @@ host-safe specs pinned. Details in section 29 of
   until Andy has reviewed the validation results and marked it Accepted.
 
 **The behaviour.** On FreeBSD 15.1-RELEASE-p7 (zfs-2.4.2), a zvol created
-with `-o volmode=dev` gets its `/dev/zvol/<dataset>` node only sometimes:
-2 in 5 on smith and on langrishe, created one after another, and 1 in 6
-one at a time (lab-VM validation of PR #52, finding 5). A node that is
-missing never appears later. bhyve opens disks by that node, so the VM
-fails to start: "Could not open backing file … No such file or
-directory". `zfs set volmode=none` and then `zfs set volmode=dev`
-brought the node back 5 times in 5, and never exposed the zvol to GEOM.
-Whether the same happens after `zfs clone` and `zfs rollback`, and for a
-zvol in an encrypted dataset, has not been measured yet. The code treats
-those cases the same way, and the probe must confirm it.
+with `-o volmode=dev` usually gets no `/dev/zvol/<dataset>` node: 45 of
+50 on smith and 43 of 50 on langrishe, fresh installs, 2026-11-22. A node
+that is missing never appears later (0 within 30 s). `zfs clone -o
+volmode=dev` misses too (17/20 and 20/20), and so does a zvol in an
+encrypted dataset with its key loaded (19/20, 14/20); `zfs rollback` of a
+zvol that had a node lost it 0 times in 20 on each host, and `zpool
+import` created all 50 of 50 nodes three times. bhyve opens disks by that
+node, so the VM fails to start: "Could not open backing file … No such
+file or directory". `zfs set volmode=none` and then `zfs set volmode=dev`
+brought every missing node back (179 of 179, plain, cloned, and
+encrypted), at once, and never exposed the zvol to GEOM (no `p1` and
+nothing in `kern.geom.conftxt` for a zvol holding a GPT). With a reader
+holding the node open, the toggle does not fail: the node disappears and
+the reader is terminated, which is why rule 3 requires the VM stopped.
+Results: [zvol-device-node-20261122.md](../../tests/integration/setup/results/zvol-device-node-20261122.md).
 
 **The rules.** `ZFS.EnsureVolumeDevice` in hostops (root agent):
 
@@ -2425,15 +2430,17 @@ volmode=dev` command. Skep does not repair it automatically, because it
 cannot tell its own interrupted repair from an administrator who set
 `none` on purpose. The window is two `zfs set` calls long.
 
-**Validation still owed** (the run of 2026-11-22 could not do it: smith
-and langrishe were not at `fresh-151`, and hearst was unreachable):
-raw `zfs` probes on two fresh VMs (miss rate over 50 creates; none→dev
-for a plain zvol, a clone, a rolled-back zvol, and a zvol in an encrypted
-dataset; the toggle while a reader holds the node open; no `p1` and
-nothing in `kern.geom.conftxt` for a zvol holding a GPT); then, through
-the agent, 50 creates, 20 clones, and 20 rollbacks, each ending with a
-node; a real VM started from a disk whose node was missing; and the two
-refusals (VM running, `volmode=none` set by hand). An upstream report
+**Validation.** Done on smith and langrishe (2026-11-22, night): the raw
+`zfs` probe above, and the agent's hostops code on real ZFS (a harness,
+`tests/integration/storage/zvoldev`): 50 disk creates, 20 clones, and 20
+rollbacks of a GPT disk, each ending with a node (repairs: 47/45, 4/7,
+0/0, all in one round), no `p1` and nothing in GEOM after the clones and
+rollbacks, and the refusals `vm_not_stopped` and `volmode_none` (with the
+command) leaving the zvol unchanged. **Still owed**, because `vm.create`
+needs the `edk2-bhyve` firmware and a start needs vmm, neither approved
+on the lab VMs for that run: the same loops through the API, a real VM
+started from a disk whose node was missing, and `vm.start` refused with
+`disk_device_missing` for a disk at `volmode=none`. An upstream report
 with a Skep-free reproducer is drafted in
 [docs/upstream/openzfs-zvol-volmode-dev-node.md](../upstream/openzfs-zvol-volmode-dev-node.md);
 Andy files it.
