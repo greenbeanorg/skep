@@ -236,6 +236,15 @@ Creating a VM creates its datasets and zvols (`volmode=dev`,
 larger than the pool's available space is refused; a thin disk may be,
 with a warning in the task result.
 
+A NIC without `mac_address` gets a generated one (`02:` and five random
+bytes). A given address must be unicast and not all zeroes. One that
+another Skep VM already holds is refused with `invalid_request` (400);
+one that a Skep jail holds is refused with `vm_mac_in_use` (409), whose
+details name the jail (`held_by_kind` `container`, `held_by_id`,
+`held_by_name`) and the NIC (`slot`, `mac_address`). Nothing is created
+and the refusal is audited. A NIC's MAC cannot be changed after creation;
+a clone gets new, generated addresses.
+
 Then **Start**, and **Console**. With install media attached and an empty
 disk the firmware boots the ISO. Install as usual through the console.
 When the installer reboots, bhyve exits and Skep's runner starts it again
