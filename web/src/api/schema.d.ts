@@ -929,7 +929,9 @@ export interface paths {
          *     addressing (DHCP by default, or a static IPv4 address with an
          *     optional gateway, one gateway per jail) is written into the jail's
          *     `/etc/rc.conf`, and `nameservers` (static addressing only) into
-         *     its `/etc/resolv.conf`, before the first start. After that the
+         *     its `/etc/resolv.conf`, before the first start. Nameservers for a
+         *     jail without a NIC are refused with `nameservers_require_nic`
+         *     (422), at create, update, and clone. After that the
          *     addressing describes what Skep wrote; changing it is the jail's own
          *     business. No IPv6 addressing yet.
          */
@@ -1732,7 +1734,7 @@ export interface components {
             ssh_authorized_key?: string;
             /** @description Slots 0, 1, ... in order. Each needs if_epair at start. */
             nics?: components["schemas"]["ContainerNICSpec"][];
-            /** @description IPv4 or IPv6 addresses for resolv.conf. Only when no NIC uses DHCP (dhclient writes resolv.conf). */
+            /** @description IPv4 or IPv6 addresses for resolv.conf. Only with at least one NIC (`nameservers_require_nic`, 422) and when no NIC uses DHCP (dhclient writes resolv.conf; `invalid_request`). */
             nameservers?: string[];
         };
         ContainerUpdate: {
@@ -1744,7 +1746,7 @@ export interface components {
             ssh_authorized_key?: string;
             /** @description Replaces every NIC; empty removes them all. After the first start only the bridge and MAC address of existing slots may change (`container_started`). */
             nics?: components["schemas"]["ContainerNICSpec"][];
-            /** @description Only before the first start. */
+            /** @description Only before the first start. Left out, the stored list is kept, so an update that removes the last NIC of a jail with nameservers must also send an empty list (`nameservers_require_nic`, 422). */
             nameservers?: string[];
         };
         ContainerAction: {
@@ -1777,7 +1779,7 @@ export interface components {
             snapshot_id?: string;
             /** @description One entry per NIC of the source, in slot order. Empty fields keep the source's bridge and addressing; the MAC address is new unless given. Every NIC with a static address on the source needs new addressing here. */
             nics?: components["schemas"]["ContainerNICSpec"][];
-            /** @description Replace the source's (static addressing only). Dropped when no NIC keeps a static address. */
+            /** @description Replace the source's (static addressing only). Dropped when no NIC keeps a static address. Given for a clone without a NIC, refused with `nameservers_require_nic` (422). */
             nameservers?: string[];
         };
         VMClone: {
@@ -2467,8 +2469,8 @@ export interface components {
          *     `storage_feature_unsupported`, and for jail templates
          *     `release_unsupported` (no allowlist for the host's release), and
          *     for jails `container_ssh_unavailable`,
-         *     `mlock_requires_memory_limit`, `clone_addressing_required`,
-         *     `container_mac_invalid`, `container_locked_memory_above_max`,
+         *     `mlock_requires_memory_limit`, `nameservers_require_nic`,
+         *     `clone_addressing_required`, `container_mac_invalid`, `container_locked_memory_above_max`,
          *     `container_disk_quota_below_usage`.
          *     A build task can also fail with `template_script_unknown`,
          *     `template_trigger_left`, `template_host_changed`,

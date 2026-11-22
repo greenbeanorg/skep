@@ -12,6 +12,9 @@ never `-k` alone) and read the host with read-only commands (`zfs list`,
 `ifconfig`, `ls /dev/vmm`, the run state files). The guest installation is
 done through the serial console in a browser.
 
+Design for the next VM check (hostile frames from inside a real guest, to
+replace the emulated half of M7c item 7): [hostile-guest-design.md](hostile-guest-design.md).
+
 ## Status
 
 | Check | Status | Record |

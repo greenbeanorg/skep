@@ -158,6 +158,7 @@ func TestNetworkRefusals(t *testing.T) {
 		{"bad bridge name", models.ContainerCreate{NICs: []models.ContainerNICSpec{{Bridge: "bridge0;x"}}}, models.CodeInvalidRequest},
 		{"too many", models.ContainerCreate{NICs: many}, models.CodeInvalidRequest},
 		{"nameservers with dhcp", models.ContainerCreate{NICs: []models.ContainerNICSpec{{Bridge: "bridge0"}}, Nameservers: []string{"9.9.9.9"}}, models.CodeInvalidRequest},
+		{"nameservers without a NIC", models.ContainerCreate{Nameservers: []string{"192.0.2.53"}}, models.CodeNameserversRequireNIC},
 		{"two gateways", models.ContainerCreate{NICs: []models.ContainerNICSpec{
 			{Bridge: "bridge0", IPv4: static("192.0.2.10/24", "192.0.2.1")}, {Bridge: "bridge0", IPv4: static("198.51.100.5/24", "198.51.100.1")}}}, models.CodeInvalidRequest},
 		{"gateway outside", models.ContainerCreate{NICs: []models.ContainerNICSpec{{Bridge: "bridge0", IPv4: static("192.0.2.10/24", "192.0.3.1")}}}, models.CodeInvalidRequest},
@@ -413,4 +414,57 @@ func TestMACHeldRefusedAtCreateUpdateClone(t *testing.T) {
 	}
 	// The jail's own address is not held by anyone else.
 	f.succeed(f.svc.UpdateContainer(ctx, c.ID, models.ContainerUpdate{NICs: &jailMAC}, f.sub))
+}
+
+// TestNameserversRequireNIC: nameservers for a jail that would have no NIC
+// are refused with 422 nameservers_require_nic at create, update, and
+// clone, as the web interface offers the field only with a NIC (step 10
+// run 3, item 3). An empty list is accepted, and nothing is created or
+// changed by a refusal.
+func TestNameserversRequireNIC(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	ns := []string{"192.0.2.53"}
+	refused := func(what string, err error) {
+		t.Helper()
+		wantCode(t, err, models.CodeNameserversRequireNIC)
+		var me *models.Error
+		errors.As(err, &me)
+		if me.Details["nameservers_given"] != 1 {
+			t.Errorf("%s: details = %v", what, me.Details)
+		}
+		rec := httptest.NewRecorder()
+		httpkit.Fail(slog.New(slog.NewTextHandler(io.Discard, nil)), rec, httptest.NewRequest("POST", "/api/v1/containers", nil), err)
+		if rec.Code != 422 || !strings.Contains(rec.Body.String(), `"code":"nameservers_require_nic"`) {
+			t.Errorf("%s: API reply %d %s", what, rec.Code, rec.Body)
+		}
+	}
+
+	before := f.count(`SELECT COUNT(*) FROM containers`)
+	_, err := f.svc.CreateContainer(ctx, models.ContainerCreate{Name: "nonic", TemplateID: f.minimal, Nameservers: ns}, f.sub)
+	refused("create", err)
+	if n := f.count(`SELECT COUNT(*) FROM containers`); n != before {
+		t.Fatalf("%d containers after a refused create, want %d", n, before)
+	}
+	empty := f.create(models.ContainerCreate{Name: "nonic", TemplateID: f.minimal, Nameservers: []string{}})
+
+	// Update: nameservers for a NIC-less jail, and removing the last NIC
+	// of a jail that keeps its nameservers.
+	_, err = f.svc.UpdateContainer(ctx, empty.ID, models.ContainerUpdate{Nameservers: &ns}, f.sub)
+	refused("update nameservers", err)
+	withNIC := f.create(models.ContainerCreate{Name: "static1", TemplateID: f.minimal,
+		NICs: []models.ContainerNICSpec{{Bridge: "bridge0", IPv4: static("192.0.2.10/24", "")}}, Nameservers: ns})
+	none := []models.ContainerNICSpec{}
+	_, err = f.svc.UpdateContainer(ctx, withNIC.ID, models.ContainerUpdate{NICs: &none}, f.sub)
+	refused("update removing the NIC", err)
+	got, err := f.svc.Container(ctx, withNIC.ID)
+	if err != nil || len(got.NICs) != 1 || !slices.Equal(got.Nameservers, ns) {
+		t.Fatalf("a refused update changed the jail: %+v, %v", got, err)
+	}
+	noNS := []string{}
+	f.succeed(f.svc.UpdateContainer(ctx, withNIC.ID, models.ContainerUpdate{NICs: &none, Nameservers: &noNS}, f.sub))
+
+	// Clone: of a NIC-less jail, with nameservers asked for.
+	_, err = f.svc.CloneContainer(ctx, empty.ID, models.ContainerClone{Name: "nonic2", Nameservers: ns}, f.sub)
+	refused("clone", err)
 }
