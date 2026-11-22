@@ -26,7 +26,7 @@ export CGO_ENABLED := 0
 WEBUI_DIST := internal/webui/dist
 WEBUI_TAGS := -tags skep_webui
 
-.PHONY: all build build-go build-freebsd build-freebsd-go build-freebsd-test test vet lint fmt install-hooks run-dev clean help web-install web-check web-build web-e2e
+.PHONY: all build build-go build-freebsd build-freebsd-go build-freebsd-test test vet lint fmt install-hooks run-dev clean help web-install web-check web-build web-e2e notices notices-check
 
 all: vet test build build-freebsd
 
@@ -106,6 +106,12 @@ run-dev: build-go ## Run skep-agent and skep-api in development mode (API on 127
 	./scripts/run-dev.sh
 
 # The web interface needs Node.js and npm.
+notices: ## Regenerate THIRD_PARTY_NOTICES from the Go modules and npm packages that ship (needs make web-install)
+	$(GO) run ./scripts/notices
+
+notices-check: ## Fail when THIRD_PARTY_NOTICES is stale (CI runs this)
+	$(GO) run ./scripts/notices -check
+
 web-install: ## Install the web interface's dependencies (npm ci)
 	cd web && npm ci
 
