@@ -106,7 +106,7 @@ func ComputeRemove(ctx context.Context, o RemoveOptions, f Facts, r Runner, ag A
 			"delete them first, or use --keep-guests to leave them unmanaged")
 	default:
 		b.warn("guests", fmt.Sprintf("%d VM(s) and %d jail(s) are kept (%d running)", vms, jails, len(rj)+len(rv)),
-			"nothing is stopped; their datasets stay and nothing will manage them. pkg delete refuses while any of them runs")
+			"nothing is stopped; their datasets stay and nothing will manage them. pkg delete only warns while any of them runs, and deletes the files anyway")
 	}
 
 	// Stop the services, then disable them.
