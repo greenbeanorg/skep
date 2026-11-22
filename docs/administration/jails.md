@@ -523,11 +523,14 @@ POST /api/v1/containers/<id>/clone
   **A jail with a static address can therefore be cloned only before its
   first start.** A DHCP jail can always be cloned, and its clone asks for
   its own lease with its new MAC address.
-- **A start is refused when a running Skep jail on the same bridge holds
-  one of the jail's static addresses** (`container_address_in_use`). The
-  addresses compared are the ones Skep wrote; an address changed inside a
-  jail is not seen, and two starts submitted at the same moment are not
-  checked against each other.
+- **A start is refused when a running or starting Skep jail on the same
+  bridge holds one of the jail's static addresses**
+  (`container_address_in_use`). The addresses compared are the ones Skep
+  wrote; an address changed inside a jail, a DHCP lease, and another
+  bridge on the same L2 segment are not seen. Two starts submitted at the
+  same moment are checked against each other: the check is repeated in
+  the database transaction that records the start, so the second one
+  fails with the same code (SR-07).
 - **A clone is the same guest.** Its `/etc/ssh` host keys and
   `/etc/hostid` are the source's. Regenerate the host keys inside the
   clone before it shares a network with the source:
