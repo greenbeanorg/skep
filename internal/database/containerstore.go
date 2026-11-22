@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/netip"
 	"strings"
 	"time"
 
@@ -386,10 +387,89 @@ func (s *ContainerStore) SetProvisioned(ctx context.Context, id string, at time.
 // run code for the first time or again: started_once becomes 1 for good
 // and the desired state running (decision 13: from here on Skep never
 // writes into the tree).
+//
+// It refuses, with container_address_in_use, when another jail recorded
+// starting or running holds one of this jail's static IPv4 addresses on
+// the same bridge (SR-07). The check and the write share one transaction,
+// and writing transactions are serialised (_txlock immediate), so two
+// starts of jails with the same address cannot both pass: the start
+// service's earlier check against the host's running jails can race.
 func (s *ContainerStore) MarkStarting(ctx context.Context, id string, at time.Time) error {
-	return s.exec(ctx, "mark container starting", id,
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("database: mark container starting: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err := addressFreeTx(ctx, tx, id); err != nil {
+		return err
+	}
+	res, err := tx.ExecContext(ctx,
 		`UPDATE containers SET started_once = 1, desired_state = 'running', observed_state = 'starting', observed_at = ?, updated_at = ? WHERE id = ?`,
 		formatTime(at), formatTime(at), id)
+	if err != nil {
+		return fmt.Errorf("database: mark container starting: %w", err)
+	}
+	if err := oneRow(res, "container", id); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("database: mark container starting: %w", err)
+	}
+	return nil
+}
+
+// addressFreeTx refuses when a jail other than id, recorded starting or
+// running, holds one of id's static IPv4 addresses on the same bridge.
+// Addresses are compared by IP, whatever their prefix lengths.
+func addressFreeTx(ctx context.Context, tx *sql.Tx, id string) error {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT n.container_id, c.name, c.observed_state, n.slot, n.bridge, n.ipv4_address
+		FROM container_networks n JOIN containers c ON c.id = n.container_id
+		WHERE n.ipv4_mode = 'static' AND n.ipv4_address IS NOT NULL
+		  AND (n.container_id = ? OR c.observed_state IN ('starting', 'running'))
+		ORDER BY c.name, n.slot`, id)
+	if err != nil {
+		return fmt.Errorf("database: check static addresses: %w", err)
+	}
+	type nic struct {
+		StaticNIC
+		state string
+		ip    netip.Addr
+	}
+	var mine, others []nic
+	for rows.Next() {
+		var n nic
+		if err := rows.Scan(&n.ContainerID, &n.ContainerName, &n.state, &n.Slot, &n.Bridge, &n.Address); err != nil {
+			rows.Close()
+			return fmt.Errorf("database: check static addresses: %w", err)
+		}
+		p, err := netip.ParsePrefix(n.Address)
+		if err != nil {
+			continue // validated on write; an unparsable address holds nothing
+		}
+		n.ip = p.Addr()
+		if n.ContainerID == id {
+			mine = append(mine, n)
+		} else {
+			others = append(others, n)
+		}
+	}
+	if err := closeRows(rows); err != nil {
+		return fmt.Errorf("database: check static addresses: %w", err)
+	}
+	for _, m := range mine {
+		for _, o := range others {
+			if o.Bridge != m.Bridge || o.ip != m.ip {
+				continue
+			}
+			return &models.Error{Code: models.CodeContainerAddressInUse,
+				Message: fmt.Sprintf("the %s jail %s holds %s on %s; stop it or give this jail another address",
+					o.state, o.ContainerName, o.Address, o.Bridge),
+				Details: map[string]any{"slot": m.Slot, "address": m.Address, "bridge": m.Bridge,
+					"held_by_container_id": o.ContainerID, "held_by_container_name": o.ContainerName}}
+		}
+	}
+	return nil
 }
 
 // SetDesired records the desired state a user asked for.

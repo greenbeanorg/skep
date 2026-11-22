@@ -345,3 +345,47 @@ func (s *Service) checkAddressFree(ctx context.Context, c models.Container) erro
 	}
 	return nil
 }
+
+// refreshAddressPeers records as stopped the jails that hold one of c's
+// static addresses on the same bridge, are recorded running, and are not
+// running on the host (removed outside Skep): MarkStarting counts every
+// jail recorded starting or running as holding its addresses (SR-07).
+// Jails recorded starting or stopping are left alone, as observe does.
+// Errors are logged: the store's check then errs on the side of refusing.
+func (s *Service) refreshAddressPeers(ctx context.Context, c models.Container) {
+	var mine []models.ContainerNIC
+	for _, n := range c.NICs {
+		if n.IPv4.Mode == models.IPv4Static {
+			mine = append(mine, n)
+		}
+	}
+	if len(mine) == 0 {
+		return
+	}
+	others, err := s.store.StaticNICs(ctx)
+	if err != nil {
+		s.log.Warn("containers: could not list static addresses", "error", err)
+		return
+	}
+	var running map[string]hostops.JailState
+	seen := map[string]bool{}
+	for _, n := range mine {
+		for _, o := range others {
+			if o.ContainerID == c.ID || seen[o.ContainerID] || o.Bridge != n.Bridge || !sameIP(o.Address, n.IPv4.Address) {
+				continue
+			}
+			seen[o.ContainerID] = true
+			peer, err := s.store.Get(ctx, o.ContainerID)
+			if err != nil || peer.State != models.ContainerRunning {
+				continue
+			}
+			if running == nil {
+				if running, err = s.jails.RunningJails(ctx); err != nil {
+					s.log.Warn("containers: could not list the running jails", "error", err)
+					return
+				}
+			}
+			s.observe(ctx, peer, running, false)
+		}
+	}
+}
