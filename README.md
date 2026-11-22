@@ -83,6 +83,23 @@ skep-agent 0.1.0 (commit bba5d75, built 2026-11-11T20:23:35Z, go1.27.4 linux/amd
 
 Override the version with `make build VERSION=0.1.1`.
 
+### Third-party notices
+
+[THIRD_PARTY_NOTICES](THIRD_PARTY_NOTICES) carries the license text of
+every Go module linked into the release binaries (FreeBSD amd64, with the
+web interface embedded), the Go standard library, and every npm package
+whose code is in the built web interface. It is generated; after changing
+a Go or npm dependency, run
+
+```sh
+make web-install   # once, if web/node_modules is missing
+make notices       # rewrite THIRD_PARTY_NOTICES
+```
+
+and commit the result. CI runs `make notices-check`, which fails when the
+file is stale. The generator is `scripts/notices` (standard library and the
+`go` command only).
+
 ## Run in development mode
 
 ```sh
@@ -393,7 +410,7 @@ internal/ctlstate/     skepctl's pins and session tokens on disk
 internal/webui/        serves the web interface from skep-api (embedded with the build tag skep_webui)
 web/                   the web interface: React, TypeScript, Vite, Tailwind CSS
 packaging/             rc.d scripts and sample configuration
-scripts/               development helpers
+scripts/               development helpers; scripts/notices writes THIRD_PARTY_NOTICES
 migrations/sqlite/     versioned SQL migrations, one set per database (agent, api)
 tests/integration/     native tests that run on a real FreeBSD host
 tests/e2e/             agent and API together in one process
