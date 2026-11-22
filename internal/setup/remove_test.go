@@ -2,6 +2,7 @@ package setup
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -251,4 +252,103 @@ func TestRemoveDisableOverridden(t *testing.T) {
 	root := stockHost(t)
 	appendFile(t, filepath.Join(root, "etc/rc.conf.d/skep"), "skep_agent_enable=\"YES\"\n")
 	want(t, computeRemove(t, RemoveOptions{Root: root}, facts(), newFakeRunner()), Manual, `skep_agent_enable="NO"`, "rc.conf.d/skep")
+}
+
+// TestRevertHostKeepsTheOperatorsKldListWords is ADR 0012 amendment
+// 2026-11-22, item 14: a kld_list word the operator had before apply (so
+// setup did not add it) survives remove --revert-host, a rollback of that
+// remove, and a rollback of the apply. Both forms setup counts as present
+// are covered (a bare name and NAME.ko), and a module setup never adds.
+func TestRevertHostKeepsTheOperatorsKldListWords(t *testing.T) {
+	const operators = "if_epair linux ng_ether.ko"
+	setupHost := func(t *testing.T) (*applyEnv, string, *Journal) {
+		t.Helper()
+		root := stockHost(t)
+		appendFile(t, filepath.Join(root, "etc/rc.conf"), `kld_list="`+operators+`"`+"\n")
+		rc0 := read(t, filepath.Join(root, "etc/rc.conf"))
+		e := newApplyEnv(t, root)
+		j, err := e.applier().Apply(context.Background(), compute(t, newBridgeOpts(root), facts()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		// Setup journals only the words it added.
+		var added []string
+		for _, en := range j.Entries {
+			if en.Action.Name == "kld_list" {
+				added = append(added, en.Action.Op+en.Action.Value)
+			}
+		}
+		if strings.Join(added, ",") != "+=netgraph ng_socket ng_bpf" {
+			t.Fatalf("journalled kld_list changes %q", added)
+		}
+		if got := kldList(t, root); got != operators+" netgraph ng_socket ng_bpf" {
+			t.Fatalf("after apply kld_list=%q", got)
+		}
+		e.runner.running["skep_agent"], e.runner.running["skep_api"] = true, true
+		return e, rc0, j
+	}
+
+	t.Run("remove --revert-host, then rollbacks", func(t *testing.T) {
+		e, rc0, apply := setupHost(t)
+		afterApply := read(t, filepath.Join(e.root, "etc/rc.conf"))
+		p := computeRemove(t, RemoveOptions{Root: e.root, RevertHost: true}, facts(), e.runner)
+		if got := strings.Join(actions(p), "\n"); !strings.Contains(got, `sysrc kld_list-="netgraph ng_socket ng_bpf"`) {
+			t.Fatalf("revert actions:\n%s", got)
+		}
+		rm, err := e.remover().Apply(context.Background(), p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := kldList(t, e.root); got != operators {
+			t.Fatalf("after remove --revert-host kld_list=%q, want %q", got, operators)
+		}
+		// Rolling back the remove puts back the file apply left.
+		if _, err := Rollback(e.root, rm.ID, e.clock); err != nil {
+			t.Fatal(err)
+		}
+		if read(t, filepath.Join(e.root, "etc/rc.conf")) != afterApply {
+			t.Fatal("rollback of remove did not restore rc.conf as apply left it")
+		}
+		// Rolling back the apply puts back the operator's original file.
+		if _, err := Rollback(e.root, apply.ID, e.clock); err != nil {
+			t.Fatal(err)
+		}
+		if read(t, filepath.Join(e.root, "etc/rc.conf")) != rc0 || kldList(t, e.root) != operators {
+			t.Fatalf("after rolling back the apply kld_list=%q", kldList(t, e.root))
+		}
+	})
+
+	t.Run("rollback of the apply", func(t *testing.T) {
+		e, rc0, _ := setupHost(t)
+		if _, err := Rollback(e.root, "", e.clock); err != nil {
+			t.Fatal(err)
+		}
+		if read(t, filepath.Join(e.root, "etc/rc.conf")) != rc0 || kldList(t, e.root) != operators {
+			t.Fatalf("after rollback kld_list=%q", kldList(t, e.root))
+		}
+	})
+
+	t.Run("remove --revert-host after a second apply", func(t *testing.T) {
+		// A second apply finds nothing to do and journals nothing, so the
+		// first apply's journal alone decides what is setup's.
+		e, _, _ := setupHost(t)
+		if _, err := e.applier().Apply(context.Background(), compute(t, newBridgeOpts(e.root), facts())); !errors.Is(err, ErrNothingToDo) {
+			t.Fatalf("second apply: %v", err)
+		}
+		if _, err := e.remover().Apply(context.Background(), computeRemove(t, RemoveOptions{Root: e.root, RevertHost: true}, facts(), e.runner)); err != nil {
+			t.Fatal(err)
+		}
+		if got := kldList(t, e.root); got != operators {
+			t.Fatalf("kld_list=%q, want %q", got, operators)
+		}
+	})
+}
+
+func kldList(t *testing.T, root string) string {
+	t.Helper()
+	rc, err := ReadShVars(filepath.Join(root, "etc/rc.conf"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return rc.Vals["kld_list"]
 }
