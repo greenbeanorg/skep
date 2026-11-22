@@ -318,7 +318,7 @@ skep-api db backup
 
 Each writes a consistent copy of its database (SQLite `VACUUM INTO` on a
 read-only connection; the service keeps running) to
-`/var/db/skep/backup/<version>-<commit>-<UTC timestamp>/` (`0700`, the
+`/var/db/skep/backup/<version>+<commit>-<UTC timestamp>/` (`0700`, the
 copy `0600`), with its SHA-256 and a listing of the audit archive (not a
 copy). `-dir DIR` writes into a given directory there, `-keep N` keeps
 the newest N backups made this way (default 3). `skep-setup upgrade`

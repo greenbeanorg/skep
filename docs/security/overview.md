@@ -668,9 +668,17 @@ rules of [ADR 0012](../decisions/0012-installer.md) Decision 2:
   as plain `name=value` lines; anything else makes it edit nothing in that
   file. Changes go through `sysrc` with an argument list (never a shell),
   and each result is read back.
-- It only adds; an existing value is never overwritten. New files are
+- It only adds; an existing value is never overwritten, and a variable
+  changed between the plan and the change is skipped. New files are
   created with their mode and owner before they appear (temporary file,
-  `chown`, then a hard link that fails if anything is there).
+  `chown`, then a hard link that fails if anything is there). An
+  `agent.json` or `api.json` it did not write is parsed and compared,
+  never rewritten.
+- Every program it runs as root is named by absolute path, with a fixed
+  minimal environment (`PATH`, `HOME`; `TERM` only for the interactive
+  `admin create`) and umask `022`. The first administrator is created by
+  `skep-api admin create` running as the `skep` user, not root, once the
+  API has created its database.
 - It never loads modules, reboots, creates or destroys pools or
   datasets, or changes an interface or bridge it did not create.
   `0.0.0.0` as the listen address needs `-listen-all`.
@@ -680,10 +688,16 @@ rules of [ADR 0012](../decisions/0012-installer.md) Decision 2:
   terminal).
 - `remove -purge-data` deletes only `/var/db/skep` (except the
   journals), `agent.json`, `api.json` and the `skep` account, and always
-  asks. Its path checks refuse anything else.
-- The package's scripts only create the account (fixed UID/GID 409) and
-  refuse removal while Skep guests run; they never edit `rc.conf` or
-  start anything.
+  asks. Its path checks refuse anything else. It is refused while a Skep
+  guest runs, and when a guest dataset's ZFS key file is under
+  `/var/db/skep` (Skep itself keeps no ZFS key).
+- The package's scripts set a fixed `PATH`, only create the account
+  (fixed UID/GID 409), and **warn** while Skep guests run when the
+  package is deleted. They do not prevent the deletion: pkg 2.9.2 deletes
+  the files although the pre-deinstall script fails. The guard against
+  removing Skep under running guests is `skep-setup remove`, which
+  refuses ([ADR 0012](../decisions/0012-installer.md), fix-round
+  amendment). They never edit `rc.conf` or start anything.
 
 Database backups (`db backup`) are `0600` in a `0700` directory and
 contain everything the databases do (password hashes, session hashes,

@@ -11,7 +11,9 @@ scripts ran on the lab VMs (FreeBSD 15.1-RELEASE-p7, pkg 2.9.2, smith and
 langrishe, 2026-11-22;
 [record](../../tests/integration/setup/results/lab-vm-validation-20261122.md)).
 Everything in sections 3 and 4 behaved as written **except the
-pre-deinstall refusal, which pkg does not enforce** (section 2).
+pre-deinstall refusal, which pkg does not enforce** (section 2); the
+script now says so and only warns (ADR 0012, fix-round amendment). The
+reworded scripts are pending FreeBSD validation.
 
 ## 1. Stage (development machine)
 
@@ -57,21 +59,26 @@ Both are plain `sh`, embedded in `+MANIFEST` from `packaging/pkg/`.
   install stops) when only one of them exists, or when 409 belongs to
   another name. It warns, and changes nothing, when both exist with other
   numbers (a host set up by hand earlier, such as `hearst` with 1002).
-- **pre-deinstall** refuses while Skep guests run: jails named `skep-*`
+- **pre-deinstall** **warns** while Skep guests run: jails named `skep-*`
   in `jls` and VMs named `skep-*` in `/dev/vmm`. It asks the host, not the
-  agent, so it refuses even when `skep_agent` is stopped (ADR 0012
-  amendment 2026-11-22, build decision 5). It never refuses when
-  `PKG_UPGRADE` is set, because `pkg upgrade` runs the old package's
-  deinstall scripts and an upgrade leaves guests running. `pkg delete -f`
-  overrides it.
+  agent, so it warns even when `skep_agent` is stopped. The warning says
+  that pkg deletes the files anyway and names `skep-setup remove`, the
+  guard for 0.1, which refuses while Skep guests exist; the script still
+  exits 1 for a pkg that honours it. It is silent when `PKG_UPGRADE` is
+  set, because `pkg upgrade` runs the old package's deinstall scripts and
+  an upgrade leaves guests running. `pkg lock` was rejected as a guard: it
+  would also block `pkg upgrade` (ADR 0012, fix-round amendment).
+- Both scripts set `PATH=/sbin:/bin:/usr/sbin:/usr/bin` first: pkg runs
+  them as root with the caller's environment. (The script tests replace
+  that one line to find their fake `pw` and `jls`.)
 
   **Measured on pkg 2.9.2 (2026-11-22):** `pkg upgrade` runs the old
   package's pre-deinstall with `PKG_UPGRADE=true`; `pkg delete` leaves it
   unset; `pkg add` of a newer `.pkg` is a "forced install" and runs no
   pre-deinstall at all. **A failing pre-deinstall does not stop `pkg
   delete`** unless `DEVELOPER_MODE` is on: pkg prints "DEINSTALL script
-  failed", deletes the files and exits 0. The refusal is therefore a
-  warning only; decision pending (see the validation record). A failing
+  failed", deletes the files and exits 0. The script's message is
+  therefore worded as a warning (decided 2026-11-22). A failing
   pre-install does stop `pkg add` (exit 1, nothing installed).
 
 Neither script edits `rc.conf`, enables, starts or stops a service.
@@ -99,8 +106,9 @@ On a VM restored from its clean snapshot:
    and after), no service started.
 2. Run it again with the account already present: no change.
 3. `skep-setup check` and `skep-setup plan`.
-4. With a Skep guest running: `pkg delete skep` is refused and lists the
-   guest; `pkg delete -f skep` is not needed for this check.
+4. With a Skep guest running: `skep-setup remove` refuses; `pkg delete
+   skep` prints the warning listing the guest and that pkg deletes the
+   files anyway (pkg 2.9.2 then deletes them).
 5. With a guest running, `pkg upgrade` (or `pkg add -f` of a newer build)
    succeeds, the guest keeps running, and **record what pkg sets in
    `PKG_UPGRADE`** (`env` in a test pre-deinstall script): the refusal's

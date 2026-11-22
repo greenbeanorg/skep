@@ -42,11 +42,11 @@ refused.
 | `-bridge NAME` | An existing guest bridge to allow-list. Setup changes nothing on it |
 | `-create-bridge NAME -uplink IF` | Create a new guest bridge on a spare interface with no address and no other settings, `vlanfilter` on |
 | `-pool NAME` | A ZFS pool to allow-list; it must be imported and `ONLINE` |
-| `-dir-pool NAME=/PATH` | A directory pool for VM disks; the directory must exist, root-owned, not writable by others |
+| `-dir-pool NAME=/PATH` | A directory pool for VM disks; the path must be a real directory (not a symbolic link), owned by root (UID 0), and not writable by its group or others |
 | `-listen ADDR:PORT` | The API listen address (default: the management address, port 8443). `0.0.0.0` or `::` only with `-listen-all` |
 | `-no-racct` | Do not add `kern.racct.enable="1"` (jail limits other than `disk_quota` are then refused) |
 | `-start` | Start both services at the end of `apply` |
-| `-admin NAME` | Create the first administrator (asks for the password, twice, without echo). Needs `-start`, or `/var/db/skep/api` to exist already (the API has run once); otherwise the plan refuses, because `skep-api admin create` run as root first would create the API's data directory owned by root ([ADR 0012 amendment](../decisions/0012-installer.md#amendment-2026-11-22-build-decisions-confirmed), build decision 8) |
+| `-admin NAME` | Create the first administrator (asks for the password, twice, without echo). Needs `-start`, or `/var/db/skep/api` to exist already (the API has run once); otherwise the plan refuses, because `skep-api admin create` run as root first would create the API's data directory owned by root ([ADR 0012 amendment](../decisions/0012-installer.md#amendment-2026-11-22-build-decisions-confirmed), build decision 8). Setup runs `skep-api admin create` **as the `skep` user** (UID and primary GID from `/etc/passwd`, never root), and only once `skep_api` has written `/var/run/skep/api.pid` and created `api.db` (it waits up to 30 s). If it fails, every other change stays made, the journal is finished with the error, and setup prints the same `apply` command to retry: it then plans only the administrator |
 
 ## What apply changes
 
@@ -68,9 +68,30 @@ Every `rc.conf` and `loader.conf` change goes through `sysrc`, except
 and `-x` alike), so setup appends that one line itself (and `remove
 -revert-host` deletes exactly that line), replacing the file atomically
 with its mode and owner. Every result is read back and checked. A variable already set to another value
-is a **conflict**: reported, never overwritten. `agent.json` and
-`api.json` are created, never rewritten; if one exists and setup did not
-write it, `apply` refuses and prints its proposed version next to it.
+is a **conflict**: reported, never overwritten. Each variable is read
+again just before its `sysrc NAME=` (or, in `remove`, `sysrc -x`); if
+someone set or changed it after the plan, that one change is **skipped**
+(printed, and recorded in the journal) and the rest of the run goes on.
+
+`agent.json` and `api.json` are created, never rewritten. One that exists
+and that setup did not write is the administrator's: setup parses it and
+compares the allow-lists (`storage.pools`, `storage.directories`,
+`network.bridges`, `network.management_interfaces`) or the listen address
+(`listen_address`; absent means skep-api's default `127.0.0.1:8443`) with
+the answers. The same is `ok` and the file is left as it is; different is
+a **conflict**, printed with setup's proposed content; a file that is not
+JSON is **refused**.
+
+Every program setup runs as root is named by its absolute path
+(`/usr/sbin/service`, `/usr/sbin/sysrc`, `/usr/sbin/pw`, `/usr/bin/fstat`,
+`/sbin/zfs`, `/sbin/zpool`, `/sbin/ifconfig`, `/usr/sbin/jls`,
+`/sbin/sysctl`, `/bin/freebsd-version`) and gets a fixed environment
+(`PATH=/sbin:/bin:/usr/sbin:/usr/bin:/usr/local/sbin:/usr/local/bin`,
+`HOME=/`; `TERM` is kept only for the interactive `admin create`).
+`apply`, `rollback`, `upgrade` and `remove` set umask `022` first. With
+`-root` other than `/` (tests), anything that acts on this host's
+services or accounts (`-start`, `-admin`, `remove`'s service stops and
+`pw`, and `upgrade` as a whole) is refused.
 
 ## What it refuses
 
@@ -90,9 +111,10 @@ write it, `apply` refuses and prints its proposed version next to it.
 - only one of the `skep` user and group, a `skep` user with a login shell
   or a home, no `skep` account at all (the package creates it), or UID or
   GID 409 held by another name;
-- an `agent.json` or `api.json` it did not write;
-- a pool that is not imported or not `ONLINE`; a directory pool writable
-  by others;
+- an `agent.json` or `api.json` it did not write and cannot parse;
+- a pool that is not imported or not `ONLINE`; a directory pool that is a
+  symbolic link, not a directory, not owned by root, or writable by its
+  group or others;
 - `0.0.0.0` without `-listen-all`; no address to listen on;
 - an earlier run that did not finish (roll it back first).
 
@@ -116,12 +138,24 @@ writes no journal: with `-start`, a service that is running already
 created is `ok` (also after that run was rolled back, since rollback
 never deletes users).
 
-`skep-setup rollback [ID]` (default: the newest run) puts a file back
-only if it is still byte-identical to what the run left; a file changed
-since is reported and left alone. Files and directories setup created are
-removed. It does not stop or start services, delete the administrator,
-unload modules or destroy interfaces. If an `apply` fails part-way, it
-stops, and the next `plan` refuses until that run is rolled back.
+`skep-setup rollback [ID]` (default: the newest run) first prints the
+run it would undo (its ID, command, start time, and how many changes it
+made), then asks. It puts a file back only if it is still byte-identical
+to what the run left (a new file renamed into place, with the current
+owner and mode, synced); a file changed since is reported and left alone.
+Files and directories setup created are removed. It does not stop or
+start services, delete the administrator, unload modules or destroy
+interfaces. If an `apply` fails part-way, it stops, and the next `plan`
+refuses until that run is rolled back (a failed `-admin` is the
+exception, above).
+
+A journal directory without a readable `journal.json` (a run that
+stopped before its first save, or a damaged file) does not make every
+command fail: it shows as an unfinished run with no recorded changes,
+which the plans refuse on until `skep-setup rollback ID` clears it.
+Rollback then undoes nothing (setup cannot tell what that run changed),
+keeps a damaged file as `journal.json.unreadable`, and names the run's
+`files/` directory.
 
 ## Upgrades
 
@@ -134,9 +168,16 @@ skep-setup upgrade
 `skep-api` and `skep-setup` are one build, and while any agent task is
 **pending or running**. A task interrupted by the agent restart is never
 resumed or re-run: it ends `interrupted` and must be resubmitted, so only
-`-force` upgrades over unfinished tasks. Then it:
+`-force` upgrades over unfinished tasks. It reads the tasks from the
+database the agent's configuration names (`agent.json`, or
+`skep_agent_config`, with `skep_agent_data_dir`); if that database is
+missing while the agent answers on its socket, it refuses, since it would
+be reading the wrong configuration. `-keep` must be at least 1, and
+`/var/db/skep/backup` must be creatable, before anything is stopped. Then
+it:
 
-1. stops `skep_api`, so no new task can be submitted, and reads the
+1. stops `skep_api` (a service that is not running is left as it is,
+   here and for `skep_agent`), so no new task can be submitted, and reads the
    agent's tasks again. While any are pending or running it waits, up to
    `-wait` (default `60s`; `-wait 0` does not wait). If some remain and
    there is no `-force`, it **refuses** (exit 3): it starts `skep_api`
@@ -147,8 +188,12 @@ resumed or re-run: it ends `interrupted` and must be resubmitted, so only
    (keeping the newest 3);
 3. stops `skep_agent`, starts it (its schema migrations run), starts
    `skep_api`, and checks each running process is the installed file at
-   the new build;
-4. reports the agent's health.
+   the new build. **From the agent's stop on, Ctrl-C does not interrupt
+   the upgrade**: stopping half way would leave the host without an
+   agent. The commands run in their own process group, so the terminal's
+   signal does not reach them either; every wait is bounded;
+4. polls the agent's socket, up to 30 s, until it answers and reports the
+   new build in `Skep-Agent-Version`, then reports the agent's health.
 
 Every refusal or failure after `skep_api` was stopped (the second look
 at the tasks, the wait, a backup, the agent's stop, start or check)
@@ -159,6 +204,13 @@ still the old one if the failure came before its restart. Until a later
 agent_version_mismatch` to everything that needs the agent, and its
 health is `unavailable`. The tasks keep running on the agent; run
 `skep-setup upgrade` again once they have finished.
+
+If the **agent** did not come back as the new build, upgrade starts the
+API and says so; running `skep-setup upgrade` again repeats the same
+start, so it helps only once the cause (in `/var/log/daemon.log`) is
+fixed. If only the final `skep_api` start fails, the agent is upgraded:
+start the API by hand (`service skep_api start`); upgrade need not run
+again.
 Andy accepted this for 0.1 (2026-11-22, seen on both lab VMs); an agent
 drain mode that avoids it is in the [backlog](../backlog.md).
 
@@ -169,14 +221,18 @@ restart. If only one of the two services was restarted, the API answers
 ### Database backups by hand
 
 ```sh
-skep-agent db backup          # -> /var/db/skep/backup/<version>-<commit>-<timestamp>/agent.db
+skep-agent db backup          # -> /var/db/skep/backup/<version>+<commit>-<timestamp>/agent.db
 skep-api db backup            # -> .../api.db
 ```
 
 Each writes a consistent copy (SQLite `VACUUM INTO`, read-only on the
 live database, so the service can keep running), its `.sha256`, and a
 listing of the audit archive (names, sizes, SHA-256; the sealed segments
-are not copied). `-dir` names the directory, `-keep N` how many backups
+are not copied; each is opened without following a symbolic link and
+must be a regular file). The `.skep-backup` marker is written last, so
+only a finished backup is counted and pruned; one that failed half way
+is left for you. Manual and upgrade backups share one label format,
+`<version>+<commit>`. `-dir` names the directory, `-keep N` how many backups
 to keep. A downgrade is: install the old package, restore both copies
 with the services stopped, start them.
 
@@ -188,7 +244,10 @@ skep-setup remove             # then: pkg delete skep
 ```
 
 `remove` refuses while any Skep guest exists, running or stopped (or
-use `-keep-guests`: nothing is stopped and nothing will manage them).
+use `-keep-guests`: nothing is stopped and nothing will manage them). It
+counts them in the database the agent's configuration names; a missing
+table is an error, and a missing database while the agent answers on its
+socket is refused.
 It stops `skep_api` and `skep_agent` and sets both `_enable` variables
 to `NO`. By default it keeps everything else (answer 11):
 
@@ -207,6 +266,9 @@ to `NO`. By default it keeps everything else (answer 11):
     and that holds nothing but setup's words is deleted (`sysrc -x`):
     FreeBSD's `sysrc NAME-="..."` leaves `NAME=""` behind, so this is what
     returns `rc.conf` to its bytes before apply;
+  - `zfs_enable` is **kept** while any pool is imported (without it the
+    pools are not imported at boot); the plan says so;
+  - words are removed one per `sysrc NAME-="WORD"` call;
   - rolled-back applies are ignored; in a file that is not plain
     `name=value` lines, nothing is edited and the `sysrc` steps are printed
     for you.
@@ -215,23 +277,28 @@ to `NO`. By default it keeps everything else (answer 11):
 - `-purge-data` (always asks, even with `-yes`) deletes `/var/db/skep`
   except setup's journals (node identity, databases, audit logs and
   archives, backups, the TLS key, install media), `agent.json` and
-  `api.json` (copies stay in the journal), and the `skep` account.
+  `api.json` (copies stay in the journal), and the `skep` account. It is
+  **refused while any Skep guest is running**, with `-keep-guests` too.
+  Skep keeps no ZFS encryption key ([ADR 0010](../decisions/0010-storage-and-jails.md):
+  the operator holds them); remove looks up the encryption roots of the
+  datasets under each pool's `skep` dataset, and if one's `keylocation`
+  is a file under `/var/db/skep`, `-purge-data` is refused (without it,
+  a warning).
 
 It never destroys a dataset; it lists the ones under each pool's
 `skep` dataset for you.
 
-**Validation finding (2026-11-22, both lab VMs, pkg 2.9.2): the refusal
-below is printed but not enforced.** pkg stops on a failing
-pre-deinstall script only with `DEVELOPER_MODE` on; by default it prints
-"DEINSTALL script failed" and deletes the files anyway (exit 0), leaving
-the guests and the running daemons without their binaries. Until that is
-decided, run `skep-setup remove` (which does refuse) before `pkg delete`.
+**The guard against removing Skep under running guests is `skep-setup
+remove`**, which refuses while Skep guests exist; run it before `pkg
+delete`. `pkg delete` itself does not refuse: pkg 2.9.2 (measured on both
+lab VMs, 2026-11-22) stops on a failing pre-deinstall script only with
+`DEVELOPER_MODE` on, and by default prints "DEINSTALL script failed" and
+deletes the files anyway (exit 0). The package's pre-deinstall script
+therefore prints a **warning** while a Skep guest is running (jails named
+`skep-*` in `jls`, VMs named `skep-*` in `/dev/vmm`, also when
+`skep_agent` is stopped), saying that pkg deletes the files anyway and
+naming `skep-setup remove`; it keeps exit 1 for a pkg that does honour
+it. It is silent during `pkg upgrade`. `pkg lock` was considered and
+rejected: it would also block `pkg upgrade`. ([ADR 0012 amendment, the
+pre-deinstall guard](../decisions/0012-installer.md#amendment-2026-11-22-fix-round-the-pre-deinstall-guard-and-the-review-fixes).)
 A failing pre-install, by contrast, does stop `pkg add`.
-
-`pkg delete skep` itself is meant to refuse while a Skep guest is running: the
-package's pre-deinstall script looks for jails named `skep-*` (`jls`) and
-VMs named `skep-*` (`/dev/vmm`) on the host, so it refuses **even when
-`skep_agent` is stopped**, as it is after `skep-setup remove`. It never
-refuses during `pkg upgrade`; `pkg delete -f` overrides it ([ADR 0012
-amendment](../decisions/0012-installer.md#amendment-2026-11-22-build-decisions-confirmed),
-build decision 5).
