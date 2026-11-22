@@ -3,7 +3,7 @@
 This page is the complete, ordered procedure for turning a stock
 FreeBSD® 15.1-RELEASE (amd64) install into a Skep host, by hand. Until the
 installer exists (Milestone 10, [ADR 0012](../decisions/0012-installer.md),
-Proposed), this is how Skep is installed. It also serves as the inventory
+accepted 2026-11-22, not yet built), this is how Skep is installed. It also serves as the inventory
 that ADR is based on: every step below is something an installer would
 automate, check, or leave to the operator.
 
@@ -55,6 +55,10 @@ agent does create at run time is listed in
   uplink of the guest bridge, with no address. Skep refuses to put a guest
   on a bridge that has a management interface as a member. In the
   examples, `vtnet0` is management and `vtnet1` is the guest uplink.
+- The management interface should have a static address. One configured
+  by DHCP works, but the API's listen address (step 12) is the current
+  lease's and stops working if the lease changes; use a DHCP reservation
+  if you keep DHCP. (`skep-setup` will warn about this, not refuse.)
 - If the host is itself a virtual machine (as `hearst` is), the outer
   hypervisor must expose VT-x (Proxmox CPU type `host`) and must let the
   guest uplink send frames from MAC addresses it did not assign (on
@@ -98,7 +102,8 @@ libraries; the web interface is embedded in `skep-api`.
 vmm_load="YES"
 nmdm_load="YES"
 
-# Optional: RACCT, needed only for jail limits other than disk_quota
+# RACCT: Skep's jail limits use RCTL, which needs it (every limit
+# other than disk_quota). Recommended; skep-setup will add it by default.
 kern.racct.enable="1"
 
 # Optional, small hosts with ZFS: cap the ARC so guests fit (1 GiB here)
@@ -184,13 +189,18 @@ non-critical health check `bridge_vlan_unfiltered`.
 ## 7. The service account
 
 ```sh
-pw groupadd skep
-pw useradd skep -g skep -d /nonexistent -s /usr/sbin/nologin -c "Skep service account"
+id 409; getent group 409       # both must find nothing
+pw groupadd skep -g 409
+pw useradd skep -u 409 -g skep -d /nonexistent -s /usr/sbin/nologin -c "Skep service account"
 ```
 
 `skep-api` runs as this account; the rc.d scripts refuse to start without
-it and never create it. The UID and GID are whatever `pw` assigns
-(`hearst`: 1002); a fixed UID is a Milestone 10 packaging decision.
+it and never create it. UID and GID **409** are fixed by
+[ADR 0012](../decisions/0012-installer.md) Decision 1, so that every node
+of a future cluster has the same owner on files that move between nodes;
+the package will create the account with these numbers. If 409 is taken
+on your host, stop and report it. Hosts set up before that decision have
+whatever `pw` assigned (`hearst`: 1002); that works on a single host.
 
 ## 8. The programs and the rc.d scripts
 
@@ -205,7 +215,9 @@ skep-agent -version; skep-api -version
 ```
 
 Check the version and commit match the build. There is no signed package
-yet: compare SHA-256 sums with the build machine. The agent runs as root,
+yet: compare SHA-256 sums with the build machine. (The package will also
+install `LICENSE` and `THIRD_PARTY_NOTICES` in
+`/usr/local/share/licenses/skep/`.) The agent runs as root,
 so nothing it runs may be writable by anyone else, including every
 directory above it.
 

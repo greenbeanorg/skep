@@ -8,7 +8,7 @@ Skep runs as two rc.d services (ADR 0004, ADR 0006):
 | `skep_api` | `packaging/rc.d/skep_api` | `skep` (unprivileged) | TCP, `127.0.0.1:8443` by default |
 
 There is no package or installer yet (Milestone 10,
-[ADR 0012](../decisions/0012-installer.md), Proposed), so the steps below are
+[ADR 0012](../decisions/0012-installer.md), accepted, not yet built), so the steps below are
 manual; [Host requirements](host-requirements.md) puts every step of a
 new host in order. They were run on FreeBSD 15.1-RELEASE-p6, including an in-place
 upgrade of a Milestone 3 installation; the native test and its recorded
@@ -77,9 +77,9 @@ variable `skep_agent_runas` is no longer read and can be removed.
 ## Install
 
 ```sh
-# The service account. No login shell, no home directory.
-pw groupadd skep
-pw useradd skep -g skep -d /nonexistent -s /usr/sbin/nologin -c "Skep service account"
+# The service account, UID/GID 409 (ADR 0012). No login shell, no home directory.
+pw groupadd skep -g 409
+pw useradd skep -u 409 -g skep -d /nonexistent -s /usr/sbin/nologin -c "Skep service account"
 
 install -o root -g wheel -m 0555 skep-agent skep-api /usr/local/sbin/
 install -o root -g wheel -m 0555 packaging/rc.d/skep_agent packaging/rc.d/skep_api /usr/local/etc/rc.d/
@@ -372,5 +372,6 @@ pw userdel skep             # also removes the skep group
   the data directory on a ZFS dataset.
 - Logging to a file with rotation is not offered; use syslog and
   `newsyslog(8)`.
-- The account's UID and GID are whatever `pw` assigns. A fixed, registered
-  UID is a packaging decision for Milestone 10.
+- The account's UID and GID are fixed at 409 by ADR 0012 (the lowest pair
+  free in the ports registry on 2026-11-22; registered when a port is
+  submitted). Hosts set up earlier keep what `pw` assigned.

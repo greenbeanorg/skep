@@ -1,8 +1,8 @@
 # ADR 0012: Installing, upgrading, and removing Skep (Milestone 10)
 
-- Status: **Proposed** (2026-11-22). Not to be merged until Andy has
-  answered [the decisions](#decisions-for-andy), the answers are recorded
-  here, and the status is Accepted.
+- Status: **Accepted** (2026-11-22). Andy's answers to
+  [the decisions](#decisions-for-andy) are recorded in
+  [Answers](#answers-2026-11-22) and folded into the decisions below.
 - Date: 2026-11-22
 - Depends on: [ADR 0003](0003-read-only-discovery.md) (enabling a
   capability is an administrative act), [ADR 0004](0004-privilege-boundary.md)
@@ -149,7 +149,9 @@ is every host a 0.1 tester has.
 | Work for 0.1 | A package build, one Go tool, tests, docs | All of (a) plus image build infrastructure, partitioning, dialogs | (a) |
 | Risk to an existing host | Low: refuses what it cannot change safely | N/A (a new host only) | (a) |
 
-## Recommendation: (c), committing to (a) only for 0.1
+## Decision: (c), committing to (a) only for 0.1
+
+Accepted as recommended (answer 1).
 
 Build (a) now. Record (b) as the intended later step, without building
 or designing it beyond confirming that (a) leaves room for it (a
@@ -176,23 +178,41 @@ The rest of this ADR specifies (a).
 - **Contents:** `sbin/skep-agent`, `sbin/skep-api`, `sbin/skep-setup`,
   `bin/skepctl` (`0555 root:wheel`); `etc/rc.d/skep_agent`, `skep_api`
   (`0555`); `etc/skep/agent.json.sample`, `api.json.sample` (`0644`; no
-  secrets); `share/licenses/skep/`; `share/doc/skep/` (optional).
+  secrets); `share/licenses/skep/` with `LICENSE` and
+  `THIRD_PARTY_NOTICES` (the file `make notices` generates and CI checks);
+  `share/doc/skep/` (optional).
 - **Never** contains `agent.json` or `api.json` themselves, so an upgrade
   cannot overwrite the administrator's configuration. `skep-setup`
   writes them from its answers on first setup.
 - **Dependencies:** none required. `edk2-bhyve` is checked by
   `skep-setup check` and offered (`pkg install edk2-bhyve` printed), not
   a hard dependency: a jails-only host does not need it.
-- **Scripts:** pre-install creates group and user if absent. No
-  post-install changes. Pre-deinstall refuses (exit non-zero) while
-  `skep_agent` runs and Skep guests exist, so `pkg delete` cannot
-  orphan running guests; `-f` overrides as usual for pkg.
-- **Building:** the release job runs `make build-freebsd`, stages the
-  tree, and either (i) runs `pkg create -M +MANIFEST -r stage` on a
-  FreeBSD builder, or (ii) writes the `.pkg` from Go as the probe does.
-  The probe shows (ii) works up to the archive; whether FreeBSD's `pkg`
-  accepts it is **not yet tested**. Recommendation: (i) for releases (the
-  supported tool), with (ii) kept only if (i) is impractical in CI.
+- **Scripts:** pre-install creates the `skep` group and user, with the
+  fixed UID and GID below, if absent. No post-install changes.
+  Pre-deinstall refuses (exit non-zero) while `skep_agent` runs and Skep
+  guests exist, so `pkg delete` cannot orphan running guests; `-f`
+  overrides as usual for pkg. **It must not refuse during an upgrade:**
+  `pkg upgrade` runs the old package's deinstall scripts before installing
+  the new one, so the refusal is skipped when `PKG_UPGRADE` is set in the
+  script's environment (answer 14). pkg's exact behaviour (that the
+  variable is set, and its value) is to be verified on a lab VM during the
+  build, and there are tests for both cases: an upgrade with guests
+  running succeeds without touching them, and a `pkg delete` with guests
+  is refused.
+- **The `skep` account: UID 409, GID 409** (answer 5). Fixed now because
+  clustering (Milestone 8) wants the same UID on every node: files that
+  move between nodes (replicated datasets, backups) keep their owner. 409
+  was the lowest number free in both the ports `UIDs` and `GIDs` registries
+  (`freebsd-ports` main, read 2026-11-22; both files list it as
+  `# free: 409`), and is outside base's range. It is **not reserved**
+  until a port is submitted, so the number is re-checked against the
+  registry before each release and registered with the port. Setup
+  refuses when UID 409 or GID 409 belongs to another name, and warns
+  (does not change anything) when a `skep` account exists with another
+  number, as on hosts set up by hand before this ADR (`hearst`: 1002).
+- **Building:** the release is staged from `make build-freebsd` and packed
+  with `pkg create -M +MANIFEST -r stage`, run by hand on a lab FreeBSD VM
+  for each release (answer 2). The probe's Go `.pkg` writer is dropped.
 - **ABI from the manifest.** Go stamps FreeBSD binaries with a FreeBSD
   12.3 ELF note (seen in the probe); the package ABI must be set in the
   manifest, not detected from the binaries.
@@ -216,13 +236,18 @@ nothing in that file and print the steps instead (probe: tested).
 
 | Situation | Why |
 |---|---|
-| The named management interface has no `ifconfig_` line with an address | It will not guess which interface carries management |
+| The named management interface has no `ifconfig_` line, or one with neither an address nor `DHCP`/`SYNCDHCP` | It will not guess which interface carries management |
 | A bridge to be allow-listed has the management interface as a member | Skep would refuse guests on it anyway; guests next to management is the one network layout Skep forbids |
 | The uplink for a new bridge has an address, other settings, is the management interface, or is in another bridge | It is in use |
 | Only one of the `skep` user and group exists, or the user has a login shell or a home | Something else made it |
 | The release is not FreeBSD 15.x amd64 | Not a supported platform |
 | `agent.json` or `api.json` exists and was not written by this tool | The administrator's file; setup prints its proposed version beside it |
 | Asked to apply while a previous apply's journal is incomplete | Finish or roll back first |
+
+**It warns, and continues,** when the management interface is configured
+by DHCP (`ifconfig_IF="DHCP"` or `"SYNCDHCP"`): the listen address it
+writes is the current lease's, and changes if the lease does. The warning
+says so and suggests a static address or a DHCP reservation (answer 6).
 
 **It never touches**, on any host:
 
@@ -250,7 +275,7 @@ them separately).
 | Item | Change | When it takes effect |
 |---|---|---|
 | `/boot/loader.conf` | `vmm_load="YES"`, `nmdm_load="YES"` if missing | Next boot |
-| `/boot/loader.conf` | `kern.racct.enable="1"` only with `--racct` | Next boot |
+| `/boot/loader.conf` | `kern.racct.enable="1"` unless `--no-racct` (Skep's jail limits use RCTL, which needs RACCT); the plan says it takes a reboot | Next boot |
 | `/etc/rc.conf` | `kld_list+=` the missing ones of `if_epair netgraph ng_socket ng_ether ng_bpf` | Next boot; setup prints the `kldload` line |
 | `/etc/rc.conf` | `zfs_enable="YES"` when a ZFS pool is named and it is missing | Next boot |
 | `/etc/rc.conf` | A **new** bridge, only with `--create-bridge NAME --uplink IF`: `cloned_interfaces+=`, `ifconfig_IF="up"`, `ifconfig_NAME="addm IF ifuntagged IF 1 defuntagged 1 vlanfilter up"` | Next boot; or setup prints the `ifconfig` lines in order |
@@ -260,11 +285,19 @@ them separately).
 | `/var/db/skep/media` | Created `0700 root:wheel` | — |
 | First administrator | `skep-api admin create` run interactively (or `--password-stdin`); never a password in a flag, file, or the journal | — |
 
+Answer 6 confirmed this table: a new bridge only when explicitly asked,
+on a spare unaddressed NIC; an existing bridge is never changed.
+Answer 7: `vlanfilter` is on for bridges setup creates, and printed (not
+applied) for existing ones.
+
 The listen address defaults to the management interface's address, port
-8443, shown in the plan; `0.0.0.0` is refused unless `--listen-all` is
+8443, shown in the plan (with the DHCP warning above when it applies); `0.0.0.0` is refused unless `--listen-all` is
 given (ADR 0006 Decision 7).
 
 ## Decision 4: idempotency, the journal, and rollback
+
+Answer 12: for 0.1 setup records what it did in its own journal only, not
+in the agent's audit log.
 
 - Every action is "ensure X": it checks, and acts only if X is not
   already true. A second `apply` with the same answers plans nothing and
@@ -295,9 +328,11 @@ services (Decision 1).
 1. Checks the new binaries' versions agree (`skep-agent -version`,
    `skep-api -version`, `skep-setup` itself) and that the release is
    one this version supports.
-2. Backs up both databases with SQLite's online backup, to
-   `/var/db/skep/backup/<old version>-<timestamp>/`, and the audit
-   archives' file lists. (New code: today nothing takes this backup.)
+2. Backs up both databases with new `skep-agent db backup` and
+   `skep-api db backup` commands (SQLite's online backup), to
+   `/var/db/skep/backup/<old version>-<timestamp>/`, keeping the last 3
+   backups. The audit archives are listed (file names, sizes, SHA-256),
+   not copied (answer 10).
 3. Stops `skep_api`, stops `skep_agent`, starts `skep_agent` (which runs
    the agent's schema migrations), starts `skep_api` (the API's
    migrations), and verifies each running process is the installed file
@@ -331,10 +366,9 @@ validated on `hearst`.
 
 **Compatibility between programs.** `skep-api` and `skep-agent` come from
 one package and are upgraded together; there is no version handshake
-between them today. Proposed: the agent reports its version on its
-internal API and `skep-api` refuses to serve (503, a new error code)
-when the versions differ. That is an API/error-code change and needs its
-own approval (decision 9).
+between them today. Added (answer 9, approved): the agent reports its
+version on its internal API and `skep-api` refuses to serve with 503
+`agent_version_mismatch` when the versions differ.
 
 **FreeBSD itself.** A FreeBSD patch upgrade (`pkg upgrade` of base, or
 `freebsd-update`) is the administrator's. A minor upgrade (15.1 to 15.2)
@@ -362,7 +396,13 @@ says so before and after.
 Then `pkg delete skep` removes the files. The `skep` account is removed
 only with `--purge-data` (files may still be owned by it otherwise).
 
+Answer 11: these defaults stand; data, host lines, and the account are
+kept unless asked.
+
 ## Decision 7: version and compatibility checks
+
+Answer 8 confirmed: refuse anything but 15.x amd64; warn on 15.x other
+than 15.1.
 
 - The package's ABI restricts it to FreeBSD 15 amd64 (pkg enforces it).
 - `skep-setup check` reports, and `apply` refuses on: not 15.x amd64,
@@ -375,17 +415,21 @@ only with `--purge-data` (files may still be owned by it otherwise).
 
 ## Decision 8: signing and integrity
 
-- **Repository:** a `pkg` repository (`pkg repo` with a signing key)
-  hosted as static files. `pkg` verifies the catalogue signature and each
+Both, per answer 3: a signed `pkg` repository and a signed `.pkg`
+download. The files go on GitHub Releases; the repository on GitHub Pages
+once the repository is public.
+
+- **Repository:** a `pkg` repository (`pkg repo` with an RSA 4096
+  signing key) hosted as static files. `pkg` verifies the catalogue signature and each
   package's checksum natively; the administrator adds a
   `/usr/local/etc/pkg/repos/skep.conf` with the public key's path.
 - **Direct download:** `skep-<version>.pkg` and `SHA256SUMS`, with
-  `SHA256SUMS.sig` made by `ssh-keygen -Y sign`, verifiable on stock
+  `SHA256SUMS.sig` made by `ssh-keygen -Y sign` with an Ed25519 key, verifiable on stock
   FreeBSD with `ssh-keygen -Y verify` (base system, no package needed).
-- **Keys:** generated and held offline by Andy; the public key and its
-  fingerprint published in the README, the docs, and the release notes.
-  CI never holds the private key; signing is a manual release step for
-  0.1.
+- **Keys** (answer 4): generated and held by Andy on his Mac, with one
+  offline backup; the public keys and their fingerprints published in
+  the README, the docs, and the release notes. CI never holds a private
+  key; signing is a manual release step for 0.1.
 - **Reproducibility:** the Go build is already `-trimpath` with fixed
   ldflags; the probe writes archives with a fixed mtime. Reproducible
   packages are a goal, not a 0.1 requirement.
@@ -396,11 +440,10 @@ only with `--purge-data` (files may still be owned by it otherwise).
   `rc.conf`/`loader.conf` as `bsdinstall` writes them, hearst's, and
   hostile cases (shell code in `rc.conf`, a bridge holding management,
   conflicting values). Every refusal has a test.
-- **Package tests in CI (optional, needs approval):** a FreeBSD VM on a
-  Linux runner (QEMU, no nested bhyve) to run `pkg add`, `skep-setup
-  check`/`plan`, start both services, and `pkg delete`. This adds a
-  third-party Action; the alternative is running the same steps by hand
-  on a lab VM per release.
+- **No FreeBSD VM job in CI for 0.1** (answer 13): the package steps
+  (`pkg add`, `skep-setup check`/`plan`, both services started, `pkg
+  upgrade` with guests running, `pkg delete` with and without guests) are
+  run by hand on a lab VM for each release. Revisit at 1.0.
 - **Lab VMs:** two fresh Proxmox VMs from the official FreeBSD 15.1 VM
   images (UFS and ZFS root), two NICs each, VT-x exposed, with a snapshot
   to revert to after each run. On each: install, `apply` twice
@@ -411,6 +454,8 @@ only with `--purge-data` (files may still be owned by it otherwise).
   Milestone 11.
 
 ## Decisions for Andy
+
+As they were asked; the answers are in [Answers](#answers-2026-11-22).
 
 1. **Approach:** (a) package plus `skep-setup` for 0.1, with (b) recorded
    as later and not designed now (recommended), or another choice.
@@ -456,6 +501,51 @@ only with `--purge-data` (files may still be owned by it otherwise).
     refuse while Skep guests exist (recommended), given `pkg delete -f`
     still overrides it?
 
+## Answers (2026-11-22)
+
+Andy's answers, numbered as the decisions above:
+
+1. Approach (c): (a) package plus `skep-setup` for 0.1; (b) recorded as
+   later, not designed.
+2. `pkg create` run by hand on a lab VM for each release; the probe's Go
+   `.pkg` writer is dropped.
+3. Both a signed `pkg` repository and a signed `.pkg` download; files on
+   GitHub Releases, the repository on GitHub Pages once the repository is
+   public.
+4. RSA 4096 for the `pkg` repository, Ed25519 for `ssh-keygen -Y`;
+   generated and held by Andy on his Mac with one offline backup; manual
+   signing for 0.1.
+5. A fixed `skep` UID/GID now, a free number from the ports registry,
+   recorded with the reason (clustering wants matching UIDs): **409/409**
+   (Decision 1).
+6. Decision 3's table confirmed; a new bridge only on explicit request on
+   a spare unaddressed NIC; an existing bridge is never changed. Change: a
+   management interface on DHCP is accepted with a warning (the listen
+   address may change), not refused (Decision 2's table updated).
+7. `vlanfilter` on for bridges setup creates; printed, not applied, for
+   existing bridges.
+8. Refuse anything but 15.x amd64; warn on 15.x other than 15.1.
+9. Add the version handshake: 503 `agent_version_mismatch` (approved).
+10. Add `skep-agent db backup` / `skep-api db backup`; keep the last 3;
+    the audit archive is listed, not copied.
+11. Uninstall keeps data, host lines, and the account unless asked.
+12. Setup's own journal only for 0.1.
+13. No FreeBSD VM CI job for 0.1; a manual lab-VM check per release;
+    revisit at 1.0.
+14. Pre-deinstall refusal: yes, but it must not refuse during an upgrade
+    (pkg runs the old package's deinstall scripts on upgrade): skipped when
+    `PKG_UPGRADE` is set. pkg's exact behaviour is verified on a lab VM
+    during the build, with tests for upgrade-with-guests and
+    delete-with-guests.
+
+Also decided:
+
+- **RACCT on by default:** setup adds `kern.racct.enable="1"` unless
+  `--no-racct`, and the plan says it needs a reboot, because Skep's jail
+  limits use RCTL (Decision 3).
+- **Third-party notices:** the package installs `THIRD_PARTY_NOTICES`
+  beside the license in `share/licenses/skep/` (Decision 1).
+
 ## What Andy must provide
 
 1. **Two fresh FreeBSD 15.1-RELEASE amd64 VMs on Proxmox**, from the
@@ -465,11 +555,11 @@ only with `--purge-data` (files may still be owned by it otherwise).
    an isolated bridge or VLAN 60 with the Proxmox MAC filter off), a spare
    virtual disk for a pool on the UFS one, and a Proxmox snapshot of the
    untouched state. Passwordless sudo for the lab user, as on `hearst`.
-2. **Approval to run the probe's package (`pkg add`) and `skep-setup`
-   on those VMs**, which `hearst`'s rules do not cover.
+2. **Approval to run the package (`pkg add`, `pkg upgrade`, `pkg delete`)
+   and `skep-setup` on those VMs**, which `hearst`'s rules do not cover.
 3. **Answers to the decisions above.**
-4. **A signing key pair** (or approval for Claude to generate one on a
-   machine Andy names, with the private key never leaving it), when
+4. **The signing keys** (RSA 4096 for the repository, Ed25519 for
+   `ssh-keygen -Y`), generated on Andy's Mac with one offline backup, when
    signing is built.
 5. **Later, not for 0.1:** a bare-metal box for hardware qualification
    (Milestone 11) and, if (b) is pursued, a FreeBSD build host for
