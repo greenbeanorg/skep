@@ -78,6 +78,16 @@ outside the jail. An existing `rc.conf` or `resolv.conf` is opened with
 or replaced: a FIFO, device node, directory, or link that a template put
 there fails the task instead of blocking it (ADR 0010 amendment n, SR-09).
 
+**Nameservers.** `nameservers` (up to three IPv4 or IPv6 addresses) go
+into the jail's `/etc/resolv.conf` before its first start, for static
+addressing only: with a DHCP NIC, `dhclient` writes `resolv.conf`, and
+nameservers are refused (`invalid_request`). For a jail without a NIC
+they are refused with `nameservers_require_nic` (422), at create,
+update, and clone, as the web interface offers the field only when the
+jail has a NIC. An update that leaves `nameservers` out keeps the stored
+list, so one that removes the last NIC of a jail with nameservers must
+also send `"nameservers": []`.
+
 **MAC addresses.** A NIC's MAC address, given in a create, an update,
 or a clone, must be unicast, locally administered (the `0x02` bit of the
 first byte set: the second hex digit is 2, 6, A, or E), and not all
@@ -513,11 +523,14 @@ POST /api/v1/containers/<id>/clone
   **A jail with a static address can therefore be cloned only before its
   first start.** A DHCP jail can always be cloned, and its clone asks for
   its own lease with its new MAC address.
-- **A start is refused when a running Skep jail on the same bridge holds
-  one of the jail's static addresses** (`container_address_in_use`). The
-  addresses compared are the ones Skep wrote; an address changed inside a
-  jail is not seen, and two starts submitted at the same moment are not
-  checked against each other.
+- **A start is refused when a running or starting Skep jail on the same
+  bridge holds one of the jail's static addresses**
+  (`container_address_in_use`). The addresses compared are the ones Skep
+  wrote; an address changed inside a jail, a DHCP lease, and another
+  bridge on the same L2 segment are not seen. Two starts submitted at the
+  same moment are checked against each other: the check is repeated in
+  the database transaction that records the start, so the second one
+  fails with the same code (SR-07).
 - **A clone is the same guest.** Its `/etc/ssh` host keys and
   `/etc/hostid` are the source's. Regenerate the host keys inside the
   clone before it shares a network with the source:

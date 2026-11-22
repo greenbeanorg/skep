@@ -185,6 +185,9 @@ describe("containerErrorHint for the security review codes", () => {
     expect(existing).not.toMatch(/new jail|template/);
     expect(containerErrorHint("container_disk_quota_below_usage")).toBe(existing);
   });
+  it("explains nameservers without a NIC", () => {
+    expect(containerErrorHint("nameservers_require_nic")).toMatch(/network interface/);
+  });
   it("explains the MAC refusals of amendment n", () => {
     expect(containerErrorHint("container_mac_invalid")).toMatch(/locally administered/);
     expect(containerErrorHint("container_mac_in_use")).toMatch(/already on the bridge/);
