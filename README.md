@@ -408,6 +408,7 @@ docs/                  architecture, security, and decision records
 
 - [Architecture overview](docs/architecture/overview.md)
 - [Security overview](docs/security/overview.md)
+- [Host requirements and the manual install](docs/installation/host-requirements.md)
 - [Running Skep as FreeBSD services](docs/installation/freebsd-service.md)
 - [skepctl](docs/administration/skepctl.md)
 - [The web interface](docs/administration/web-ui.md)
@@ -427,7 +428,8 @@ docs/                  architecture, security, and decision records
   [0008 The first web interface](docs/decisions/0008-web-ui.md),
   [0009 The first working VM on bhyve](docs/decisions/0009-first-vm-bhyve.md),
   [0010 Storage management and jails](docs/decisions/0010-storage-and-jails.md),
-  [0011 Anti-spoofing on guest ports](docs/decisions/0011-guest-port-anti-spoofing.md) (Accepted 2026-11-21)
+  [0011 Anti-spoofing on guest ports](docs/decisions/0011-guest-port-anti-spoofing.md) (Accepted 2026-11-21),
+  [0012 Installing, upgrading, and removing Skep](docs/decisions/0012-installer.md) (Proposed)
 
 ## Trademarks
 

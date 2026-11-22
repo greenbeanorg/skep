@@ -7,8 +7,10 @@ Skep runs as two rc.d services (ADR 0004, ADR 0006):
 | `skep_agent` | `packaging/rc.d/skep_agent` | `root` | The Unix socket `/var/run/skep/agent.sock` only. No network listener. |
 | `skep_api` | `packaging/rc.d/skep_api` | `skep` (unprivileged) | TCP, `127.0.0.1:8443` by default |
 
-There is no package or installer yet (Milestone 10), so the steps below are
-manual. They were run on FreeBSD 15.1-RELEASE-p6, including an in-place
+There is no package or installer yet (Milestone 10,
+[ADR 0012](../decisions/0012-installer.md), Proposed), so the steps below are
+manual; [Host requirements](host-requirements.md) puts every step of a
+new host in order. They were run on FreeBSD 15.1-RELEASE-p6, including an in-place
 upgrade of a Milestone 3 installation; the native test and its recorded
 result are in
 [tests/integration/rcd](../../tests/integration/rcd/README.md).
