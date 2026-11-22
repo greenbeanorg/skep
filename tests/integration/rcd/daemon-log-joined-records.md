@@ -63,3 +63,6 @@ line most of the time.
 one syslog message per line is what `-S` users expect. B is the right
 Skep-side fix if records must never be joined (for example for log
 shipping); it is a config and rc.d change, so it waits for Andy.
+
+**Decided (Andy, 2026-11-22):** A now; B is in the [backlog](../../../docs/backlog.md)
+for after 0.1; no FreeBSD problem report (D) for now.

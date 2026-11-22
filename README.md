@@ -418,6 +418,7 @@ docs/                  architecture, security, and decision records
 - [Jail templates](docs/administration/jail-templates.md)
 - [Jails](docs/administration/jails.md)
 - [Guest-port anti-spoofing](docs/administration/guest-port-filtering.md)
+- [Backlog](docs/backlog.md)
 - Decision records:
   [0001 Go toolchain and SQLite driver](docs/decisions/0001-go-toolchain-and-sqlite-driver.md),
   [0002 Discovery abstraction](docs/decisions/0002-discovery-abstraction.md),
