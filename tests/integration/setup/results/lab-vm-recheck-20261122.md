@@ -103,3 +103,89 @@ rc.conf, never created live), /usr/local/etc/skep/{agent,api}.json, /var/db/skep
 api/agent data, 3 backups and 12 journals; administrator skepadmin; tank imported with
 the last run's tank/skep datasets; bridge0 and the modules still live from the last
 run; local repo, fakes and test files removed.
+
+## langrishe
+
+4. L1 and L5 used `-admin skepadmin` / no `-admin`: langrishe's leftover journal
+   20261122T192821Z holds `admin-create admin`, and `plan -admin admin` printed
+   "ok first administrator admin: created by skep-setup run 20261122T192821Z"
+   (finding 1 reproduced on a second host).
+5. L5's apply was `-mgmt vtnet0 -create-bridge bridge0 -uplink vtnet1 -pool zroot`
+   without `-start`/`-admin`: the item is the byte-identical rollback, and with
+   `-admin` finding 1 would hide the admin step anyway. The second approved reboot
+   was used before L5: bridge0 (live since L1's boot) refused `-create-bridge bridge0`.
+
+| Item | Result | Log |
+|---|---|---|
+| L1 pkg add 0.1.0, apply -start -admin skepadmin | PASS: 15 changes, admin created as skep | 20261122T210217Z-langrishe-L1-pkg-add-apply.log |
+| L1 reboot | PASS: both services up, bridge0 vlanfilter with vtnet1, vmm/nmdm/if_epair/netgraph/ng_* loaded, kern.racct.enable 1 | 20261122T210228Z-langrishe-L1-reboot.log |
+| L1 login, pkgbase template, jail with a DHCP NIC | PASS: pin compared with `skep-api tls fingerprint` (b449452d…); template base151r2 4d0ea3cc… succeeded in 36 s; jail rc2j1 running, skep0 10.79.60.136/24 by DHCP | 20261122T210326Z-langrishe-L1-login.log, 20261122T210358Z-langrishe-L1-template-jail.log |
+| L2 pkg delete with the jail running | PASS (as designed for 0.1): warning printed (text below), "DEINSTALL script failed", files deleted, exit 0; jail and old daemons kept running | 20261122T210448Z-langrishe-L2-pkg-delete-readd.log |
+| L2 pkg add again, restart services | PASS | same log |
+| L3 remove -purge-data -keep-guests, jail running | PASS: refused (exit 3); rc.conf, loader.conf, both configs, /var/db/skep listing, journal count, account unchanged | 20261122T210506Z-langrishe-L3-purge-refusals.log |
+| L3 enctest with keylocation file:///var/db/skep/enctest.key | PASS: remove -purge-data refused naming the key; plain remove -plan warns ("--purge-data would refuse"); enctest and key destroyed | same log |
+| L4 delete jail; remove -revert-host -purge-data | PASS: rc.conf and loader.conf == original bytes (fd574992…/a27b0c57…, root:wheel 0644); skep user and group gone; /var/db/skep holds only setup/; agent.json, api.json gone; datasets listed, none destroyed | 20261122T210531Z-langrishe-L4-revert-purge.log |
+| L5 pkg delete + fresh pkg add, apply, rollback | PASS: rc.conf and loader.conf byte-identical, owner and mode unchanged; created files removed | 20261122T210627Z-langrishe-L5-apply-rollback.log |
+
+L2 warning text (pre-deinstall, pkg 2.9.2):
+
+```
+skep: WARNING: Skep guests are running:
+skep:   jail skep-d74ca8f6-7342-4f61-a8f2-5532c460b063
+skep: pkg deletes the files anyway (it does not stop on this script's failure),
+skep: and leaves these guests running with nothing to manage them.
+skep: Before pkg delete, stop them (web interface, skepctl, or the API) and run
+skep: skep-setup remove, which refuses while Skep guests exist.
+pkg: DEINSTALL script failed
+```
+
+Self-approved (UI text): 5ec6369 `fix(setup): remove's kept-guests warning says pkg
+delete only warns`; the warning said "pkg delete refuses while any of them runs",
+which L2 shows is false.
+
+Note: in L3 the plain `remove -plan` (no -keep-guests) is also refused for the
+stopped jail that still exists ("delete them first"); the key warning is there as
+asked.
+
+**langrishe state at the end:** skep 0.1.0 (e16716c) installed, never applied (L5 was
+rolled back), services not running; skep account 409 (from L5's pkg add); rc.conf and
+loader.conf the original bytes; zroot/skep with templates 02cb4aff… (last run) and
+4d0ea3cc… (this run), no jail; 8 journals in /var/db/skep/setup; no bridge (rebooted
+before L5), no Skep modules; `~/skep-pkgs/r2` with both packages; no local repo.
+
+## Differences between real FreeBSD and the unit tests
+
+- The unit tests start from an empty journal directory. Real hosts that had Skep
+  before keep every journal (pkg delete and -purge-data keep them), and the
+  planner reads them all: the first administrator is skipped (finding 1) and old
+  revert lines appear in remove's plan.
+- Part 0 a's failure paths (zfs list / zfs get failing for an imported pool) were
+  not reproducible on the lab VMs without breaking ZFS; covered by unit tests only.
+  The "dataset does not exist" match is on zfs's English message, as the fake
+  returns it; on both hosts the skep dataset existed, so that path did not run.
+  **Pending FreeBSD validation.**
+- Part 0 c: loader.conf was a regular file on both hosts; the append and delete of
+  kern.racct.enable worked through the new code (S2, S9, L1, L4, L5); the symlink
+  refusal is unit-tested only.
+- Upgrade with the agent stopped labels the backup `unknown-<ts>`; the tests cover
+  the running case's label.
+
+## CI
+
+- e16716c: run 45067453073 success (Test, vet, build; Web interface; Release build).
+- Logs of my own tooling slips, kept for completeness: 20261122T205237Z (pty driver
+  syntax error, nothing ran on smith but a read-only check), 20261122T205317Z (pin
+  parsed wrongly, login refused by skepctl's pin format check; nothing changed).
+- 5ec6369: run 45070265734 success. (The lab packages were built from e16716c;
+  5ec6369 changes only the warning text above and was not re-run on the VMs.)
+
+## pgrep check
+
+`pgrep -u aba -af 'scratchpad|\.test'` on merrick: only the pgrep command's own
+shell. On smith and langrishe no skep-setup, test script or pty driver running.
+
+## Next
+
+- Andy: finding 1 (journals that outlive the install suppress `-admin` and add
+  stale revert lines), the VMs not being at fresh-151, and the items still
+  pending FreeBSD validation above. Nothing merged; #52 at 5ec6369, #54 has this file.
