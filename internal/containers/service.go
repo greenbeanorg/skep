@@ -77,6 +77,7 @@ type Service struct {
 	engine       Engine
 	conf         hostops.Confinement
 	jails        hostops.Jails
+	filters      hostops.PortFilters
 	zfs          hostops.ZFS
 	release      func(context.Context) (string, error)
 	stopTimeout  time.Duration
@@ -95,8 +96,8 @@ type Service struct {
 // starts.
 func New(opts Options) (*Service, error) {
 	if opts.NodeID == "" || opts.Store == nil || opts.Templates == nil || opts.Snapshots == nil || opts.Engine == nil ||
-		opts.Host.Jails == nil || opts.Host.Templates == nil || opts.Host.ZFS == nil {
-		return nil, errors.New("containers: a node ID, the container, template, and snapshot stores, a task engine, and the jail, template, and ZFS host operations are required")
+		opts.Host.Jails == nil || opts.Host.Templates == nil || opts.Host.ZFS == nil || opts.Host.Filters == nil {
+		return nil, errors.New("containers: a node ID, the container, template, and snapshot stores, a task engine, and the jail, template, ZFS, and port filter host operations are required")
 	}
 	if opts.MaxSnapshots <= 0 {
 		opts.MaxSnapshots = models.DefaultMaxSnapshotsPerResource
@@ -116,7 +117,7 @@ func New(opts Options) (*Service, error) {
 	return &Service{
 		nodeID: opts.NodeID, store: opts.Store, templates: opts.Templates, snaps: opts.Snapshots,
 		maxSnapshots: opts.MaxSnapshots, engine: opts.Engine,
-		conf: opts.Host.Conf, jails: opts.Host.Jails, zfs: opts.Host.ZFS, release: opts.Host.Templates.HostRelease,
+		conf: opts.Host.Conf, jails: opts.Host.Jails, filters: opts.Host.Filters, zfs: opts.Host.ZFS, release: opts.Host.Templates.HostRelease,
 		stopTimeout: opts.StopTimeout, startTimeout: opts.StartTimeout, log: opts.Logger, now: opts.Now,
 		maxLocked: MaxLockedMemory(opts.MaxLockedMemory, opts.PhysicalMemory), lockedStarting: map[string]int64{},
 	}, nil

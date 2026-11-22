@@ -235,6 +235,16 @@ func TestStartRefusals(t *testing.T) {
 	}
 	f.fake.Set(func(fk *hostfake.Fake) { fk.Info.VMMLoaded = true })
 
+	// The netgraph modules missing, with a NIC: refused (ADR 0011).
+	if len(b.NICs) == 0 {
+		t.Fatal("the test VM has no NIC")
+	}
+	f.fake.Set(func(fk *hostfake.Fake) { fk.NoNetgraph = true })
+	if _, err := f.svc.Action(context.Background(), b.ID, models.VMAction{Action: "start"}, f.sub); code(err) != models.CodePortFilterUnavailable {
+		t.Errorf("start without netgraph: %v", err)
+	}
+	f.fake.Set(func(fk *hostfake.Fake) { fk.NoNetgraph = false })
+
 	// A dataset with its key unloaded: refused, audited, nothing started
 	// (ADR 0010 decision 5).
 	f.fake.Lock("devpool/skep/vm/"+b.ID, true)
@@ -243,8 +253,8 @@ func TestStartRefusals(t *testing.T) {
 	if _, err := f.svc.Action(context.Background(), b.ID, models.VMAction{Action: "start"}, f.sub); code(err) != models.CodeStorageLocked {
 		t.Errorf("start with a locked dataset: %v", err)
 	}
-	if n := f.count(`SELECT COUNT(*) FROM audit_log WHERE action = 'vm.start' AND outcome = 'denied' AND resource_id = ?`, b.ID); n != 3 {
-		t.Errorf("%d denied start entries, want 3", n)
+	if n := f.count(`SELECT COUNT(*) FROM audit_log WHERE action = 'vm.start' AND outcome = 'denied' AND resource_id = ?`, b.ID); n != 4 {
+		t.Errorf("%d denied start entries, want 4 (memory, vmm, netgraph, key)", n)
 	}
 	f.fake.Lock("devpool/skep/vm/"+b.ID, false)
 	if task, _ := f.act(b.ID, models.VMActionStart, nil); task.Status != models.TaskSucceeded {

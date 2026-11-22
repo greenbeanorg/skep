@@ -930,3 +930,17 @@ func TestCleanLineFirstStderrLine(t *testing.T) {
 		}
 	}
 }
+
+// TestRunEnvStdin: a command gets EnvCommand.Stdin as its whole standard
+// input (ngctl -f -, ADR 0011), and none without it.
+func TestRunEnvStdin(t *testing.T) {
+	o := envRunOpts(5*time.Second, EnvCommand{Stdin: []byte("mkpeer x\nconnect y\n")})
+	out, err := runCommand(context.Background(), o, testShell, "-c", "cat")
+	if err != nil || string(out) != "mkpeer x\nconnect y\n" {
+		t.Fatalf("stdin: %q, %v", out, err)
+	}
+	out, err = runCommand(context.Background(), envRunOpts(5*time.Second, EnvCommand{}), testShell, "-c", "cat")
+	if err != nil || len(out) != 0 {
+		t.Fatalf("no stdin: %q, %v", out, err)
+	}
+}

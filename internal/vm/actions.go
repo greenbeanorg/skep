@@ -105,6 +105,13 @@ func (s *Service) checkAction(ctx context.Context, id, taskType string) error {
 		if caps := s.hv.Capabilities(ctx); !caps.Available {
 			return &models.Error{Code: models.CodeBhyveUnavailable, Message: "bhyve cannot run a VM on this host: " + caps.Reason}
 		}
+		// Every NIC gets an anti-spoofing filter, which needs netgraph
+		// (ADR 0011 decision 6).
+		if len(vm.NICs) > 0 && s.host.Filters != nil {
+			if err := s.host.Filters.PortFilterAvailable(ctx); err != nil {
+				return err
+			}
+		}
 		if err := s.checkUnlocked(ctx, vm); err != nil {
 			return err
 		}
