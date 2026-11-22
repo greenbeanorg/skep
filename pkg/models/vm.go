@@ -111,6 +111,11 @@ const (
 	// CodeDiskHasSnapshots refuses removing a disk that snapshots contain,
 	// unless destroy_snapshots says to destroy them.
 	CodeDiskHasSnapshots = "disk_has_snapshots"
+	// CodeDiskDeviceMissing is a disk whose zvol has no device node that
+	// Skep could, or was allowed to, bring back (ADR 0010 amendment z).
+	// Its details name the dataset and the reason, and, when an
+	// administrator has to act, the command.
+	CodeDiskDeviceMissing = "disk_device_missing"
 
 	// Storage management (ADR 0010).
 	CodeSnapshotLimit             = "snapshot_limit"
