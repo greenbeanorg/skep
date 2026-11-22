@@ -486,3 +486,62 @@ func TestCancelCarriesTheActorAndThePeer(t *testing.T) {
 		t.Errorf("invalid task ID: %d", resp.StatusCode)
 	}
 }
+
+// TestVersionHandshake: the agent reports its build on every response and
+// skep-api refuses an agent of another build (ADR 0012 answer 9).
+func TestVersionHandshake(t *testing.T) {
+	path := start(t, &fakeBackend{}, me())
+
+	// Every response carries the build, a 404 and a refused request too.
+	hc := &http.Client{Transport: &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, "unix", path)
+	}}}
+	for _, p := range []string{agentproto.Prefix + "/health", agentproto.Prefix + "/nope", "/elsewhere"} {
+		req, _ := http.NewRequest(http.MethodGet, "http://agent"+p, nil)
+		testCaller.SetHeaders(req.Header)
+		resp, err := hc.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if got := resp.Header.Get(agentproto.HeaderAgentVersion); got != agentproto.BuildID() {
+			t.Errorf("%s (%d): build header %q, want %q", p, resp.StatusCode, got, agentproto.BuildID())
+		}
+	}
+	// Without actor headers the agent refuses, and still says its build.
+	resp, err := hc.Get("http://agent" + agentproto.Prefix + "/system")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.Header.Get(agentproto.HeaderAgentVersion) == "" {
+		t.Error("a refusal lacks the build header")
+	}
+
+	// The same build: everything works.
+	if _, err := newClient(t, path).System(callerCtx()); err != nil {
+		t.Fatalf("same build refused: %v", err)
+	}
+
+	// Another build: every call is refused with agent_version_mismatch,
+	// and health says the agent is unavailable without naming versions.
+	other, err := agentclient.New(agentclient.Options{SocketPath: path, Build: "0.0.9+0123abc"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer other.Close()
+	_, err = other.System(callerCtx())
+	var me *models.Error
+	if !errors.As(err, &me) || me.Code != models.CodeAgentVersionMismatch ||
+		!strings.Contains(me.Message, agentproto.BuildID()) || !strings.Contains(me.Message, "0.0.9+0123abc") {
+		t.Fatalf("err %v", err)
+	}
+	h := other.Health(callerCtx())
+	if h.Status != models.HealthUnavailable || !strings.Contains(h.Checks["agent"].Error, "different builds") ||
+		strings.Contains(h.Checks["agent"].Error, "0.0.9") {
+		t.Fatalf("health %+v", h)
+	}
+	if _, err := other.DialConsole(callerCtx(), "vm-1"); !errors.As(err, &me) || me.Code != models.CodeAgentVersionMismatch {
+		t.Fatalf("console: %v", err)
+	}
+}

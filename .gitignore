@@ -6,6 +6,7 @@
 /skep-api
 /skepctl
 /skep-installer
+/skep-setup
 /skep-controller
 
 # Local state: databases are never committed

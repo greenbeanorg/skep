@@ -32,6 +32,10 @@ func (c *Client) DialConsole(ctx context.Context, vmID string) (*websocket.Conn,
 	if err == nil {
 		return conn, nil
 	}
+	var vm *VersionMismatchError
+	if errors.As(err, &vm) {
+		return nil, vm.Model()
+	}
 	if resp != nil && resp.StatusCode != http.StatusSwitchingProtocols {
 		var body []byte
 		if resp.Body != nil {

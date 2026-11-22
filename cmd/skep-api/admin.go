@@ -26,6 +26,9 @@ const adminUsage = `usage:
         disable a user and end that user's sessions
   skep-api admin delete --username NAME --yes [flags]
         delete a user and end that user's sessions
+  skep-api admin exists --username NAME [flags]
+        report whether a user exists, reading api.db without changing it;
+        exit 0: it exists, 1: it does not, 2: error
   skep-api admin hash-benchmark [flags]
         measure how long one password hash takes on this host
 
@@ -51,6 +54,8 @@ func runAdmin(ctx context.Context, args []string, e env) error {
 		return adminDisable(ctx, args[1:], e)
 	case "delete":
 		return adminDelete(ctx, args[1:], e)
+	case "exists":
+		return adminExists(ctx, args[1:], e)
 	case "hash-benchmark":
 		return adminHashBenchmark(ctx, args[1:], e)
 	default:

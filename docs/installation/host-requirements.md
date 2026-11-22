@@ -1,11 +1,17 @@
 # Host requirements and the manual install
 
 This page is the complete, ordered procedure for turning a stock
-FreeBSD® 15.1-RELEASE (amd64) install into a Skep host, by hand. Until the
-installer exists (Milestone 10, [ADR 0012](../decisions/0012-installer.md),
-accepted 2026-11-22, not yet built), this is how Skep is installed. It also serves as the inventory
-that ADR is based on: every step below is something an installer would
-automate, check, or leave to the operator.
+FreeBSD® 15.1-RELEASE (amd64) install into a Skep host, by hand. It is
+also the inventory [ADR 0012](../decisions/0012-installer.md) is based
+on: every step below is something the installer automates, checks, or
+leaves to the operator.
+
+The package and [`skep-setup`](skep-setup.md) (Milestone 10) automate
+steps 3, 4, 5 (`zfs_enable`), 6 (a new bridge only), 9, 10, 12 and 13's
+media directory, and check the rest; the package creates the account of
+step 7 and installs the files of step 8 ([packaging](packaging.md)). Both
+are **pending FreeBSD validation**: until they have run on the lab VMs,
+this manual procedure is the validated way to install Skep.
 
 It collects what is otherwise spread across
 [Running Skep as FreeBSD services](freebsd-service.md),

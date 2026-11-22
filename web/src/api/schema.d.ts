@@ -2023,7 +2023,7 @@ export interface components {
                  *     by task submission, which is not exposed yet.
                  * @enum {string}
                  */
-                code: "invalid_request" | "not_found" | "method_not_allowed" | "internal_error" | "service_unavailable" | "agent_unavailable" | "unauthenticated" | "invalid_credentials" | "forbidden" | "rate_limited" | "setup_required" | "username_taken" | "last_admin" | "unknown_role" | "resource_busy" | "idempotency_key_conflict" | "not_cancellable" | "queue_full" | "shutting_down";
+                code: "invalid_request" | "not_found" | "method_not_allowed" | "internal_error" | "service_unavailable" | "agent_unavailable" | "agent_version_mismatch" | "unauthenticated" | "invalid_credentials" | "forbidden" | "rate_limited" | "setup_required" | "username_taken" | "last_admin" | "unknown_role" | "resource_busy" | "idempotency_key_conflict" | "not_cancellable" | "queue_full" | "shutting_down";
                 /** @description Human-readable description. */
                 message: string;
                 request_id?: string;
@@ -2586,8 +2586,9 @@ export interface components {
             };
         };
         /**
-         * @description The host agent cannot be reached (`agent_unavailable`), or the
-         *     request was cancelled or timed out (`service_unavailable`).
+         * @description The host agent cannot be reached (`agent_unavailable`), is another
+         *     build than skep-api (`agent_version_mismatch`), or the request was
+         *     cancelled or timed out (`service_unavailable`).
          */
         Unavailable: {
             headers: {

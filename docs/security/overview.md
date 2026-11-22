@@ -352,6 +352,14 @@ implemented:
   `/var/db/skep/agent` is `root`, `0700`; `/var/db/skep/api` is `skep`,
   `0700`.
 
+The agent puts its build (release version and commit) in
+`Skep-Agent-Version` on every response, and `skep-api` refuses every
+response from another build, or one without the header, before using
+it: node endpoints answer `503 agent_version_mismatch` and the public
+health check reports the agent unavailable without naming versions
+(ADR 0012 answer 9). Both programs come from one package; a mismatch
+means only one was restarted.
+
 The actor of a request is the authenticated user. The health check that
 `skep-api` makes without a user carries the actor `skep-api`. The socket
 and the two rc.d services are pending FreeBSD validation.
@@ -650,6 +658,52 @@ the database, the files, and the index together. It detects accidents,
 bugs, and partial tampering, and with an off-host copy of the latest hash
 it detects complete tampering too. A compromised `skep-api` can damage
 its own log and archive, detectably; the agent's are out of its reach.
+
+## Installer (Milestone 10)
+
+`skep-setup` runs as root and edits host files, so it is held to the
+rules of [ADR 0012](../decisions/0012-installer.md) Decision 2:
+
+- It never sources a host file. `rc.conf` and `loader.conf` are parsed
+  as plain `name=value` lines; anything else makes it edit nothing in that
+  file. Changes go through `sysrc` with an argument list (never a shell),
+  and each result is read back.
+- It only adds; an existing value is never overwritten, and a variable
+  changed between the plan and the change is skipped. New files are
+  created with their mode and owner before they appear (temporary file,
+  `chown`, then a hard link that fails if anything is there). An
+  `agent.json` or `api.json` it did not write is parsed and compared,
+  never rewritten.
+- Every program it runs as root is named by absolute path, with a fixed
+  minimal environment (`PATH`, `HOME`; `TERM` only for the interactive
+  `admin create`) and umask `022`. The first administrator is created by
+  `skep-api admin create` running as the `skep` user, not root, once the
+  API has created its database.
+- It never loads modules, reboots, creates or destroys pools or
+  datasets, or changes an interface or bridge it did not create.
+  `0.0.0.0` as the listen address needs `-listen-all`.
+- Every change is journaled with the file's prior copy
+  (`/var/db/skep/setup`, `0700`, copies `0600`; no passwords: the first
+  administrator's password goes only to `skep-api admin create` on the
+  terminal).
+- `remove -purge-data` deletes only `/var/db/skep` (except the
+  journals), `agent.json`, `api.json` and the `skep` account, and always
+  asks. Its path checks refuse anything else. It is refused while a Skep
+  guest runs, and when a guest dataset's ZFS key file is under
+  `/var/db/skep` (Skep itself keeps no ZFS key).
+- The package's scripts set a fixed `PATH`, only create the account
+  (fixed UID/GID 409), and **warn** while Skep guests run when the
+  package is deleted. They do not prevent the deletion: pkg 2.9.2 deletes
+  the files although the pre-deinstall script fails. The guard against
+  removing Skep under running guests is `skep-setup remove`, which
+  refuses ([ADR 0012](../decisions/0012-installer.md), fix-round
+  amendment). They never edit `rc.conf` or start anything.
+
+Database backups (`db backup`) are `0600` in a `0700` directory and
+contain everything the databases do (password hashes, session hashes,
+audit logs): treat them as the databases themselves.
+
+All of this is pending FreeBSD validation.
 
 ## Open items
 

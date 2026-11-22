@@ -33,3 +33,24 @@ func TestFailDiskQuotaBelowUsage(t *testing.T) {
 		t.Fatalf("body = %s", w.Body.String())
 	}
 }
+
+// An agent of another build is 503 agent_version_mismatch (ADR 0012
+// answer 9), with no details.
+func TestFailAgentVersionMismatch(t *testing.T) {
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, "/api/v1/system", nil)
+	Fail(slog.New(slog.NewTextHandler(io.Discard, nil)), w, r,
+		&models.Error{Code: models.CodeAgentVersionMismatch, Message: "skep-agent runs a and skep-api runs b"})
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503", w.Code)
+	}
+	var body struct {
+		Error struct {
+			Code    string         `json:"code"`
+			Details map[string]any `json:"details"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil || body.Error.Code != models.CodeAgentVersionMismatch || body.Error.Details != nil {
+		t.Fatalf("body = %s", w.Body.String())
+	}
+}

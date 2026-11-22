@@ -3,6 +3,11 @@
 - Status: **Accepted** (2026-11-22). Andy's answers to
   [the decisions](#decisions-for-andy) are recorded in
   [Answers](#answers-2026-11-22) and folded into the decisions below.
+  [Amendment (2026-11-22)](#amendment-2026-11-22-build-decisions-confirmed)
+  records three build decisions Andy confirmed;
+  [the fix-round amendment](#amendment-2026-11-22-fix-round-the-pre-deinstall-guard-and-the-review-fixes)
+  records the pre-deinstall guard for 0.1 and the review fixes Andy
+  approved.
 - Date: 2026-11-22
 - Depends on: [ADR 0003](0003-read-only-discovery.md) (enabling a
   capability is an administrative act), [ADR 0004](0004-privilege-boundary.md)
@@ -362,7 +367,7 @@ validated on `hearst`.
   upgrade from a Skep without filters (b61e578) was handled
   (m7c-validation item 5).
 - Tasks running when the agent stops are marked `interrupted` (ADR 0005);
-  setup refuses to upgrade while tasks are `running` unless `--force`.
+  setup refuses to upgrade while tasks are `running` unless `--force` (pending ones too since the [amendment](#amendment-2026-11-22-build-decisions-confirmed)).
 
 **Compatibility between programs.** `skep-api` and `skep-agent` come from
 one package and are upgraded together; there is no version handshake
@@ -545,6 +550,114 @@ Also decided:
   limits use RCTL (Decision 3).
 - **Third-party notices:** the package installs `THIRD_PARTY_NOTICES`
   beside the license in `share/licenses/skep/` (Decision 1).
+
+## Amendment (2026-11-22): build decisions confirmed
+
+The build (PR #52) took three decisions on its own, numbered 5, 8 and 14
+in that run's report. Andy confirmed all three on 2026-11-22. They refine
+Decisions 1, 3 and 6; nothing above them changes.
+
+- **Build decision 5: the pre-deinstall refusal does not depend on the
+  agent.** The package's `pre-deinstall` script refuses (exit 1) while a
+  Skep guest runs, looking at the host itself (jails named `skep-*` in
+  `jls`, VMs named `skep-*` in `/dev/vmm`), **even when `skep_agent` is
+  stopped**. A stopped agent is the usual state before `pkg delete`
+  (`skep-setup remove` stops it), and it is when a running guest would be
+  left with nothing to manage it. As before, it never refuses when
+  `PKG_UPGRADE` is set, and `pkg delete -f` overrides it (Decision 1,
+  answer 14).
+- **Build decision 8: `--admin` needs `--start` or an existing
+  `/var/db/skep/api`.** `skep-api admin create` opens `api.db`. Run as
+  root before `skep_api` has ever started, it would create the API's data
+  directory owned by root and lock the unprivileged API out of it. So the
+  plan refuses `--admin NAME` unless `--start` is also given (the
+  administrator is then created after both services start) or
+  `/var/db/skep/api` already exists (Decision 3).
+- **Build decision 14: what `--revert-host` reverts.** `skep-setup remove
+  --revert-host` reverts only what an apply's journal records as added and
+  what is unchanged since (Decision 6):
+  - a variable setup set with `=` is removed (`sysrc -x`) only while it
+    still has the value setup gave it; a changed one is reported as a
+    conflict and left alone;
+  - for a list setup appended to with `+=` (`kld_list`,
+    `cloned_interfaces`), only the words that apply added are removed
+    (`sysrc NAME-="..."`). Apply journals only the words that were
+    missing, so a word the operator had before apply (as `NAME` or
+    `NAME.ko` in `kld_list`), and any word added after it that setup did
+    not add, stays. Rolling back the apply, or the remove, restores the
+    file as it was and keeps those words too;
+  - applies that were rolled back are ignored;
+  - when `rc.conf` or `loader.conf` (or an override file) holds lines that
+    are not plain assignments, setup edits nothing in it and prints the
+    `sysrc` steps instead;
+  - modules stay loaded and interfaces exist until the next boot.
+
+  Covered by `TestRemoveRevertHost`, `TestRemoveRevertLeavesChangedLines`
+  and `TestRevertHostKeepsTheOperatorsKldListWords`
+  (`internal/setup/remove_test.go`). Real `sysrc -=` and `-x` semantics
+  are pending FreeBSD validation on the lab VMs.
+- **Upgrade and unfinished tasks (approved 2026-11-22):** `skep-setup
+  upgrade` refuses while tasks are pending or running, not only running;
+  it stops `skep_api`, re-reads the tasks, and waits up to `-wait` (60 s)
+  before backing up and restarting the agent. If tasks remain without
+  `-force` it refuses, and every refusal or failure after the API stop
+  starts `skep_api` again and checks it. `-force` says pending and running
+  tasks are interrupted and must be resubmitted (Decision 5).
+
+## Amendment (2026-11-22, fix round): the pre-deinstall guard and the review fixes
+
+Andy decided and approved these on 2026-11-22 (fix round for PR #52,
+after the Fable review and the lab-VM run recorded in PR #54). They
+refine Decisions 1, 2, 5 and 6 and build decisions 5 and 8; where they
+differ, this amendment wins.
+
+- **The guard for 0.1 is `skep-setup remove`.** pkg 2.9.2 deletes the
+  files even when the pre-deinstall script fails (it stops only with
+  `DEVELOPER_MODE` on), so build decision 5's refusal is not enforced.
+  The script now prints a **warning** that says pkg deletes the files
+  anyway and names `skep-setup remove`, which does refuse while Skep
+  guests exist. It keeps exit 1, for a pkg that honours it.
+  **`pkg lock` was rejected**: it would also block `pkg upgrade`.
+- **Package scripts** set `PATH=/sbin:/bin:/usr/sbin:/usr/bin` first.
+- **Root commands** (Decision 2): every base-system program is run by
+  absolute path with a fixed minimal environment (`PATH`, `HOME=/`;
+  `TERM` only for the interactive `admin create`); non-interactive
+  commands run in their own process group; `apply`, `rollback`,
+  `upgrade` and `remove` set umask `022`. With `-root` other than `/` and
+  the real runner, service, `pw`, administrator and upgrade actions are
+  refused.
+- **`-admin`** (build decision 8, whose refusal stays): `skep-api admin
+  create` runs as the `skep` user (UID and primary GID from the root's
+  `/etc/passwd`), only once `skep_api`'s pid file and `api.db` exist (a
+  bounded wait). A failed admin create finishes the journal with the
+  error and the command exits non-zero with the command to retry.
+- **Directory pools** must be a real directory (`lstat`), owned by UID 0,
+  not group or other writable.
+- **`agent.json` / `api.json` not written by setup** are parsed:
+  allow-lists (or the listen address) equal to the answers are `ok`,
+  different is a conflict with the proposed content, unparsable is
+  refused. Setup never rewrites them.
+- **Upgrade** (Decision 5): a service that is not running is not
+  stopped (status first); once `skep_agent` is being stopped, Ctrl-C
+  cancels nothing (bounded waits); `-keep >= 1` and the backup directory
+  are checked before `skep_api` stops; after the starts, the agent's
+  socket is polled (up to 30 s) until it reports the expected build.
+  The agent's database path comes from its configuration; an agent that
+  answers on its socket while that database is missing is a refusal,
+  and a missing table is an error, not zero.
+- **Remove** (Decision 6): `-purge-data` is refused while any Skep guest
+  runs, also with `-keep-guests`. Skep keeps no ZFS key material (ADR
+  0010: the operator holds the keys); remove checks the `keylocation` of
+  the guest datasets' encryption roots and refuses `-purge-data` if one
+  is a file under `/var/db/skep`. `-revert-host` keeps `zfs_enable`
+  while any pool is imported and says so.
+- **Journal**: a journal directory without a readable `journal.json` is
+  shown as an unfinished run with no recorded changes that `rollback ID`
+  clears; rollback prints the run it undoes before asking.
+
+Covered by tests in `internal/setup`, `cmd/skep-setup`,
+`internal/dbbackup` and `scripts/pkgstage`; all of it is pending FreeBSD
+validation on the lab VMs.
 
 ## What Andy must provide
 

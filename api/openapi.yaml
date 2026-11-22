@@ -65,7 +65,10 @@ info:
     in the system document.
 
     When the agent cannot be reached, node endpoints answer
-    `503 agent_unavailable`.
+    `503 agent_unavailable`. When the agent is another build than
+    `skep-api` (only one of them was restarted after an upgrade), they
+    answer `503 agent_version_mismatch`; restarting both
+    (`skep-setup upgrade`) clears it.
 
     Every error response uses the `ErrorResponse` envelope. Every response
     carries an `X-Request-ID` header; a well-formed ID sent by the client is
@@ -2430,8 +2433,9 @@ components:
             $ref: "#/components/schemas/ErrorResponse"
     Unavailable:
       description: |
-        The host agent cannot be reached (`agent_unavailable`), or the
-        request was cancelled or timed out (`service_unavailable`).
+        The host agent cannot be reached (`agent_unavailable`), is another
+        build than skep-api (`agent_version_mismatch`), or the request was
+        cancelled or timed out (`service_unavailable`).
       content:
         application/json:
           schema:
@@ -3445,6 +3449,7 @@ components:
                 - internal_error
                 - service_unavailable
                 - agent_unavailable
+                - agent_version_mismatch
                 - unauthenticated
                 - invalid_credentials
                 - forbidden

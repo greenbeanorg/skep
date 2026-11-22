@@ -487,6 +487,9 @@ const (
 	CodeShuttingDown        = "shutting_down"
 	// CodeAgentUnavailable means skep-api could not reach the host agent.
 	CodeAgentUnavailable = "agent_unavailable"
+	// CodeAgentVersionMismatch means the agent is another build than
+	// skep-api: only one of them was restarted after an upgrade.
+	CodeAgentVersionMismatch = "agent_version_mismatch"
 )
 
 // Invalid returns an invalid_request Error with the given message.

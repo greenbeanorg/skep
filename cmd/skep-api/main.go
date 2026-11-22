@@ -48,8 +48,14 @@ func main() {
 		drop:         privdrop.To,
 		readPassword: termpass.Read,
 	})
+	var exitErr *exitCodeError
 	switch {
 	case err == nil:
+	case errors.As(err, &exitErr):
+		if exitErr.msg != "" {
+			fmt.Fprintln(os.Stderr, "skep-api:", exitErr.msg)
+		}
+		os.Exit(exitErr.code)
 	case errors.Is(err, flag.ErrHelp):
 		os.Exit(2)
 	default:
@@ -76,8 +82,8 @@ var errRoot = errors.New("refusing to run as root: skep-api is the network-facin
 	"must run as the unprivileged skep account (use the skep_api rc.d service)")
 
 // run is the whole program; main only maps its error to an exit code.
-// Without a command it runs the server; "admin", "tls", and "audit" are
-// local commands for the host's administrator.
+// Without a command it runs the server; "admin", "tls", "audit", and "db"
+// are local commands for the host's administrator.
 func run(ctx context.Context, args []string, e env) error {
 	if len(args) > 0 {
 		switch args[0] {
@@ -87,6 +93,8 @@ func run(ctx context.Context, args []string, e env) error {
 			return runTLS(ctx, args[1:], e)
 		case "audit":
 			return runAudit(ctx, args[1:], e)
+		case "db":
+			return runDB(ctx, args[1:], e)
 		}
 	}
 	return runServer(ctx, args, e)
