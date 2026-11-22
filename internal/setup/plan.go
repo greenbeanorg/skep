@@ -49,6 +49,9 @@ const (
 	ActMkdir        = "mkdir"         // create a directory that does not exist
 	ActServiceStart = "service-start" // start a Skep service (--start)
 	ActAdminCreate  = "admin-create"  // skep-api admin create, interactive
+	ActServiceStop  = "service-stop"  // stop a Skep service (remove)
+	ActRemovePath   = "remove-path"   // delete Skep's data (remove --purge-data)
+	ActPwDelete     = "pw-delete"     // delete the skep account (remove --purge-data)
 )
 
 // Action is one change apply makes. Paths are host paths (under the root).
@@ -292,15 +295,28 @@ func Compute(ctx context.Context, o Options, f Facts) (Plan, error) {
 	b.media()
 	b.readOnlyChecks()
 	b.guests()
-	if o.Admin != "" {
-		b.add("api", "first administrator "+o.Admin, "never a password in a flag, a file, or the journal",
-			Action{Type: ActAdminCreate, Username: o.Admin})
-	}
 	if o.Start {
 		b.add("services", "start skep_agent", "", Action{Type: ActServiceStart, Service: "skep_agent"})
 		b.add("services", "start skep_api", "", Action{Type: ActServiceStart, Service: "skep_api"})
 	}
+	if o.Admin != "" {
+		b.admin()
+	}
 	return b.plan, nil
+}
+
+// admin plans the first administrator. skep-api admin create opens
+// api.db; run before skep_api has ever started, it would create the API's
+// data directory as root and lock the unprivileged API out of it, so it
+// runs after --start, or once the directory exists.
+func (b *builder) admin() {
+	if _, err := os.Stat(hostPath(b.o.Root, "/var/db/skep/api")); err != nil && !b.o.Start {
+		b.refuse("api", "first administrator "+b.o.Admin,
+			"skep_api has not created its data directory yet; add --start, or start skep_api first")
+		return
+	}
+	b.add("api", "first administrator "+b.o.Admin, "never a password in a flag, a file, or the journal",
+		Action{Type: ActAdminCreate, Username: b.o.Admin})
 }
 
 // builder accumulates the plan.
@@ -616,7 +632,15 @@ func (b *builder) bridges() {
 
 func (b *builder) newBridge() {
 	br, up := b.o.CreateBridge, b.o.Uplink
+	bridgeLine := fmt.Sprintf("addm %s ifuntagged %s 1 defuntagged 1 vlanfilter up", up, up)
 	if b.bridgeDefined(br) {
+		line, _ := b.rc.Get("ifconfig_" + br)
+		cloned, _ := b.rc.Get("cloned_interfaces")
+		upLine, _ := b.rc.Get("ifconfig_" + up)
+		if line == bridgeLine && slices.Contains(strings.Fields(cloned), br) && strings.EqualFold(upLine, "up") {
+			b.ok("network", "new bridge "+br, "in rc.conf as setup writes it (uplink "+up+", vlanfilter on)")
+			return
+		}
 		b.refuse("network", br, "exists already; setup never changes an existing bridge (use --bridge "+br+" to allow-list it)")
 		return
 	}
@@ -664,7 +688,6 @@ func (b *builder) newBridge() {
 			}
 		}
 	}
-	bridgeLine := fmt.Sprintf("addm %s ifuntagged %s 1 defuntagged 1 vlanfilter up", up, up)
 	acts := []Action{
 		{Type: ActSysrc, File: rcConfPath, Name: "cloned_interfaces", Op: "+=", Value: br},
 		{Type: ActSysrc, File: rcConfPath, Name: "ifconfig_" + up, Op: "=", Value: "up"},

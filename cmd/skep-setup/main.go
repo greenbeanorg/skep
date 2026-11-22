@@ -47,6 +47,8 @@ type env struct {
 	euid           int
 	// confirm asks the operator a yes/no question.
 	confirm func(prompt string) bool
+	// chown sets file owners; nil means os.Lchown.
+	chown func(path string, uid, gid int) error
 }
 
 // exitError carries an exit code.
@@ -190,7 +192,8 @@ func (a *answers) options() (setup.Options, error) {
 }
 
 // computePlan parses the answers, probes the host, and computes the plan.
-func computePlan(ctx context.Context, name string, args []string, e env, extra func(*flag.FlagSet)) (setup.Options, setup.Plan, error) {
+// gate, when set, runs on the parsed options before anything is read.
+func computePlan(ctx context.Context, name string, args []string, e env, extra func(*flag.FlagSet), gate func(setup.Options) error) (setup.Options, setup.Plan, error) {
 	flags := flag.NewFlagSet("skep-setup "+name, flag.ContinueOnError)
 	flags.SetOutput(e.stderr)
 	var a answers
@@ -207,6 +210,11 @@ func computePlan(ctx context.Context, name string, args []string, e env, extra f
 	o, err := a.options()
 	if err != nil {
 		return o, setup.Plan{}, err
+	}
+	if gate != nil {
+		if err := gate(o); err != nil {
+			return o, setup.Plan{}, err
+		}
 	}
 	f, err := e.prober.Probe(ctx)
 	if err != nil {
@@ -254,7 +262,7 @@ func summary(items []setup.Item) string {
 }
 
 func runCheck(ctx context.Context, args []string, e env) error {
-	o, p, err := computePlan(ctx, "check", args, e, nil)
+	o, p, err := computePlan(ctx, "check", args, e, nil, nil)
 	if err != nil {
 		return err
 	}
@@ -271,7 +279,7 @@ func runCheck(ctx context.Context, args []string, e env) error {
 }
 
 func runPlan(ctx context.Context, args []string, e env) error {
-	o, p, err := computePlan(ctx, "plan", args, e, nil)
+	o, p, err := computePlan(ctx, "plan", args, e, nil, nil)
 	if err != nil {
 		return err
 	}
