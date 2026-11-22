@@ -1,0 +1,17 @@
+# Backlog
+
+Work that has been decided on in principle but is deliberately not
+scheduled. An entry here is not a commitment to a release; each needs its
+own design (and, where it changes behaviour, Andy's approval) before it is
+built. Entries say when they may be picked up.
+
+| Item | When | Where it came from |
+|---|---|---|
+| Skep logs to syslog itself (a `slog` handler sending one record per message to `/var/run/log`), instead of daemon(8)'s `-S` pipe, so records are never joined on one `daemon.log` line | After 0.1 | [daemon-log-joined-records.md](../tests/integration/rcd/daemon-log-joined-records.md), option B (Andy, 2026-11-22) |
+| An optional pinned IPv4 address for VM NICs (anti-spoofing beyond MAC) | Not scheduled | [ADR 0011](decisions/0011-guest-port-anti-spoofing.md) decision 7 |
+| Default jail limits, or limits required per role | Not scheduled | [Jails](administration/jails.md#limits) |
+| An option to reset a jail's SSH host keys on clone | Not scheduled | [Jails](administration/jails.md) |
+
+Not planned for now: FreeBSD problem reports for the daemon(8) joined
+records and the `rc.d/routing` "File exists" lines at jail start (Andy,
+2026-11-22). Both are documented as harmless base-system behaviour.
