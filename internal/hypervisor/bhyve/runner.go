@@ -174,6 +174,9 @@ func (r *runner) addNIC(ctx context.Context, n SpecNIC) (string, string) {
 	if err != nil {
 		return models.VMFailed, models.CodePortFilterFailed + ": " + err.Error()
 	}
+	if r.ops.Filters == nil {
+		return models.VMFailed, models.CodePortFilterFailed + ": this host has no port filter operations"
+	}
 	unlock, err := r.ops.Filters.LockPort(hostops.PortVM, id, n.Slot, true)
 	if err != nil {
 		return models.VMFailed, "lock the port: " + err.Error()

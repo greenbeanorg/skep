@@ -92,6 +92,9 @@ func (a *Adapter) Start(ctx context.Context, vm models.VM) error {
 	// Every NIC gets an anti-spoofing filter (ADR 0011); without the
 	// netgraph modules the start is refused before anything is created.
 	if len(spec.NICs) > 0 {
+		if a.host.Filters == nil {
+			return &models.Error{Code: models.CodePortFilterUnavailable, Message: "this host has no port filter operations"}
+		}
 		if err := a.host.Filters.PortFilterAvailable(ctx); err != nil {
 			return err
 		}

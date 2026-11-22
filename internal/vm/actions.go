@@ -107,7 +107,10 @@ func (s *Service) checkAction(ctx context.Context, id, taskType string) error {
 		}
 		// Every NIC gets an anti-spoofing filter, which needs netgraph
 		// (ADR 0011 decision 6).
-		if len(vm.NICs) > 0 && s.host.Filters != nil {
+		if len(vm.NICs) > 0 {
+			if s.host.Filters == nil {
+				return &models.Error{Code: models.CodePortFilterUnavailable, Message: "this host has no port filter operations"}
+			}
 			if err := s.host.Filters.PortFilterAvailable(ctx); err != nil {
 				return err
 			}

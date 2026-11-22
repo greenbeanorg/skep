@@ -288,9 +288,11 @@ is the interval.
    what was wrong, and an audit entry;
 2. **reinstall** the filter at once, on the port as it is (Decision 3's
    step 2; the port stays a bridge member, so frames sent during the gap
-   were already forwarded): whatever is left of the old graph on the
-   ether node is removed first (`rmhook` of `lower` and `upper`), then
-   the install script runs and is verified; success is
+   were already forwarded): hooks of `lower` and `upper` whose peer is an
+   `ng_bpf` node (what is left of Skep's filter) are removed first; a hook
+   to any other node is left alone (Decision 10: Skep does not tear down
+   someone else's graph), so the install then fails and step 3 applies;
+   then the install script runs, by node ID, and is verified; success is
    `port_filter_restored` and an audit entry;
 3. if the reinstall fails, **remove the port from the bridge** (`deletem`),
    so the guest is cut off rather than unfiltered: event
