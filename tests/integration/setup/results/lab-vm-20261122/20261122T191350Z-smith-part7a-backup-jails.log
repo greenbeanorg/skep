@@ -1,0 +1,24 @@
+skep-agent db backup: /var/db/skep/backup/0.1.0-20c8731-20261122T191351Z/agent.db sha256 ff61d0892cb77235ab40a9738434c216b2e7112e5f225d527a6e83286efc0e56
+rc=0
+skep-api db backup: /var/db/skep/backup/0.1.0-20c8731-20261122T191351Z/api.db sha256 cf8eb1327bfc7a1037e029d34a33f5060d2b780ab4808796d0adcdc7525ff2d9
+rc=0
+total 24
+drwx------  3 root wheel 512 Nov 22 14:13 .
+drwxr-xr-x  8 root wheel 512 Nov 22 14:13 ..
+drwx------  2 root wheel 512 Nov 22 14:13 0.1.0-20c8731-20261122T191351Z
+
+/var/db/skep/backup/0.1.0-20c8731-20261122T191351Z:
+total 912
+drwx------  2 root wheel    512 Nov 22 14:13 .
+drwx------  3 root wheel    512 Nov 22 14:13 ..
+-rw-------  1 root wheel      0 Nov 22 14:13 .skep-backup
+-rw-------  1 root wheel 360448 Nov 22 14:13 agent.db
+-rw-------  1 root wheel     75 Nov 22 14:13 agent.db.sha256
+-rw-------  1 root wheel  90112 Nov 22 14:13 api.db
+-rw-------  1 root wheel     73 Nov 22 14:13 api.db.sha256
+upa=44c06b99-9333-4db7-9034-3b34396204d4
+Status:       succeeded
+Status:       succeeded
+upb=57ea160b-f5b5-4568-9766-9bd0ffe35d60
+Status:       succeeded
+Status:       succeeded

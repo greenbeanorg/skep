@@ -1,0 +1,15 @@
+head 20c8731
+pkg-0.1.0: staged sha256 == SHA256SUMS.stage
+skep-0.1.0
+10
+SHA256 (out/skep-0.1.0.pkg) = 8cb77163f13ee974a692ea130e0fc0b8fdb25ec9388e3d252a033c4e98a4f399
+skep-setup 0.1.0 (commit 20c8731, built 2026-11-22T18:54:55Z, go1.27.4 freebsd/amd64)
+pkg-0.1.1: staged sha256 == SHA256SUMS.stage
+skep-0.1.1
+10
+SHA256 (out/skep-0.1.1.pkg) = 65db3826e633c501eed5024c618f44bb3b921a3713c966fa79fceea9149de992
+skep-setup 0.1.1 (commit 20c8731, built 2026-11-22T18:55:03Z, go1.27.4 freebsd/amd64)
+SHA256 (/home/aba/skep-pkgs/skep-0.1.0.pkg) = 8cb77163f13ee974a692ea130e0fc0b8fdb25ec9388e3d252a033c4e98a4f399
+SHA256 (/home/aba/skep-pkgs/skep-0.1.1.pkg) = 65db3826e633c501eed5024c618f44bb3b921a3713c966fa79fceea9149de992
+SHA256 (/home/aba/skep-pkgs/skep-pkgprobe-1.0.pkg) = 0c943afdf703c1289ce21f53b2f94078e3756b03f225df8c419b8d84f8bbdb84
+SHA256 (/home/aba/skep-pkgs/skep-pkgprobe-1.1.pkg) = 987adab7e33aa5c8f71ff3edc2211b63f9cc01d4e78772a3ad070c05b4cd9d0b

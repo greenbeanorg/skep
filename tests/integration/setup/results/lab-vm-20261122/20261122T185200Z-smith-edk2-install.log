@@ -1,0 +1,8 @@
+[1/1] Fetching edk2-bhyve-g202508_3: .......... done
+Checking integrity... done (0 conflicting)
+[1/1] Installing edk2-bhyve-g202508_3...
+[1/1] Extracting edk2-bhyve-g202508_3: ......... done
+rc=0
+BHYVE_UEFI.fd
+BHYVE_UEFI_CODE.fd
+BHYVE_UEFI_VARS.fd

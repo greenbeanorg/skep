@@ -1,0 +1,40 @@
+SHA256 (/home/aba/skep-pkgs/skep-0.1.0.pkg) = eaa321ee187f4f52233768eff75a38d990a4101aa91834f81d407730fb63a9ed
+id: skep: no such user
+pw: no such uid `409'
+pw: unknown gid `409'
+Installing skep-0.1.0...
+skep: created the skep group and user (UID and GID 409, no login shell, no home).
+Extracting skep-0.1.0: .......... done
+rc=0
+uid=409(skep) gid=409(skep) groups=409(skep)
+skep:*:409:409::0:0:Skep service account:/nonexistent:/usr/sbin/nologin
+skep:*:409:
+-r-xr-xr-x  1 root wheel  7217322 Nov 22 14:27 /usr/local/bin/skepctl
+-r-xr-xr-x  1 root wheel     6955 Nov 22 14:27 /usr/local/etc/rc.d/skep_agent
+-r-xr-xr-x  1 root wheel     6228 Nov 22 14:27 /usr/local/etc/rc.d/skep_api
+-r-xr-xr-x  1 root wheel 13779114 Nov 22 14:27 /usr/local/sbin/skep-agent
+-r-xr-xr-x  1 root wheel 14246058 Nov 22 14:27 /usr/local/sbin/skep-api
+-r-xr-xr-x  1 root wheel 11231402 Nov 22 14:27 /usr/local/sbin/skep-setup
+
+/usr/local/share/licenses/skep/:
+total 1
+-r--r--r--  1 root wheel   1303 Nov 22 14:27 LICENSE
+-r--r--r--  1 root wheel 249097 Nov 22 14:27 THIRD_PARTY_NOTICES
+total 10
+drwxr-xr-x  2 root wheel    4 Nov 22 14:28 .
+drwxr-xr-x  9 root wheel   17 Nov 22 14:28 ..
+-rw-r--r--  1 root wheel 1316 Nov 22 14:27 agent.json.sample
+-rw-r--r--  1 root wheel  822 Nov 22 14:27 api.json.sample
+SHA256 (/etc/rc.conf) = fd574992f98b7711b768422c905e276d0a92ff4758fabc7bd3ed4ac12d3c3729
+SHA256 (/boot/loader.conf) = a27b0c57033768f0d3a4a53e692b959fc985d70c28c3fc539896b91b84d1bdd9
+procs: 1
+ls: /var/db/skep: No such file or directory
+Checking skep: . done
+--- again
+Installing skep-0.1.0...
+the most recent version of skep-0.1.0 is already installed
+rc=0
+Extracting skep-0.1.0: .......... done
+rc=0
+uid=409(skep) gid=409(skep) groups=409(skep)
+SHA256 (/etc/rc.conf) = fd574992f98b7711b768422c905e276d0a92ff4758fabc7bd3ed4ac12d3c3729

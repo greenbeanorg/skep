@@ -1,0 +1,105 @@
+SHA256 (/etc/rc.conf) = fd574992f98b7711b768422c905e276d0a92ff4758fabc7bd3ed4ac12d3c3729
+SHA256 (/boot/loader.conf) = a27b0c57033768f0d3a4a53e692b959fc985d70c28c3fc539896b91b84d1bdd9
+skep: created the skep group and user (UID and GID 409, no login shell, no home).
+Extracting skep-0.1.1: .......... done
+uid=409(skep) gid=409(skep) groups=409(skep)
+=== apply -mgmt vtnet0 -create-bridge bridge0 -uplink vtnet1 -pool zroot
+skep-setup: refused: nothing was changed
+  8 ok, 9 to add, 0 warnings, 0 conflicts, 0 for you, 1 refused
+SHA256 (/etc/rc.conf) = fd574992f98b7711b768422c905e276d0a92ff4758fabc7bd3ed4ac12d3c3729
+SHA256 (/boot/loader.conf) = a27b0c57033768f0d3a4a53e692b959fc985d70c28c3fc539896b91b84d1bdd9
+total 2
+-rw-r--r--  1 root wheel 1316 Nov 22 14:27 agent.json.sample
+-rw-r--r--  1 root wheel  822 Nov 22 14:27 api.json.sample
+=== rollback 20261122T193804Z
+  restored /boot/loader.conf
+  restored /etc/rc.conf
+  kept     /usr/local/etc/skep/agent.json: deleted by remove; a copy is in /var/db/skep/setup/20261122T193804Z/files/usr_local_etc_skep_agent.json
+  kept     /usr/local/etc/skep/api.json: deleted by remove; a copy is in /var/db/skep/setup/20261122T193804Z/files/usr_local_etc_skep_api.json
+  kept     the skep account: rollback does not create it again (reinstall the package)
+  kept     /var/db/skep/media: deleted data cannot be restored
+  kept     /var/db/skep/backup: deleted data cannot be restored
+  kept     /var/db/skep/api: deleted data cannot be restored
+  kept     /var/db/skep/agent: deleted data cannot be restored
+  kept     skep_agent: rollback does not start services again
+  kept     skep_api: rollback does not start services again
+rolled back 20261122T193804Z
+rc=0
+SHA256 (/etc/rc.conf) = 96212f082cac6c475501db5845a4ce98ce801c4fb67ef5645ba30fc5622e0d1f
+SHA256 (/boot/loader.conf) = c6a71a0f57a0ed3e47087b3095b8d2c1ca8f245d3da2d843a8792a919363ae69
+-rw-r--r--  1 root wheel 185 Nov 22 14:38 /boot/loader.conf
+-rw-r--r--  1 root wheel 491 Nov 22 14:38 /etc/rc.conf
+/usr/local/etc/skep:
+agent.json.sample
+api.json.sample
+
+/var/db/skep:
+setup
+=== check after
+  15 ok, 3 to add, 0 warnings, 0 conflicts, 0 for you, 0 refused
+[1/1] Deleting files for skep-0.1.1: .......... done
+Extracting skep-0.1.1: .......... done
+  15 ok, 3 to add, 0 warnings, 0 conflicts, 0 for you, 0 refused
+  add      config                             /usr/local/etc/skep/agent.json
+                                                -> write /usr/local/etc/skep/agent.json (0600 root:wheel)
+                                                the agent's allow-lists
+20261122T192821Z
+20261122T193755Z
+20261122T193804Z
+  sysrc -f /boot/loader.conf -x vmm_load
+  sysrc -f /boot/loader.conf -x nmdm_load
+  delete the kern.racct.enable line from /boot/loader.conf
+  sysrc -x kld_list
+  sysrc -x cloned_interfaces
+  sysrc -x ifconfig_vtnet1
+  sysrc -x ifconfig_bridge0
+  sysrc -x skep_agent_enable
+  sysrc -x skep_api_enable
+done: journal /var/db/skep/setup/20261122T193837Z. Now remove the files: pkg delete skep
+SHA256 (/etc/rc.conf) = fd574992f98b7711b768422c905e276d0a92ff4758fabc7bd3ed4ac12d3c3729
+SHA256 (/boot/loader.conf) = a27b0c57033768f0d3a4a53e692b959fc985d70c28c3fc539896b91b84d1bdd9
+uid=409(skep) gid=409(skep) groups=409(skep)
+ 2:39PM  up 17 secs, 0 users, load averages: 0.13, 0.03, 0.01
+vtnet0 vtnet1 lo0
+0
+SHA256 (/etc/rc.conf) = fd574992f98b7711b768422c905e276d0a92ff4758fabc7bd3ed4ac12d3c3729
+SHA256 (/boot/loader.conf) = a27b0c57033768f0d3a4a53e692b959fc985d70c28c3fc539896b91b84d1bdd9
+=== part 9 retry: apply -mgmt vtnet0 -create-bridge bridge0 -uplink vtnet1 -pool zroot
+SHA256 (/etc/rc.conf) = fd574992f98b7711b768422c905e276d0a92ff4758fabc7bd3ed4ac12d3c3729
+SHA256 (/boot/loader.conf) = a27b0c57033768f0d3a4a53e692b959fc985d70c28c3fc539896b91b84d1bdd9
+  8 ok, 12 to add, 0 warnings, 0 conflicts, 1 for you, 0 refused
+  sysrc -f /boot/loader.conf vmm_load="YES"
+  sysrc -f /boot/loader.conf nmdm_load="YES"
+  append kern.racct.enable="1" to /boot/loader.conf
+  sysrc kld_list+="if_epair netgraph ng_socket ng_ether ng_bpf"
+  sysrc cloned_interfaces+="bridge0"
+  sysrc ifconfig_vtnet1="up"
+  sysrc ifconfig_bridge0="addm vtnet1 ifuntagged vtnet1 1 defuntagged 1 vlanfilter up"
+  sysrc skep_agent_enable="YES"
+  sysrc skep_api_enable="YES"
+  write /usr/local/etc/skep/agent.json (0600 root:wheel)
+  write /usr/local/etc/skep/api.json (0640 root:skep)
+  mkdir /var/db/skep/media (0700 root:wheel)
+done: 12 changes, journal /var/db/skep/setup/20261122T193925Z (undo with: skep-setup rollback 20261122T193925Z)
+apply rc=0
+journal 20261122T193925Z
+SHA256 (/etc/rc.conf) = 96212f082cac6c475501db5845a4ce98ce801c4fb67ef5645ba30fc5622e0d1f
+SHA256 (/boot/loader.conf) = c6a71a0f57a0ed3e47087b3095b8d2c1ca8f245d3da2d843a8792a919363ae69
+=== rollback 20261122T193925Z
+  restored /boot/loader.conf
+  restored /etc/rc.conf
+  removed  /usr/local/etc/skep/agent.json
+  removed  /usr/local/etc/skep/api.json
+  removed  /var/db/skep/media
+rolled back 20261122T193925Z
+rc=0
+SHA256 (/etc/rc.conf) = fd574992f98b7711b768422c905e276d0a92ff4758fabc7bd3ed4ac12d3c3729
+SHA256 (/boot/loader.conf) = a27b0c57033768f0d3a4a53e692b959fc985d70c28c3fc539896b91b84d1bdd9
+-rw-r--r--  1 root wheel 132 Nov 22 14:39 /boot/loader.conf
+-rw-r--r--  1 root wheel 262 Nov 22 14:39 /etc/rc.conf
+/usr/local/etc/skep:
+agent.json.sample
+api.json.sample
+
+/var/db/skep:
+setup

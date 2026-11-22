@@ -1,0 +1,37 @@
+Stopping skep_api.
+Waiting for PIDS: 1477.
+Stopping skep_agent.
+Waiting for PIDS: 1442.
+Extracting skep-0.1.0: .......... done
+Starting skep_agent.
+Starting skep_api.
+skep-agent 0.1.0 (commit 20c8731, built 2026-11-22T18:54:55Z, go1.27.4 freebsd/amd64)
+skep_agent is running as pid 2280 (supervisor pid 2278).
+skep_api is running as pid 2351 (supervisor pid 2349).
+20261122T184709Z
+20261122T185105Z
+20261122T185331Z
+=== check
+skep-setup check, root / (read-only; nothing was changed)
+  20 ok, 0 to add, 0 warnings, 0 conflicts, 1 for you, 0 refused
+  manual   packages                           FreeBSD-base repository
+                                                disabled; the pkgbase jail template source needs it (or use the dist source)
+                                                $ printf 'FreeBSD-base: { enabled: yes }\n' >> /usr/local/etc/pkg/repos/FreeBSD.conf
+rc=1
+=== apply
+skep-setup apply, root /
+  manual   packages                           FreeBSD-base repository
+                                                disabled; the pkgbase jail template source needs it (or use the dist source)
+                                                $ printf 'FreeBSD-base: { enabled: yes }\n' >> /usr/local/etc/pkg/repos/FreeBSD.conf
+  20 ok, 0 to add, 0 warnings, 0 conflicts, 1 for you, 0 refused
+nothing to do: the host is already as planned
+rc=0
+20261122T184709Z
+20261122T185105Z
+20261122T185331Z
+rc.conf loader.conf agent.json api.json: unchanged
+  20 ok, 0 to add, 0 warnings, 0 conflicts, 1 for you, 0 refused
+nothing to do: the host is already as planned
+20261122T184709Z
+20261122T185105Z
+20261122T185331Z

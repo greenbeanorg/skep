@@ -1,0 +1,81 @@
+Creating repository in /var/tmp/skeplocal-repo: .. done
+Packing files for repository: .... done
+skeplocal: {
+  url: "file:///var/tmp/skeplocal-repo",
+  signature_type: "none",
+  enabled: yes
+}
+=== A: pkg add 1.0 then pkg add 1.1
+Extracting skep-pkgprobe-1.0: . done
+Installing skep-pkgprobe-1.1...
+package skep-pkgprobe is already installed, forced install
+Extracting skep-pkgprobe-1.1: . done
+-- /var/tmp/skep-pkgprobe-env.*
+grep: /var/tmp/skep-pkgprobe-env.*: No such file or directory
+mv: rename /var/tmp/skep-pkgprobe-env.* to /var/tmp/skep-pkgprobe-env.*.A-add: No such file or directory
+=== B: pkg delete
+[1/1] Deleting files for skep-pkgprobe-1.1: . done
+-- /var/tmp/skep-pkgprobe-env.1795374859.7567
+phase=pre-deinstall version=1.1
+PKG_UPGRADE=[<unset>]
+PKG_MSGFD=4
+PKG_NAME=skep-pkgprobe
+PKG_PREFIX=/usr/local
+PKG_ROOTDIR=/
+=== C: pkg add 1.0, pkg upgrade -r skeplocal
+Extracting skep-pkgprobe-1.0: . done
+skeplocal is up to date.
+Updating skeplocal repository catalogue...
+skeplocal repository is up to date.
+skeplocal is up to date.
+Updating database digests format: . done
+Checking integrity... done (0 conflicting)
+The following 1 package(s) will be affected (of 0 checked):
+
+Installed packages to be UPGRADED:
+	skep-pkgprobe: 1.0 -> 1.1 [skeplocal]
+
+Number of packages to be upgraded: 1
+[1/1] Upgrading skep-pkgprobe from 1.0 to 1.1...
+[1/1] Extracting skep-pkgprobe-1.1: . done
+-- /var/tmp/skep-pkgprobe-env.1795374859.7590
+phase=pre-deinstall version=1.0
+PKG_UPGRADE=[true]
+PKG_MSGFD=4
+PKG_NAME=skep-pkgprobe
+PKG_PREFIX=/usr/local
+PKG_ROOTDIR=/
+PKG_UPGRADE=true
+skep-pkgprobe-1.1
+=== D: pkg delete
+[1/1] Deleting files for skep-pkgprobe-1.1: . done
+phase=pre-deinstall version=1.1
+PKG_UPGRADE=[<unset>]
+PKG_MSGFD=4
+PKG_NAME=skep-pkgprobe
+PKG_PREFIX=/usr/local
+PKG_ROOTDIR=/
+=== full env of the upgrade run:
+phase=pre-deinstall version=1.0
+PKG_UPGRADE=[true]
+HOME=/root
+HTTP_USER_AGENT=pkg/2.9.2
+LANG=C.UTF-8
+LOGNAME=root
+MAIL=/var/mail/root
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+PKG_MSGFD=4
+PKG_NAME=skep-pkgprobe
+PKG_PREFIX=/usr/local
+PKG_ROOTDIR=/
+PKG_UPGRADE=true
+POSIXLY_CORRECT=1
+PWD=/home/aba
+SHELL=/bin/sh
+SUDO_COMMAND=/usr/local/sbin/pkg upgrade -y -r skeplocal skep-pkgprobe
+SUDO_GID=1001
+SUDO_HOME=/home/aba
+SUDO_UID=1001
+SUDO_USER=aba
+TERM=su
+USER=root

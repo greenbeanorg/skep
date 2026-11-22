@@ -1,0 +1,28 @@
+Geom name: da1
+Providers:
+1. Name: da1
+   Mediasize: 17179869184 (16G)
+   Sectorsize: 512
+   Stripesize: 4096
+   Stripeoffset: 0
+   Mode: r0w0e0
+   descr: QEMU QEMU HARDDISK
+   ident: 
+   rotationrate: unknown
+   fwsectors: 63
+gpart: No such geom: da1.
+rc=0
+NAME   SIZE  ALLOC   FREE  CKPOINT  EXPANDSZ   FRAG    CAP  DEDUP    HEALTH  ALTROOT
+tank  15.5G   332K  15.5G        -         -     0%     0%  1.00x    ONLINE  -
+  pool: tank
+ state: ONLINE
+config:
+
+	NAME        STATE     READ WRITE CKSUM
+	tank        ONLINE       0     0     0
+	  da1       ONLINE       0     0     0
+
+errors: No known data errors
+NAME   USED  AVAIL  REFER  MOUNTPOINT
+tank   372K  15.0G    96K  /tank
+ 6    1 0xffffffff82e00000   3f2c78 zfs.ko

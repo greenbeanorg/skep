@@ -1,0 +1,159 @@
+== 10.79.20.81
+smith.greenbean.org
+15.1-RELEASE-p7
+15.1-RELEASE-p7
+15.1-RELEASE-p7
+amd64
+uid=1001(aba) gid=1001(aba) groups=0(wheel),1001(aba)
+/dev/da0s1a     29G    4.0G     23G    15%    /
+2
+4254515200
+0
+sysctl: unknown oid 'hw.vmm'
+Id Refs Address                Size Name
+ 1   15 0xffffffff80200000  23520f8 kernel
+ 2    1 0xffffffff82c18000     21e8 hms.ko
+ 3    1 0xffffffff82c1b000     30a8 hidmap.ko
+ 4    1 0xffffffff82c1f000     4250 ichsmb.ko
+ 5    1 0xffffffff82c24000     2178 smbus.ko
+--- loader.conf
+hw.vmm.vmx.cap.virtual_interrupt_delivery="0"
+--- rc.conf
+hostname="smith.greenbean.org"
+ifconfig_vtnet0="inet 10.79.20.81/24"
+sshd_enable="YES"
+moused_nondefault_enable="NO"
+# Set dumpdev to "AUTO" to enable crash dumps, "NO" to disable
+dumpdev="AUTO"
+defaultrouter="10.79.20.1"
+vtnet0 vtnet1 lo0
+1. Name: cd0
+   Mediasize: 546666496 (521M)
+1. Name: da0
+   Mediasize: 34359738368 (32G)
+1. Name: da1
+   Mediasize: 17179869184 (16G)
+pkg: 4 packages installed
+gettext-runtime-1.0_1          GNU gettext runtime libraries and programs
+indexinfo-0.3.1_1              Utility to regenerate the GNU info page index
+pkg-2.9.2                      Package manager
+sudo-1.9.17p2_2                Allow others to run commands as root
+Failed to load zfs module: Operation not permitted
+/sbin/sha256
+id: skep: no such user
+/usr/local/etc:
+bash_completion.d
+pam.d
+periodic
+pkg.conf
+pkg.conf.sample
+rc.d
+sudo.conf
+sudo.conf.sample
+sudo_logsrvd.conf
+sudo_logsrvd.conf.sample
+sudoers
+sudoers.d
+sudoers.dist
+
+/usr/local/sbin:
+pkg
+pkg-static
+sudo_logsrvd
+sudo_sendlog
+visudo
+== 10.79.20.82
+langrishe.greenbean.org
+15.1-RELEASE-p7
+15.1-RELEASE-p7
+15.1-RELEASE-p7
+amd64
+uid=1001(aba) gid=1001(aba) groups=0(wheel),1001(aba)
+zroot/ROOT/default     29G    1.3G     27G     5%    /
+2
+4175863808
+0
+sysctl: unknown oid 'hw.vmm'
+Id Refs Address                Size Name
+ 1   24 0xffffffff80200000  23520f8 kernel
+ 2    1 0xffffffff82553000   628ef8 zfs.ko
+ 3    1 0xffffffff837f8000     21e8 hms.ko
+ 4    1 0xffffffff837fb000     30a8 hidmap.ko
+ 5    1 0xffffffff837ff000     4250 ichsmb.ko
+ 6    1 0xffffffff83804000     2178 smbus.ko
+--- loader.conf
+kern.geom.label.disk_ident.enable="0"
+kern.geom.label.gptid.enable="0"
+zfs_load="YES"
+hw.vmm.vmx.cap.virtual_interrupt_delivery="0"
+--- rc.conf
+hostname="langrishe.greenbean.org"
+ifconfig_vtnet0="inet 10.79.20.82 netmask 255.255.255.0"
+defaultrouter="10.79.20.1"
+sshd_enable="YES"
+moused_nondefault_enable="NO"
+# Set dumpdev to "AUTO" to enable crash dumps, "NO" to disable
+dumpdev="AUTO"
+zfs_enable="YES"
+vtnet0 vtnet1 lo0
+1. Name: cd0
+   Mediasize: 546666496 (521M)
+1. Name: da0
+   Mediasize: 34359738368 (32G)
+pkg: 323 packages installed
+FreeBSD-acct-15.1p4            System resource accounting
+FreeBSD-acpi-15.1              Advanced Configuration and Power Interface (ACPI) utilities
+FreeBSD-apm-15.1               Intel / Microsoft APM BIOS utility
+FreeBSD-at-15.1                Scheduled and batch command utilities
+FreeBSD-atf-15.1               Automated Testing Framework
+FreeBSD-atf-dev-15.1           Automated Testing Framework (development files)
+FreeBSD-atf-lib-15.1           Automated Testing Framework (libraries)
+FreeBSD-audit-15.1p4           OpenBSM auditing utilities
+FreeBSD-audit-dev-15.1         OpenBSM auditing utilities (development files)
+FreeBSD-audit-dev-lib32-15.1   OpenBSM auditing utilities (32-bit development files)
+FreeBSD-audit-lib-15.1         OpenBSM auditing utilities (libraries)
+FreeBSD-audit-lib32-15.1       OpenBSM auditing utilities (32-bit libraries)
+FreeBSD-autofs-15.1p2          File system automounter
+FreeBSD-bhyve-15.1p5           bhyve virtual machine hypervisor
+FreeBSD-blocklist-15.1         Network blocklist daemon
+FreeBSD-blocklist-dev-15.1     Network blocklist daemon (development files)
+FreeBSD-blocklist-dev-lib32-15.1 Network blocklist daemon (32-bit development files)
+FreeBSD-blocklist-lib32-15.1   Network blocklist daemon (32-bit libraries)
+FreeBSD-bluetooth-15.1         Bluetooth support
+FreeBSD-bluetooth-dev-15.1     Bluetooth support (development files)
+FreeBSD-bluetooth-dev-lib32-15.1 Bluetooth support (32-bit development files)
+FreeBSD-bluetooth-lib-15.1     Bluetooth support (libraries)
+FreeBSD-bluetooth-lib32-15.1   Bluetooth support (32-bit libraries)
+FreeBSD-bmake-15.1             Program maintenance utility
+FreeBSD-bootloader-15.1        System boot loader
+FreeBSD-bootloader-dev-15.1    System boot loader (development files)
+FreeBSD-bsdconfig-15.1         System configuration utility
+FreeBSD-bsdinstall-15.1        System installer
+FreeBSD-bsnmp-15.1p7           Simple and extensible SNMP daemon
+FreeBSD-bsnmp-dev-15.1p7       Simple and extensible SNMP daemon (development files)
+NAME    SIZE  ALLOC   FREE  CKPOINT  EXPANDSZ   FRAG    CAP  DEDUP    HEALTH  ALTROOT
+zroot  29.5G  1.31G  28.2G        -         -     0%     4%  1.00x    ONLINE  -
+/sbin/sha256
+id: skep: no such user
+/usr/local/etc:
+bash_completion.d
+pam.d
+periodic
+pkg
+pkg.conf
+pkg.conf.sample
+rc.d
+sudo.conf
+sudo.conf.sample
+sudo_logsrvd.conf
+sudo_logsrvd.conf.sample
+sudoers
+sudoers.d
+sudoers.dist
+
+/usr/local/sbin:
+pkg
+pkg-static
+sudo_logsrvd
+sudo_sendlog
+visudo

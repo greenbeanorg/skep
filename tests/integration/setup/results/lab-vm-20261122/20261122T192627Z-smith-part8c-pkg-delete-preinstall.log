@@ -1,0 +1,38 @@
+Checking integrity... done (0 conflicting)
+Deinstallation has been requested for the following 1 packages (of 0 packages in the universe):
+
+Installed packages to be REMOVED:
+	skep: 0.1.2
+
+Number of packages to be removed: 1
+
+The operation will free 45 MiB.
+[1/1] Deinstalling skep-0.1.2...
+[1/1] Deleting files for skep-0.1.2: .......... done
+pkg delete rc=0
+pkg: No package(s) matching skep
+ls: /usr/local/etc/skep: No such file or directory
+ls: /usr/local/sbin/skep-*: No such file or directory
+=== pre-install refusal: UID 409 held by tst409
+uid=409(tst409) gid=409(tst409) groups=409(tst409)
+Installing skep-0.1.2...
+skep: refusing to install: UID 409 belongs to the user tst409.
+pkg: PRE-INSTALL script failed
+
+Failed to install the following 1 package(s): /home/aba/skep-pkgs/pkg-0.1.2/out/skep-0.1.2.pkg
+pkg add rc=1
+pkg: No package(s) matching skep
+ls: /usr/local/sbin/skep-*: No such file or directory
+id: skep: no such user
+=== DEVELOPER_MODE=yes pkg add (diagnostic)
+Installing skep-0.1.2...
+skep: refusing to install: UID 409 belongs to the user tst409.
+pkg: PRE-INSTALL script failed
+
+Failed to install the following 1 package(s): /home/aba/skep-pkgs/pkg-0.1.2/out/skep-0.1.2.pkg
+rc=1
+pkg: No package(s) matching skep
+=== cleanup
+id: tst409: no such user
+pw: unknown group `tst409'
+pw: unknown gid `409'

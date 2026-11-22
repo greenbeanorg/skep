@@ -1,0 +1,55 @@
+20261122T184709Z
+20261122T185105Z
+SHA256 (/etc/rc.conf) = 9d59643908f97aa91a887f3434893e8d3ad243dac6821d32395ecce8af75a233
+SHA256 (/boot/loader.conf) = 36d2a35e2081aa4224b9dee7632e0d8bf431b3e29591ae0317c2778442ff14b8
+SHA256 (/usr/local/etc/skep/agent.json) = 81870917ba661871df7a47e64f37299d6ef4c04302520b22179891337fe66a26
+SHA256 (/usr/local/etc/skep/api.json) = 5e6638e2ee3b50495055d57566c0b1cde00a015a9601cd4212f1e5f6de15840e
+=== check
+skep-setup check, root / (read-only; nothing was changed)
+  17 ok, 3 to add, 0 warnings, 0 conflicts, 1 for you, 0 refused
+  manual   packages                           FreeBSD-base repository
+                                                disabled; the pkgbase jail template source needs it (or use the dist source)
+                                                $ printf 'FreeBSD-base: { enabled: yes }\n' >> /usr/local/etc/pkg/repos/FreeBSD.conf
+  add      services                           start skep_agent
+                                                -> service skep_agent start
+  add      services                           start skep_api
+                                                -> service skep_api start
+  add      api                                first administrator admin
+                                                -> skep-api admin create --username admin (asks for the password, twice, without echo)
+                                                never a password in a flag, a file, or the journal
+rc=1
+=== apply
+skep-setup apply, root /
+  manual   packages                           FreeBSD-base repository
+                                                disabled; the pkgbase jail template source needs it (or use the dist source)
+                                                $ printf 'FreeBSD-base: { enabled: yes }\n' >> /usr/local/etc/pkg/repos/FreeBSD.conf
+  add      services                           start skep_agent
+                                                -> service skep_agent start
+  add      services                           start skep_api
+                                                -> service skep_api start
+  add      api                                first administrator admin
+                                                -> skep-api admin create --username admin (asks for the password, twice, without echo)
+                                                never a password in a flag, a file, or the journal
+  17 ok, 3 to add, 0 warnings, 0 conflicts, 1 for you, 0 refused
+  service skep_agent start
+    skep_agent is running already
+  service skep_api start
+    skep_api is running already
+  skep-api admin create --username admin (asks for the password, twice, without echo)
+skep-api: user "admin" already exists; use 'skep-api admin reset-password' to set a new password
+skep-setup: skep-api admin create --username admin (asks for the password, twice, without echo) failed: exit status 1; nothing after it was done. Undo with: skep-setup rollback 20261122T185331Z
+rc=3
+20261122T184709Z
+20261122T185105Z
+20261122T185331Z
+SHA256 (/etc/rc.conf) = 9d59643908f97aa91a887f3434893e8d3ad243dac6821d32395ecce8af75a233
+SHA256 (/boot/loader.conf) = 36d2a35e2081aa4224b9dee7632e0d8bf431b3e29591ae0317c2778442ff14b8
+SHA256 (/usr/local/etc/skep/agent.json) = 81870917ba661871df7a47e64f37299d6ef4c04302520b22179891337fe66a26
+SHA256 (/usr/local/etc/skep/api.json) = 5e6638e2ee3b50495055d57566c0b1cde00a015a9601cd4212f1e5f6de15840e
+  kept     skep_api: rollback does not stop services
+  kept     skep_agent: rollback does not stop services
+rolled back 20261122T185331Z
+rc=0
+skep-setup check, root / (read-only; nothing was changed)
+  17 ok, 0 to add, 0 warnings, 0 conflicts, 1 for you, 0 refused
+  manual   packages                           FreeBSD-base repository

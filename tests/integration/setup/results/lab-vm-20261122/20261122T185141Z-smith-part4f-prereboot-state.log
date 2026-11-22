@@ -1,0 +1,82 @@
+hw.vmm.vmx.cap.virtual_interrupt_delivery="0"
+vmm_load="YES"
+nmdm_load="YES"
+kern.racct.enable="1"
+---
+hostname="smith.greenbean.org"
+ifconfig_vtnet0="inet 10.79.20.81/24"
+sshd_enable="YES"
+moused_nondefault_enable="NO"
+# Set dumpdev to "AUTO" to enable crash dumps, "NO" to disable
+dumpdev="AUTO"
+defaultrouter="10.79.20.1"
+kld_list="if_epair netgraph ng_socket ng_ether ng_bpf"
+zfs_enable="YES"
+cloned_interfaces="bridge0"
+ifconfig_vtnet1="up"
+ifconfig_bridge0="addm vtnet1 ifuntagged vtnet1 1 defuntagged 1 vlanfilter up"
+skep_agent_enable="YES"
+skep_api_enable="YES"
+-rw-r--r--  1 root wheel  99 Nov 22 13:51 /boot/loader.conf
+-rw-r--r--  1 root wheel 468 Nov 22 13:51 /etc/rc.conf
+total 32
+-rw-------  1 root wheel  259 Nov 22 13:51 agent.json
+-rw-r--r--  1 root wheel 1316 Nov 22 13:50 agent.json.sample
+-rw-r-----  1 root skep    43 Nov 22 13:51 api.json
+-rw-r--r--  1 root wheel  822 Nov 22 13:50 api.json.sample
+{
+  "storage": {
+    "pools": [
+      "tank"
+    ],
+    "directories": [],
+    "dataset_root": "skep",
+    "media_dir": "/var/db/skep/media"
+  },
+  "network": {
+    "bridges": [
+      "bridge0"
+    ],
+    "management_interfaces": [
+      "vtnet0"
+    ]
+  }
+}
+{
+  "listen_address": "10.79.20.81:8443"
+}
+skep_agent is running as pid 2628 (supervisor pid 2626).
+skep_api is running as pid 2736 (supervisor pid 2734).
+2626 daemon: /usr/local/sbin/skep-agent[2628]
+2628 /usr/local/sbin/skep-agent -data-dir /var/db/skep
+2734 daemon: /usr/local/sbin/skep-api[2736]
+2736 /usr/local/sbin/skep-api -data-dir /var/db/skep
+total 48
+drwxr-xr-x   6 root wheel 512 Nov 22 13:51 .
+drwxr-xr-x  15 root wheel 512 Nov 22 13:47 ..
+drwx------   2 root wheel 512 Nov 22 13:51 agent
+drwx------   3 skep skep  512 Nov 22 13:51 api
+drwx------   2 root wheel 512 Nov 22 13:51 media
+drwx------   4 root wheel 512 Nov 22 13:51 setup
+skep skep-api   2736  8 tcp4  10.79.20.81:8443      *:*                  
+Nov 22 13:43:33 smith kernel: Root mount waiting for: usbus3 usbus7
+Nov 22 13:43:33 smith syslogd: last message repeated 1 times
+Nov 22 13:43:33 smith kernel: uhub4: 6 ports with 6 removable, self powered
+Nov 22 13:43:33 smith kernel: uhub6: 6 ports with 6 removable, self powered
+Nov 22 13:43:33 smith kernel: ugen7.2: <QEMU QEMU USB Tablet> at usbus7
+Nov 22 13:43:33 smith kernel: usbhid0 on uhub4
+Nov 22 13:43:33 smith kernel: usbhid0: <QEMU QEMU USB Tablet, class 0/0, rev 2.00/0.00, addr 2> on usbus7
+Nov 22 13:43:33 smith kernel: hidbus0: <HID bus> on usbhid0
+Nov 22 13:43:33 smith kernel: ichsmb0: <Intel 82801I (ICH9) SMBus controller> port 0x700-0x73f irq 16 at device 31.3 on pci0
+Nov 22 13:43:33 smith kernel: smbus0: <System Management Bus> on ichsmb0
+Nov 22 13:43:33 smith kernel: hms0: <QEMU QEMU USB Tablet> on hidbus0
+Nov 22 13:43:33 smith kernel: hms0: 5 buttons and [XYW] coordinates ID=0
+Nov 22 13:43:33 smith kernel: lo0: link state changed to UP
+Nov 22 13:43:33 smith kernel: vtnet0: link state changed to UP
+Nov 22 13:46:18 smith kernel: ZFS filesystem version: 5
+Nov 22 13:46:18 smith kernel: ZFS storage pool version: features support (5000)
+Nov 22 13:46:34 smith pkg[1717]: skep-0.1.0 installed
+Nov 22 13:46:34 smith pkg[1756]: skep-0.1.0 installed
+Nov 22 13:50:57 smith pkg[2182]: skep-0.1.0 deinstalled
+Nov 22 13:50:57 smith pkg[2199]: skep-0.1.0 installed
+ls: /var/log/skep*: No such file or directory
