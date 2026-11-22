@@ -113,3 +113,29 @@ func TestTagVLAN(t *testing.T) {
 		t.Fatal("VID 4095 accepted")
 	}
 }
+
+// TestGuardFrames: the frames for the ADR 0011 guards are what the filter
+// looks for: UDP source port 67 behind a 20-byte header, ICMPv6 type 134
+// right after the IPv6 header, LLDP's ethertype, STP's length field.
+func TestGuardFrames(t *testing.T) {
+	src := mustMAC(t, "02:5e:00:0a:00:10")
+	p, err := ipv4(netip.MustParseAddr("192.0.2.10"), netip.MustParseAddr("255.255.255.255"), 17, 1,
+		dhcpOffer(broadcast, 1, netip.MustParseAddr("192.0.2.99")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	f, _ := ethernet(broadcast, src, etherIPv4, p)
+	if f[14]&0x0f != 5 || f[23] != 17 || binary.BigEndian.Uint16(f[34:]) != 67 || binary.BigEndian.Uint16(f[36:]) != 68 {
+		t.Errorf("dhcp offer: proto %d ports %d->%d", f[23], binary.BigEndian.Uint16(f[34:]), binary.BigEndian.Uint16(f[36:]))
+	}
+	ra, err := ipv6RA(netip.MustParseAddr("fe80::1"))
+	if err != nil || ra[6] != 58 || ra[40] != 134 {
+		t.Errorf("ra: nh %d type %d, %v", ra[6], ra[40], err)
+	}
+	if l, _ := lldpFrame(src); binary.BigEndian.Uint16(l[12:]) != 0x88cc {
+		t.Error("lldp ethertype")
+	}
+	if s := stpBPDU(src); binary.BigEndian.Uint16(s[12:]) >= 0x600 || s[14] != 0x42 {
+		t.Error("stp is not an 802.3 LLC frame")
+	}
+}

@@ -15,6 +15,10 @@
 //	rawl2 -if skep0 -mode icmp -eth-src MAC -eth-dst MAC -src IP -dst IP
 //	rawl2 -if skep0 -mode dhcp -eth-src MAC
 //	rawl2 -if skep0 -mode ipv6 -eth-src MAC
+//	rawl2 -if skep0 -mode dhcpoffer -eth-src MAC -src IP   (UDP 67 -> 68: a rogue DHCP server)
+//	rawl2 -if skep0 -mode ra -eth-src MAC                  (ICMPv6 router advertisement)
+//	rawl2 -if skep0 -mode lldp -eth-src MAC
+//	rawl2 -if skep0 -mode stp -eth-src MAC                 (802.3/LLC configuration BPDU)
 //
 // Every mode takes -count N (one frame per second) and -vlan VID[,VID...],
 // which inserts 802.1Q tags (TPID 0x8100, outermost first) after the
@@ -156,6 +160,83 @@ func ipv6Echo(src, dst netip.Addr, id, seq uint16) ([]byte, error) {
 	copy(b[24:40], d[:])
 	copy(b[40:], ic)
 	return b, nil
+}
+
+// dhcpOffer returns a UDP datagram from port 67 to 68 (checksum 0)
+// carrying a minimal BOOTREPLY/DHCP OFFER: what a guest acting as a DHCP
+// server sends (ADR 0011 answer 5).
+func dhcpOffer(chaddr net.HardwareAddr, xid uint32, yiaddr netip.Addr) []byte {
+	bootp := make([]byte, 240+4)
+	bootp[0], bootp[1], bootp[2] = 2, 1, 6 // BOOTREPLY, Ethernet, hlen 6
+	binary.BigEndian.PutUint32(bootp[4:], xid)
+	y := yiaddr.As4()
+	copy(bootp[16:20], y[:])
+	copy(bootp[28:34], chaddr)
+	copy(bootp[236:240], []byte{99, 130, 83, 99})
+	copy(bootp[240:], []byte{53, 1, 2, 255}) // DHCP OFFER, end
+	udp := make([]byte, 8+len(bootp))
+	binary.BigEndian.PutUint16(udp[0:], 67)
+	binary.BigEndian.PutUint16(udp[2:], 68)
+	binary.BigEndian.PutUint16(udp[4:], uint16(len(udp)))
+	copy(udp[8:], bootp)
+	return udp
+}
+
+// ipv6RA returns an IPv6 header and a minimal ICMPv6 router advertisement
+// (type 134, router lifetime 1800 s) from src to ff02::1, with its
+// checksum.
+func ipv6RA(src netip.Addr) ([]byte, error) {
+	dst := netip.MustParseAddr("ff02::1")
+	if !src.Is6() || src.Is4In6() {
+		return nil, fmt.Errorf("rawl2: IPv6 source only (%v)", src)
+	}
+	ic := make([]byte, 16)
+	ic[0] = 134
+	ic[4] = 64                               // cur hop limit
+	binary.BigEndian.PutUint16(ic[6:], 1800) // router lifetime
+	s, d := src.As16(), dst.As16()
+	pseudo := make([]byte, 0, 40+len(ic))
+	pseudo = append(pseudo, s[:]...)
+	pseudo = append(pseudo, d[:]...)
+	pseudo = binary.BigEndian.AppendUint32(pseudo, uint32(len(ic)))
+	pseudo = append(pseudo, 0, 0, 0, 58)
+	pseudo = append(pseudo, ic...)
+	binary.BigEndian.PutUint16(ic[2:], checksum(pseudo))
+	b := make([]byte, 40+len(ic))
+	b[0] = 0x60
+	binary.BigEndian.PutUint16(b[4:], uint16(len(ic)))
+	b[6], b[7] = 58, 255
+	copy(b[8:24], s[:])
+	copy(b[24:40], d[:])
+	copy(b[40:], ic)
+	return b, nil
+}
+
+// stpBPDU returns an 802.3 frame (length field, LLC 42 42 03) carrying a
+// configuration BPDU to the bridge group address, from src.
+func stpBPDU(src net.HardwareAddr) []byte {
+	bpdu := make([]byte, 35) // protocol 0, version 0, type 0 (config)
+	copy(bpdu[5:11], src)    // root ID: priority 0 + our MAC, to win
+	llc := append([]byte{0x42, 0x42, 0x03}, bpdu...)
+	b := make([]byte, 14+len(llc))
+	copy(b[0:6], []byte{0x01, 0x80, 0xc2, 0, 0, 0})
+	copy(b[6:12], src)
+	binary.BigEndian.PutUint16(b[12:], uint16(len(llc)))
+	copy(b[14:], llc)
+	for len(b) < minFrame {
+		b = append(b, 0)
+	}
+	return b
+}
+
+// lldpFrame returns a minimal LLDP frame (chassis ID, port ID, TTL, end).
+func lldpFrame(src net.HardwareAddr) ([]byte, error) {
+	p := []byte{0x02, 0x07, 0x04}
+	p = append(p, src...)                               // chassis ID: MAC
+	p = append(p, 0x04, 0x05, 0x05, 's', 'k', 'e', 'p') // port ID: interface name
+	p = append(p, 0x06, 0x02, 0x00, 0x78)               // TTL 120
+	p = append(p, 0x00, 0x00)                           // end
+	return ethernet(net.HardwareAddr{0x01, 0x80, 0xc2, 0, 0, 0x0e}, src, 0x88cc, p)
 }
 
 // tagVLAN returns frame with one 802.1Q tag (TPID 0x8100, PCP 0) per VID

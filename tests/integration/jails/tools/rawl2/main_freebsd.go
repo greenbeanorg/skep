@@ -17,7 +17,7 @@ import (
 
 func main() {
 	ifName := flag.String("if", "", "interface to write to (inside the jail: skep0)")
-	mode := flag.String("mode", "", "arp, icmp, dhcp or ipv6")
+	mode := flag.String("mode", "", "arp, icmp, dhcp, ipv6, dhcpoffer, ra, lldp or stp")
 	ethSrc := flag.String("eth-src", "", "Ethernet source MAC (may be forged)")
 	ethDst := flag.String("eth-dst", "ff:ff:ff:ff:ff:ff", "Ethernet destination MAC")
 	op := flag.String("op", "request", "ARP operation: request or reply")
@@ -25,7 +25,7 @@ func main() {
 	spa := flag.String("spa", "", "ARP sender IPv4 (payload)")
 	tha := flag.String("tha", "00:00:00:00:00:00", "ARP target MAC (payload)")
 	tpa := flag.String("tpa", "", "ARP target IPv4 (payload)")
-	src := flag.String("src", "", "IPv4 source (icmp)")
+	src := flag.String("src", "", "IPv4 source (icmp, dhcpoffer)")
 	dst := flag.String("dst", "", "IPv4 destination (icmp)")
 	count := flag.Int("count", 1, "frames to send, one per second")
 	vlan := flag.String("vlan", "", "802.1Q VLAN IDs to insert, outermost first (e.g. 5 or 5,7)")
@@ -130,8 +130,30 @@ func build(mode, ethSrc, ethDst, op, sha, spa, tha, tpa, src, dst string) ([]byt
 			return nil, err
 		}
 		return ethernet(net.HardwareAddr{0x33, 0x33, 0, 0, 0, 1}, es, etherIPv6, p)
+	case "dhcpoffer":
+		s, err := netip.ParseAddr(src)
+		if err != nil {
+			return nil, fmt.Errorf("-src: %w", err)
+		}
+		p, err := ipv4(s, netip.MustParseAddr("255.255.255.255"), 17, 0x5306,
+			dhcpOffer(broadcast, 0x5306c0de, netip.MustParseAddr("192.0.2.99")))
+		if err != nil {
+			return nil, err
+		}
+		return ethernet(broadcast, es, etherIPv4, p)
+	case "ra":
+		eui := [16]byte{0: 0xfe, 1: 0x80, 8: es[0] ^ 2, 9: es[1], 10: es[2], 11: 0xff, 12: 0xfe, 13: es[3], 14: es[4], 15: es[5]}
+		p, err := ipv6RA(netip.AddrFrom16(eui))
+		if err != nil {
+			return nil, err
+		}
+		return ethernet(net.HardwareAddr{0x33, 0x33, 0, 0, 0, 1}, es, etherIPv6, p)
+	case "lldp":
+		return lldpFrame(es)
+	case "stp":
+		return stpBPDU(es), nil
 	}
-	return nil, fmt.Errorf("-mode must be arp, icmp, dhcp or ipv6")
+	return nil, fmt.Errorf("-mode must be arp, icmp, dhcp, ipv6, dhcpoffer, ra, lldp or stp")
 }
 
 // openBPF opens /dev/bpf bound to ifName with BIOCSHDRCMPLT set, so the
