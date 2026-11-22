@@ -4,11 +4,13 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"net/netip"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 
+	"github.com/greenbeanorg/skep/internal/portfilter"
 	"github.com/greenbeanorg/skep/pkg/models"
 )
 
@@ -69,6 +71,29 @@ type JailNIC struct {
 	// DHCP is true when the jail's rc.conf asks dhclient for an address;
 	// such a jail gets JailDHCPDevfsRuleset.
 	DHCP bool
+	// IPv4 is the configured address of a static NIC in CIDR form, as the
+	// API records it; empty for DHCP. The port filter pins it (ADR 0011).
+	IPv4 string
+	// IPv6 is true when the NIC has ipv6_mode slaac or static: the port
+	// filter then allows IPv6, MAC-only (ADR 0011 answer 4).
+	IPv6 bool
+}
+
+// FilterParams is what the NIC's port filter is generated from.
+func (n JailNIC) FilterParams() (portfilter.Params, error) {
+	mac, err := net.ParseMAC(n.MAC)
+	if err != nil {
+		return portfilter.Params{}, invalid("invalid MAC address for jail NIC slot %d", n.Slot)
+	}
+	p := portfilter.Params{MAC: mac, IPv6: n.IPv6}
+	if !n.DHCP {
+		pfx, err := netip.ParsePrefix(n.IPv4)
+		if err != nil || !pfx.Addr().Is4() {
+			return portfilter.Params{}, invalid("jail NIC slot %d is static but has no IPv4 address", n.Slot)
+		}
+		p.IPv4 = pfx.Addr()
+	}
+	return p, p.Validate()
 }
 
 // SkepInterface is a host interface whose description says Skep made it.
@@ -178,6 +203,9 @@ func checkNICs(nics []JailNIC) error {
 		}
 		if !bridgeNameRE.MatchString(n.Bridge) {
 			return invalid("invalid bridge name")
+		}
+		if _, err := n.FilterParams(); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -376,13 +404,25 @@ func (h *host) checkMACsFree(ctx context.Context, spec JailSpec) error {
 }
 
 // createJailEpair creates the epair of one NIC and returns its host end.
-// The jail end is renamed, given its MAC, and left for vnet.interface;
-// the host end joins the bridge.
+// The host end gets its anti-spoofing filter first (ADR 0011 decision 3),
+// then the jail end is renamed, given its MAC, and left for
+// vnet.interface, and only then does the host end join the bridge. The
+// port's lock is held throughout, so the health check never sees the port
+// half installed. A filter that cannot be installed is port_filter_failed.
 func (h *host) createJailEpair(ctx context.Context, containerID string, nic JailNIC) (string, error) {
 	jif, err := JailInterfaceName(containerID, nic.Slot)
 	if err != nil {
 		return "", err
 	}
+	params, err := nic.FilterParams()
+	if err != nil {
+		return "", err
+	}
+	unlock, err := h.LockPort(PortJail, containerID, nic.Slot, true)
+	if err != nil {
+		return "", err
+	}
+	defer unlock()
 	if exists, err := h.interfaceExists(ctx, jif); err != nil {
 		return "", err
 	} else if exists {
@@ -392,6 +432,9 @@ func (h *host) createJailEpair(ctx context.Context, containerID string, nic Jail
 	host, err := h.epairCreate(ctx, desc)
 	if err != nil {
 		return "", err
+	}
+	if _, err := h.InstallPortFilter(ctx, host, params); err != nil {
+		return host, err
 	}
 	peer := strings.TrimSuffix(host, "a") + "b"
 	steps := [][]string{

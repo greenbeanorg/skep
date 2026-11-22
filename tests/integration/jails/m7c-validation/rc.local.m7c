@@ -1,0 +1,7 @@
+#!/bin/sh
+# M7c ordering test: forge from the earliest point the guest controls.
+echo "m7c rc.local: forging from $(date -u +%T)" > /dev/console
+ifconfig skep0 ether 02:5e:00:00:00:01
+ping -c 6 -i 0.5 -t 4 192.0.2.20 > /root/rc-local-ping.txt 2>&1 &
+/root/rawping -src 192.0.2.50 -dst 192.0.2.20 -count 4 > /root/rc-local-rawping.txt 2>&1 &
+sleep 4

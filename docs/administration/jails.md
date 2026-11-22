@@ -454,23 +454,19 @@ again.
 
 ## Known limitations
 
-- **No anti-spoofing on jail ports yet** (ADR 0010 amendment y, SR-02).
-  The host bridge passes whatever a jail sends. Until the anti-spoofing
-  work lands, a jail's root can forge source IPv4 addresses within its
-  subnet, take over unused addresses on the network (it answers ARP for
-  them), and change its MAC; this was measured on FreeBSD 15.1 (step 10
-  progress log, section 31, tests T1, T4, and T5). Forged off-subnet
-  sources leave the host too (T2, T3); whether they get further depends
-  on the upstream router. **Give jails only to trusted users when they
-  share a network with other machines.** VM guests are in the same
-  position: their taps are not filtered either (not measured).
-- The planned fix, a release blocker built after Milestone 7b: the host
-  drops frames from a guest port whose source MAC is not the MAC Skep
-  recorded, and, for a static NIC, IP and ARP whose sender is not the
-  configured address; IPv6 is dropped on a port with no IPv6 configured.
-  A DHCP NIC will get MAC pinning only, because its lease cannot be
-  learnt from a source the jail does not control. An upstream firewall
-  is optional defence in depth, not something Skep relies on.
+- **Anti-spoofing on jail ports** (ADR 0011, Milestone 7c): every jail
+  NIC's epair host end carries a netgraph filter, installed before it
+  joins the bridge. A static NIC can send only with its recorded MAC and
+  configured IPv4 address (IP and ARP). A DHCP NIC gets MAC pinning only:
+  its root can still claim another IPv4 address with its own MAC
+  (traceable, not prevented). IPv6 is dropped on jail NICs, and so are
+  DHCP-server replies and control frames such as STP and LLDP. Starts
+  need the netgraph modules (`port_filter_unavailable` otherwise). See
+  [Guest-port anti-spoofing](guest-port-filtering.md) for the details, the
+  health checks, and the limits, including what loading `ng_socket` lets
+  any VNET jail's root do.
+- A jail whose root changes its own address in `rc.conf` loses
+  connectivity on the new address: the recorded address is enforced.
 
 ## Snapshots and clones
 

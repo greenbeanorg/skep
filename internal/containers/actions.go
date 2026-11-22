@@ -92,6 +92,10 @@ func (s *Service) checkAction(ctx context.Context, id, taskType string) error {
 			if err := s.jails.EpairAvailable(ctx); err != nil {
 				return err
 			}
+			// The port filters need netgraph (ADR 0011 decision 6).
+			if err := s.filters.PortFilterAvailable(ctx); err != nil {
+				return err
+			}
 		}
 		if err := s.checkMACs(ctx, c); err != nil {
 			return err

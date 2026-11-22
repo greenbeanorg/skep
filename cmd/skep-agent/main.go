@@ -38,6 +38,7 @@ import (
 	"github.com/greenbeanorg/skep/internal/logging"
 	"github.com/greenbeanorg/skep/internal/monitoring"
 	"github.com/greenbeanorg/skep/internal/orphans"
+	"github.com/greenbeanorg/skep/internal/portcheck"
 	"github.com/greenbeanorg/skep/internal/retention"
 	"github.com/greenbeanorg/skep/internal/storage"
 	"github.com/greenbeanorg/skep/internal/sysaccount"
@@ -308,6 +309,21 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 	checks[models.CheckOrphanedInterfaces] = orphanChecker.Probe
+	// The anti-spoofing filters of running guests' ports (ADR 0011
+	// decision 5): checked at start, before the socket is served, and
+	// every 10 seconds; repaired, or the port detached, when one is
+	// missing or wrong.
+	portChecker, err := portcheck.New(portcheck.Options{
+		Host:   host,
+		Ports:  runningPorts(containerSvc, vms, log),
+		Audit:  database.NewAuditLog(db),
+		Logger: log,
+	})
+	if err != nil {
+		return err
+	}
+	checks[models.CheckPortFilters] = portChecker.Probe
+	checks[models.CheckBridgeVLANUnfiltered] = portChecker.VLANProbe
 	svc, err := agent.NewService(agent.Options{
 		Bhyve:      vms.Capabilities,
 		Containers: containerSvc.Capabilities,
@@ -402,6 +418,13 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	// After both observations, which reset the starting and stopping a
 	// crash left: report every epair and tap whose owner is not running.
 	_ = orphanChecker.Report(ctx)
+	// Every running guest's port, before anything can ask about one: an
+	// agent restarted, or upgraded from a Skep without filters, installs
+	// what is missing (decision 4).
+	if err := portChecker.Check(ctx); err != nil {
+		log.Error("could not check the guest port filters", "error", err)
+	}
+	go portChecker.Run(ctx, portcheck.Interval)
 	go vms.Watch(ctx, cfg.Hypervisor.Bhyve.WatchInterval.Std())
 	go sampler.Run(ctx, monitoring.DefaultInterval)
 	if caps := vms.Capabilities(ctx); caps.Available {

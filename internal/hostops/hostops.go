@@ -44,6 +44,9 @@ type Ops struct {
 	// Jails creates, runs, and destroys jails (ADR 0010 decisions 8, 9,
 	// and 13).
 	Jails Jails
+	// Filters puts and keeps the anti-spoofing filter on guest ports
+	// (ADR 0011).
+	Filters PortFilters
 }
 
 // ZFS creates, lists, and destroys the datasets of VMs inside the

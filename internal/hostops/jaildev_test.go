@@ -238,7 +238,7 @@ func nicJail(t *testing.T) (*host, *script, string, JailSpec) {
 	t.Helper()
 	h, run, root := startedJail(t)
 	spec := jailSpec()
-	spec.NICs = []JailNIC{{Slot: 0, Bridge: "bridge0", MAC: "02:00:5e:00:00:01"}, {Slot: 1, Bridge: "bridge0", MAC: "02:00:5e:00:00:02"}}
+	spec.NICs = []JailNIC{{Slot: 0, Bridge: "bridge0", MAC: "02:00:5e:00:00:01", IPv4: "192.0.2.1/24"}, {Slot: 1, Bridge: "bridge0", MAC: "02:00:5e:00:00:02", IPv4: "192.0.2.1/24"}}
 	for slot := range 2 {
 		jif, _ := JailInterfaceName(ctrA, slot)
 		run.answers["ifconfig "+jif] = noSuchInterface(jif)

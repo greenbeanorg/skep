@@ -557,17 +557,35 @@ Skep fixes and nobody can change through the API
   grants them to every jail with its own network stack before it looks
   at `allow.raw_sockets`, so Skep does not rely on that parameter, and
   root in a jail is not trusted on the network.
-- **Known limitation: no anti-spoofing on guest ports yet (SR-02, ADR
-  0010 amendment y).** The host bridge passes whatever a jail sends.
-  Until the anti-spoofing work lands, a jail's root can forge source IPs
-  within its subnet, take over unused addresses, and change its MAC
-  (measured on `hearst`: step 10 progress log, section 31, T1, T4, T5);
-  VM guests on the same bridges are in the same position (not measured).
-  Give jails only to trusted users on shared networks. The decided fix
-  enforces, on the host per guest port (epair host end, tap), the MAC
-  recorded by the API and, for static NICs, the configured IP and ARP
-  sender; DHCP NICs get MAC pinning only. It is built right after
-  Milestone 7b, with its own ADR, and blocks any public release.
+- **Anti-spoofing on guest ports (SR-02, ADR 0011, Milestone 7c).** Every
+  guest port (a jail's epair host end, a VM's tap) carries a netgraph
+  `ng_bpf` filter on its `ng_ether` node, installed and read back before
+  the port joins its bridge; a start without it fails
+  (`port_filter_failed`), and a start without the netgraph modules is
+  refused (`port_filter_unavailable`). The filter is default deny: the
+  recorded source MAC always; for a static jail NIC also the IPv4 source
+  and the ARP sender IP; ARP sender MAC always; UDP source port 67 (a
+  rogue DHCP server) dropped on every port; IPv6 dropped on jail NICs and
+  allowed MAC-only on VM NICs with ICMPv6 router advertisements dropped;
+  STP, LLDP and every other ethertype dropped. Single 802.1Q tags are left
+  to the bridge's `vlanfilter` (reported, not enforced, by the warning
+  check `bridge_vlan_unfiltered`). The agent re-checks every port every
+  10 seconds; a missing or wrong filter is audited and reinstalled by
+  netgraph node ID, and a port whose filter cannot be kept (a failed
+  reinstall, or three failed checks in a row) is removed from its bridge
+  until the guest restarts. A per-port lock shared by jail start, the VM
+  runner, and the check keeps a port from being repaired while it is
+  being created. **Residual risks, documented:** MAC-only ports (DHCP
+  jails, all VMs) can still use another IPv4 address with their own MAC
+  (traceable, not prevented); IPv6 source and neighbour discovery are not
+  pinned; the RA guard is best-effort against extension headers; host
+  root can open a port for up to one check interval; with `ng_socket`
+  loaded every VNET jail's root, including jails Skep does not manage,
+  can open netgraph sockets and inject frames on its own interface, which
+  on a Skep port the filter drops and on an unmanaged jail's port nothing
+  does. Details: [Guest-port anti-spoofing](../administration/guest-port-filtering.md).
+  An ARP cache can be poisoned without bpf (`arp -s ... pub`, probe part
+  1), which is why enforcement is on the host, not by hiding devices.
 - **Host users never reach a jail's tree.** The directory that holds the
   jail roots, like the templates directory, is `root:wheel 0700` and
   checked before every start: a jail controls setuid binaries in its tree,

@@ -362,6 +362,33 @@ skep-agent
   start) go through `jailwrite_freebsd.go`; other systems have a stub, and
   the dev fake records what would have been written.
 
+## Guest-port anti-spoofing
+
+Milestone 7c ([ADR 0011](../decisions/0011-guest-port-anti-spoofing.md)):
+
+```
+skep-agent
+   internal/portfilter  the ng_bpf program per NIC (static, MAC-only, IPv6
+                        with the RA guard; DHCP-server guard everywhere),
+                        the ngctl install script (by node ID), and the
+                        parsers of ngctl show / getprogram; no OS calls
+   internal/hostops     PortFilters: kldstat checks, ngctl -f - with the
+                        script on stdin, read-back, reinstall by node ID,
+                        deletem, bridge VLAN state, the per-port flock
+                        (port<slot>.lock in the owner's run directory)
+   internal/portcheck   the 10 s check of every running guest's ports and
+                        the reaction (audit, reinstall, detach), the
+                        port_filters and bridge_vlan_unfiltered checks
+   jail start / runner  install under the port lock between creating the
+                        epair or tap and addm
+```
+
+- **One owner of repair.** Jail start and the VM runner install; only the
+  agent's checker reinstalls or detaches, for VM ports too. The runner, a
+  separate process, shares the port lock through `flock(2)`.
+- **No API field, no configuration key, no migration.** The program is
+  derived from the NIC as recorded; node IDs are read, not stored.
+
 ## FreeBSD validation status
 
 Validated means it ran on FreeBSD 15.1-RELEASE-p6 (amd64, UFS-root, `hearst`)
@@ -418,18 +445,17 @@ imported, both as an unprivileged user and as root.
 | VM storage on ZFS: datasets and zvols with `volmode=dev`, `volblocksize=16K`, full or no reservation, `skep:` user properties; refusals outside the confinement; deletion of the VM's datasets only | Validated (2026-11-14, see `tests/integration/vm`) |
 | Booting a bhyve guest: runner, taps, nmdm console in the browser, a FreeBSD install to a zvol, guest reboot, media detach, stop and `stop_timeout`, force stop (also runner-less), restart, agent restart and `kill -9`, host reboot with drift, console audit, limit, logout and idle, permissions, concurrency, interrupted create, capabilities with `vmm` unloaded, unit tests natively | Validated (2026-11-14, after the nested-KVM workaround; see `tests/integration/vm`). Guest network isolation first failed because the lab firewall routed the guest VLAN to the SERVERS and MGMT VLANs; passed after the firewall fix |
 | Storage, phase 7a: inventory, snapshots (running and stopped), rollback with and without `destroy_newer`, linked clones booting with their own lease, disk add, grow, remove, directory pools with a FreeBSD guest installed on a file disk, `/metrics` against `zpool`, `zfs`, `df`, and `ps`, `storage_capacity`, `storage_locked` with an encrypted root and its key unloaded, the viewer refused every write, the clone note in the browser, `skepctl vm snapshot` | Validated (2026-11-14 and 15, see `tests/integration/storage`) |
+| Guest-port anti-spoofing (ADR 0011): module check, install before `addm` for jails and VMs, programs identical to the generated ones, every probe case for static, DHCP and VM ports, ordering, fail-open detection, reinstall, detach, three-in-a-row, agent restart, upgrade from b61e578, a real DHCP lease, VLAN filtering on both bridges | Validated (2026-11-22, `tests/integration/jails/results/m7c-validation.md`; the VM program's hostile-frame cases emulated on a hand-made epair). Reboot with `kld_list` (Decision 12 item 10): **pending, needs Andy** |
 | ZFS-root host | **Pending FreeBSD validation** (the lab VM is UFS-root) |
 | arm64 | Not a target yet |
 
 ## Known limitations
 
-- **No anti-spoofing on guest ports yet (SR-02, a release blocker).**
-  Until the host-side enforcement of ADR 0010 amendment y lands, a
-  jail's root can forge source IPs within its subnet, take over unused
-  addresses, and change its MAC (measured on `hearst`, step 10 progress
-  log section 31); VM guests are in the same position (not measured).
-  Give jails only to trusted users on shared networks. See
-  [Jails: known limitations](../administration/jails.md#known-limitations).
+- **Guest-port anti-spoofing is MAC-only on DHCP jail NICs and all VM
+  NICs**: such a guest can still use another IPv4 address with its own
+  MAC. IPv6 source and neighbour discovery are not pinned, the RA guard is
+  best-effort, and detection of a filter removed by host root is polling
+  (10 s). See [Guest-port anti-spoofing](../administration/guest-port-filtering.md#known-limitations).
 - Permissions are global: there is no per-resource scoping and no custom
   roles yet.
 - Sessions and users are per node.

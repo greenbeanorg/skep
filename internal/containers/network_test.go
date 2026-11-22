@@ -13,6 +13,7 @@ import (
 
 	"github.com/greenbeanorg/skep/internal/hostops/hostfake"
 	"github.com/greenbeanorg/skep/internal/httpkit"
+	"github.com/greenbeanorg/skep/internal/portfilter"
 	"github.com/greenbeanorg/skep/pkg/models"
 )
 
@@ -209,6 +210,48 @@ func TestNetworkStartRefusals(t *testing.T) {
 	}
 	f.succeed(f.svc.Action(ctx, plain.ID, models.ContainerAction{Action: "start"}, f.sub))
 	f.fake.NoEpair = false
+
+	// Without the netgraph modules (ADR 0011): the same, with
+	// port_filter_unavailable.
+	f.fake.NoNetgraph = true
+	_, err = f.svc.Action(ctx, c.ID, models.ContainerAction{Action: "start"}, f.sub)
+	wantCode(t, err, models.CodePortFilterUnavailable)
+	if n := f.count(`SELECT count(*) FROM audit_log WHERE outcome = 'denied' AND resource_id = ? AND details LIKE '%' || ? || '%'`, c.ID, models.CodePortFilterUnavailable); n != 1 {
+		t.Fatalf("%d port filter denials audited", n)
+	}
+	f.fake.NoNetgraph = false
+
+	// A filter that cannot be installed fails the start: no jail, no
+	// epair left.
+	f.fake.FailPortFilters(true, false)
+	ftask, err := f.svc.Action(ctx, c.ID, models.ContainerAction{Action: "start"}, f.sub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if done := f.wait(ftask.ID); done.Status != models.TaskFailed || done.ErrorCode != models.CodePortFilterFailed {
+		t.Fatalf("start with a failing filter = %s %s %s", done.Status, done.ErrorCode, done.ErrorMessage)
+	}
+	if running, _ := f.svc.isRunning(ctx, c.ID); running || len(f.fake.Epairs()) != 0 {
+		t.Fatalf("after a failed filter: running %v, epairs %v", running, f.fake.Epairs())
+	}
+	f.fake.FailPortFilters(false, false)
+
+	// A start installs the filter generated for the NIC on its epair.
+	stask, err := f.svc.Action(ctx, c.ID, models.ContainerAction{Action: "start"}, f.sub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if done := f.wait(stask.ID); done.Status != models.TaskSucceeded {
+		t.Fatalf("start = %s %s", done.Status, done.ErrorMessage)
+	}
+	started, _ := f.svc.Container(ctx, c.ID)
+	host := started.NICs[0].HostInterface
+	params, _ := JailNICs(started)[0].FilterParams()
+	want, _ := portfilter.Program(params)
+	if host == "" || !portfilter.Equal(f.fake.FilterProgram(host), want) {
+		t.Fatalf("epair %q carries %v", host, f.fake.FilterProgram(host))
+	}
+	f.succeed(f.svc.Action(ctx, c.ID, models.ContainerAction{Action: "stop"}, f.sub))
 
 	// A foreign devfs ruleset 6001: the start fails with the code and
 	// leaves no jail and no epair.
