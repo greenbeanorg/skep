@@ -54,7 +54,9 @@ Both are plain `sh`, embedded in `+MANIFEST` from `packaging/pkg/`.
   another name. It warns, and changes nothing, when both exist with other
   numbers (a host set up by hand earlier, such as `hearst` with 1002).
 - **pre-deinstall** refuses while Skep guests run: jails named `skep-*`
-  in `jls` and VMs named `skep-*` in `/dev/vmm`. It never refuses when
+  in `jls` and VMs named `skep-*` in `/dev/vmm`. It asks the host, not the
+  agent, so it refuses even when `skep_agent` is stopped (ADR 0012
+  amendment 2026-11-22, build decision 5). It never refuses when
   `PKG_UPGRADE` is set, because `pkg upgrade` runs the old package's
   deinstall scripts and an upgrade leaves guests running. `pkg delete -f`
   overrides it.

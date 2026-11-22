@@ -3,6 +3,8 @@
 - Status: **Accepted** (2026-11-22). Andy's answers to
   [the decisions](#decisions-for-andy) are recorded in
   [Answers](#answers-2026-11-22) and folded into the decisions below.
+  [Amendment (2026-11-22)](#amendment-2026-11-22-build-decisions-confirmed)
+  records three build decisions Andy confirmed.
 - Date: 2026-11-22
 - Depends on: [ADR 0003](0003-read-only-discovery.md) (enabling a
   capability is an administrative act), [ADR 0004](0004-privilege-boundary.md)
@@ -545,6 +547,52 @@ Also decided:
   limits use RCTL (Decision 3).
 - **Third-party notices:** the package installs `THIRD_PARTY_NOTICES`
   beside the license in `share/licenses/skep/` (Decision 1).
+
+## Amendment (2026-11-22): build decisions confirmed
+
+The build (PR #52) took three decisions on its own, numbered 5, 8 and 14
+in that run's report. Andy confirmed all three on 2026-11-22. They refine
+Decisions 1, 3 and 6; nothing above them changes.
+
+- **Build decision 5: the pre-deinstall refusal does not depend on the
+  agent.** The package's `pre-deinstall` script refuses (exit 1) while a
+  Skep guest runs, looking at the host itself (jails named `skep-*` in
+  `jls`, VMs named `skep-*` in `/dev/vmm`), **even when `skep_agent` is
+  stopped**. A stopped agent is the usual state before `pkg delete`
+  (`skep-setup remove` stops it), and it is when a running guest would be
+  left with nothing to manage it. As before, it never refuses when
+  `PKG_UPGRADE` is set, and `pkg delete -f` overrides it (Decision 1,
+  answer 14).
+- **Build decision 8: `--admin` needs `--start` or an existing
+  `/var/db/skep/api`.** `skep-api admin create` opens `api.db`. Run as
+  root before `skep_api` has ever started, it would create the API's data
+  directory owned by root and lock the unprivileged API out of it. So the
+  plan refuses `--admin NAME` unless `--start` is also given (the
+  administrator is then created after both services start) or
+  `/var/db/skep/api` already exists (Decision 3).
+- **Build decision 14: what `--revert-host` reverts.** `skep-setup remove
+  --revert-host` reverts only what an apply's journal records as added and
+  what is unchanged since (Decision 6):
+  - a variable setup set with `=` is removed (`sysrc -x`) only while it
+    still has the value setup gave it; a changed one is reported as a
+    conflict and left alone;
+  - for a list setup appended to with `+=` (`kld_list`,
+    `cloned_interfaces`), only the words that apply added are removed
+    (`sysrc NAME-="..."`). Apply journals only the words that were
+    missing, so a word the operator had before apply (as `NAME` or
+    `NAME.ko` in `kld_list`), and any word added after it that setup did
+    not add, stays. Rolling back the apply, or the remove, restores the
+    file as it was and keeps those words too;
+  - applies that were rolled back are ignored;
+  - when `rc.conf` or `loader.conf` (or an override file) holds lines that
+    are not plain assignments, setup edits nothing in it and prints the
+    `sysrc` steps instead;
+  - modules stay loaded and interfaces exist until the next boot.
+
+  Covered by `TestRemoveRevertHost`, `TestRemoveRevertLeavesChangedLines`
+  and `TestRevertHostKeepsTheOperatorsKldListWords`
+  (`internal/setup/remove_test.go`). Real `sysrc -=` and `-x` semantics
+  are pending FreeBSD validation on the lab VMs.
 
 ## What Andy must provide
 

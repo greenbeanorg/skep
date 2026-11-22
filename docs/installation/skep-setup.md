@@ -41,7 +41,7 @@ refused.
 | `-listen ADDR:PORT` | The API listen address (default: the management address, port 8443). `0.0.0.0` or `::` only with `-listen-all` |
 | `-no-racct` | Do not add `kern.racct.enable="1"` (jail limits other than `disk_quota` are then refused) |
 | `-start` | Start both services at the end of `apply` |
-| `-admin NAME` | Create the first administrator (asks for the password, twice, without echo). Needs `-start`, or the API to have run once |
+| `-admin NAME` | Create the first administrator (asks for the password, twice, without echo). Needs `-start`, or `/var/db/skep/api` to exist already (the API has run once); otherwise the plan refuses, because `skep-api admin create` run as root first would create the API's data directory owned by root ([ADR 0012 amendment](../decisions/0012-installer.md#amendment-2026-11-22-build-decisions-confirmed), build decision 8) |
 
 ## What apply changes
 
@@ -161,9 +161,21 @@ It stops `skep_api` and `skep_agent` and sets both `_enable` variables
 to `NO`. By default it keeps everything else (answer 11):
 
 - `-revert-host` also removes the lines setup's applies added, where
-  they are unchanged since (`sysrc -x`, or only setup's own words from
-  `kld_list` and `cloned_interfaces`). Modules stay loaded and interfaces
-  exist until the next boot.
+  they are unchanged since ([ADR 0012
+  amendment](../decisions/0012-installer.md#amendment-2026-11-22-build-decisions-confirmed),
+  build decision 14):
+  - a variable setup set is removed (`sysrc -x`) only while it still has
+    setup's value; one changed since is reported and left alone;
+  - from `kld_list` and `cloned_interfaces` only the words setup added are
+    removed (`sysrc NAME-="..."`). Apply records only the words that were
+    missing, so a module you had listed before apply (`if_epair` or
+    `if_epair.ko`) stays, as does anything you added since that setup did
+    not add. Rolling back the apply or the remove keeps them too;
+  - rolled-back applies are ignored; in a file that is not plain
+    `name=value` lines, nothing is edited and the `sysrc` steps are printed
+    for you.
+
+  Modules stay loaded and interfaces exist until the next boot.
 - `-purge-data` (always asks, even with `-yes`) deletes `/var/db/skep`
   except setup's journals (node identity, databases, audit logs and
   archives, backups, the TLS key, install media), `agent.json` and
@@ -171,3 +183,11 @@ to `NO`. By default it keeps everything else (answer 11):
 
 It never destroys a dataset; it lists the ones under each pool's
 `skep` dataset for you.
+
+`pkg delete skep` itself refuses while a Skep guest is running: the
+package's pre-deinstall script looks for jails named `skep-*` (`jls`) and
+VMs named `skep-*` (`/dev/vmm`) on the host, so it refuses **even when
+`skep_agent` is stopped**, as it is after `skep-setup remove`. It never
+refuses during `pkg upgrade`; `pkg delete -f` overrides it ([ADR 0012
+amendment](../decisions/0012-installer.md#amendment-2026-11-22-build-decisions-confirmed),
+build decision 5).
