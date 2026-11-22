@@ -223,34 +223,25 @@ type loaded struct {
 // loadPair reads a certificate and key and checks that they belong
 // together.
 func loadPair(certFile, keyFile string) (*loaded, error) {
-	l, _, err := readPair(certFile, keyFile)
-	return l, err
-}
-
-// readPair is loadPair that also returns the stamp of what it read, when
-// both files could be read, so a caller can tell whether the files
-// changed while it was reading.
-func readPair(certFile, keyFile string) (*loaded, string, error) {
 	certPEM, err := os.ReadFile(certFile)
 	if err != nil {
-		return nil, "", err
+		return nil, err
 	}
 	keyPEM, err := os.ReadFile(keyFile)
 	if err != nil {
-		return nil, "", err
+		return nil, err
 	}
-	stamp := fileStamp(certPEM, keyPEM)
 	// X509KeyPair fails when the key does not match the certificate.
 	cert, err := tls.X509KeyPair(certPEM, keyPEM)
 	if err != nil {
-		return nil, stamp, fmt.Errorf("%s and %s: %w", certFile, keyFile, err)
+		return nil, fmt.Errorf("%s and %s: %w", certFile, keyFile, err)
 	}
 	leaf, err := x509.ParseCertificate(cert.Certificate[0])
 	if err != nil {
-		return nil, stamp, fmt.Errorf("%s: %w", certFile, err)
+		return nil, fmt.Errorf("%s: %w", certFile, err)
 	}
 	cert.Leaf = leaf
-	return &loaded{cert: &cert, leaf: leaf, stamp: stamp}, stamp, nil
+	return &loaded{cert: &cert, leaf: leaf, stamp: fileStamp(certPEM, keyPEM)}, nil
 }
 
 // fileStamp fingerprints file contents. It is compared, never shown.
@@ -292,21 +283,24 @@ func ensureDir(dir string) error {
 
 // generate creates a new key and certificate in dir, replacing what is
 // there, so that no reader ever has to use a key and certificate that do
-// not match. Two files cannot be replaced in one atomic step, so the swap
-// is made recoverable instead:
+// not match. Two files cannot be renamed in one step, so the swap is made
+// atomic for readers with a lock, and recoverable after a crash:
 //
-//  1. Both new files are written under their pending names
+//  1. An exclusive lock on dir is taken (lockDir). Readers take a shared
+//     one, so none reads while the steps below run, in this process or
+//     in another.
+//  2. Both new files are written under their pending names
 //     (key.pem.next, cert.pem.next), each to a temporary file, synced,
 //     and renamed; then the directory is synced. Nothing a reader uses
 //     has changed yet, and the complete new pair is durable.
-//  2. finishSwap renames the key into place, then the certificate, and
-//     syncs the directory.
+//  3. finishSwap renames the key into place, then the certificate, and
+//     syncs the directory. Then the lock is released.
 //
-// Between the two renames of step 2 the key is new and the certificate
-// old. A reader that finds that state (loadGenerated) sees the pending
-// certificate that matches the key and finishes the swap itself, so a
-// reload landing there gets the new pair, and a crash there is repaired
-// at the next start.
+// A reader therefore sees the old pair or the new one, never the state
+// between the two renames. That state is left on disk only by a crash
+// between them; the next reader that finds it (loadGenerated) takes the
+// exclusive lock, sees the pending certificate that matches the key, and
+// finishes the swap.
 func generate(dir string, now time.Time) (*loaded, error) {
 	p, err := newPair(now)
 	if err != nil {
@@ -350,6 +344,11 @@ func install(dir string, p *pair) (*loaded, error) {
 	if err := ensureDir(dir); err != nil {
 		return nil, err
 	}
+	unlock, err := lockDir(dir, true)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
 	if err := writePending(dir, p.keyPEM, p.certPEM); err != nil {
 		return nil, err
 	}
@@ -381,9 +380,9 @@ func writePending(dir string, keyPEM, certPEM []byte) error {
 }
 
 // finishSwap moves a pending pair into place: the key first, then the
-// certificate. It is idempotent, and safe when generate and a reader run
-// it at the same time: each rename is done by whoever gets there first,
-// and the other finds the pending file gone.
+// certificate. It is idempotent. The caller holds the exclusive lock on
+// dir: each check below and the rename after it must see the same file,
+// which only holds while no one else can write a pending file.
 //
 // It never installs a key without its certificate: the pending key moves
 // only if it matches the pending certificate, and the pending certificate
@@ -431,44 +430,59 @@ func syncDir(dir string) error {
 // loadGenerated loads the generated pair from dir. It returns
 // errNoCertificate when neither file exists.
 //
-// When the pair does not load and a pending pair exists, a swap by
-// generate is half done (in progress, or interrupted by a crash), and it
-// is finished here before loading again; see generate. Nothing else is
+// It reads under a shared lock on dir, so it never sees a swap by
+// generate half done. When the pair does not load, it takes the
+// exclusive lock and reads again; if the pair still does not load and a
+// pending pair exists, a swap was interrupted by a crash, and it is
+// finished here before loading once more; see generate. Nothing else is
 // ever replaced: without a pending pair that matches, the error stands.
 func loadGenerated(dir string) (*loaded, error) {
+	l, err := readGeneratedShared(dir)
+	if err == nil || errors.Is(err, errNoCertificate) {
+		return l, err
+	}
+	unlock, lockErr := lockDir(dir, true)
+	if lockErr != nil {
+		return nil, lockErr
+	}
+	defer unlock()
+	if l, err = readGenerated(dir); err == nil || errors.Is(err, errNoCertificate) || !pendingExists(dir) {
+		return l, err
+	}
+	if swapErr := finishSwap(dir); swapErr != nil {
+		return nil, fmt.Errorf("%w (and %w)", err, swapErr)
+	}
+	return readGenerated(dir)
+}
+
+// readGeneratedShared is readGenerated under a shared lock on dir. A
+// directory that does not exist holds no certificate.
+func readGeneratedShared(dir string) (*loaded, error) {
+	unlock, err := lockDir(dir, false)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, errNoCertificate
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
+	return readGenerated(dir)
+}
+
+// readGenerated reads the pair in dir; the caller holds a lock on dir.
+func readGenerated(dir string) (*loaded, error) {
 	certFile, keyFile := filepath.Join(dir, CertFileName), filepath.Join(dir, KeyFileName)
 	_, certErr := os.Stat(certFile)
 	_, keyErr := os.Stat(keyFile)
 	if errors.Is(certErr, os.ErrNotExist) && errors.Is(keyErr, os.ErrNotExist) {
 		return nil, errNoCertificate
 	}
-	for attempt := 1; ; attempt++ {
-		l, stamp, err := readPair(certFile, keyFile)
-		if err == nil {
-			return l, nil
-		}
-		// Read again only on evidence of a concurrent generate: a pending
-		// pair (whose swap is finished first), or files that changed
-		// while they were read, which tears the read across a swap.
-		again := false
-		if pendingExists(dir) {
-			if swapErr := finishSwap(dir); swapErr != nil {
-				return nil, fmt.Errorf("apitls: the generated certificate in %s is unusable: %w (and %w)", dir, err, swapErr)
-			}
-			again = true
-		} else if stamp != "" && stampOf(certFile, keyFile) != stamp {
-			again = true
-		}
-		if !again || attempt == maxLoadAttempts {
-			return nil, fmt.Errorf("apitls: the generated certificate in %s is unusable: %w", dir, err)
-		}
+	l, err := loadPair(certFile, keyFile)
+	if err != nil {
+		return nil, fmt.Errorf("apitls: the generated certificate in %s is unusable: %w", dir, err)
 	}
+	return l, nil
 }
-
-// maxLoadAttempts bounds loadGenerated's reads while a generate runs. If
-// they run out, a running server keeps the certificate it has and tries
-// again at the next tick; it never serves a pair that does not match.
-const maxLoadAttempts = 10
 
 // pendingExists reports whether either pending file is in dir.
 func pendingExists(dir string) bool {
@@ -478,9 +492,23 @@ func pendingExists(dir string) bool {
 	return certErr == nil || keyErr == nil
 }
 
+// keyFileHolds checks that keyFile holds the private key of leaf.
+func keyFileHolds(keyFile string, leaf *x509.Certificate) error {
+	keyPEM, err := os.ReadFile(keyFile)
+	if err != nil {
+		return fmt.Errorf("apitls: renew: %w", err)
+	}
+	// X509KeyPair checks that the key belongs to the certificate.
+	if _, err := tls.X509KeyPair(encodeCert(leaf.Raw), keyPEM); err != nil {
+		return fmt.Errorf("apitls: renew: %s no longer holds the key of the certificate in use (regenerated?); not renewing: %w", keyFile, err)
+	}
+	return nil
+}
+
 // renew issues a new certificate for the existing key, with the names of
-// the old certificate, and replaces the certificate file. The key file is
-// not touched.
+// the old certificate, and replaces the certificate file under the
+// exclusive lock, after checking that the key file still holds that key.
+// The key file is not touched.
 func renew(dir string, old *loaded, now time.Time) (*loaded, error) {
 	signer, ok := old.cert.PrivateKey.(crypto.Signer)
 	if !ok {
@@ -491,6 +519,17 @@ func renew(dir string, old *loaded, now time.Time) (*loaded, error) {
 		return nil, err
 	}
 	certFile, keyFile := filepath.Join(dir, CertFileName), filepath.Join(dir, KeyFileName)
+	unlock, err := lockDir(dir, true)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
+	// A regenerate (by another process) may have replaced the key since
+	// old was loaded. A certificate for the old key must not go next to
+	// the new one.
+	if err := keyFileHolds(keyFile, old.leaf); err != nil {
+		return nil, err
+	}
 	if err := writeFile(certFile, encodeCert(der), 0o644); err != nil {
 		return nil, fmt.Errorf("apitls: write certificate: %w", err)
 	}
