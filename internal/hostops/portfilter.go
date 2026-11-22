@@ -55,6 +55,10 @@ type PortFilters interface {
 	LockPort(kind PortOwner, ownerID string, slot int, wait bool) (unlock func(), err error)
 	// BridgeVLAN reads a bridge's VLAN filtering state.
 	BridgeVLAN(ctx context.Context, bridge string) (BridgeVLAN, error)
+	// PortOwner reads the skep:<id>:<slot> description of a guest port.
+	// ok is false when the port does not exist or carries no such
+	// description.
+	PortOwner(ctx context.Context, ifName string) (owner SkepInterface, ok bool, err error)
 }
 
 // PortOwner says whose port it is.
@@ -341,4 +345,24 @@ func parseBridgeVLAN(out []byte) BridgeVLAN {
 		}
 	}
 	return b
+}
+
+// PortOwner implements PortFilters.
+func (h *host) PortOwner(ctx context.Context, ifName string) (SkepInterface, bool, error) {
+	if !portfilter.ValidInterface(ifName) {
+		return SkepInterface{}, false, invalid("invalid guest port name")
+	}
+	desc, exists, err := h.tapDescription(ctx, ifName)
+	if err != nil || !exists {
+		return SkepInterface{}, false, err
+	}
+	id, slot, ok := parseDescription(desc)
+	if !ok {
+		return SkepInterface{}, false, nil
+	}
+	kind := "epair"
+	if strings.HasPrefix(ifName, "tap") {
+		kind = "tap"
+	}
+	return SkepInterface{Name: ifName, Kind: kind, OwnerID: id, Slot: slot}, true, nil
 }

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/greenbeanorg/skep/internal/hostops"
@@ -262,4 +263,33 @@ func (f *Fake) PortBridge(ifName string) string {
 		return t.bridge
 	}
 	return f.epairs[ifName].bridge
+}
+
+func (p fakePortFilters) PortOwner(_ context.Context, ifName string) (hostops.SkepInterface, bool, error) {
+	f := p.f
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	kind, t := "tap", fakeTap{}
+	if tap, ok := f.taps[ifName]; ok {
+		t = tap
+	} else if e, ok := f.epairs[ifName]; ok {
+		kind, t = "epair", e
+	} else {
+		return hostops.SkepInterface{}, false, nil
+	}
+	var id string
+	var slot int
+	rest, ok := strings.CutPrefix(t.desc, "skep:")
+	if !ok {
+		return hostops.SkepInterface{}, false, nil
+	}
+	id, s, ok := strings.Cut(rest, ":")
+	if !ok {
+		return hostops.SkepInterface{}, false, nil
+	}
+	slot, err := strconv.Atoi(s)
+	if err != nil {
+		return hostops.SkepInterface{}, false, nil
+	}
+	return hostops.SkepInterface{Name: ifName, Kind: kind, OwnerID: id, Slot: slot}, true, nil
 }

@@ -416,8 +416,21 @@ func (f *Fake) Bridge(_ context.Context, name string) (hostops.Bridge, error) {
 	if f.MissingBridges[name] {
 		return hostops.Bridge{Name: name}, nil
 	}
-	return hostops.Bridge{Name: name, Exists: true, Up: true,
-		Members: append([]string{}, f.BridgeMembers[name]...)}, nil
+	members := append([]string{}, f.BridgeMembers[name]...)
+	// And the guest ports Skep added to it.
+	var ports []string
+	for n, t := range f.taps {
+		if t.bridge == name {
+			ports = append(ports, n)
+		}
+	}
+	for n, e := range f.epairs {
+		if e.bridge == name {
+			ports = append(ports, n)
+		}
+	}
+	sort.Strings(ports)
+	return hostops.Bridge{Name: name, Exists: true, Up: true, Members: append(members, ports...)}, nil
 }
 
 // Capabilities implements hostops.VMM.
