@@ -184,11 +184,15 @@ func TestCreateProvisionsAVM(t *testing.T) {
 	}
 	// The VM exists at once, with its name reserved. It is not
 	// provisioned unless a worker already ran the task between the submit
-	// and the read that built the answer.
+	// and the read that built the answer. The handler records the VM
+	// provisioned as its last step and the engine records the task
+	// succeeded after the handler returns, so in between the task is
+	// still running; the wait below checks that it succeeds.
 	vm := created.VM
 	if vm.Provisioned {
-		if task, err := f.engine.Get(ctx, created.Task.ID); err != nil || task.Status != models.TaskSucceeded {
-			t.Fatalf("the VM was provisioned before its task succeeded: %+v, %v", task, err)
+		if task, err := f.engine.Get(ctx, created.Task.ID); err != nil ||
+			(task.Status != models.TaskRunning && task.Status != models.TaskSucceeded) {
+			t.Fatalf("the VM was provisioned before its task ran: %+v, %v", task, err)
 		}
 	}
 	if vm.ID == "" || vm.Name != "web-1" || vm.Engine != "bhyve" || vm.Firmware != "uefi" ||
