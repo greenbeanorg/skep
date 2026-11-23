@@ -144,7 +144,7 @@ func TestCheckACLs(t *testing.T) {
 		"nfs4 everyone owner":  {out: "owner@:rwxp--aARWcCos:-------:allow\ngroup@:r-x---a-R-c--s:-------:allow\neveryone@:r-x---a-R-c-os:-------:allow\n", want: "beyond its mode"},
 		"nfs4 everyone delete": {out: "owner@:rwxp--aARWcCos:-------:allow\ngroup@:r-x---a-R-c--s:-------:allow\neveryone@:r-xpd-a-R-c--s:-------:allow\n", want: "beyond its mode"},
 		"nfs4 inherited":       {out: "owner@:rwxp--aARWcCos:fd-----:allow\ngroup@:r-x---a-R-c--s:-------:allow\neveryone@:r-x---a-R-c--s:-------:allow\n", want: "beyond its mode"},
-		"nfs4 deny":            {out: "owner@:rwxp--aARWcCos:-------:allow\ngroup@:r-x---a-R-c--s:-------:deny\neveryone@:r-x---a-R-c--s:-------:allow\n", want: "beyond its mode"},
+		"nfs4 deny":            {out: "owner@:rwxp--aARWcCos:-------:allow\ngroup@:r-x---a-R-c--s:-------:deny\neveryone@:r-x---a-R-c--s:-------:allow\n", want: "deny entries"},
 		"duplicate class":      {out: "user::rwx\nuser::rwx\nother::r-x\n", want: "beyond its mode"},
 		"mixed formats":        {out: "user::rwx\ngroup@:r-x---a-R-c--s:-------:allow\nother::r-x\n", want: "beyond its mode"},
 		"empty":                {out: "", want: "does not understand"},
@@ -165,6 +165,55 @@ func TestCheckACLs(t *testing.T) {
 			continue
 		}
 		if r := refusal(t, err); r.Path != "/usr/local/sbin/skep-agent" || !strings.Contains(r.Why, c.want) {
+			t.Errorf("%s: %v", name, r)
+		}
+	}
+}
+
+// zfs0705 is getfacl -q -n for mode 0705 on ZFS (langrishe, 2026-11-23).
+const zfs0705 = `            owner@:r-x-----------:-------:allow
+            group@:r-x-----------:-------:deny
+            owner@:rwxp--aARWcCos:-------:allow
+            group@:------a-R-c--s:-------:allow
+         everyone@:r-x---a-R-c--s:-------:allow
+`
+
+func TestCheckModeDenyEntriesFix(t *testing.T) {
+	const p = "/usr/local/sbin/skep-agent"
+	f := newFake(p)
+	f.st[p] = Info{Perm: 0o705}
+	f.acl[p] = zfs0705
+	r := refusal(t, Check(f, []Target{bin()}))
+	for _, want := range []string{"deny entries", "0705"} {
+		if !strings.Contains(r.Why, want) {
+			t.Errorf("why lacks %q: %s", want, r.Why)
+		}
+	}
+	for _, want := range []string{"0755", "0700", "chmod"} {
+		if !strings.Contains(r.Fix, want) {
+			t.Errorf("fix lacks %q: %s", want, r.Fix)
+		}
+	}
+	if strings.Contains(r.Error(), "setfacl") {
+		t.Errorf("a mode's deny entries are not fixed with setfacl: %v", r)
+	}
+}
+
+// A deny entry alongside something a mode does not produce keeps the
+// advice to review and remove the ACL: a new mode may not clear it.
+func TestCheckSetDenyACLKeepsSetfaclFix(t *testing.T) {
+	const p = "/usr/local/sbin/skep-agent"
+	for name, out := range map[string]string{
+		"named user allow": zfs0705 + "user:1001:rwxp--aARWcCos:-------:allow\n",
+		"named user deny":  zfs0705 + "user:1001:r-x-----------:-------:deny\n",
+		"inherited deny":   strings.Replace(zfs0705, "r-x-----------:-------:deny", "r-x-----------:fd-----:deny", 1),
+		"group write":      strings.Replace(zfs0705, "group@:------a-R-c--s", "group@:-w----a-R-c--s", 1),
+		"everyone acl":     strings.Replace(zfs0705, "everyone@:r-x---a-R-c--s", "everyone@:r-x---a-R-cC-s", 1),
+	} {
+		f := newFake(p)
+		f.acl[p] = out
+		r := refusal(t, Check(f, []Target{bin()}))
+		if !strings.Contains(r.Why, "beyond its mode") || !strings.Contains(r.Fix, "setfacl -b") {
 			t.Errorf("%s: %v", name, r)
 		}
 	}

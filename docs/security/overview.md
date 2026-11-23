@@ -819,7 +819,8 @@ others, and carry no ACL beyond the entries that mirror the mode. If
 Symbolic links are followed one component at a time, checking the directory
 that holds each link; more than 16 links in a path, or a loop, is a refusal.
 The database's directory is checked as well, and a ZFS path whose mode needs
-`deny` entries (for example `0705`) is refused.
+`deny` entries (for example `0705`) is refused, with a mode such as `0755` or
+`0700` as the fix.
 There is no override. See
 [ADR 0004](../decisions/0004-privilege-boundary.md), amendment of 2026-11-23.
 

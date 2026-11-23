@@ -202,6 +202,10 @@ func (c *checker) one(p string, st Info, what string) error {
 	case aclTrivial:
 		return nil
 	case aclExtended:
+		if modeDenyACL(out) {
+			return &Refusal{Path: p, Why: fmt.Sprintf("has NFSv4 deny entries because its mode (%04o) gives a class less than a broader one; the agent accepts only an ACL that mirrors its mode without deny entries, so it cannot rule out a change to %s", st.Perm.Perm(), what),
+				Fix: "set a mode that needs no deny entries, such as 0755 or 0700: chmod 0755 " + p + ", or chmod 0700 " + p + " if only root should read it"}
+		}
 		return &Refusal{Path: p, Why: "has an ACL beyond its mode bits, which can let another user change " + what,
 			Fix: "review it with getfacl " + p + ", then remove it with setfacl -b " + p}
 	default:
@@ -223,6 +227,7 @@ var (
 	// these is output the check does not understand.
 	posixAnyRE  = regexp.MustCompile(`^(user|group|other|mask)(:[^:]*)?:[r-][w-][x-]$`)
 	nfs4EntryRE = regexp.MustCompile(`^(owner@|group@|everyone@):([r-][w-][x-][p-][d-][D-][a-][A-][R-][W-][c-][C-][o-][s-]):(-{7}):allow$`)
+	nfs4ModeRE  = regexp.MustCompile(`^(owner@|group@|everyone@):([r-][w-][x-][p-][d-][D-][a-][A-][R-][W-][c-][C-][o-][s-]):-{7}:(allow|deny)$`)
 	nfs4AnyRE   = regexp.MustCompile(`^(owner@|group@|everyone@|user:[^:]+|group:[^:]+):[rwxpdDaARWcCos-]{14}:[fdinIFS-]{7}:(allow|deny)$`)
 )
 
@@ -231,6 +236,37 @@ var (
 // delete, delete child, write attributes, write extended attributes, write
 // ACL, write owner.
 var nfs4Writes = map[int]bool{1: true, 3: true, 4: true, 5: true, 7: true, 9: true, 11: true, 12: true}
+
+// modeDenyACL reports whether NFSv4 output has the shape ZFS gives a mode
+// such as 0705: at least one deny entry, only the owner@, group@ and
+// everyone@ classes, no inheritance flags, and no write access allowed to
+// group@ or everyone@. A named user, an inherited entry, or a write grant
+// is an ACL someone set, which a new mode may not remove.
+func modeDenyACL(out string) bool {
+	deny := false
+	for _, l := range strings.Split(out, "\n") {
+		if l = strings.TrimSpace(l); l == "" {
+			continue
+		}
+		m := nfs4ModeRE.FindStringSubmatch(l)
+		if m == nil {
+			return false
+		}
+		if m[3] == "deny" {
+			deny = true
+			continue
+		}
+		if m[1] == "owner@" {
+			continue
+		}
+		for i, ch := range m[2] {
+			if ch != '-' && nfs4Writes[i] {
+				return false
+			}
+		}
+	}
+	return deny
+}
 
 // aclClass classifies getfacl -q -n output. Trivial is exactly one entry
 // for each of the three classes, in either format, with no write access
