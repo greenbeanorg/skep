@@ -126,6 +126,12 @@ paths:
         where each check says whether it is critical. The same document is
         in the system document's `health` field.
 
+        When the agent's socket does not answer, the `agent` check's
+        `error` is a fixed text saying so and pointing at
+        `/var/log/daemon.log`, where a refused start is logged. It never
+        carries the agent's own error text or the paths it refused on, and
+        a caller without a session still gets the status alone.
+
         Two checks concern the audit archives: `audit_archive` (the
         agent's operation audit log) and `access_audit_archive`
         (skep-api's access audit log). Each is `degraded` when the

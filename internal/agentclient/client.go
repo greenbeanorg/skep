@@ -130,6 +130,10 @@ func New(opts Options) (*Client, error) {
 // Close releases idle connections.
 func (c *Client) Close() { c.http.CloseIdleConnections() }
 
+// AgentNotAnsweringReason is the agent check's error when the agent's
+// socket does not answer.
+const AgentNotAnsweringReason = "the host agent's socket is not answering: the agent is down or refusing to start; see /var/log/daemon.log"
+
 // Health returns the agent's health document. When the agent cannot be
 // reached the result is an unavailable document saying so; it never fails.
 func (c *Client) Health(ctx context.Context) models.Health {
@@ -142,6 +146,12 @@ func (c *Client) Health(ctx context.Context) models.Health {
 		if errors.As(err, &me) && me.Code == models.CodeAgentVersionMismatch {
 			// No version strings here: health is public.
 			h.Record("agent", true, "skep-agent and skep-api are different builds; restart both (skep-setup upgrade)")
+			return h
+		}
+		// Fixed texts: the cause may hold host paths or the agent's own
+		// error, which do not belong in the health document.
+		if errors.Is(err, ErrUnavailable) || errors.Is(err, context.DeadlineExceeded) {
+			h.Record("agent", true, AgentNotAnsweringReason)
 			return h
 		}
 		h.Record("agent", true, "the host agent is not reachable")
