@@ -566,14 +566,14 @@ POST /api/v1/containers/<id>/clone
 - **A clone has its source's `started_once`.** A snapshot of a jail that
   has started may hold a tree that has run code, so Skep never writes
   into such a clone.
-- **Static addresses.** Every NIC of the source with a static address
-  needs new addressing in `nics` (one entry per NIC, in slot order; empty
-  fields keep the source's), or the request is refused with
-  `clone_addressing_required` (422) and the slots. The new address must go
-  into the clone's `rc.conf`, so it is accepted only when the source has
-  never started; for a started source the request is `container_started`.
-  **A jail with a static address can therefore be cloned only before its
-  first start.** A DHCP jail can always be cloned, and its clone asks for
+- **Static addresses.** **A jail with a static address can be cloned only
+  before its first start.** Once it has started, every clone request is
+  refused with `container_started` (409), with or without new addressing,
+  because the new address would have to be written into a tree that has
+  run code. Before the first start, every NIC with a static address needs
+  new addressing in `nics` (one entry per NIC, in slot order; empty fields
+  keep the source's), or the request is refused with
+  `clone_addressing_required` (422) and the slots. A DHCP jail can always be cloned, and its clone asks for
   its own lease with its new MAC address.
 - **A start is refused when a running or starting Skep jail on the same
   bridge holds one of the jail's static addresses**
