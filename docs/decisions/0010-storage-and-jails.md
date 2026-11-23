@@ -2337,3 +2337,79 @@ mode refused a missing and a wrong pin before any test and ran the
 host-safe specs pinned. Details in section 29 of
 [step10-progress.md](../../tests/integration/jails/results/step10-progress.md).
 
+
+## Amendment aa (Proposed): the agent finishes a half-stopped jail at start
+
+- Status: **Proposed**, 2026-11-23 (unattended run; Andy away). Written
+  before the build, as asked. Not to be merged until Andy has answered the
+  questions below and marked it Accepted. (Amendment z is on PR #55.)
+
+**The problem.** A jail stop is: record desired `stopped` and observed
+`stopping`; `hostops.StopJail`, which destroys the jail's epairs first and
+then runs `jail -r` (exec.stop `/etc/rc.shutdown`, then SIGTERM, then
+SIGKILL after the stop timeout); then record the epairs gone and the jail
+`stopped`. An agent restart in the middle (a crash, an upgrade's restart,
+an operator's `service skep_agent restart`) interrupts the task (ADR 0005:
+it is marked `interrupted` and never resumed) and can leave the jail
+running with its epairs already destroyed. At the next start
+`ObserveAll` observes the jail running and records `running`, with desired
+`stopped` and the recorded `host_interface` of each NIC naming an epair
+that no longer exists. The jail runs with no network until someone stops
+it again; the record says otherwise. (Backlog item from the PR #52 fix
+round, 2026-11-22.)
+
+**The rule.** At agent start, in `ObserveAll`, before the socket is served
+and while no task runs, a container recorded `stopping` has its stop
+completed:
+
+1. `hostops.StopJail` with the default stop timeout: if the jail exists,
+   `jail -r` with exec.stop, as a stop task does; then every epair of the
+   container is destroyed (also when the jail is already gone, so epairs a
+   finished `jail -r` left are not orphaned).
+2. Success: the recorded epairs are cleared, the container is recorded
+   `stopped` with the detail "a stop interrupted by an agent restart was
+   completed at agent start", a leftover devfs on its root is swept
+   (amendment l), and the agent logs `jail_stop_completed` (WARN).
+3. Failure: logged at ERROR (`jail_stop_interrupted`); the container is
+   recorded `unknown` with the detail "a stop interrupted by an agent
+   restart could not be completed at agent start: …; stop it again", as a
+   failed stop task records it. The epairs record is left as it is (a
+   failed stop task does the same); the next stop destroys any epairs and
+   clears it.
+4. Desired state is not changed: a stop set it to `stopped` before
+   anything else. A restart interrupted in its stop half ends stopped; its
+   start half is not resumed (ADR 0005: interrupted work is resubmitted,
+   never resumed).
+5. A container recorded `starting` is still the half-started sweep's
+   (amendment i); a `failed` (quarantined) one is still the quarantine
+   sweep's (amendment n). Neither changes.
+
+**Why exec.stop, and not a removal without it.** The half-started sweep
+removes the jail without `/etc/rc.shutdown` because the `/dev` guard may not
+have run (amendment i). A half-stopped jail finished its start, ran
+observed `running`, and its operator asked for a stop with
+`/etc/rc.shutdown`; part of it may have run. Running it again is what a
+second stop request does, and lets the jail's services shut down in order.
+Removing it without exec.stop (alternative B) would be faster and run none
+of the jail's code at agent start, but would cut off an orderly shutdown
+the operator asked for.
+
+**Cost.** The agent's start waits for each half-stopped jail's stop: at
+most the default stop timeout (10 s) plus `jail(8)`'s slack per jail, one
+after another. Running VMs and jails are not affected; only the agent's
+socket comes up later.
+
+**Questions for Andy.**
+
+1. exec.stop at agent start (this amendment), or removal without it
+   (alternative B)?
+2. The default stop timeout, not the timeout the interrupted task asked
+   for (which is in its payload): acceptable?
+3. Should the completion also write an entry to the agent's audit log
+   (today the start-up sweeps only log), and if so with which actor?
+
+**Validation (to do).** On a lab VM: build a template, start a jail with a
+DHCP NIC on a test bridge on vtnet1, kill the agent during the stop
+(between the epair destruction and the end of `jail -r`), start the agent,
+and show the jail ends `stopped`, no epair left, no `host_interface`
+recorded, desired `stopped`. Results go below.
