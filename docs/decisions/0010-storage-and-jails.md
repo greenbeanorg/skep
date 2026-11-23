@@ -2629,3 +2629,16 @@ template, and the bridge were removed afterwards, `agent.json` restored
 [jail-stop-recovery-20261123/](../../tests/integration/jails/results/jail-stop-recovery-20261123/).
 The failure path (completion fails → `unknown` with a detail) is covered by
 unit tests only.
+
+**Validation of rules 6–9 (langrishe, 2026-11-23 UTC, unattended, build
+eae2ab3).** The success case repeated (`jail_stop_completing` with
+`max_wait_seconds: 190`, then `jail_stop_completed`; `stopped`, no epairs).
+The agent stopped with `service skep_agent stop` during a completion:
+`jail_stop_completion_cancelled`, the jail still present, `agent.db` showing
+the container `stopping`, and the next start completed it. The induced
+failure (`chflags schg` on the jail's `jail.conf`): GET and the list showed
+`running`, desired `stopped`, the `jid`, and the completion's reason in
+`state_detail`; a stop task with the flag still set failed and GET then
+showed "the last stop failed: …"; after the flag was cleared a stop
+succeeded and cleared the detail. Record:
+[jail-stop-fixround-20261123.md](../../tests/integration/jails/results/jail-stop-fixround-20261123.md).
