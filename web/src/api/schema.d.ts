@@ -31,6 +31,11 @@ export interface paths {
          *     where each check says whether it is critical. The same document is
          *     in the system document's `health` field.
          *
+         *     This is the only health endpoint. `/health` and `/healthz` at the
+         *     root of the HTTPS port, outside `/api/v1`, answer `404` with the
+         *     standard error body naming this path, so that a check pointed at
+         *     them cannot pass on the web interface's `200`.
+         *
          *     Two checks concern the audit archives: `audit_archive` (the
          *     agent's operation audit log) and `access_audit_archive`
          *     (skep-api's access audit log). Each is `degraded` when the
