@@ -18,9 +18,9 @@
   under [Decisions](#decisions) and are worked into the text. The changes
   `hearst` needs are under [Changes hearst needs](#changes-hearst-needs),
   all approved.
-- Amendment z, zvol device nodes: **Proposed** (2026-11-22), built on
-  branch `fix/zvol-device-node`, not yet validated on FreeBSD; see
-  [Amendment z](#amendment-z-proposed-zvol-device-nodes).
+- Amendment z, zvol device nodes: **Accepted** (2026-11-22), built on
+  branch `fix/zvol-device-node` and validated on FreeBSD (lab VMs smith and
+  langrishe); see [Amendment z](#amendment-z-accepted-zvol-device-nodes).
 - Date: 2026-11-14 (proposed and accepted)
 - Depends on: [ADR 0003](0003-read-only-discovery.md) (discovery never
   changes the host), [ADR 0004](0004-privilege-boundary.md) (typed
@@ -2341,14 +2341,15 @@ host-safe specs pinned. Details in section 29 of
 [step10-progress.md](../../tests/integration/jails/results/step10-progress.md).
 
 
-## Amendment z (Proposed): zvol device nodes
+## Amendment z (Accepted): zvol device nodes
 
-- Status: **Proposed**, 2026-11-22. Built (`fix/zvol-device-node`), unit
+- Status: **Accepted**, 2026-11-22 (Andy, after reviewing the validation
+  results). Built (`fix/zvol-device-node`), unit
   tested on merrick; FreeBSD validation on the lab VMs smith and langrishe,
   2026-11-22, and through the API on 2026-11-23 UTC (results in
   [zvol-device-node-20261122.md](../../tests/integration/setup/results/zvol-device-node-20261122.md)).
-  Andy answered the questions on 2026-11-22 (below). Not to be merged
-  until Andy has reviewed the validation results and marked it Accepted.
+  Andy answered the questions on 2026-11-22 (below), reviewed the
+  validation results, and accepted the amendment.
 
 **The behaviour.** On FreeBSD 15.1-RELEASE-p7 (zfs-2.4.2), a zvol created
 with `-o volmode=dev` usually gets no `/dev/zvol/<dataset>` node: 45 of
@@ -2466,8 +2467,8 @@ error's `details` (here `dataset`, `reason`, `command`)? Today the
 reason only in the agent's log. Adding it is an API contract change, so it
 was not made.
 
-**Andy's answers** (2026-11-22; the status stays Proposed until Andy has
-reviewed the validation results and marks it Accepted).
+**Andy's answers** (2026-11-22; Andy then reviewed the validation results
+and accepted the amendment).
 
 1. Post-operation checks (after create, disk add, clone, and rollback)
    report a node that is still missing but don't fail the task: **accepted;
