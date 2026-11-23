@@ -84,7 +84,7 @@ func (f *fakeRunner) Run(_ context.Context, c Cmd) (string, error) {
 			return out, nil
 		}
 	}
-	if strings.HasSuffix(c.Name, apiBin) && len(c.Args) == 4 && c.Args[0] == "admin" && c.Args[2] == "--username" {
+	if strings.HasSuffix(c.Name, apiBin) && len(c.Args) >= 4 && c.Args[0] == "admin" && c.Args[2] == "--username" {
 		user := c.Args[3]
 		switch c.Args[1] {
 		case "create":
@@ -490,7 +490,7 @@ func TestApplyStartAndAdmin(t *testing.T) {
 		}
 	}
 	want := []string{"service skep_agent status", "service skep_api status", "service skep_api start",
-		root + "/usr/local/sbin/skep-api admin create --username andy (interactive) (as 409:409)"}
+		root + "/usr/local/sbin/skep-api admin create --username andy -data-dir /var/db/skep (interactive) (as 409:409)"}
 	if strings.Join(tail, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("commands:\n%s", strings.Join(tail, "\n"))
 	}
@@ -526,7 +526,7 @@ func TestSecondApplyWithStartAndAdminIsANoOp(t *testing.T) {
 	}
 	want(t, p, OK, "skep_agent", "running")
 	want(t, p, OK, "first administrator andy", `exists (skep-api admin exists: user "andy" exists (role admin))`)
-	if c := e.runner.calls[len(e.runner.calls)-1]; c != root+"/usr/local/sbin/skep-api admin exists --username andy (as 409:409)" {
+	if c := e.runner.calls[len(e.runner.calls)-1]; c != root+"/usr/local/sbin/skep-api admin exists --username andy -data-dir /var/db/skep (as 409:409)" {
 		t.Fatalf("the plan asked %q", c)
 	}
 	if _, err := e.applier().Apply(context.Background(), p); !errors.Is(err, ErrNothingToDo) {
@@ -757,7 +757,7 @@ func TestApplyAdminWaitsForTheAPIAndFailsCleanly(t *testing.T) {
 	if _, err := e.applier().Apply(context.Background(), p); err != nil {
 		t.Fatal(err)
 	}
-	if c := e.runner.calls[len(e.runner.calls)-1]; !strings.HasSuffix(c, "admin create --username andy (interactive) (as 409:409)") {
+	if c := e.runner.calls[len(e.runner.calls)-1]; !strings.HasSuffix(c, "admin create --username andy -data-dir /var/db/skep (interactive) (as 409:409)") {
 		t.Fatalf("last command %q", c)
 	}
 }
@@ -965,5 +965,27 @@ func TestParseAdminExists(t *testing.T) {
 		if r != want.role || d != want.disabled || ok != want.ok {
 			t.Errorf("%q: %q %v %v", in, r, d, ok)
 		}
+	}
+}
+
+// TestAdminCommandsGetTheServiceDataDirAndConfig: admin exists and admin
+// create open the database the rc.d script gives skep_api, not skep-api's
+// defaults (backlog, finding 1 fix).
+func TestAdminCommandsGetTheServiceDataDirAndConfig(t *testing.T) {
+	root := stockHost(t)
+	appendFile(t, filepath.Join(root, "etc/rc.conf"), "skep_api_data_dir=\"/srv/skep\"\nskep_api_config=\"/usr/local/etc/skep/api-alt.json\"\n")
+	args, err := apiServiceArgs(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(args, " ") != "-data-dir /srv/skep -config /usr/local/etc/skep/api-alt.json" {
+		t.Fatalf("args %q", args)
+	}
+	e := newApplyEnv(t, root)
+	if found, _, err := (SkepAPIAdmins{Runner: e.runner}).AdminExists(context.Background(), root, "andy"); found || err != nil {
+		t.Fatalf("empty fake: found %v, err %v", found, err)
+	}
+	if c := e.runner.calls[len(e.runner.calls)-1]; !strings.HasSuffix(c, "admin exists --username andy -data-dir /srv/skep -config /usr/local/etc/skep/api-alt.json (as 409:409)") {
+		t.Fatalf("called %q", c)
 	}
 }

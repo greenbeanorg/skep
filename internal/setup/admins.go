@@ -29,8 +29,12 @@ func (s SkepAPIAdmins) AdminExists(ctx context.Context, root, username string) (
 	if err != nil {
 		return false, "", err
 	}
+	svc, err := apiServiceArgs(root)
+	if err != nil {
+		return false, "", err
+	}
 	out, err := s.Runner.Run(ctx, Cmd{Name: hostPath(root, apiBin),
-		Args: []string{"admin", "exists", "--username", username}, As: cred})
+		Args: append([]string{"admin", "exists", "--username", username}, svc...), As: cred})
 	detail := strings.TrimSpace(out)
 	if err == nil {
 		return true, detail, nil

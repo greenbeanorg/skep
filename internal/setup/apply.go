@@ -294,7 +294,11 @@ func (a *Applier) adminCreate(ctx context.Context, username string) error {
 		}
 		sleep(time.Second)
 	}
-	_, err = a.Runner.Run(ctx, Cmd{Name: hostPath(a.Root, apiBin), Args: []string{"admin", "create", "--username", username},
+	svc, err := apiServiceArgs(a.Root)
+	if err != nil {
+		return err
+	}
+	_, err = a.Runner.Run(ctx, Cmd{Name: hostPath(a.Root, apiBin), Args: append([]string{"admin", "create", "--username", username}, svc...),
 		Interactive: true, As: cred})
 	return err
 }
