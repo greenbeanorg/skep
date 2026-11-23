@@ -20,8 +20,9 @@ import (
 // Default timings of EnsureVolumeDevice.
 const (
 	// deviceLateWait is how long a missing node is given to appear on its
-	// own before anything is changed.
-	deviceLateWait = 5 * time.Second
+	// own before anything is changed. The probe on the lab VMs saw no
+	// missing node appear late (0 of 88 within 30 s), so the wait is short.
+	deviceLateWait = 1 * time.Second
 	// deviceSettleWait is how long a repair round waits for the node.
 	deviceSettleWait = 10 * time.Second
 	// devicePoll is how often the node is looked at while waiting.

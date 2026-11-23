@@ -2376,7 +2376,9 @@ Results: [zvol-device-node-20261122.md](../../tests/integration/setup/results/zv
    and `skep:disk_id` to name the disk.
 2. The node is checked with `lstat` and must be a character device. A
    path that exists as anything else is an error. A missing node is
-   first given about 5 s to appear on its own.
+   first given 1 s to appear on its own (the probe saw 0 of 88 missing
+   nodes appear late, within 30 s; first built with 5 s, shortened on
+   Andy's instruction of 2026-11-22).
 3. A repair happens only if all of these hold: the dataset is a volume;
    `volmode` is exactly `dev`; `keystatus` is `available` or not
    applicable; the VM is stopped. The stopped check is the caller's: it
