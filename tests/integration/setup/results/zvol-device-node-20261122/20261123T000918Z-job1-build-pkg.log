@@ -1,0 +1,6 @@
+head 0ec6fec
+pkg-0.1.0: staged sha256 == SHA256SUMS.stage
+skep-0.1.0
+SHA256 (out/skep-0.1.0.pkg) = e29e768491089166e67b10dd78b290a3a4bc8e05920108517f0b0d55fc3d82bd
+skep-setup 0.1.0 (commit 0ec6fec, built 2026-11-23T00:08:57Z, go1.27.4 freebsd/amd64)
+SHA256 (/home/aba/skep-pkgs/z2/skep-0.1.0.pkg) = e29e768491089166e67b10dd78b290a3a4bc8e05920108517f0b0d55fc3d82bd

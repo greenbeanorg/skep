@@ -1,0 +1,6 @@
+start task 14e333bc-6124-4da7-bab0-920614ce8041 succeeded 2026-11-23T00:18:20.625Z 2026-11-23T00:18:21.788Z None
+observed {'state': 'running', 'pid': 11880, 'at': '2026-11-23T00:18:24.738Z'}
+crw-r-----  1 root operator 0xdf Nov 22 19:18 /dev/zvol/tank/skep/vm/86a3b481-2674-4945-868c-c91a01bc1fb5/disk0
+skep-86a3b481-2674-4945-868c-c91a01bc1fb5
+11880 bhyve: skep-86a3b481-2674-4945-868c-c91a01bc1fb5
+Nov 22 19:18:21 smith skep-agent[6836]: {"time":"2026-11-22T19:18:21.685338175-05:00","level":"INFO","msg":"hostops: zvol device node repaired","dataset":"tank/skep/vm/86a3b481-2674-4945-868c-c91a01bc1fb5/disk0","rounds":1,"duration":34178430} {"time":"2026-11-22T19:18:21.685376519-05:00","level":"INFO","msg":"bhyve: repaired a disk's device node before the start","vm_id":"86a3b481-2674-4945-868c-

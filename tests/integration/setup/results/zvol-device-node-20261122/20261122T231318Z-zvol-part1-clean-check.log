@@ -1,0 +1,62 @@
+=== 10.79.20.81
+smith.greenbean.org
+15.1-RELEASE-p7
+15.1-RELEASE-p7
+ 6:13PM  up 2 mins, 0 users, load averages: 0.46, 0.15, 0.06
+ls: /var/db/skep: No such file or directory
+id: skep: no such user
+pkg: No package(s) matching skep
+vtnet0 vtnet1 lo0
+Failed to load zfs module: Operation not permitted
+Failed to load zfs module: Operation not permitted
+--- rc.conf
+hostname="smith.greenbean.org"
+ifconfig_vtnet0="inet 10.79.20.81/24"
+sshd_enable="YES"
+moused_nondefault_enable="NO"
+# Set dumpdev to "AUTO" to enable crash dumps, "NO" to disable
+dumpdev="AUTO"
+defaultrouter="10.79.20.1"
+--- loader
+hw.vmm.vmx.cap.virtual_interrupt_delivery="0"
+ls: /usr/local/etc/skep: No such file or directory
+boot time                                  Sun Nov 22 18:11
+shutdown time                              Sun Nov 22 13:42
+boot time                                  Sun Nov 22 13:42
+shutdown time                              Sun Nov 22 13:41
+aba        pts/0    merrick.greenbean.org  Sun Nov 22 13:38 - 13:39  (00:01)
+boot time                                  Sun Nov 22 13:38
+=== 10.79.20.82
+langrishe.greenbean.org
+15.1-RELEASE-p7
+15.1-RELEASE-p7
+ 6:13PM  up 1 min, 0 users, load averages: 0.25, 0.07, 0.02
+ls: /var/db/skep: No such file or directory
+id: skep: no such user
+pkg: No package(s) matching skep
+vtnet0 vtnet1 lo0
+zroot	29.5G	1.31G	28.2G	-	-	0%	4%	1.00x	ONLINE	-
+zfs-2.4.2-1-FreeBSD_g6330a45b0
+zfs-kmod-2.4.2-1-FreeBSD_g6330a45b0
+--- rc.conf
+hostname="langrishe.greenbean.org"
+ifconfig_vtnet0="inet 10.79.20.82 netmask 255.255.255.0"
+defaultrouter="10.79.20.1"
+sshd_enable="YES"
+moused_nondefault_enable="NO"
+# Set dumpdev to "AUTO" to enable crash dumps, "NO" to disable
+dumpdev="AUTO"
+zfs_enable="YES"
+--- loader
+kern.geom.label.disk_ident.enable="0"
+kern.geom.label.gptid.enable="0"
+zfs_load="YES"
+hw.vmm.vmx.cap.virtual_interrupt_delivery="0"
+ls: /usr/local/etc/skep: No such file or directory
+boot time                                  Sun Nov 22 18:11
+shutdown time                              Sun Nov 22 13:43
+boot time                                  Sun Nov 22 13:42
+shutdown time                              Sun Nov 22 13:41
+boot time                                  Sun Nov 22 13:38
+shutdown time                              Sun Nov 22 13:38
+ 2    1 0xffffffff82555000   628ef8 zfs.ko

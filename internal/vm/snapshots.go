@@ -543,6 +543,7 @@ func (s *Service) runSnapshotRollback(ctx context.Context, task tasks.Task, repo
 		}
 	}
 	s.refreshVolumes(ctx, vm)
+	s.ensureDevices(ctx, vm.ID, vm.Disks, report)
 	s.log.Info("vm rolled back", "vm_id", vm.ID, "snapshot_id", target.ID, "destroyed", len(gone))
 	return RollbackResult{VMID: vm.ID, SnapshotID: target.ID, Name: target.Name, Destroyed: gone,
 		DatasetsDestroyed: datasetInfo(destroyed)}, nil
@@ -864,6 +865,8 @@ func (s *Service) runClone(ctx context.Context, task tasks.Task, report tasks.Re
 		return nil, failure(err)
 	}
 	s.refreshVolumes(ctx, target)
+	// The clone is not provisioned yet, so nothing can start it.
+	s.ensureDevices(ctx, target.ID, target.Disks, report)
 	if err := s.store.SetProvisioned(ctx, target.ID, s.now().UTC()); err != nil {
 		return nil, err
 	}

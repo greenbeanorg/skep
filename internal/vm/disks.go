@@ -223,6 +223,7 @@ func (s *Service) applyDisks(ctx context.Context, vm models.VM, work diskWork, r
 		if err := s.store.AddDisk(ctx, vm, d, s.host.Conf.DatasetRoot, at); err != nil {
 			return err
 		}
+		s.ensureDevices(ctx, vm.ID, []models.VMDisk{d}, report)
 		result.DisksAdded = append(result.DisksAdded, datasetInfo([]hostops.Dataset{made})...)
 	}
 	s.refreshVolumes(ctx, vm)
