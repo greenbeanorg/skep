@@ -1,0 +1,24 @@
++ jls -q name
++ ls /dev/vmm
++ sudo timeout -f 300 pkg add -f /home/aba/skep-pkgs/j3/pkg/out/skep-0.1.0.pkg
+Installing skep-0.1.0...
+package skep is already installed, forced install
+Extracting skep-0.1.0: .......... done
+add-rc=0
++ echo 'add-rc=0'
++ sudo timeout -f 300 skep-setup upgrade -yes
+  installed: skep-agent, skep-api and skep-setup are 0.1.0+c9ecac9
+  service skep_api stop
+  skep-agent db backup: /var/db/skep/backup/0.1.0+b959cc8-20261123T023059Z/agent.db sha256 8285949e43842e42502f8601ff0dcf150d2dfd5f0a7c4698b313f2d41c996c55
+  skep-agent db backup: removed the old backup /var/db/skep/backup/0.1.0+0ec6fec-20261123T002634Z
+  skep-api db backup: /var/db/skep/backup/0.1.0+b959cc8-20261123T023059Z/api.db sha256 2a2cb044e5d5dda563f5bcc502b870051676b05d2105ed875f87dc176fe395a1
+  service skep_agent stop (from here on, Ctrl-C does not interrupt the upgrade)
+  skep_agent pid 22907 runs /usr/local/sbin/skep-agent at 0.1.0+c9ecac9
+  skep_api pid 22979 runs /usr/local/sbin/skep-api at 0.1.0+c9ecac9
+  agent socket: answers as 0.1.0+c9ecac9
+  health: ok
+upgraded to 0.1.0+c9ecac9; backups in /var/db/skep/backup/0.1.0+b959cc8-20261123T023059Z
+upgrade-rc=0
++ echo 'upgrade-rc=0'
++ sysctl hw.vmm.vmx.cap.virtual_interrupt_delivery
+hw.vmm.vmx.cap.virtual_interrupt_delivery: 0

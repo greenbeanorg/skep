@@ -5,6 +5,7 @@ import { api } from "@/api/client";
 import { useQuery } from "@/api/hooks";
 import type { Task } from "@/api/types";
 import { TaskStatusBadge } from "@/components/status";
+import { TaskErrorDetails } from "@/components/task-error-details";
 
 import { containerErrorHint } from "./container";
 
@@ -44,6 +45,7 @@ export function TaskLine({ task, onDone }: { task: Task; onDone?: () => void }) 
         <div className="rounded-md border border-bad/40 bg-bad-soft px-3 py-2 text-[0.8125rem]">
           <span className="font-mono">{t.error.code}</span>: {t.error.message}
           {hint ? <span className="block text-muted-foreground">{hint}</span> : null}
+          <TaskErrorDetails details={t.error.details} />
         </div>
       ) : null}
     </div>

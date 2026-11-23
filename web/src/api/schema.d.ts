@@ -2081,6 +2081,18 @@ export interface components {
                 /** @example timeout */
                 code: string;
                 message: string;
+                /**
+                 * @description Structured context the agent recorded with the failure, for example `dataset`, `reason` and `command` for `disk_device_missing`. Only the keys reviewed for each error code are included (the list is in the security overview); a key that could hold a secret, a key path, a password, or free text from a command or package is never included. Visible to every caller who can read the task. Absent when there is none.
+                 * @example {
+                 *       "dataset": "tank/skep/vm/0193.../disk0",
+                 *       "reason": "volmode_none",
+                 *       "volmode": "none",
+                 *       "command": "zfs set volmode=dev tank/skep/vm/0193.../disk0"
+                 *     }
+                 */
+                details?: {
+                    [key: string]: unknown;
+                };
             };
             /** Format: date-time */
             created_at: string;

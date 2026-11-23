@@ -251,7 +251,11 @@ func taskFailure(t models.Task) error {
 		return nil
 	}
 	if t.Error != nil {
-		return fmt.Errorf("task %s %s: %s: %s", t.ID, t.Status, t.Error.Code, clean(t.Error.Message))
+		msg := fmt.Sprintf("task %s %s: %s: %s", t.ID, t.Status, t.Error.Code, clean(t.Error.Message))
+		for _, kv := range detailLines(t.Error.Details) {
+			msg += "\n  " + kv[0] + ": " + kv[1]
+		}
+		return errors.New(msg)
 	}
 	return fmt.Errorf("task %s %s", t.ID, t.Status)
 }
