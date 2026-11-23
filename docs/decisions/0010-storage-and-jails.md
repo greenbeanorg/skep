@@ -2488,8 +2488,10 @@ and accepted the amendment).
 ## Amendment aa (Proposed): the agent finishes a half-stopped jail at start
 
 - Status: **Proposed**, 2026-11-23 (unattended run; Andy away). Written
-  before the build, as asked. Not to be merged until Andy has answered the
-  questions below and marked it Accepted. (Amendment z is on PR #55.)
+  before the build, as asked. Andy's answers to the four questions are
+  recorded below (2026-11-23, with the Fable review's fix round, rules 6–9);
+  the amendment stays Proposed until Andy marks it Accepted. (Amendment z
+  is on PR #55.)
 
 **The problem.** A jail stop is: record desired `stopped` and observed
 `stopping`; `hostops.StopJail`, which destroys the jail's epairs first and
@@ -2530,6 +2532,39 @@ completed:
 5. A container recorded `starting` is still the half-started sweep's
    (amendment i); a `failed` (quarantined) one is still the quarantine
    sweep's (amendment n). Neither changes.
+6. **What a read shows after a failure.** Whenever a jail is observed
+   running while its desired state is `stopped` and its recorded state is
+   not `starting` or `stopping`, the state shown is the observed one
+   (`running`, with its `jid`) and the recorded `state_detail` is kept;
+   with none recorded, the detail is "the jail is running although it
+   should be stopped; stop it again". This covers a failed completion
+   (rule 3: the jail usually still runs, since `jail -r` and `jail -R`
+   both failed) and equally a failed stop task, which records `unknown`
+   with "the last stop failed: …" and whose detail the first read used to
+   drop the same way (unit test `TestFailedStopTaskDetailOnRead` fails on
+   the build before this rule). A failed completion whose jail is gone
+   reads `stopped` with no detail. A successful stop clears the detail
+   (the store writes NULL for an empty detail).
+7. **Agent shutdown during a completion.** If the agent's context is
+   cancelled (SIGTERM, `service skep_agent stop`) and `StopJail` returns
+   an error, nothing is recorded: the container stays `stopping`, the
+   agent logs `jail_stop_completion_cancelled` (WARN), and the next agent
+   start completes the stop. `jail -r` is killed with the context
+   (hostops does not force a cancelled removal), so the jail may still
+   run. An outcome `StopJail` did return is recorded on a context
+   detached from the agent's, as a stop task records.
+8. **Log before the wait.** Before `StopJail` the agent logs
+   `jail_stop_completing` (WARN) with `container_id` and
+   `max_wait_seconds`, the longest the call can take (rule 9's bound).
+9. **Epairs are destroyed by ownership, never by recorded name.**
+   `StopJail` destroys only the epair host ends (`epair<N>a`) whose
+   description, read from the host at that moment, is
+   `skep:<container-id>:<slot>` (`DestroyJailInterfaces`); `JailSpec`
+   carries no recorded interface name. The `host_interface` names recorded
+   on the container are only cleared. An interface named as recorded but
+   now described as another owner's, or not described, is left (unit test
+   `TestStopJailOfGoneJailChecksOwnership`). A normal stop task is
+   unchanged.
 
 **Why exec.stop, and not a removal without it.** The half-started sweep
 removes the jail without `/etc/rc.shutdown` because the `/dev` guard may not
@@ -2544,22 +2579,31 @@ the operator asked for.
 **Cost.** The agent's start waits for each half-stopped jail's stop, one
 after another. `exec.stop` is bounded by `exec.timeout` (the start timeout,
 120 s), then `stop.timeout` (10 s), and `jail -r` as a whole by those plus
-30 s of slack: **up to about 160 s per jail**, not the 10 s stop timeout
-alone (measured: a jail whose `/etc/rc.shutdown.local` sleeps 30 s delayed
+30 s of slack; a `jail -r` that fails or times out is followed by `jail -R`,
+bounded by another 30 s (amendment u): **up to about 190 s per jail**
+(`JailSpec.StopMaxWait`; the first draft said 160 s, leaving out `jail
+-R`), not the 10 s stop timeout alone (measured: a jail whose `/etc/rc.shutdown.local` sleeps 30 s delayed
 the agent's start by 30 s). Running VMs and jails are not affected; only
 the agent's socket comes up later.
 
-**Questions for Andy.**
+**Questions for Andy, and his answers (2026-11-23).**
 
 1. exec.stop at agent start (this amendment), or removal without it
-   (alternative B)?
+   (alternative B)? — **exec.stop.**
 2. The default stop timeout, not the timeout the interrupted task asked
-   for (which is in its payload): acceptable?
+   for (which is in its payload): acceptable? — **The default timeout is
+   accepted.**
 3. Should the completion also write an entry to the agent's audit log
-   (today the start-up sweeps only log), and if so with which actor?
-4. The start can wait up to about 160 s per half-stopped jail (Cost).
-   Acceptable, or should the completion run after the socket is served
-   (the jail would show `stopping` meanwhile)?
+   (today the start-up sweeps only log), and if so with which actor? —
+   **No audit entry in this change.** A backlog row "start-up sweeps write
+   audit entries, actor system" covers all three start-up sweeps (the
+   half-started sweep, the quarantine sweep, and this completion).
+4. The start can wait up to about 160 s (in fact about 190 s, see Cost)
+   per half-stopped jail. Acceptable, or should the completion run after
+   the socket is served (the jail would show `stopping` meanwhile)? —
+   **The completion stays before the socket is served, for 0.1.**
+   (`skep-setup upgrade` waits 30 s for the socket; see the PR #57 fix
+   round report for what it says when the agent takes longer.)
 
 **Validation (langrishe, 2026-11-23 UTC, unattended).** A pkgbase template
 built through the API (41 s), a jail with a DHCP NIC on a test bridge
