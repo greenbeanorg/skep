@@ -23,6 +23,9 @@ import "github.com/greenbeanorg/skep/pkg/models"
 //     /var/db/pkg and /usr/share/certs that changed (key files among them)
 //     and the text of the build's failure
 //   - text (template_script_unknown): a package script's text
+//   - seen_on (container_mac_in_use): built from ifconfig's output, up to
+//     the port name in the bridge's address table, so it is command output
+//     and not a fixed value
 //
 // The other keys are identifiers, names, sizes, states and fixed commands
 // that the error's message already states or that a caller who can read
@@ -35,7 +38,7 @@ var ErrorDetailKeys = map[string][]string{
 	models.CodeContainerDiskQuotaBelowUsage:   {"container_id", "template_id", "disk_quota", "referenced_bytes"},
 	models.CodeContainerLockedMemoryAboveMax:  {"locked_memory", "max_locked_memory_bytes"},
 	models.CodeContainerLockedMemoryExhausted: {"container_id", "running_bytes", "required_bytes", "max_locked_memory_bytes"},
-	models.CodeContainerMACInUse:              {"container_id", "slot", "mac_address", "bridge", "seen_on", "held_by_kind", "held_by_id", "held_by_name"},
+	models.CodeContainerMACInUse:              {"container_id", "slot", "mac_address", "bridge", "held_by_kind", "held_by_id", "held_by_name"},
 	models.CodeContainerMACInvalid:            {"field", "slot", "mac_address"},
 	models.CodeContainerNotProvisioned:        {"container_id"},
 	models.CodeContainerNotRunning:            {"container_id"},

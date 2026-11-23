@@ -10,7 +10,7 @@ import (
 // The keys reviewed as possibly holding a secret, a key path, a password,
 // or unreviewed free text are never shown, for any code.
 func TestErrorDetailKeysNeverListFlaggedKeys(t *testing.T) {
-	flaggedEverywhere := []string{"error", "stderr", "cleanup_error", "build_error", "paths", "text", "password", "passphrase", "key", "keylocation", "token", "secret"}
+	flaggedEverywhere := []string{"error", "stderr", "cleanup_error", "build_error", "paths", "text", "password", "passphrase", "key", "keylocation", "token", "secret", "seen_on"}
 	for code, keys := range ErrorDetailKeys {
 		for _, k := range keys {
 			if slices.Contains(flaggedEverywhere, k) {
@@ -21,6 +21,20 @@ func TestErrorDetailKeysNeverListFlaggedKeys(t *testing.T) {
 	// "files" is SSH host key paths under template_build_failed.
 	if slices.Contains(ErrorDetailKeys[models.CodeTemplateBuildFailed], "files") {
 		t.Error("template_build_failed lists files (SSH host key paths)")
+	}
+}
+
+// seen_on is built from ifconfig's output: it stays in the audit log.
+func TestPublicErrorDetailsDropsSeenOn(t *testing.T) {
+	got := PublicErrorDetails(models.CodeContainerMACInUse, map[string]any{
+		"slot": 0, "mac_address": "02:00:00:00:00:01", "bridge": "bridge1",
+		"seen_on": "bridge1's address table (learnt on vtnet1)",
+	})
+	if _, ok := got["seen_on"]; ok {
+		t.Errorf("seen_on left the agent: %v", got)
+	}
+	if got["bridge"] != "bridge1" || got["mac_address"] != "02:00:00:00:00:01" {
+		t.Errorf("the other keys must stay: %v", got)
 	}
 }
 

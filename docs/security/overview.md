@@ -685,7 +685,7 @@ helper that builds details, 2026-11-23):
 | `container_disk_quota_below_usage` | container_id, template_id, disk_quota, referenced_bytes | |
 | `container_locked_memory_above_max` | locked_memory, max_locked_memory_bytes | |
 | `container_locked_memory_exhausted` | container_id, running_bytes, required_bytes, max_locked_memory_bytes | |
-| `container_mac_in_use` | container_id, slot, mac_address, bridge, seen_on, held_by_kind, held_by_id, held_by_name | |
+| `container_mac_in_use` | container_id, slot, mac_address, bridge, held_by_kind, held_by_id, held_by_name | **seen_on** (built from ifconfig output, up to a port name in the address table) |
 | `container_mac_invalid` | field, slot, mac_address | |
 | `container_not_provisioned`, `container_not_running`, `container_not_stopped`, `container_remove_failed`, `container_started` | container_id | |
 | `container_quarantined` | container_id, state_detail | |
