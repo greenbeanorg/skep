@@ -33,3 +33,16 @@ With the fixed steps:
 **Limit.** The link was quiet: no address was learned in the 30 s after the
 reboot, so forwarding was seen only before it. After the reboot the
 configuration and link state were checked, not traffic.
+
+## B3(b): a group-writable `/var/db/skep/setup` (smith)
+
+Mode changed from `700` to `720`. `check`, `plan`, `apply`, `rollback`,
+`upgrade`, `remove` and `remove -plan`, none with `-yes`, each exited 3 with
+"/var/db/skep/setup is writable by its group or others (0720)". The mode was
+restored to `700 root:wheel`, and both services kept running.
+
+Where each command meets the check, before its first read or write under
+`/var/db/skep`: `check`, `plan` and `apply` in `computePlan`; `rollback` in
+`runRollback`; `upgrade` in `runUpgrade`, before its prompt; `remove` in
+`runRemove`, before the probe. No command reached the directory unchecked
+before this change, but `check`, `plan`, `apply` and `remove` exited 2.

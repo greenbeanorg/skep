@@ -30,6 +30,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/greenbeanorg/skep/internal/auth"
 	"github.com/greenbeanorg/skep/internal/config"
 	"github.com/greenbeanorg/skep/internal/pkgrepo"
 )
@@ -391,7 +392,23 @@ func (b *builder) admin() {
 	case err != nil:
 		b.refuse("api", what, "cannot tell whether "+b.o.Admin+" exists: "+err.Error())
 	case found:
-		b.ok("api", what, "exists (skep-api admin exists: "+detail+")")
+		role, disabled, ok := parseAdminExists(detail)
+		switch {
+		case !ok:
+			b.warn("api", what, "exists, but skep-api's answer could not be read (skep-api admin exists: "+detail+"); check that it is an enabled administrator")
+		case disabled || role != auth.RoleAdmin:
+			var why []string
+			if role != auth.RoleAdmin {
+				why = append(why, "has the role "+role+", not "+auth.RoleAdmin)
+			}
+			if disabled {
+				why = append(why, "is disabled")
+			}
+			b.warn("api", what, "exists but "+strings.Join(why, " and ")+" (skep-api admin exists: "+detail+
+				"); setup never changes an existing user, so this user cannot administer Skep until an administrator changes it in the web interface or the API")
+		default:
+			b.ok("api", what, "exists (skep-api admin exists: "+detail+")")
+		}
 	default:
 		b.add("api", what, "not in the API database (skep-api admin exists: "+detail+"); never a password in a flag, a file, or the journal",
 			Action{Type: ActAdminCreate, Username: b.o.Admin})
@@ -682,6 +699,20 @@ func sorted(s []string) []string {
 	c := slices.Clone(s)
 	slices.Sort(c)
 	return c
+}
+
+// adminExistsRE is skep-api admin exists' answer for a user that exists:
+// user "NAME" exists (role ROLE[, disabled]).
+var adminExistsRE = regexp.MustCompile(`^user ".*" exists \(role ([^,()]+)(, disabled)?\)$`)
+
+// parseAdminExists reads the role and the disabled flag from skep-api admin
+// exists' answer; ok is false when it does not have that shape.
+func parseAdminExists(detail string) (role string, disabled, ok bool) {
+	m := adminExistsRE.FindStringSubmatch(strings.TrimSpace(detail))
+	if m == nil {
+		return "", false, false
+	}
+	return m[1], m[2] != "", true
 }
 
 func (b *builder) bridgeDefined(name string) bool {

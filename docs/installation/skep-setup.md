@@ -46,7 +46,7 @@ refused.
 | `-listen ADDR:PORT` | The API listen address (default: the management address, port 8443). `0.0.0.0` or `::` only with `-listen-all` |
 | `-no-racct` | Do not add `kern.racct.enable="1"` (jail limits other than `disk_quota` are then refused) |
 | `-start` | Start both services at the end of `apply` |
-| `-admin NAME` | Create the first administrator (asks for the password, twice, without echo). Needs `-start`, or `/var/db/skep/api` to exist already (the API has run once); otherwise the plan refuses, because `skep-api admin create` run as root first would create the API's data directory owned by root ([ADR 0012 amendment](../decisions/0012-installer.md#amendment-2026-11-22-build-decisions-confirmed), build decision 8). Setup runs `skep-api admin create` **as the `skep` user** (UID and primary GID from `/etc/passwd`, never root), and only once `skep_api` has written `/var/run/skep/api.pid` and created `api.db` (it waits up to 30 s). If it fails, every other change stays made, the journal is finished with the error, and setup prints the same `apply` command to retry: it then plans only the administrator. Whether the administrator exists is asked of `skep-api` itself: with no `api.db` the create is planned; with one, `check`, `plan` and `apply` run `skep-api admin exists --username NAME` as the `skep` user with the fixed environment (read-only; it never creates or migrates `api.db`). Exit 0 is `ok`, 1 plans the create, anything else refuses with skep-api's error. Asking needs root; as another user, or with `-root` other than `/`, the plan refuses `-admin` while `api.db` exists |
+| `-admin NAME` | Create the first administrator (asks for the password, twice, without echo). Needs `-start`, or `/var/db/skep/api` to exist already (the API has run once); otherwise the plan refuses, because `skep-api admin create` run as root first would create the API's data directory owned by root ([ADR 0012 amendment](../decisions/0012-installer.md#amendment-2026-11-22-build-decisions-confirmed), build decision 8). Setup runs `skep-api admin create` **as the `skep` user** (UID and primary GID from `/etc/passwd`, never root), and only once `skep_api` has written `/var/run/skep/api.pid` and created `api.db` (it waits up to 30 s). If it fails, every other change stays made, the journal is finished with the error, and setup prints the same `apply` command to retry: it then plans only the administrator. Whether the administrator exists is asked of `skep-api` itself: with no `api.db` the create is planned; with one, `check`, `plan` and `apply` run `skep-api admin exists --username NAME` as the `skep` user with the fixed environment (read-only; it never creates or migrates `api.db`). Exit 0 is `ok`, 1 plans the create, anything else refuses with skep-api's error. Asking needs root; as another user, or with `-root` other than `/`, the plan refuses `-admin` while `api.db` exists. A NAME that exists already is left as it is: `ok` when it is an enabled `admin`, a **warning** when it is disabled or has another role (setup never changes an existing user). |
 
 ## What apply changes
 
@@ -129,7 +129,13 @@ that only runs jails needs no firmware: `pkg install edk2-bhyve`. (Decided
   symbolic link, not a directory, not owned by root, or writable by its
   group or others;
 - `0.0.0.0` without `-listen-all`; no address to listen on;
-- an earlier run that did not finish (roll it back first).
+- an earlier run that did not finish (roll it back first);
+- a `/var/db/skep` or `/var/db/skep/setup` that is a symbolic link or not a
+  directory (either may be missing), or any of `/var/db/skep/setup`,
+  `/var/db/skep`, `/var/db`, `/var` not owned by root or writable by its
+  group or others: every command that reads or writes there (`check`,
+  `plan`, `apply`, `rollback`, `upgrade`, `remove`) stops with exit 3 before
+  using it.
 
 Bridges are judged as they are **now** as well as by `rc.conf`: setup
 reads `ifconfig -g bridge` and each bridge's `member:` lines and `bridge
@@ -204,7 +210,9 @@ refuses until that run is rolled back (a failed `-admin` is the
 exception, above).
 
 A journal directory without a readable `journal.json` (a run that
-stopped before its first save, or a damaged file) does not make every
+stopped before its first save, a damaged file, or one whose format or ID
+this skep-setup does not understand, such as a newer version's or a
+directory copied under another name) does not make every
 command fail: it shows as an unfinished run with no recorded changes,
 which the plans refuse on until `skep-setup rollback ID` clears it.
 Rollback then undoes nothing (setup cannot tell what that run changed),
