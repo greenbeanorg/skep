@@ -700,7 +700,7 @@ func TestUpgradeRefusesANonDefaultDataDir(t *testing.T) {
 		os.WriteFile(hostPath(h.root, "/etc/rc.conf"), []byte(line+"\n"), 0o644)
 		err := u.Upgrade(context.Background())
 		var r *UpgradeRefusal
-		if !errors.As(err, &r) || !strings.Contains(err.Error(), "docs/installation/upgrading.md") ||
+		if !errors.As(err, &r) || !strings.Contains(err.Error(), "https://github.com/greenbeanorg/skep/blob/main/docs/installation/upgrading.md") ||
 			!strings.Contains(err.Error(), "nothing was changed") || len(serviceCalls(h)) != 0 {
 			t.Fatalf("%s: err %v, services %v", line, err, serviceCalls(h))
 		}

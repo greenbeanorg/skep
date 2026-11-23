@@ -563,8 +563,8 @@ func inode(path string) (uint64, error) {
 }
 
 // manualUpgradeDoc is the procedure for a host skep-setup upgrade does not
-// handle.
-const manualUpgradeDoc = "docs/installation/upgrading.md (\"Upgrading a host\", the general steps)"
+// handle: a URL, since an installed host has no source tree to look in.
+const manualUpgradeDoc = "https://github.com/greenbeanorg/skep/blob/main/docs/installation/upgrading.md (\"Upgrading a host\", the general steps)"
 
 // defaultDataDirs refuses a service whose rc.conf data directory
 // (skep_agent_data_dir, skep_api_data_dir) is not the default: upgrade
