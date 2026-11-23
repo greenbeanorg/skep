@@ -171,7 +171,9 @@ refuses until that run is rolled back (a failed `-admin` is the
 exception, above).
 
 A journal directory without a readable `journal.json` (a run that
-stopped before its first save, or a damaged file) does not make every
+stopped before its first save, a damaged file, or one whose format or ID
+this skep-setup does not understand, such as a newer version's or a
+directory copied under another name) does not make every
 command fail: it shows as an unfinished run with no recorded changes,
 which the plans refuse on until `skep-setup rollback ID` clears it.
 Rollback then undoes nothing (setup cannot tell what that run changed),

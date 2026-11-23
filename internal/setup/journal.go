@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -118,9 +119,28 @@ func LoadJournal(root, id string) (Journal, error) {
 		return Journal{}, fmt.Errorf("journal %s: %w", id, err)
 	}
 	if j.Format != JournalFormat || j.ID != id {
-		return Journal{}, fmt.Errorf("journal %s: format %d id %q not understood", id, j.Format, j.ID)
+		// Set aside like an unreadable one, so that one such journal (a
+		// newer skep-setup's, or a copied directory) does not make every
+		// command fail: the plans refuse on it as an unfinished run until
+		// "skep-setup rollback ID" clears it, which undoes nothing and
+		// keeps the file as journal.json.unreadable.
+		return Journal{}, &unreadableError{fmt.Errorf("journal %s: format %d id %q not understood (this skep-setup writes format %d; another version, or a copied directory?)",
+			id, j.Format, printableID(j.ID), JournalFormat)}
 	}
 	return j, nil
+}
+
+// printableID cuts an ID read from a file to something safe to print.
+func printableID(s string) string {
+	if len(s) > 64 {
+		s = s[:64]
+	}
+	return strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7f {
+			return '?'
+		}
+		return r
+	}, s)
 }
 
 // unreadableError is a journal directory without a readable journal.json.

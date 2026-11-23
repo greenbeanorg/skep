@@ -777,7 +777,12 @@ func TestApplyAdminRefusesARootSkepAccount(t *testing.T) {
 // unfinished run with no recorded changes; it does not break every
 // command, and rollback ID clears it.
 func TestUnreadableJournal(t *testing.T) {
-	for name, content := range map[string]*string{"missing": nil, "not JSON": ptr(`{"format": 1, "id": "2026`)} {
+	for name, content := range map[string]*string{"missing": nil, "not JSON": ptr(`{"format": 1, "id": "2026`),
+		// A newer skep-setup's format, or a directory copied under another
+		// name: set aside the same way, not a failure of every command
+		// (backlog, PR #52 lab re-check).
+		"unknown format": ptr(`{"format": 99, "id": "20261122T120000Z", "command": "apply"}`),
+		"wrong ID":       ptr(`{"format": 1, "id": "20261121T090000Z", "command": "apply"}`)} {
 		t.Run(name, func(t *testing.T) {
 			root := stockHost(t)
 			id := "20261122T120000Z"
