@@ -291,6 +291,11 @@ func (u *Upgrader) Upgrade(ctx context.Context) error {
 	if u.Wait == 0 {
 		u.Wait = DefaultTaskWait
 	}
+	// Setup backs the databases up under /var/db/skep: refuse a data
+	// directory someone other than root can change.
+	if err := CheckDataDir(u.Root); err != nil {
+		return &UpgradeRefusal{Reason: err.Error()}
+	}
 	// 1. Platform and versions.
 	f, err := u.Prober.Probe(ctx)
 	if err != nil {

@@ -70,6 +70,9 @@ func JournalDir(root, id string) string { return filepath.Join(root, journalRoot
 
 // LoadJournals returns every journal under root, oldest first.
 func LoadJournals(root string) ([]Journal, error) {
+	if err := CheckDataDir(root); err != nil {
+		return nil, err
+	}
 	entries, err := os.ReadDir(filepath.Join(root, journalRoot))
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, nil

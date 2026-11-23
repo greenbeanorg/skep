@@ -129,7 +129,11 @@ the package should depend on it is an open question; see the
   symbolic link, not a directory, not owned by root, or writable by its
   group or others;
 - `0.0.0.0` without `-listen-all`; no address to listen on;
-- an earlier run that did not finish (roll it back first).
+- an earlier run that did not finish (roll it back first);
+- a `/var/db/skep` that is a symbolic link or not a directory, or a
+  `/var/db/skep`, `/var/db`, or `/var` not owned by root or writable by its
+  group or others: every command that reads or writes there (`check`,
+  `plan`, `apply`, `rollback`, `upgrade`, `remove`) stops before using it.
 
 Bridges are judged as they are **now** as well as by `rc.conf`: setup
 reads `ifconfig -g bridge` and each bridge's `member:` lines and `bridge
