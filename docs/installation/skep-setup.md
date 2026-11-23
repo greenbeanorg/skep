@@ -52,7 +52,7 @@ Run it as root: it reads `agent.json` (`0600`).
 | `-listen ADDR:PORT` | The API listen address (default: the management address, port 8443). `0.0.0.0` or `::` only with `-listen-all` |
 | `-no-racct` | Do not add `kern.racct.enable="1"` (jail limits other than `disk_quota` are then refused) |
 | `-start` | Start both services at the end of `apply` |
-| `-admin NAME` | Create the first administrator (asks for the password, twice, without echo). Needs `-start`, or `/var/db/skep/api` to exist already (the API has run once); otherwise the plan refuses, because `skep-api admin create` run as root first would create the API's data directory owned by root ([ADR 0012 amendment](../decisions/0012-installer.md#amendment-2026-11-22-build-decisions-confirmed), build decision 8). Setup runs `skep-api admin create` **as the `skep` user** (UID and primary GID from `/etc/passwd`, never root), and only once `skep_api` has written `/var/run/skep/api.pid` and created `api.db` (it waits up to 30 s). If it fails, every other change stays made, the journal is finished with the error, and setup prints the same `apply` command to retry: it then plans only the administrator. Whether the administrator exists is asked of `skep-api` itself: with no `api.db` the create is planned; with one, `check`, `plan` and `apply` run `skep-api admin exists --username NAME` as the `skep` user with the fixed environment (read-only; it never creates or migrates `api.db`). Exit 0 is `ok`, 1 plans the create, anything else refuses with skep-api's error. Asking needs root; as another user, or with `-root` other than `/`, the plan refuses `-admin` while `api.db` exists A NAME that exists already is left as it is: `ok` when it is an enabled `admin`, a **warning** when it is disabled or has another role (setup never changes an existing user). |
+| `-admin NAME` | Create the first administrator (asks for the password, twice, without echo). Needs `-start`, or `/var/db/skep/api` to exist already (the API has run once); otherwise the plan refuses, because `skep-api admin create` run as root first would create the API's data directory owned by root ([ADR 0012 amendment](../decisions/0012-installer.md#amendment-2026-11-22-build-decisions-confirmed), build decision 8). Setup runs `skep-api admin create` **as the `skep` user** (UID and primary GID from `/etc/passwd`, never root), and only once `skep_api` has written `/var/run/skep/api.pid` and created `api.db` (it waits up to 30 s). If it fails, every other change stays made, the journal is finished with the error, and setup prints the same `apply` command to retry: it then plans only the administrator. Whether the administrator exists is asked of `skep-api` itself: with no `api.db` the create is planned; with one, `check`, `plan` and `apply` run `skep-api admin exists --username NAME` as the `skep` user with the fixed environment (read-only; it never creates or migrates `api.db`). Exit 0 is `ok`, 1 plans the create, anything else refuses with skep-api's error. Asking needs root; as another user, or with `-root` other than `/`, the plan refuses `-admin` while `api.db` exists. A NAME that exists already is left as it is: `ok` when it is an enabled `admin`, a **warning** when it is disabled or has another role (setup never changes an existing user). |
 
 ## What apply changes
 
@@ -160,10 +160,12 @@ or one where the firmware was removed afterwards. Setup never installs it:
   group or others;
 - `0.0.0.0` without `-listen-all`; no address to listen on;
 - an earlier run that did not finish (roll it back first);
-- a `/var/db/skep` that is a symbolic link or not a directory, or a
-  `/var/db/skep`, `/var/db`, or `/var` not owned by root or writable by its
+- a `/var/db/skep` or `/var/db/skep/setup` that is a symbolic link or not a
+  directory (either may be missing), or any of `/var/db/skep/setup`,
+  `/var/db/skep`, `/var/db`, `/var` not owned by root or writable by its
   group or others: every command that reads or writes there (`check`,
-  `plan`, `apply`, `rollback`, `upgrade`, `remove`) stops before using it.
+  `plan`, `apply`, `rollback`, `upgrade`, `remove`) stops with exit 3 before
+  using it.
 
 Bridges are judged as they are **now** as well as by `rc.conf`: setup
 reads `ifconfig -g bridge` and each bridge's `member:` lines and `bridge
@@ -175,14 +177,20 @@ bridge` itself fails, `check` and `plan` stop with the error rather than
 assume there is no bridge (on FreeBSD 15.1 it exits 0 with no output when
 there is none), as they do when one bridge cannot be read.
 
-For an allow-listed bridge without `vlanfilter`, the steps are:
+For an allow-listed bridge without `vlanfilter`, setup first looks for
+Skep guest ports among its live members (`epair*`, `tap*`). If there are
+any, it prints no live steps and no `sysrc` step: stop the Skep guests on
+this bridge first, then run `plan` again. Setup never sets a PVID on a
+guest port; the agent sets each one when the guest starts. Otherwise the
+steps are:
 
 - **`vlanfilter` in `rc.conf` but off now**: an item of its own saying so.
   It takes effect at the next boot, or run the printed live steps now;
   there is no `sysrc` step, because the line already has it.
 - **a bridge that exists now**: the live steps (each member's PVID with
-  `ifuntagged MEMBER 1`, then `defuntagged 1`, then `vlanfilter`), run from
-  the console, then the `sysrc` line that keeps it across reboots.
+  `ifuntagged MEMBER 1`, then `defuntagged 1`, then `vlanfilter`, then
+  `ifconfig MEMBER up`, because adding a member does not bring it up), run
+  from the console, then the `sysrc` lines that keep it across reboots.
 - **a bridge that exists only at run time**: also
   `sysrc cloned_interfaces+="BRIDGE"`, unless `cloned_interfaces` already
   names it; without it the bridge is not created at boot.
@@ -191,9 +199,10 @@ For an allow-listed bridge without `vlanfilter`, the steps are:
 The `sysrc ifconfig_BRIDGE=` line names only real uplinks: for a bridge in
 `rc.conf`, its `rc.conf` members (the existing line, with `ifuntagged`,
 `defuntagged` and `vlanfilter` added where missing); for a run-time
-bridge, its live members except guest ports (`epair*` and `tap*`, which
-the agent creates when a guest starts), and the item names the ports it
-left out. Every interface name put into a printed command must be letters,
+bridge, its live members. An uplink with no `ifconfig_` line also gets
+`sysrc ifconfig_UPLINK="up"`; an existing line is never replaced, and if it
+does not bring the uplink up the item says to add `up` by hand. Every
+interface name put into a printed command must be letters,
 digits, `.` and `_`, and every word of a reprinted `rc.conf` line letters,
 digits and `. _ : / -`; otherwise setup prints no steps for that bridge and
 says which name stopped it.
