@@ -250,7 +250,7 @@ func TestSnapshotCommands(t *testing.T) {
 }
 
 // A failed task's details are shown under its error, one per line, sorted
-// and cleaned of terminal control characters, by "tasks get" and by the
+// and cleaned of terminal control characters, by "tasks show" and by the
 // commands that wait for a task.
 func TestTaskErrorDetailsShown(t *testing.T) {
 	task := models.Task{ID: "t1", Status: models.TaskFailed, Error: &models.TaskError{
@@ -267,7 +267,7 @@ func TestTaskErrorDetailsShown(t *testing.T) {
 	}
 	for _, s := range []string{"Error:", "disk_device_missing: no device node", "  command:", "zfs set volmode=dev tank/a", "  reason:", "volmode_none"} {
 		if !strings.Contains(b.String(), s) {
-			t.Errorf("tasks get lacks %q:\n%s", s, b.String())
+			t.Errorf("tasks show lacks %q:\n%s", s, b.String())
 		}
 	}
 	if strings.Contains(b.String(), "\x1b") {
