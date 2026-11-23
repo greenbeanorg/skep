@@ -11,7 +11,8 @@ import (
 )
 
 // HostProber reads the facts of this FreeBSD host with read-only
-// commands: freebsd-version, sysctl, ifconfig, zpool list, jls, a
+// commands: freebsd-version, sysctl, ifconfig (addresses, and each
+// bridge's members and flags), zpool list, jls, a
 // listing of /dev/vmm, and "service skep_agent|skep_api status".
 type HostProber struct{}
 
@@ -45,6 +46,9 @@ func (HostProber) Probe(ctx context.Context) (Facts, error) {
 			out = ""
 		}
 		f.Interfaces[n] = parseIfconfigInet(out)
+	}
+	if f.Bridges, err = readBridges(ctx, output); err != nil {
+		return f, err
 	}
 	// No ZFS (a UFS host without the module) is not an error.
 	if out, err := output(ctx, cmdZpool, "list", "-H", "-o", "name,health"); err == nil {

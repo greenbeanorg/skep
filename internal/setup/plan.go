@@ -31,6 +31,7 @@ import (
 	"syscall"
 
 	"github.com/greenbeanorg/skep/internal/config"
+	"github.com/greenbeanorg/skep/internal/pkgrepo"
 )
 
 // Kind is what the plan says about one item.
@@ -676,6 +677,13 @@ func members(line string) []string {
 	return out
 }
 
+// sorted returns a sorted copy.
+func sorted(s []string) []string {
+	c := slices.Clone(s)
+	slices.Sort(c)
+	return c
+}
+
 func (b *builder) bridgeDefined(name string) bool {
 	_, line := b.rc.Get("ifconfig_" + name)
 	cloned, _ := b.rc.Get("cloned_interfaces")
@@ -693,31 +701,58 @@ func (b *builder) bridges() {
 			b.refuse("network", br, "does not exist; to have setup create it, use --create-bridge "+br+" --uplink IF")
 			continue
 		}
-		line, _ := b.rc.Get("ifconfig_" + br)
-		m := members(line)
-		if bad := slices.IndexFunc(m, func(x string) bool { return slices.Contains(b.o.Mgmt, x) }); bad >= 0 {
-			b.refuse("network", br, fmt.Sprintf("has the management interface %s as a member; Skep never puts guests next to management", m[bad]))
+		line, inRC := b.rc.Get("ifconfig_" + br)
+		rcMembers := members(line)
+		rcFilter := slices.Contains(strings.Fields(line), "vlanfilter")
+		live, isLive := b.f.Bridges[br]
+		// The members now and at the next boot both count: a management
+		// interface in either is refused.
+		m := rcMembers
+		if isLive {
+			m = live.Members
+		}
+		all := slices.Clone(m)
+		for _, x := range rcMembers {
+			if !slices.Contains(all, x) {
+				all = append(all, x)
+			}
+		}
+		if bad := slices.IndexFunc(all, func(x string) bool { return slices.Contains(b.o.Mgmt, x) }); bad >= 0 {
+			where := "in rc.conf"
+			if isLive && slices.Contains(live.Members, all[bad]) {
+				where = "now"
+			}
+			b.refuse("network", br, fmt.Sprintf("has the management interface %s as a member (%s); Skep never puts guests next to management", all[bad], where))
 			continue
 		}
-		b.ok("network", br, fmt.Sprintf("exists (members %v); setup allow-lists it and changes nothing on it", m))
-		if slices.Contains(strings.Fields(line), "vlanfilter") {
+		if _, exists := b.f.Interfaces[br]; exists && !isLive && b.f.Bridges != nil {
+			b.refuse("network", br, "exists but is not a bridge (not in ifconfig -g bridge)")
+			continue
+		}
+		switch {
+		case isLive && inRC && !slices.Equal(sorted(live.Members), sorted(rcMembers)):
+			b.ok("network", br, fmt.Sprintf("exists (members now %v, in rc.conf %v); setup allow-lists it and changes nothing on it", live.Members, rcMembers))
+		case isLive:
+			b.ok("network", br, fmt.Sprintf("exists (members %v); setup allow-lists it and changes nothing on it", live.Members))
+		default:
+			b.ok("network", br, fmt.Sprintf("in rc.conf (members %v), not created yet; setup allow-lists it and changes nothing on it", rcMembers))
+		}
+		if isLive && !inRC {
+			b.warn("network", br, "exists only at run time: rc.conf has no ifconfig_"+br+" line, so after a reboot it is gone (or comes back without its members) and guests on it lose their network")
+		}
+		filterNow := rcFilter
+		if isLive {
+			filterNow = live.VLANFilter
+		}
+		if filterNow {
 			b.ok("network", br+" vlanfilter", "on")
+			if isLive && inRC && !rcFilter {
+				b.warn("network", br+" vlanfilter", "on now, but not in ifconfig_"+br+" in rc.conf: it is off after a reboot, and the agent then reports bridge_vlan_unfiltered")
+			}
 			continue
 		}
-		steps := []string{}
-		for _, x := range m {
-			steps = append(steps, fmt.Sprintf("ifconfig %s ifuntagged %s 1", br, x))
-		}
-		steps = append(steps, "ifconfig "+br+" defuntagged 1", "ifconfig "+br+" vlanfilter")
-		var persist []string
-		for _, x := range m {
-			persist = append(persist, "ifuntagged "+x+" 1")
-		}
-		steps = append(steps, fmt.Sprintf(`sysrc ifconfig_%s="%s"`, br,
-			strings.TrimSpace(strings.Replace(line, " up", "", 1)+" "+strings.Join(persist, " ")+" defuntagged 1 vlanfilter up")))
-		b.item(Item{Kind: Manual, Area: "network", What: br + " vlanfilter",
-			Detail: "not set; changing an existing bridge can cut off its members, so setup prints the steps (each member's PVID first, then defuntagged, then vlanfilter); run them from the console. Without it the agent reports bridge_vlan_unfiltered",
-			Steps:  steps})
+		_, exists := b.f.Interfaces[br]
+		b.item(vlanfilterSteps(br, line, inRC, rcFilter, rcMembers, m, isLive || exists, isLive, b.rc))
 	}
 	if b.o.CreateBridge != "" {
 		b.newBridge()
@@ -760,6 +795,10 @@ func (b *builder) newBridge() {
 			b.refuse("network", br, fmt.Sprintf("the uplink %s already has settings (%q); setup will not merge them", up, line))
 			return
 		}
+	}
+	if other, ok := b.f.BridgeOf(up); ok {
+		b.refuse("network", br, fmt.Sprintf("the uplink %s is a member of %s now (ifconfig %s); it is in use", up, other, other))
+		return
 	}
 	for _, v := range []ShVars{b.rc.Main} {
 		for k, val := range v.Vals {
@@ -1031,17 +1070,39 @@ func (b *builder) media() {
 	}
 }
 
+// firmwareFiles are the files of the edk2-bhyve package the agent needs to
+// create a VM: hostops.FirmwareCodeFile and hostops.FirmwareVarsFile.
+var firmwareFiles = []string{"BHYVE_UEFI.fd", "BHYVE_UEFI_VARS.fd"}
+
+// missingFirmware returns the firmware files that are not regular files in
+// firmwareDir (a symbolic link to one counts).
+func missingFirmware(root string) []string {
+	var missing []string
+	for _, f := range firmwareFiles {
+		if st, err := os.Stat(hostPath(root, firmwareDir+"/"+f)); err != nil || !st.Mode().IsRegular() {
+			missing = append(missing, f)
+		}
+	}
+	return missing
+}
+
 func (b *builder) readOnlyChecks() {
-	if st, err := os.Stat(hostPath(b.o.Root, firmwareDir)); err != nil || !st.IsDir() {
-		b.item(Item{Kind: Manual, Area: "packages", What: "edk2-bhyve",
-			Detail: "UEFI firmware for VMs is not installed; jails do not need it", Steps: []string{"pkg install edk2-bhyve"}})
+	if missing := missingFirmware(b.o.Root); len(missing) > 0 {
+		// A warning, not a manual step: setup does not install the
+		// package and the skep package does not depend on it, because a
+		// jails-only host needs no firmware. But without it no VM can be
+		// created, so the operator is told plainly.
+		b.item(Item{Kind: Warn, Area: "packages", What: "edk2-bhyve",
+			Detail: "the bhyve UEFI firmware package edk2-bhyve is not installed (" + strings.Join(missing, ", ") +
+				" missing in " + firmwareDir + "): VMs cannot be created without it; jails do not need it. Setup does not install it",
+			Steps: []string{"pkg install edk2-bhyve"}})
 	} else {
 		b.ok("packages", "edk2-bhyve", firmwareDir)
 	}
 	if !baseRepoEnabled(b.o.Root) {
 		b.item(Item{Kind: Manual, Area: "packages", What: "FreeBSD-base repository",
 			Detail: "disabled; the pkgbase jail template source needs it (or use the dist source)",
-			Steps:  []string{`printf 'FreeBSD-base: { enabled: yes }\n' >> /usr/local/etc/pkg/repos/FreeBSD.conf`}})
+			Steps:  []string{pkgrepo.EnableBase}})
 	} else {
 		b.ok("packages", "FreeBSD-base repository", "enabled")
 	}
@@ -1070,30 +1131,13 @@ func vmxReady(dmesg string) bool {
 	return false
 }
 
-var baseRepoRE = regexp.MustCompile(`(?s)FreeBSD-base\s*:\s*\{[^}]*enabled\s*:\s*(yes|true)`)
-
-// baseRepoEnabled reads the pkg repository files (/etc/pkg, then
-// /usr/local/etc/pkg/repos, which wins).
+// baseRepoEnabled reports whether pkg's repository files under root
+// (/etc/pkg, then /usr/local/etc/pkg/repos, which wins) enable FreeBSD-base,
+// by the same rules the agent uses (package pkgrepo). root is never empty:
+// -root defaults to "/" and ValidateOptions refuses "", which matters
+// because os.DirFS("") fails every read and would always say disabled.
 func baseRepoEnabled(root string) bool {
-	enabled := false
-	for _, dir := range []string{"/etc/pkg", "/usr/local/etc/pkg/repos"} {
-		entries, _ := os.ReadDir(hostPath(root, dir))
-		for _, e := range entries {
-			if !strings.HasSuffix(e.Name(), ".conf") {
-				continue
-			}
-			bs, err := os.ReadFile(hostPath(root, dir+"/"+e.Name()))
-			if err != nil {
-				continue
-			}
-			s := string(bs)
-			if baseRepoRE.MatchString(s) {
-				enabled = true
-			} else if regexp.MustCompile(`FreeBSD-base\s*:`).MatchString(s) {
-				enabled = false
-			}
-		}
-	}
+	enabled, _ := pkgrepo.Base(os.DirFS(root))
 	return enabled
 }
 

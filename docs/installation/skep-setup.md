@@ -95,6 +95,15 @@ Every program setup runs as root is named by its absolute path
 services or accounts (`-start`, `-admin`, `remove`'s service stops and
 `pw`, and `upgrade` as a whole) is refused.
 
+**Firmware.** `check` and `plan` print a **warning** when the bhyve UEFI
+firmware is missing (`BHYVE_UEFI.fd` or `BHYVE_UEFI_VARS.fd` in
+`/usr/local/share/edk2-bhyve`, the files the agent opens): it names the
+package, `edk2-bhyve`, and says VMs cannot be created without it. Setup does
+not install it and the skep package does not depend on it, because a host
+that only runs jails needs no firmware: `pkg install edk2-bhyve`. (Decided
+2026-11-23: the package will depend on it; built in PR #61. See the
+[backlog](../backlog.md).)
+
 ## What it refuses
 
 `apply` does nothing at all while any of these stands:
@@ -105,11 +114,13 @@ services or accounts (`-start`, `-admin`, `remove`'s service stops and
 - a management interface that does not exist, has no `ifconfig_` line,
   or has one with neither an address nor DHCP (**DHCP is accepted with a
   warning**: the listen address is the current lease's);
-- a bridge to allow-list that has a management interface as a member, or
-  does not exist;
+- a bridge to allow-list that has a management interface as a member
+  (now, by `ifconfig`, or in `rc.conf`), does not exist, or exists but is
+  not a bridge;
 - a new bridge whose uplink is a management interface, does not exist,
   has an address (now or in `rc.conf`), has other settings or aliases, or
-  is in another bridge; or a new bridge name that exists already;
+  is in another bridge (now, by `ifconfig`, or in `rc.conf`); or a new
+  bridge name that exists already;
 - only one of the `skep` user and group, a `skep` user with a login shell
   or a home, no `skep` account at all (the package creates it), or UID or
   GID 409 held by another name;
@@ -119,6 +130,46 @@ services or accounts (`-start`, `-admin`, `remove`'s service stops and
   group or others;
 - `0.0.0.0` without `-listen-all`; no address to listen on;
 - an earlier run that did not finish (roll it back first).
+
+Bridges are judged as they are **now** as well as by `rc.conf`: setup
+reads `ifconfig -g bridge` and each bridge's `member:` lines and `bridge
+flags` (`VLANFILTER`). An allow-listed bridge that exists only at run time
+(no `ifconfig_` line in `rc.conf`) is a warning, because it is gone after a
+reboot; so is `vlanfilter` that is on now but not in `rc.conf`. When the
+members now and in `rc.conf` differ, the plan shows both. If `ifconfig -g
+bridge` itself fails, `check` and `plan` stop with the error rather than
+assume there is no bridge (on FreeBSD 15.1 it exits 0 with no output when
+there is none), as they do when one bridge cannot be read.
+
+For an allow-listed bridge without `vlanfilter`, setup first looks for
+Skep guest ports among its live members (`epair*`, `tap*`). If there are
+any, it prints no live steps and no `sysrc` step: stop the Skep guests on
+this bridge first, then run `plan` again. Setup never sets a PVID on a
+guest port; the agent sets each one when the guest starts. Otherwise the
+steps are:
+
+- **`vlanfilter` in `rc.conf` but off now**: an item of its own saying so.
+  It takes effect at the next boot, or run the printed live steps now;
+  there is no `sysrc` step, because the line already has it.
+- **a bridge that exists now**: the live steps (each member's PVID with
+  `ifuntagged MEMBER 1`, then `defuntagged 1`, then `vlanfilter`, then
+  `ifconfig MEMBER up`, because adding a member does not bring it up), run
+  from the console, then the `sysrc` lines that keep it across reboots.
+- **a bridge that exists only at run time**: also
+  `sysrc cloned_interfaces+="BRIDGE"`, unless `cloned_interfaces` already
+  names it; without it the bridge is not created at boot.
+- **a bridge in `rc.conf` not created yet**: only the `sysrc` line.
+
+The `sysrc ifconfig_BRIDGE=` line names only real uplinks: for a bridge in
+`rc.conf`, its `rc.conf` members (the existing line, with `ifuntagged`,
+`defuntagged` and `vlanfilter` added where missing); for a run-time
+bridge, its live members. An uplink with no `ifconfig_` line also gets
+`sysrc ifconfig_UPLINK="up"`; an existing line is never replaced, and if it
+does not bring the uplink up the item says to add `up` by hand. Every
+interface name put into a printed command must be letters,
+digits, `.` and `_`, and every word of a reprinted `rc.conf` line letters,
+digits and `. _ : / -`; otherwise setup prints no steps for that bridge and
+says which name stopped it.
 
 A file that is not plain `name=value` lines (shell code, a substitution,
 a sourced file), or a variable set in `rc.conf.local` or `rc.conf.d`,
