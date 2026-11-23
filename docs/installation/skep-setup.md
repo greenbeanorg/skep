@@ -141,7 +141,12 @@ bridge` itself fails, `check` and `plan` stop with the error rather than
 assume there is no bridge (on FreeBSD 15.1 it exits 0 with no output when
 there is none), as they do when one bridge cannot be read.
 
-For an allow-listed bridge without `vlanfilter`, the steps are:
+For an allow-listed bridge without `vlanfilter`, setup first looks for
+Skep guest ports among its live members (`epair*`, `tap*`). If there are
+any, it prints no live steps and no `sysrc` step: stop the Skep guests on
+this bridge first, then run `plan` again. Setup never sets a PVID on a
+guest port; the agent sets each one when the guest starts. Otherwise the
+steps are:
 
 - **`vlanfilter` in `rc.conf` but off now**: an item of its own saying so.
   It takes effect at the next boot, or run the printed live steps now;
@@ -157,9 +162,7 @@ For an allow-listed bridge without `vlanfilter`, the steps are:
 The `sysrc ifconfig_BRIDGE=` line names only real uplinks: for a bridge in
 `rc.conf`, its `rc.conf` members (the existing line, with `ifuntagged`,
 `defuntagged` and `vlanfilter` added where missing); for a run-time
-bridge, its live members except guest ports (`epair*` and `tap*`, which
-the agent creates when a guest starts), and the item names the ports it
-left out. Every interface name put into a printed command must be letters,
+bridge, its live members. Every interface name put into a printed command must be letters,
 digits, `.` and `_`, and every word of a reprinted `rc.conf` line letters,
 digits and `. _ : / -`; otherwise setup prints no steps for that bridge and
 says which name stopped it.

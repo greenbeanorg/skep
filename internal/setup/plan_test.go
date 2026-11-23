@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -811,11 +812,15 @@ func TestPlanVLANFilterSteps(t *testing.T) {
 	t.Run("a: in rc.conf, off now, with a guest port", func(t *testing.T) {
 		it := run(t, "cloned_interfaces=\"bridge9\"\nifconfig_bridge9=\"addm vtnet1 vlanfilter up\"\n",
 			&Bridge{Members: []string{"vtnet1", "epair3a"}})
+		wantGuestPortRefusal(t, it, "epair3a")
+	})
+	t.Run("a: in rc.conf, off now, uplink only", func(t *testing.T) {
+		it := run(t, "cloned_interfaces=\"bridge9\"\nifconfig_bridge9=\"addm vtnet1 vlanfilter up\"\n",
+			&Bridge{Members: []string{"vtnet1"}})
 		if it.Kind != Manual || !strings.Contains(it.Detail, "rc.conf needs no change") {
 			t.Fatalf("%+v", it)
 		}
-		wantSteps(t, it, "ifconfig bridge9 ifuntagged vtnet1 1", "ifconfig bridge9 ifuntagged epair3a 1",
-			"ifconfig bridge9 defuntagged 1", "ifconfig bridge9 vlanfilter")
+		wantSteps(t, it, "ifconfig bridge9 ifuntagged vtnet1 1", "ifconfig bridge9 defuntagged 1", "ifconfig bridge9 vlanfilter")
 	})
 	t.Run("b: run-time bridge, not in cloned_interfaces", func(t *testing.T) {
 		it := run(t, "", &Bridge{Members: []string{"vtnet1"}})
@@ -830,20 +835,23 @@ func TestPlanVLANFilterSteps(t *testing.T) {
 			}
 		}
 	})
-	t.Run("c: run-time bridge, guest ports left out of the line", func(t *testing.T) {
+	t.Run("run-time bridge with guest ports: no steps", func(t *testing.T) {
 		it := run(t, "", &Bridge{Members: []string{"vtnet1", "epair0a", "tap4", "lagg0.60"}})
-		last := it.Steps[len(it.Steps)-1]
-		if last != `sysrc ifconfig_bridge9="addm vtnet1 addm lagg0.60 ifuntagged vtnet1 1 ifuntagged lagg0.60 1 defuntagged 1 vlanfilter up"` {
-			t.Fatalf("line %q", last)
-		}
-		if !slices.Contains(it.Steps, "ifconfig bridge9 ifuntagged epair0a 1") || !strings.Contains(it.Detail, "leaves out [epair0a tap4]") {
-			t.Fatalf("%+v", it)
-		}
+		wantGuestPortRefusal(t, it, "epair0a", "tap4")
+	})
+	t.Run("rc.conf bridge with a guest port: no steps", func(t *testing.T) {
+		it := run(t, "cloned_interfaces=\"bridge9\"\nifconfig_bridge9=\"addm vtnet1 up\"\n",
+			&Bridge{Members: []string{"vtnet1", "epair0a", "vtnet2"}})
+		wantGuestPortRefusal(t, it, "epair0a")
+	})
+	t.Run("guest port with an odd name: no steps, name quoted", func(t *testing.T) {
+		it := run(t, "", &Bridge{Members: []string{"vtnet1", "tap$x"}})
+		wantGuestPortRefusal(t, it, "tap$x")
 	})
 	t.Run("c: rc.conf bridge, the line keeps the rc.conf members only", func(t *testing.T) {
 		it := run(t, "cloned_interfaces=\"bridge9\"\nifconfig_bridge9=\"addm vtnet1 up\"\n",
-			&Bridge{Members: []string{"vtnet1", "epair0a", "vtnet2"}})
-		wantSteps(t, it, "ifconfig bridge9 ifuntagged vtnet1 1", "ifconfig bridge9 ifuntagged epair0a 1", "ifconfig bridge9 ifuntagged vtnet2 1",
+			&Bridge{Members: []string{"vtnet1", "vtnet2"}})
+		wantSteps(t, it, "ifconfig bridge9 ifuntagged vtnet1 1", "ifconfig bridge9 ifuntagged vtnet2 1",
 			"ifconfig bridge9 defuntagged 1", "ifconfig bridge9 vlanfilter",
 			`sysrc ifconfig_bridge9="addm vtnet1 ifuntagged vtnet1 1 defuntagged 1 vlanfilter up"`)
 	})
@@ -873,5 +881,24 @@ func TestPlanVLANFilterSteps(t *testing.T) {
 				t.Fatalf("%+v", it)
 			}
 		})
+	}
+}
+
+// wantGuestPortRefusal: a bridge with live guest ports gets no step at
+// all, live or sysrc, and the item names the ports and what to do.
+func wantGuestPortRefusal(t *testing.T, it Item, ports ...string) {
+	t.Helper()
+	if it.Kind != Manual || len(it.Steps) != 0 {
+		t.Fatalf("want a manual item with no steps: %+v", it)
+	}
+	for _, w := range []string{"stop the Skep guests on this bridge first, then run plan again", "The agent sets each guest port when the guest starts"} {
+		if !strings.Contains(it.Detail, w) {
+			t.Fatalf("detail lacks %q: %s", w, it.Detail)
+		}
+	}
+	for _, port := range ports {
+		if !strings.Contains(it.Detail, strconv.Quote(port)) {
+			t.Fatalf("detail does not name %s: %s", port, it.Detail)
+		}
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 )
 
@@ -21,9 +22,7 @@ var (
 // guestPort reports whether a live bridge member is a port the agent
 // creates for a guest and destroys when it stops: a jail's epair host end
 // (epairNa) or a VM's tap (tapN), hostops' epairHostRE and tapNameRE. Any
-// epair* or tap* counts, to be safe: such a port never belongs in the
-// rc.conf line, which would name an interface that does not exist at
-// boot.
+// epair* or tap* counts, to be safe.
 func guestPort(name string) bool {
 	return strings.HasPrefix(name, "epair") || strings.HasPrefix(name, "tap")
 }
@@ -40,12 +39,30 @@ func guestPort(name string) bool {
 // defuntagged, then vlanfilter) for a bridge that exists now; for a
 // run-time bridge, the cloned_interfaces step unless rc.conf already has
 // it; and the sysrc line that keeps it across reboots, which names only
-// real uplinks (the rc.conf members, or the live members that are not
-// guest ports). When vlanfilter is already in rc.conf it prints only the
-// live steps. Any name that does not match safeNameRE, or a word of the
-// line that does not match safeWordRE, means no steps at all.
+// real uplinks (the rc.conf members, or the live members). When vlanfilter
+// is already in rc.conf it prints only the live steps. Any name that does
+// not match safeNameRE, or a word of the line that does not match
+// safeWordRE, means no steps at all.
+//
+// A bridge with a guest port as a live member gets no steps at all: setup
+// never sets a PVID on a guest port (Andy's decision, 2026-11-23). The
+// agent sets each one when its guest starts, so the item says to stop the
+// guests on the bridge and run plan again.
 func vlanfilterSteps(br, line string, inRC, rcFilter bool, rcMembers, now []string, exists, isLive bool, rc RCConf) Item {
 	it := Item{Kind: Manual, Area: "network", What: br + " vlanfilter"}
+
+	if isLive {
+		var guests []string
+		for _, x := range now {
+			if guestPort(x) {
+				guests = append(guests, strconv.Quote(x))
+			}
+		}
+		if len(guests) > 0 {
+			it.Detail = fmt.Sprintf("not set; setup prints no steps while Skep guest ports are members (%s): stop the Skep guests on this bridge first, then run plan again. The agent sets each guest port when the guest starts. Without it the agent reports bridge_vlan_unfiltered", strings.Join(guests, ", "))
+			return it
+		}
+	}
 
 	var liveSteps []string
 	if exists {
@@ -66,17 +83,11 @@ func vlanfilterSteps(br, line string, inRC, rcFilter bool, rcMembers, now []stri
 	}
 
 	// The members the persisted line names: real uplinks only.
-	var uplinks, left []string
+	var uplinks []string
 	if inRC {
 		uplinks = rcMembers
 	} else if isLive {
-		for _, x := range now {
-			if guestPort(x) {
-				left = append(left, x)
-			} else {
-				uplinks = append(uplinks, x)
-			}
-		}
+		uplinks = now
 	}
 	if bad := unsafeNames(append(slices.Clone(now), uplinks...)); bad != "" {
 		return noSteps(it, bad)
@@ -122,9 +133,6 @@ func vlanfilterSteps(br, line string, inRC, rcFilter bool, rcMembers, now []stri
 		it.Detail = "not set; changing an existing bridge can cut off its members, so setup prints the steps (each member's PVID first, then defuntagged, then vlanfilter); run them from the console. Without it the agent reports bridge_vlan_unfiltered"
 	default:
 		it.Detail = "not set in ifconfig_" + br + " in rc.conf; the bridge does not exist now, so only the rc.conf line is printed (it takes effect when the bridge is created at the next boot). Without it the agent reports bridge_vlan_unfiltered"
-	}
-	if len(left) > 0 {
-		it.Detail += fmt.Sprintf(". The rc.conf line leaves out %v: guest ports the agent creates when a guest starts", left)
 	}
 	return it
 }
