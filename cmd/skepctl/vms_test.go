@@ -248,3 +248,33 @@ func TestSnapshotCommands(t *testing.T) {
 		t.Error("a viewer took a snapshot")
 	}
 }
+
+// A failed task's details are shown under its error, one per line, sorted
+// and cleaned of terminal control characters, by "tasks get" and by the
+// commands that wait for a task.
+func TestTaskErrorDetailsShown(t *testing.T) {
+	task := models.Task{ID: "t1", Status: models.TaskFailed, Error: &models.TaskError{
+		Code: "disk_device_missing", Message: "no device node",
+		Details: map[string]any{"reason": "volmode_none", "command": "zfs set volmode=dev tank/a", "dataset": "tank/a\x1b[2J"}}}
+	err := taskFailure(task)
+	want := "task t1 failed: disk_device_missing: no device node\n  command: zfs set volmode=dev tank/a\n  dataset: tank/a [2J\n  reason: volmode_none"
+	if err == nil || err.Error() != want {
+		t.Errorf("taskFailure:\n%v\nwant:\n%s", err, want)
+	}
+	var b strings.Builder
+	if err := printTask(&b, models.TaskDetail{Task: task}); err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range []string{"Error:", "disk_device_missing: no device node", "  command:", "zfs set volmode=dev tank/a", "  reason:", "volmode_none"} {
+		if !strings.Contains(b.String(), s) {
+			t.Errorf("tasks get lacks %q:\n%s", s, b.String())
+		}
+	}
+	if strings.Contains(b.String(), "\x1b") {
+		t.Error("an escape sequence reached the terminal")
+	}
+	task.Error.Details = nil
+	if err := taskFailure(task); err == nil || strings.Contains(err.Error(), "\n") {
+		t.Errorf("without details: %v", err)
+	}
+}

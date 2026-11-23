@@ -659,6 +659,75 @@ bugs, and partial tampering, and with an off-host copy of the latest hash
 it detects complete tampering too. A compromised `skep-api` can damage
 its own log and archive, detectably; the agent's are out of its reach.
 
+## Task error details
+
+A failed task's `error` in the API carries `details`: the structured context
+the agent recorded with the failure, read from the task's "finished" entry in
+the agent's audit log (no new stored data). They travel inside the task
+object, next to the error's code and message, so exactly the callers who
+already receive that task's error see them: callers with `task:read`
+(`GET /api/v1/tasks`, `GET /api/v1/tasks/{id}`), and the task's own
+submitter when a request with the same `Idempotency-Key` is replayed (a
+replay matches only the same actor and request). Nothing else returns them.
+
+Only keys reviewed for each error code leave the agent
+(`internal/tasks/errordetails.go`, `ErrorDetailKeys`); a key added later is
+kept out until someone reviews it and lists it. Every key every code can
+carry today (found with a scan of every `Code` + `Details` literal and every
+helper that builds details, 2026-11-23):
+
+| Error code | Shown | Never shown (flagged) |
+|---|---|---|
+| `bridge_not_allowed` | bridge, member | |
+| `clone_addressing_required` | slots | |
+| `console_busy` | max_attachments | |
+| `container_address_in_use` | slot, address, bridge, held_by_container_id, held_by_container_name | |
+| `container_disk_quota_below_usage` | container_id, template_id, disk_quota, referenced_bytes | |
+| `container_locked_memory_above_max` | locked_memory, max_locked_memory_bytes | |
+| `container_locked_memory_exhausted` | container_id, running_bytes, required_bytes, max_locked_memory_bytes | |
+| `container_mac_in_use` | container_id, slot, mac_address, bridge, seen_on, held_by_kind, held_by_id, held_by_name | |
+| `container_mac_invalid` | field, slot, mac_address | |
+| `container_not_provisioned`, `container_not_running`, `container_not_stopped`, `container_remove_failed`, `container_started` | container_id | |
+| `container_quarantined` | container_id, state_detail | |
+| `container_ssh_unavailable` | template_id, template_name | |
+| `container_start_failed` | container_id, extra_devices | |
+| `devfs_ruleset_conflict` | ruleset | |
+| `disk_device_missing` | dataset, reason, volmode, command, rounds | **error** (text of a failed `zfs` command) |
+| `disk_has_snapshots` | snapshots, foreign_snapshots | |
+| `insufficient_memory` | running_bytes, required_bytes, guest_memory_bytes | |
+| `insufficient_space` | pool, available_bytes, pool_size_bytes, required_bytes | |
+| `jail_parent_insecure` | path | |
+| `media_not_found` | media | |
+| `nameservers_require_nic` | nameservers_given | |
+| `pool_not_allowed` | pool | |
+| `port_filter_failed` | container_id, slot, interface, step | |
+| `port_filter_unavailable` | missing_modules | |
+| `rctl_unavailable` | container_id, racct_enabled | |
+| `release_unsupported` | template_release, host_release | |
+| `resource_busy` | task_id | |
+| `snapshot_has_clones` | clones | |
+| `snapshot_incomplete` | snapshot_id, datasets_without_snapshot | |
+| `snapshot_limit` | limit | |
+| `snapshot_not_latest` | snapshot_id, newer_snapshot_ids, foreign_snapshots | |
+| `stop_timeout` | timeout_seconds | |
+| `storage_feature_unsupported` | pool, pool_type, pools, source | |
+| `storage_locked` | dataset, keystatus | |
+| `storage_unavailable` | pool, slot | |
+| `template_archive_mismatch` | manifest_sha256, archive_sha256 | |
+| `template_build_failed` | step, exit_code | **stderr** (a build step's output), **files** (paths of SSH host key files found in the template) |
+| `template_host_changed` | (none) | **paths** (changed host files under `/etc`, `/var/db/pkg`, `/usr/share/certs`: key files among them), **build_error** (free text) |
+| `template_not_provisioned` | template_id | |
+| `template_script_unknown` | package, version, kind, phase, sha256, path | **text** (a package script's text) |
+| `template_trigger_left` | files | |
+| `vm_mac_in_use` | slot, mac_address, held_by_kind, held_by_id, held_by_name | |
+| `vm_not_running`, `vm_not_stopped`, `vm_start_failed` | state | |
+| any template build code | | **cleanup_error** (text of failed clean-up steps) |
+
+No key holds a password, a passphrase or an encryption key. `storage_locked`
+shows `keystatus` (`available`/`unavailable`), never a key location. The
+flagged keys stay in the agent's operation audit log, which the API does not serve (it is read on the host, as root).
+The `held_by_*` names are already in those errors' messages.
+
 ## Installer (Milestone 10)
 
 `skep-setup` runs as root and edits host files, so it is held to the

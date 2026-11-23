@@ -535,6 +535,12 @@ type TaskError struct {
 	// Code is stable and machine-readable, for example "timeout".
 	Code    string `json:"code"`
 	Message string `json:"message"`
+	// Details is the structured context the agent recorded with the
+	// failure (for disk_device_missing: dataset, reason, command), limited
+	// to the keys reviewed for each code (internal/tasks, ErrorDetailKeys):
+	// a key that could hold a secret, a key path, a password, or free text
+	// from a command is never included. Absent when there is none.
+	Details map[string]any `json:"details,omitempty"`
 }
 
 // Task is one asynchronous operation performed by the agent.
