@@ -507,7 +507,13 @@ export interface paths {
          *       (`port_filter_unavailable`, ADR 0011). Every tap gets its filter
          *       before it joins the bridge; if that fails, the run ends `failed`
          *       with `port_filter_failed` in the detail and the task fails with
-         *       `vm_start_failed`.
+         *       `vm_start_failed`. Before the runner starts, the device node of
+         *       every zvol disk must exist; a missing one is repaired by setting
+         *       `volmode` to `none` and back to `dev`, and when that is not
+         *       possible or not allowed the task fails with
+         *       `disk_device_missing`, whose details name the `dataset`, the
+         *       `reason`, and, when an administrator has to act, the `command`
+         *       (ADR 0010 amendment z).
          *     - `stop` sets `desired_state` to `stopped` and presses the guest's
          *       ACPI power button. It waits `timeout` seconds (default 90, at
          *       most 300); if the guest has not shut down by then the task fails
@@ -2443,7 +2449,8 @@ export interface components {
          *     `idempotency_key_conflict`, and for storage operations
          *     `storage_locked`, `snapshot_limit`, `snapshot_has_clones`,
          *     `snapshot_not_latest`, `snapshot_incomplete`, `snapshot_name_taken`,
-         *     `snapshot_not_provisioned`, `disk_has_snapshots`, and for jail
+         *     `snapshot_not_provisioned`, `disk_has_snapshots`,
+         *     `disk_device_missing`, and for jail
          *     templates `template_name_taken`, `template_not_provisioned`,
          *     `jail_parent_insecure`, and for jails `container_name_taken`,
          *     `container_not_stopped`, `container_not_running`,

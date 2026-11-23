@@ -1,0 +1,14 @@
+force_stop zc-50 succeeded
+zc-49 observed stopped
+none
+ls: /dev/zvol/tank/skep/vm/e8189ac9-dc92-48ad-8359-b0791e75d9ad/disk0: No such file or directory
+start zc-49 ebd38466-108d-4ef3-a179-e8a90fe63005 failed
+error {
+ "code": "disk_device_missing",
+ "message": "tank/skep/vm/e8189ac9-dc92-48ad-8359-b0791e75d9ad/disk0 has volmode=none, so it has no device node; Skep does not change it on its own. An administrator who wants this disk usable again runs: zfs set volmode=dev tank/skep/vm/e8189ac9-dc92-48ad-8359-b0791e75d9ad/disk0"
+}
+observed {'state': 'stopped', 'detail': 'force-stopped', 'at': '2026-11-23T00:18:37.442Z'}
+after-refusal volmode=none
+ls: /dev/vmm: No such file or directory
++ zfs set volmode=dev (the printed command)
+crw-r-----  1 root operator 0xdd Nov 22 19:18 /dev/zvol/tank/skep/vm/e8189ac9-dc92-48ad-8359-b0791e75d9ad/disk0

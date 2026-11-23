@@ -59,6 +59,11 @@ type Fake struct {
 	BridgeMembers  map[string][]string
 	// FailCreateVolume makes the next CreateVolume calls fail.
 	FailCreateVolume error
+	// MissingDevices simulates zvols without a device node, by dataset
+	// name (ADR 0010 amendment z). EnsureVolumeDevice of one calls the
+	// stopped check, then answers with the stored error; nil is a repair
+	// that worked, and the entry is removed.
+	MissingDevices map[string]error
 	// UnusableDirs maps a directory pool to why it cannot be used.
 	UnusableDirs map[string]string
 

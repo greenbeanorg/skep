@@ -1,0 +1,28 @@
+=== smith
+NAME   USED  AVAIL  REFER  MOUNTPOINT
+tank   708K  15.0G    96K  /tank
+probe.sh
+vi.recover
+zvolprobe-gpt64.img
+0
+=== langrishe
+NAME                 USED  AVAIL  REFER  MOUNTPOINT
+zroot               1.31G  27.3G    96K  /zroot
+zroot/ROOT          1.31G  27.3G    96K  none
+zroot/ROOT/default  1.31G  27.3G  1.31G  /
+zroot/home           228K  27.3G    96K  /home
+zroot/home/aba       132K  27.3G   132K  /home/aba
+zroot/tmp            128K  27.3G   128K  /tmp
+zroot/usr            288K  27.3G    96K  /usr
+zroot/usr/ports       96K  27.3G    96K  /usr/ports
+zroot/usr/src         96K  27.3G    96K  /usr/src
+zroot/var            680K  27.3G    96K  /var
+zroot/var/audit       96K  27.3G    96K  /var/audit
+zroot/var/crash       96K  27.3G    96K  /var/crash
+zroot/var/log        164K  27.3G   164K  /var/log
+zroot/var/mail        96K  27.3G    96K  /var/mail
+zroot/var/tmp        132K  27.3G   132K  /var/tmp
+probe.sh
+vi.recover
+zvolprobe-gpt64.img
+0

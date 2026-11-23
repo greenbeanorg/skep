@@ -1,0 +1,58 @@
+FreeBSD smith.greenbean.org 15.1-RELEASE-p7 FreeBSD 15.1-RELEASE-p7 releng/15.1-n283696-bb03631fe3b7 GENERIC amd64
+zfs-2.4.2-1-FreeBSD_g6330a45b0
+zfs-kmod-2.4.2-1-FreeBSD_g6330a45b0
+vfs.zfs.vol.mode: 1
+setup ok
+create a0 node_at_0s=Y node_at_1s=Y
+create a1 node_at_0s=N node_at_1s=N
+create a2 node_at_0s=N node_at_1s=N
+create a3 node_at_0s=N node_at_1s=N
+create a4 node_at_0s=N node_at_1s=N
+create a5 node_at_0s=N node_at_1s=N
+create a6 node_at_0s=N node_at_1s=N
+create a7 node_at_0s=Y node_at_1s=Y
+create a8 node_at_0s=N node_at_1s=N
+create a9 node_at_0s=N node_at_1s=N
+create a10 node_at_0s=N node_at_1s=N
+create a11 node_at_0s=N node_at_1s=N
+create a12 node_at_0s=N node_at_1s=N
+create a13 node_at_0s=N node_at_1s=N
+create a14 node_at_0s=N node_at_1s=N
+create a15 node_at_0s=N node_at_1s=N
+create a16 node_at_0s=N node_at_1s=N
+create a17 node_at_0s=N node_at_1s=N
+create a18 node_at_0s=N node_at_1s=N
+create a19 node_at_0s=Y node_at_1s=Y
+create a20 node_at_0s=N node_at_1s=N
+create a21 node_at_0s=N node_at_1s=N
+create a22 node_at_0s=N node_at_1s=N
+create a23 node_at_0s=N node_at_1s=N
+create a24 node_at_0s=N node_at_1s=N
+create a25 node_at_0s=N node_at_1s=N
+create a26 node_at_0s=N node_at_1s=N
+create a27 node_at_0s=N node_at_1s=N
+create a28 node_at_0s=N node_at_1s=N
+create a29 node_at_0s=N node_at_1s=N
+create a30 node_at_0s=N node_at_1s=N
+create a31 node_at_0s=N node_at_1s=N
+create a32 node_at_0s=N node_at_1s=N
+create a33 node_at_0s=N node_at_1s=N
+create a34 node_at_0s=N node_at_1s=N
+create a35 node_at_0s=N node_at_1s=N
+create a36 node_at_0s=Y node_at_1s=Y
+create a37 node_at_0s=N node_at_1s=N
+create a38 node_at_0s=N node_at_1s=N
+create a39 node_at_0s=N node_at_1s=N
+create a40 node_at_0s=N node_at_1s=N
+create a41 node_at_0s=N node_at_1s=N
+create a42 node_at_0s=N node_at_1s=N
+create a43 node_at_0s=N node_at_1s=N
+create a44 node_at_0s=N node_at_1s=N
+create a45 node_at_0s=N node_at_1s=N
+create a46 node_at_0s=N node_at_1s=N
+create a47 node_at_0s=Y node_at_1s=Y
+create a48 node_at_0s=N node_at_1s=N
+create a49 node_at_0s=N node_at_1s=N
+RESULT a: missing at 0 s: 45/50; missing at 1 s: 45/50: a1 a2 a3 a4 a5 a6 a8 a9 a10 a11 a12 a13 a14 a15 a16 a17 a18 a20 a21 a22 a23 a24 a25 a26 a27 a28 a29 a30 a31 a32 a33 a34 a35 a37 a38 a39 a40 a41 a42 a43 a44 a45 a46 a48 a49
+RESULT a: still missing 30 s after the loop (>= 31 s after create): 45: a1 a2 a3 a4 a5 a6 a8 a9 a10 a11 a12 a13 a14 a15 a16 a17 a18 a20 a21 a22 a23 a24 a25 a26 a27 a28 a29 a30 a31 a32 a33 a34 a35 a37 a38 a39 a40 a41 a42 a43 a44 a45 a46 a48 a49
+geom: lines with zvol in kern.geom.conftxt: 0

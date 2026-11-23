@@ -1,0 +1,5 @@
+Traceback (most recent call last):
+  File "/tmp/claude-1000/-home-aba-git-skep/c74bb673-3d69-4cc2-b917-ebc0c7ceb35e/scratchpad/zcleanup.py", line 7, in <module>
+    test = [v for v in items if v["name"].startswith(("zc-", "zk-", "zgpt", "zt-"))]
+                                ~^^^^^^^^
+TypeError: string indices must be integers, not 'str'

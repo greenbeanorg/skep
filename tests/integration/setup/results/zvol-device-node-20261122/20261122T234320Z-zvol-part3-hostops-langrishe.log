@@ -1,0 +1,107 @@
+cannot open 'zroot/zvolprobe': dataset does not exist
+create 00 node_before=N rounds=1 took=5.08s node_after=Y err=<nil>
+create 01 node_before=N rounds=1 took=5.08s node_after=Y err=<nil>
+create 02 node_before=N rounds=1 took=5.07s node_after=Y err=<nil>
+create 03 node_before=N rounds=1 took=5.06s node_after=Y err=<nil>
+create 04 node_before=N rounds=1 took=5.08s node_after=Y err=<nil>
+create 05 node_before=N rounds=1 took=5.07s node_after=Y err=<nil>
+create 06 node_before=N rounds=1 took=5.05s node_after=Y err=<nil>
+create 07 node_before=N rounds=1 took=5.09s node_after=Y err=<nil>
+create 08 node_before=N rounds=1 took=5.08s node_after=Y err=<nil>
+create 09 node_before=N rounds=1 took=5.07s node_after=Y err=<nil>
+create 10 node_before=N rounds=1 took=5.07s node_after=Y err=<nil>
+create 11 node_before=N rounds=1 took=5.1s node_after=Y err=<nil>
+create 12 node_before=N rounds=1 took=5.07s node_after=Y err=<nil>
+create 13 node_before=N rounds=1 took=5.1s node_after=Y err=<nil>
+create 14 node_before=N rounds=1 took=5.08s node_after=Y err=<nil>
+create 15 node_before=Y rounds=0 took=0s node_after=Y err=<nil>
+create 16 node_before=N rounds=1 took=5.1s node_after=Y err=<nil>
+create 17 node_before=N rounds=1 took=5.12s node_after=Y err=<nil>
+create 18 node_before=N rounds=1 took=5.11s node_after=Y err=<nil>
+create 19 node_before=N rounds=1 took=5.12s node_after=Y err=<nil>
+create 20 node_before=N rounds=1 took=5.09s node_after=Y err=<nil>
+create 21 node_before=N rounds=1 took=5.09s node_after=Y err=<nil>
+create 22 node_before=N rounds=1 took=5.09s node_after=Y err=<nil>
+create 23 node_before=N rounds=1 took=5.11s node_after=Y err=<nil>
+create 24 node_before=N rounds=1 took=5.1s node_after=Y err=<nil>
+create 25 node_before=N rounds=1 took=5.06s node_after=Y err=<nil>
+create 26 node_before=N rounds=1 took=5.11s node_after=Y err=<nil>
+create 27 node_before=Y rounds=0 took=0s node_after=Y err=<nil>
+create 28 node_before=N rounds=1 took=5.11s node_after=Y err=<nil>
+create 29 node_before=N rounds=1 took=5.08s node_after=Y err=<nil>
+create 30 node_before=N rounds=1 took=5.14s node_after=Y err=<nil>
+create 31 node_before=N rounds=1 took=5.1s node_after=Y err=<nil>
+create 32 node_before=Y rounds=0 took=0s node_after=Y err=<nil>
+create 33 node_before=N rounds=1 took=5.08s node_after=Y err=<nil>
+create 34 node_before=N rounds=1 took=5.07s node_after=Y err=<nil>
+create 35 node_before=N rounds=1 took=5.08s node_after=Y err=<nil>
+create 36 node_before=N rounds=1 took=5.09s node_after=Y err=<nil>
+create 37 node_before=N rounds=1 took=5.07s node_after=Y err=<nil>
+create 38 node_before=N rounds=1 took=5.08s node_after=Y err=<nil>
+create 39 node_before=N rounds=1 took=5.1s node_after=Y err=<nil>
+create 40 node_before=Y rounds=0 took=0s node_after=Y err=<nil>
+create 41 node_before=N rounds=1 took=5.08s node_after=Y err=<nil>
+create 42 node_before=N rounds=1 took=5.09s node_after=Y err=<nil>
+create 43 node_before=N rounds=1 took=5.1s node_after=Y err=<nil>
+create 44 node_before=N rounds=1 took=5.12s node_after=Y err=<nil>
+create 45 node_before=N rounds=1 took=5.09s node_after=Y err=<nil>
+create 46 node_before=N rounds=1 took=5.11s node_after=Y err=<nil>
+create 47 node_before=N rounds=1 took=5.09s node_after=Y err=<nil>
+create 48 node_before=Y rounds=0 took=0s node_after=Y err=<nil>
+create 49 node_before=N rounds=1 took=5.07s node_after=Y err=<nil>
+RESULT creates: 50, repaired 45, without a node at the end 0
+source 00 node_before=N rounds=1 took=5.12s node_after=Y err=<nil>
+source 30ee8c6c-6378-4eb4-a7d2-560dc85e9397: image 82f82ed0cf4ae9f40ee0ed037ca720c6ff673220e132a2cba8a21864c86aa83e zvol 82f82ed0cf4ae9f40ee0ed037ca720c6ff673220e132a2cba8a21864c86aa83e
+RESULT geom source: lines with zvol in kern.geom.conftxt: 0; p1 nodes: 0
+clone 00 node_before=N rounds=1 took=5.14s node_after=Y err=<nil>
+clone 01 node_before=N rounds=1 took=5.07s node_after=Y err=<nil>
+clone 02 node_before=N rounds=1 took=5.11s node_after=Y err=<nil>
+clone 03 node_before=N rounds=1 took=5.09s node_after=Y err=<nil>
+clone 04 node_before=Y rounds=0 took=0s node_after=Y err=<nil>
+clone 05 node_before=Y rounds=0 took=0s node_after=Y err=<nil>
+clone 06 node_before=Y rounds=0 took=0s node_after=Y err=<nil>
+clone 07 node_before=N rounds=1 took=5.06s node_after=Y err=<nil>
+clone 08 node_before=N rounds=1 took=5.09s node_after=Y err=<nil>
+clone 09 node_before=N rounds=1 took=5.08s node_after=Y err=<nil>
+clone 10 node_before=Y rounds=0 took=0s node_after=Y err=<nil>
+clone 11 node_before=Y rounds=0 took=0s node_after=Y err=<nil>
+clone 12 node_before=Y rounds=0 took=0s node_after=Y err=<nil>
+clone 13 node_before=Y rounds=0 took=0s node_after=Y err=<nil>
+clone 14 node_before=Y rounds=0 took=0s node_after=Y err=<nil>
+clone 15 node_before=Y rounds=0 took=0s node_after=Y err=<nil>
+clone 16 node_before=Y rounds=0 took=0s node_after=Y err=<nil>
+clone 17 node_before=Y rounds=0 took=0s node_after=Y err=<nil>
+clone 18 node_before=Y rounds=0 took=0s node_after=Y err=<nil>
+clone 19 node_before=Y rounds=0 took=0s node_after=Y err=<nil>
+RESULT clones: 20, repaired 7, without a node at the end 0
+RESULT geom after the clones: lines with zvol in kern.geom.conftxt: 0; p1 nodes: 0
+rollback 00 node_before=Y rounds=0 took=0s node_after=Y err=<nil>
+rollback 01 node_before=Y rounds=0 took=0s node_after=Y err=<nil>
+rollback 02 node_before=Y rounds=0 took=0s node_after=Y err=<nil>
+rollback 03 node_before=Y rounds=0 took=0s node_after=Y err=<nil>
+rollback 04 node_before=Y rounds=0 took=0s node_after=Y err=<nil>
+rollback 05 node_before=Y rounds=0 took=0s node_after=Y err=<nil>
+rollback 06 node_before=Y rounds=0 took=0s node_after=Y err=<nil>
+rollback 07 node_before=Y rounds=0 took=0s node_after=Y err=<nil>
+rollback 08 node_before=Y rounds=0 took=0s node_after=Y err=<nil>
+rollback 09 node_before=Y rounds=0 took=0s node_after=Y err=<nil>
+rollback 10 node_before=Y rounds=0 took=0s node_after=Y err=<nil>
+rollback 11 node_before=Y rounds=0 took=0s node_after=Y err=<nil>
+rollback 12 node_before=Y rounds=0 took=0s node_after=Y err=<nil>
+rollback 13 node_before=Y rounds=0 took=0s node_after=Y err=<nil>
+rollback 14 node_before=Y rounds=0 took=0s node_after=Y err=<nil>
+rollback 15 node_before=Y rounds=0 took=0s node_after=Y err=<nil>
+rollback 16 node_before=Y rounds=0 took=0s node_after=Y err=<nil>
+rollback 17 node_before=Y rounds=0 took=0s node_after=Y err=<nil>
+rollback 18 node_before=Y rounds=0 took=0s node_after=Y err=<nil>
+rollback 19 node_before=Y rounds=0 took=0s node_after=Y err=<nil>
+RESULT rollbacks: 20, repaired 0, without a node at the end 0
+RESULT geom after the rollbacks: lines with zvol in kern.geom.conftxt: 0; p1 nodes: 0
+refusal vm_not_stopped: {"Code":"disk_device_missing","Message":"the device node of zroot/zvolprobe/vm/3b180813-5667-48be-985d-b128f30cd53c/disk0 is missing, and the virtual machine is not stopped; the next start repairs it","Details":{"dataset":"zroot/zvolprobe/vm/3b180813-5667-48be-985d-b128f30cd53c/disk0","error":"vm_not_stopped: the virtual machine is running","reason":"vm_not_stopped"}}; volmode now dev; node N
+refusal volmode_none: {"Code":"disk_device_missing","Message":"zroot/zvolprobe/vm/30ee8c6c-6378-4eb4-a7d2-560dc85e9397/disk0 has volmode=none, so it has no device node; Skep does not change it on its own. An administrator who wants this disk usable again runs: zfs set volmode=dev zroot/zvolprobe/vm/30ee8c6c-6378-4eb4-a7d2-560dc85e9397/disk0","Details":{"command":"zfs set volmode=dev zroot/zvolprobe/vm/30ee8c6c-6378-4eb4-a7d2-560dc85e9397/disk0","dataset":"zroot/zvolprobe/vm/30ee8c6c-6378-4eb4-a7d2-560dc85e9397/disk0","reason":"volmode_none","volmode":"none"}}; volmode now none; node N
+after the administrator's command: volmode dev, node Y
+cleanup: destroyed zroot/zvolprobe
+exit=0
+53
+time=2026-11-22T18:48:12.670-05:00 level=WARN msg="hostops: zvol device repair refused" dataset=zroot/zvolprobe/vm/3b180813-5667-48be-985d-b128f30cd53c/disk0 reason=vm_not_stopped error="disk_device_missing: the device node of zroot/zvolprobe/vm/3b180813-5667-48be-985d-b128f30cd53c/disk0 is missing, and the virtual machine is not stopped; the next start repairs it"
+time=2026-11-22T18:48:17.767-05:00 level=WARN msg="hostops: zvol device repair refused" dataset=zroot/zvolprobe/vm/30ee8c6c-6378-4eb4-a7d2-560dc85e9397/disk0 reason=volmode_none error="disk_device_missing: zroot/zvolprobe/vm/30ee8c6c-6378-4eb4-a7d2-560dc85e9397/disk0 has volmode=none, so it has no device node; Skep does not change it on its own. An administrator who wants this disk usable again runs: zfs set volmode=dev zroot/zvolprobe/vm/30ee8c6c-6378-4eb4-a7d2-560dc85e9397/disk0"

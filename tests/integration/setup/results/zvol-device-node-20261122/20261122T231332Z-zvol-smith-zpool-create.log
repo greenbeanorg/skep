@@ -1,0 +1,14 @@
+Geom name: da1
+Providers:
+1. Name: da1
+   Mediasize: 17179869184 (16G)
+gpart: No such geom: da1.
+gpart rc=1
+rc=0
+NAME   SIZE  ALLOC   FREE  CKPOINT  EXPANDSZ   FRAG    CAP  DEDUP    HEALTH  ALTROOT
+tank  15.5G   332K  15.5G        -         -     0%     0%  1.00x    ONLINE  -
+NAME   USED  AVAIL  REFER  MOUNTPOINT
+tank   372K  15.0G    96K  /tank
+ 6    1 0xffffffff82e00000   3f2c78 zfs.ko
+zfs-2.4.2-1-FreeBSD_g6330a45b0
+zfs-kmod-2.4.2-1-FreeBSD_g6330a45b0

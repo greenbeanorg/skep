@@ -106,6 +106,15 @@ type ZFS interface {
 	// DestroyVolume destroys the zvol of a VM's disk, only if it carries
 	// the VM's and the disk's IDs and has no snapshots left.
 	DestroyVolume(ctx context.Context, spec VolumeSpec) (Dataset, error)
+	// EnsureVolumeDevice makes sure the device node of a VM disk's zvol
+	// exists (ADR 0010 amendment z). A missing node is waited for
+	// briefly, then repaired by setting volmode to none and back to dev,
+	// at most twice, only for a volume owned by the disk, at
+	// volmode=dev, with its key available or not encrypted, and only
+	// while stopped says the VM is stopped and no vmm instance of it
+	// exists. Anything else is refused unchanged: disk_device_missing,
+	// or storage_locked.
+	EnsureVolumeDevice(ctx context.Context, spec VolumeSpec, stopped StoppedCheck) (DeviceResult, error)
 }
 
 // Pool is one allow-listed pool as observed.

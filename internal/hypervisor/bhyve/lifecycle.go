@@ -99,6 +99,11 @@ func (a *Adapter) Start(ctx context.Context, vm models.VM) error {
 			return err
 		}
 	}
+	// bhyve opens every zvol by its device node, which ZFS sometimes
+	// fails to create (ADR 0010 amendment z).
+	if err := a.ensureDevices(ctx, vm); err != nil {
+		return err
+	}
 	raw, err := json.Marshal(spec)
 	if err != nil {
 		return err
@@ -246,6 +251,38 @@ func (a *Adapter) ForceStop(ctx context.Context, vmID string) error {
 			if err := a.host.Files.RemoveRunFile(vmID, name); err != nil {
 				return err
 			}
+		}
+	}
+	return nil
+}
+
+// ensureDevices makes sure the device node of every disk of a VM exists,
+// repairing a missing one (hostops.Disks.EnsureDevice). Start runs inside
+// the VM's task, the per-VM lock, and has just seen the VM stopped; the
+// stopped check looks again right before a repair.
+func (a *Adapter) ensureDevices(ctx context.Context, vm models.VM) error {
+	stopped := func(ctx context.Context) error {
+		obs, err := a.Inspect(ctx, vm.ID)
+		if err != nil {
+			return err
+		}
+		if obs.Active {
+			return &models.Error{Code: models.CodeVMNotStopped, Message: "the virtual machine is " + obs.State,
+				Details: map[string]any{"state": obs.State}}
+		}
+		return nil
+	}
+	for _, d := range vm.Disks {
+		if d.Bus == models.BusAHCICD {
+			continue
+		}
+		res, err := a.host.Disks().EnsureDevice(ctx, hostops.VolumeSpec{Pool: d.Pool, VMID: vm.ID, DiskID: d.ID, Slot: d.Slot}, stopped)
+		if err != nil {
+			return err
+		}
+		if res.Rounds > 0 {
+			a.log.Info("bhyve: repaired a disk's device node before the start", "vm_id", vm.ID, "slot", d.Slot,
+				"device", res.Path, "rounds", res.Rounds)
 		}
 	}
 	return nil
