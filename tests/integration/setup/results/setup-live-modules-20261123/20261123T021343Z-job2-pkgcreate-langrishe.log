@@ -1,0 +1,17 @@
+head b959cc8 label j2 host 10.79.20.82
+checksum compare (format may differ):
+2251d7220c75229d128d8ecef38187c76432f8ea6092d2f85de659713c176079  /usr/local/share/licenses/skep/THIRD_PARTY_NOTICES
+2ec1daaea6ebe4b8cf4cb4cb689a843207d1f5246897be18f761834227122b6e  /usr/local/sbin/skep-api
+3706210b2606404f1f31729f245c7d828c2f98d66f7d6f51a8a39203ff2ddb53  /usr/local/sbin/skep-setup
+2ec1daaea6ebe4b8cf4cb4cb689a843207d1f5246897be18f761834227122b6e stage/usr/local/sbin/skep-api
+3706210b2606404f1f31729f245c7d828c2f98d66f7d6f51a8a39203ff2ddb53 stage/usr/local/sbin/skep-setup
+98f7e2104c5d36a31a57a737ff91aa32693e3aecf87434f4b39fe42a41de5cf2 stage/usr/local/sbin/skep-agent
+total 14781
+-rw-r--r--  1 aba aba 16209204 Nov 22 21:14 skep-0.1.0.pkg
+SHA256 (out/skep-0.1.0.pkg) = 69405a00ee99919f5387cbf43ef1ce64321d8eb400a1387ed4be3d6267a49d7d
+skep-0.1.0
+Name           : skep
+Version        : 0.1.0
+skep-0.1.0:
+	edk2-bhyve-g202508_3
+skep-setup 0.1.0 (commit b959cc8, built 2026-11-23T02:13:32Z, go1.27.4 freebsd/amd64)

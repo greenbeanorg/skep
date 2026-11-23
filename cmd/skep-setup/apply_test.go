@@ -179,3 +179,49 @@ func TestFixtureRootWithTheRealRunner(t *testing.T) {
 		t.Fatal("changed the root")
 	}
 }
+
+// After apply has configured the guest modules, apply's last lines name
+// those the kernel does not have, with the reboot and the kldload command;
+// check reports the same and keeps its exit code (a warning). Setup never
+// runs kldload itself.
+func TestApplyReportsModulesNotLoaded(t *testing.T) {
+	root := stockRoot(t)
+	r := &appendSysrc{}
+	e := applyEnv(r, true)
+	f := hostFacts()
+	f.Modules = map[string]bool{"vmm": true, "nmdm": false, "if_epair": true, "netgraph": false,
+		"ng_socket": false, "ng_ether": false, "ng_bpf": false}
+	e.prober = fakeProber{f: f}
+	res := runWith(t, e, "apply", "-root", root, "-mgmt", "vtnet0")
+	if res.code != exitOK {
+		t.Fatalf("%+v", res)
+	}
+	done := strings.Index(res.stdout, "done:")
+	tail := res.stdout[done:]
+	for _, s := range []string{"configured but not loaded: nmdm netgraph ng_socket ng_ether ng_bpf",
+		"$ shutdown -r now", "$ kldload -n nmdm netgraph ng_socket ng_ether ng_bpf"} {
+		if done < 0 || !strings.Contains(tail, s) {
+			t.Errorf("apply's end lacks %q:\n%s", s, res.stdout)
+		}
+	}
+	for _, c := range r.calls {
+		if strings.Contains(c, "kldload") {
+			t.Errorf("setup ran %s", c)
+		}
+	}
+	// The fixture leaves manual items (no pool, no bridge), so check exits
+	// 1 either way; the module report is a warning, not one of them.
+	res = runWith(t, e, "check", "-root", root, "-mgmt", "vtnet0")
+	if !strings.Contains(res.stdout, "warn     kernel modules") || !strings.Contains(res.stdout, "configured but not loaded: nmdm netgraph") ||
+		!strings.Contains(res.stdout, "1 warnings") {
+		t.Fatalf("check: %+v", res)
+	}
+	// Once they are loaded, check reports nothing about them.
+	f.Modules = map[string]bool{"vmm": true, "nmdm": true, "if_epair": true, "netgraph": true,
+		"ng_socket": true, "ng_ether": true, "ng_bpf": true}
+	e.prober = fakeProber{f: f}
+	res = runWith(t, e, "check", "-root", root, "-mgmt", "vtnet0")
+	if strings.Contains(res.stdout, "not loaded") || !strings.Contains(res.stdout, "0 warnings") {
+		t.Fatalf("check with the modules loaded: %+v", res)
+	}
+}
