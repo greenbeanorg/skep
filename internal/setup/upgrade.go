@@ -653,18 +653,9 @@ func defaultDataDirs(root string) error {
 // loaded, a common reason for a degraded health right after the first
 // apply, or "" when there are none or it cannot be told.
 func (u *Upgrader) modulesHint(ctx context.Context) string {
-	conf, err := HostModules(u.Root)
-	if err != nil {
-		return ""
-	}
 	f, err := u.Prober.Probe(ctx)
 	if err != nil {
 		return ""
 	}
-	missing, known := NotLoaded(conf, f)
-	if !known || len(missing) == 0 {
-		return ""
-	}
-	return "configured but not loaded: " + strings.Join(missing, " ") +
-		" (reboot, or: " + KldloadCommand(missing) + "); "
+	return modulesHint(u.Root, f)
 }

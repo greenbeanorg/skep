@@ -108,8 +108,11 @@ configuration loads (`vmm`, `nmdm`, and `if_epair netgraph ng_socket
 ng_ether ng_bpf` from `kld_list`, including the ones this plan adds) with
 what the kernel has now (`kldstat -q -m NAME`; a module compiled into the
 kernel counts as loaded). Each one configured but not loaded is listed in
-one **warning**, with what does not work without it and the two ways to
-fix it: reboot, or load them now with the printed command, for example
+one **warning**, with what does not work without it. A reboot is always the
+complete fix. `kldload` loads modules only: loader tunables added since boot
+(`kern.racct.enable` when setup added it) still need the reboot. The warning
+also prints a `kldload` command for the modules that are safe to load now, for
+example
 
 ```
   warn     kernel modules                     configured but not loaded: vmm nmdm
@@ -118,12 +121,19 @@ fix it: reboot, or load them now with the printed command, for example
                                                 $ kldload -n vmm nmdm
 ```
 
+`vmm` reads its `hw.vmm.*` tunables from the kernel environment when it
+loads, and `kldload` does not read `loader.conf`. Setup therefore compares
+each `hw.vmm.*` line of `loader.conf`, `loader.conf.local` and `loader.conf.d`
+with `/bin/kenv -q NAME`. If one differs, is absent, or cannot be read, `vmm`
+is left out of the printed command and the warning says that loader tunables
+for vmm set since the last boot are not applied by kldload, so reboot.
+
 The warning does not change any exit code. Until the modules are loaded
 the agent's health can read `degraded`, and `upgrade` then exits 4
 (incomplete) with the same list in its message. `apply` does not load
 them, since apply never changes the running kernel: setup reports them
-and tells you to reboot (or load them yourself with the printed command;
-Andy's decision, 2026-11-23).
+and tells you to reboot (or load the ones it prints yourself; Andy's
+decision, 2026-11-23).
 
 **Firmware.** `check` and `plan` print a **warning** when the bhyve UEFI
 firmware is missing (`BHYVE_UEFI.fd` or `BHYVE_UEFI_VARS.fd` in

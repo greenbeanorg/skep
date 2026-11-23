@@ -41,6 +41,10 @@ type Facts struct {
 	// has it now ("kldstat -q -m NAME"; compiled in counts as loaded).
 	// Nil when it could not be read.
 	Modules map[string]bool
+	// Kenv reads one variable of the running kernel environment. ok is
+	// false when the variable is absent or could not be read. Nil when
+	// the prober cannot read it at all: callers treat that as differing.
+	Kenv func(name string) (value string, ok bool)
 }
 
 // Bridge is the run-time state of one bridge.

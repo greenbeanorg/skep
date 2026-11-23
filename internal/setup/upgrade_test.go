@@ -453,7 +453,7 @@ func TestUpgradeUnhealthyNamesModulesNotLoaded(t *testing.T) {
 	u.Prober = fakeProber{f}
 	err := u.Upgrade(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "health is degraded") ||
-		!strings.Contains(err.Error(), "Check: configured but not loaded: vmm netgraph (reboot, or: kldload -n vmm netgraph); skep-setup check") {
+		!strings.Contains(err.Error(), "Check: configured but not loaded: vmm netgraph (A reboot is the complete fix. kldload loads modules only: loader tunables added since boot need the reboot. To load the rest now: kldload -n vmm netgraph); skep-setup check") {
 		t.Fatalf("err %v", err)
 	}
 	var inc *UpgradeIncomplete

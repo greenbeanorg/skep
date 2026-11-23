@@ -80,19 +80,19 @@ func runApply(ctx context.Context, args []string, e env) error {
 
 // reportModules prints, after apply, the guest modules the boot
 // configuration now loads but the kernel does not have yet. Setup never
-// loads them; the warning names the reboot and the kldload command.
+// loads them; the warning names the reboot and what kldload may load.
 func reportModules(ctx context.Context, root string, e env) {
-	conf, err := setup.HostModules(root)
-	if err != nil {
-		fmt.Fprintf(e.stdout, "kernel modules: the boot configuration could not be read again (%v); see skep-setup check\n", err)
-		return
-	}
 	f, err := e.prober.Probe(ctx)
 	if err != nil {
 		fmt.Fprintf(e.stdout, "kernel modules: whether they are loaded is unknown (%v); see skep-setup check\n", err)
 		return
 	}
-	if it, ok := setup.ModulesItem(conf, f); ok && it.Kind != setup.OK {
+	it, ok, err := setup.HostModulesItem(root, f)
+	if err != nil {
+		fmt.Fprintf(e.stdout, "kernel modules: the boot configuration could not be read again (%v); see skep-setup check\n", err)
+		return
+	}
+	if ok && it.Kind != setup.OK {
 		printItems(e.stdout, []setup.Item{it}, false)
 	}
 }

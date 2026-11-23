@@ -54,18 +54,18 @@ func loaded(names ...string) map[string]bool {
 }
 
 func TestModulesItem(t *testing.T) {
-	if _, ok := ModulesItem(nil, Facts{Modules: loaded()}); ok {
+	if _, ok := ModulesItem(nil, Facts{Modules: loaded()}, RCConf{}, false); ok {
 		t.Error("an item although no module is configured")
 	}
-	it, ok := ModulesItem([]string{"vmm"}, Facts{})
+	it, ok := ModulesItem([]string{"vmm"}, Facts{}, RCConf{}, false)
 	if !ok || it.Kind != Warn || !strings.Contains(it.What, "unknown") {
 		t.Errorf("unknown load state: %+v", it)
 	}
-	it, _ = ModulesItem([]string{"vmm", "nmdm"}, Facts{Modules: loaded("vmm", "nmdm")})
+	it, _ = ModulesItem([]string{"vmm", "nmdm"}, Facts{Modules: loaded("vmm", "nmdm")}, RCConf{}, false)
 	if it.Kind != OK {
 		t.Errorf("all loaded: %+v", it)
 	}
-	it, _ = ModulesItem([]string{"vmm", "nmdm", "netgraph"}, Facts{Modules: loaded("nmdm")})
+	it, _ = ModulesItem([]string{"vmm", "nmdm", "netgraph"}, Facts{Modules: loaded("nmdm")}, RCConf{}, false)
 	if it.Kind != Warn || it.What != "configured but not loaded: vmm netgraph" {
 		t.Fatalf("missing: %+v", it)
 	}
