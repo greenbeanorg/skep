@@ -115,8 +115,16 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 			overrides.DevMode = dev
 		}
 	})
+	// Before root reads the configuration, then before it opens the
+	// database or creates the socket (ADR 0004, amendment of 2026-11-23).
+	if err := checkProgram(*configPath); err != nil {
+		return err
+	}
 	cfg, err := config.Load(config.LoadOptions{Path: *configPath, Overrides: overrides})
 	if err != nil {
+		return err
+	}
+	if err := checkState(cfg); err != nil {
 		return err
 	}
 

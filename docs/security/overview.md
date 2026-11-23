@@ -731,3 +731,14 @@ All of this is pending FreeBSD validation.
 Skep is pre-release software with no deployed users. Until a security
 contact is published, report issues privately to the repository owner rather
 than in a public issue.
+
+## The agent's start check
+
+At start, as root on FreeBSD, `skep-agent` refuses to run unless its binary,
+the configuration file it reads, its data directory, the socket's directory,
+and every parent of each are owned by root, not writable by their group or
+others, and carry no ACL beyond the entries that mirror the mode. If
+`/bin/getfacl` fails or its output is not understood, the agent refuses.
+There is no override. See
+[ADR 0004](../decisions/0004-privilege-boundary.md), amendment of 2026-11-23.
+

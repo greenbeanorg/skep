@@ -381,10 +381,9 @@ Pending FreeBSD validation:
   at boot (tmpfs). The rc.d script recreates the directory at every start;
   that was validated by removing it, not by a tmpfs.
 
-## Amendment (2026-11-23, Proposed): the agent checks its binary and configuration at start
+## Amendment (2026-11-23, Accepted): the agent checks its binary and configuration at start
 
-Status: **Proposed**. Written unattended (Andy away); nothing is built until
-the open questions below are answered. Branch `fix/agent-start-perms`.
+Status: **Accepted**, 2026-11-23 (Andy). Branch `fix/agent-start-perms`.
 
 ### Problem
 
@@ -461,7 +460,7 @@ A host where someone ran the agent from a home directory (the pre-2026-11-15
 hearst layout under `/home/aba/skep-m6`, removed since) would be refused:
 `/home/aba` is owned by `aba`.
 
-### Open questions (for Andy)
+### Questions and Andy's answers (2026-11-23)
 
 1. **ACLs.** On ZFS (`nfsv4acls`, langrishe's root) and on UFS mounted with
    `acls`, an ACL entry can let another user write a file or directory whose
@@ -483,8 +482,52 @@ hearst layout under `/home/aba/skep-m6`, removed since) would be refused:
 4. **No override.** Recommendation: no flag to skip the check (it would be
    a silent weakening).
 
-Nothing else is open. The build (a `startcheck` package with a fake stat for
-unit tests, the call in `cmd/skep-agent` before the socket, and a test on a
-lab VM with a scratch copy: a copy of the binary and of `agent.json` in a
-scratch directory made `root:wheel`, then `chmod g+w` on the scratch
-directory, never on the real files) waits for the answers.
+**Answers.**
+
+1. **(b).** Refuse a path with a non-trivial ACL, found with `/bin/getfacl`
+   and fixed arguments. If getfacl fails or its output is not understood,
+   refuse.
+2. **Yes**, also `/var/db/skep` and `/var/run/skep` (not `/var/db/skep/api`).
+3. **Refuse.**
+4. **No override.**
+
+### As built
+
+- `internal/startcheck` holds the rules behind a small `FS` interface (a fake
+  in unit tests, the host in `host_freebsd.go`). `cmd/skep-agent` calls it
+  only as root on FreeBSD.
+- **Two calls, both earlier than this amendment required.** The binary and
+  the configuration file are checked before root parses the file. The data
+  directory and the socket's directory are checked right after, before the
+  database is opened and before the socket exists. These are the directories
+  the loaded configuration names, by default `/var/db/skep` and
+  `/var/run/skep`; either may not exist yet, and its existing parents are
+  still checked.
+- **A trivial ACL** is exactly three entries, one per class, with no write
+  for the group or others. POSIX.1e: `user::`, `group::`, `other::`. NFSv4:
+  `owner@`, `group@`, `everyone@`, type `allow`, no inheritance flags, and
+  for `group@` and `everyone@` none of write, append, delete, delete child,
+  write attributes, write extended attributes, write ACL, or write owner.
+  Anything else well-formed is an extended ACL; anything else is not
+  understood. Both are refused.
+- **Also refused:** a path with a `..` component (it cannot be checked
+  component by component) and a dangling symbolic link.
+- The error names the owner by UID (`owner UID 0`), not by name.
+- `skep-setup check` does not report these paths yet: it needs the host
+  check, the configuration's path resolution and a plan item, which is more
+  than a few lines. See the [backlog](../backlog.md).
+
+### Validation (2026-11-23, lab VMs, FreeBSD 15.1)
+
+- The check passes on smith (UFS, POSIX output) and langrishe (ZFS root,
+  NFSv4 output) as installed, for the binary, `agent.json`, `/var/db/skep`,
+  `/var/run/skep`, and all their parents.
+- Scratch copies of the binary and `agent.json` under `/root`, with the data
+  directory and socket also pointed there. On smith, `chmod g+w` on the
+  scratch directory: the agent exited 1 naming that directory. On langrishe,
+  an added NFSv4 entry granting `write_data` to UID 65534, with the mode still
+  `0755`: the agent exited 1 naming the ACL. Neither created a data directory
+  or a socket, and the real files and running agents did not change.
+- **Pending:** hearst was powered off, so the prediction above for it is not
+  verified. A refusal for a POSIX.1e extended ACL (UFS mounted with `acls`)
+  and a getfacl failure are unit-tested only.

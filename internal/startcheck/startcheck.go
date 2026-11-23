@@ -1,0 +1,242 @@
+// Package startcheck is the check the root agent makes of its own binary,
+// configuration, and state directories before it trusts them (ADR 0004,
+// amendment of 2026-11-23). Each path and every parent up to / must be
+// owned by UID 0, not writable by its group or others, and carry no ACL
+// beyond the entries that mirror its mode. There is no override.
+package startcheck
+
+import (
+	"errors"
+	"fmt"
+	"io/fs"
+	"path/filepath"
+	"regexp"
+	"slices"
+	"strings"
+)
+
+// Info is what the check needs from lstat(2).
+type Info struct {
+	UID     uint32
+	Perm    fs.FileMode
+	Symlink bool
+}
+
+// FS is the host, faked in tests.
+type FS interface {
+	// Lstat reads a path without following a final symbolic link. A
+	// missing path is an error matching fs.ErrNotExist.
+	Lstat(path string) (Info, error)
+	// EvalSymlinks returns the path with every symbolic link resolved.
+	EvalSymlinks(path string) (string, error)
+	// ACL returns the output of getfacl -q -n for path.
+	ACL(path string) (string, error)
+}
+
+// Target is one path to check.
+type Target struct {
+	Path string
+	// What names it in the refusal, for example "the agent's binary".
+	What string
+	// Optional allows the path, or some of its last components, to be
+	// missing (a state directory not created yet).
+	Optional bool
+}
+
+// Refusal is the reason the agent will not start.
+type Refusal struct {
+	Path string
+	Why  string
+	Fix  string
+}
+
+func (r *Refusal) Error() string {
+	s := "refusing to start: " + r.Path + " " + r.Why
+	if r.Fix != "" {
+		s += ". Fix: " + r.Fix
+	}
+	return s
+}
+
+// Check returns a *Refusal for the first path that fails, in the order of
+// targets, outermost directory first.
+func Check(fsys FS, targets []Target) error {
+	c := checker{fsys: fsys, passed: map[string]bool{}}
+	for _, t := range targets {
+		if err := c.target(t); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type checker struct {
+	fsys   FS
+	passed map[string]bool
+}
+
+func (c *checker) target(t Target) error {
+	if slices.Contains(strings.Split(filepath.ToSlash(t.Path), "/"), "..") {
+		return &Refusal{Path: t.Path, Why: "contains \"..\", which cannot be checked component by component"}
+	}
+	abs, err := filepath.Abs(t.Path)
+	if err != nil {
+		return &Refusal{Path: t.Path, Why: "cannot be made absolute: " + err.Error()}
+	}
+	missing, err := c.chain(abs, t)
+	if err != nil {
+		return err
+	}
+	resolved, err := c.fsys.EvalSymlinks(abs)
+	switch {
+	case errors.Is(err, fs.ErrNotExist) && t.Optional && missing:
+		return nil
+	case err != nil:
+		return &Refusal{Path: abs, Why: "cannot be resolved: " + err.Error()}
+	case resolved == abs:
+		return nil
+	}
+	_, err = c.chain(resolved, t)
+	return err
+}
+
+// chain checks path and its parents, outermost first. A symbolic link's
+// own owner and mode do not matter: it can only be replaced, which takes
+// write access to its directory, and that directory is in the chain.
+func (c *checker) chain(path string, t Target) (missing bool, err error) {
+	for _, p := range components(path) {
+		if c.passed[p] {
+			continue
+		}
+		st, err := c.fsys.Lstat(p)
+		if errors.Is(err, fs.ErrNotExist) {
+			if t.Optional {
+				return true, nil
+			}
+			return true, &Refusal{Path: p, Why: "does not exist"}
+		}
+		if err != nil {
+			return false, &Refusal{Path: p, Why: "cannot be read: " + err.Error()}
+		}
+		if st.Symlink {
+			continue
+		}
+		if err := c.one(p, st, t.What); err != nil {
+			return false, err
+		}
+		c.passed[p] = true
+	}
+	return false, nil
+}
+
+func (c *checker) one(p string, st Info, what string) error {
+	if st.UID != 0 {
+		return &Refusal{Path: p, Why: fmt.Sprintf("is owned by UID %d, not root; that user could change %s, which this root process trusts", st.UID, what),
+			Fix: "chown root:wheel " + p}
+	}
+	if perm := st.Perm.Perm(); perm&0o022 != 0 {
+		return &Refusal{Path: p, Why: fmt.Sprintf("is writable by its group or others (mode %04o, owner UID %d); a user other than root could change %s, which this root process trusts", perm, st.UID, what),
+			Fix: "chmod go-w " + p}
+	}
+	out, err := c.fsys.ACL(p)
+	if err != nil {
+		return &Refusal{Path: p, Why: "could not have its ACL read with /bin/getfacl (" + err.Error() + "); the agent refuses what it cannot check"}
+	}
+	switch aclClass(out) {
+	case aclTrivial:
+		return nil
+	case aclExtended:
+		return &Refusal{Path: p, Why: "has an ACL beyond its mode bits, which can let another user change " + what,
+			Fix: "review it with getfacl " + p + ", then remove it with setfacl -b " + p}
+	default:
+		return &Refusal{Path: p, Why: "has getfacl output the agent does not understand; the agent refuses what it cannot check"}
+	}
+}
+
+// components returns /, /a, /a/b for /a/b.
+func components(path string) []string {
+	out := []string{"/"}
+	cur := ""
+	for _, part := range strings.Split(strings.Trim(path, "/"), "/") {
+		if part == "" {
+			continue
+		}
+		cur += "/" + part
+		out = append(out, cur)
+	}
+	return out
+}
+
+type aclResult int
+
+const (
+	aclUnknown aclResult = iota
+	aclTrivial
+	aclExtended
+)
+
+var (
+	posixEntryRE = regexp.MustCompile(`^(user|group|other)::([r-])([w-])([x-])$`)
+	// A well-formed entry of any kind in each format: what is not one of
+	// these is output the check does not understand.
+	posixAnyRE  = regexp.MustCompile(`^(user|group|other|mask)(:[^:]*)?:[r-][w-][x-]$`)
+	nfs4EntryRE = regexp.MustCompile(`^(owner@|group@|everyone@):([r-][w-][x-][p-][d-][D-][a-][A-][R-][W-][c-][C-][o-][s-]):(-{7}):allow$`)
+	nfs4AnyRE   = regexp.MustCompile(`^(owner@|group@|everyone@|user:[^:]+|group:[^:]+):[rwxpdDaARWcCos-]{14}:[fdinIFS-]{7}:(allow|deny)$`)
+)
+
+// nfs4Writes are the permissions, at their positions in getfacl's field,
+// that let group@ or everyone@ change a file or directory: write, append,
+// delete, delete child, write attributes, write extended attributes, write
+// ACL, write owner.
+var nfs4Writes = map[int]bool{1: true, 3: true, 4: true, 5: true, 7: true, 9: true, 11: true, 12: true}
+
+// aclClass classifies getfacl -q -n output. Trivial is exactly one entry
+// for each of the three classes, in either format, with no write access
+// for the group or others.
+func aclClass(out string) aclResult {
+	var lines []string
+	for _, l := range strings.Split(out, "\n") {
+		if l = strings.TrimSpace(l); l != "" {
+			lines = append(lines, l)
+		}
+	}
+	if len(lines) == 0 {
+		return aclUnknown
+	}
+	for _, l := range lines {
+		if !posixAnyRE.MatchString(l) && !nfs4AnyRE.MatchString(l) {
+			return aclUnknown
+		}
+	}
+	if len(lines) != 3 {
+		return aclExtended
+	}
+	seen := map[string]bool{}
+	for _, l := range lines {
+		if m := posixEntryRE.FindStringSubmatch(l); m != nil {
+			if seen[m[1]] || (m[1] != "user" && m[3] == "w") {
+				return aclExtended
+			}
+			seen[m[1]] = true
+			continue
+		}
+		m := nfs4EntryRE.FindStringSubmatch(l)
+		if m == nil || seen[m[1]] {
+			return aclExtended
+		}
+		seen[m[1]] = true
+		if m[1] != "owner@" {
+			for i, ch := range m[2] {
+				if ch != '-' && nfs4Writes[i] {
+					return aclExtended
+				}
+			}
+		}
+	}
+	posix := seen["user"] && seen["group"] && seen["other"]
+	nfs4 := seen["owner@"] && seen["group@"] && seen["everyone@"]
+	if !posix && !nfs4 {
+		return aclExtended
+	}
+	return aclTrivial
+}
