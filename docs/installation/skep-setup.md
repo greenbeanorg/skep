@@ -170,7 +170,33 @@ reads `ifconfig -g bridge` and each bridge's `member:` lines and `bridge
 flags` (`VLANFILTER`). An allow-listed bridge that exists only at run time
 (no `ifconfig_` line in `rc.conf`) is a warning, because it is gone after a
 reboot; so is `vlanfilter` that is on now but not in `rc.conf`. When the
-members now and in `rc.conf` differ, the plan shows both.
+members now and in `rc.conf` differ, the plan shows both. If `ifconfig -g
+bridge` itself fails, `check` and `plan` stop with the error rather than
+assume there is no bridge (on FreeBSD 15.1 it exits 0 with no output when
+there is none), as they do when one bridge cannot be read.
+
+For an allow-listed bridge without `vlanfilter`, the steps are:
+
+- **`vlanfilter` in `rc.conf` but off now**: an item of its own saying so.
+  It takes effect at the next boot, or run the printed live steps now;
+  there is no `sysrc` step, because the line already has it.
+- **a bridge that exists now**: the live steps (each member's PVID with
+  `ifuntagged MEMBER 1`, then `defuntagged 1`, then `vlanfilter`), run from
+  the console, then the `sysrc` line that keeps it across reboots.
+- **a bridge that exists only at run time**: also
+  `sysrc cloned_interfaces+="BRIDGE"`, unless `cloned_interfaces` already
+  names it; without it the bridge is not created at boot.
+- **a bridge in `rc.conf` not created yet**: only the `sysrc` line.
+
+The `sysrc ifconfig_BRIDGE=` line names only real uplinks: for a bridge in
+`rc.conf`, its `rc.conf` members (the existing line, with `ifuntagged`,
+`defuntagged` and `vlanfilter` added where missing); for a run-time
+bridge, its live members except guest ports (`epair*` and `tap*`, which
+the agent creates when a guest starts), and the item names the ports it
+left out. Every interface name put into a printed command must be letters,
+digits, `.` and `_`, and every word of a reprinted `rc.conf` line letters,
+digits and `. _ : / -`; otherwise setup prints no steps for that bridge and
+says which name stopped it.
 
 A file that is not plain `name=value` lines (shell code, a substitution,
 a sourced file), or a variable set in `rc.conf.local` or `rc.conf.d`,

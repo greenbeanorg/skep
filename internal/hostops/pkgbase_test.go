@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 	"testing/fstest"
+
+	"github.com/greenbeanorg/skep/internal/pkgrepo"
 )
 
 // TestPkgbaseAvailable: pkg installed is not enough; FreeBSD-base must be
@@ -19,7 +21,7 @@ func TestPkgbaseAvailable(t *testing.T) {
 	sys.paths[pkgBootstrap], sys.paths[pkgBinary] = true, true
 
 	h.rootFS = fstest.MapFS{"etc/pkg/FreeBSD.conf": {Data: []byte(stock)}}
-	if ok, why := h.PkgbaseAvailable(); ok || !strings.Contains(why, "FreeBSD-base repository is not enabled (/etc/pkg/FreeBSD.conf)") {
+	if ok, why := h.PkgbaseAvailable(); ok || !strings.Contains(why, "FreeBSD-base repository is not enabled (/etc/pkg/FreeBSD.conf); enable it with "+pkgrepo.EnableBase+", or use") {
 		t.Fatalf("stock (smith): %v %q", ok, why)
 	}
 	h.rootFS = fstest.MapFS{}

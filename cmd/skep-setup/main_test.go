@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"context"
+	"flag"
+	"io"
 	"net/netip"
 	"os"
 	"path/filepath"
@@ -167,5 +169,33 @@ func TestAdminCheckerChoice(t *testing.T) {
 	}
 	if _, ok := (env{runner: nil, euid: 1001}).adminChecker("/tmp/fixture").(setup.SkepAPIAdmins); !ok {
 		t.Error("a test runner is not asked")
+	}
+}
+
+// TestRootDefault: with no -root, check, plan and apply read the real /.
+// setup's FreeBSD-base check reads the repository files through
+// os.DirFS(root), and os.DirFS("") fails every read, so an empty root
+// must never get that far: an explicit -root "" is a usage error.
+func TestRootDefault(t *testing.T) {
+	parse := func(args ...string) (setup.Options, error) {
+		flags := flag.NewFlagSet("t", flag.ContinueOnError)
+		flags.SetOutput(io.Discard)
+		var a answers
+		a.register(flags)
+		if err := flags.Parse(args); err != nil {
+			t.Fatal(err)
+		}
+		return a.options()
+	}
+	o, err := parse("-mgmt", "vtnet0")
+	if err != nil || o.Root != "/" {
+		t.Fatalf("default root %q, %v", o.Root, err)
+	}
+	if _, err := parse("-root", "", "-mgmt", "vtnet0"); err == nil {
+		t.Fatal(`-root "" accepted`)
+	}
+	r := runWith(t, env{prober: fakeProber{f: hostFacts()}}, "check", "-root", "", "-mgmt", "vtnet0")
+	if r.code != exitUsage || !strings.Contains(r.stderr, "root must not be empty") {
+		t.Fatalf("%+v", r)
 	}
 }

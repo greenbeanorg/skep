@@ -2,7 +2,9 @@ package setup
 
 import (
 	"context"
+	"errors"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 )
@@ -86,4 +88,54 @@ func TestBridgeOf(t *testing.T) {
 	if _, ok := f.BridgeOf("vtnet2"); ok {
 		t.Fatal("vtnet2 is in no bridge")
 	}
+}
+
+// TestReadBridges: on FreeBSD 15.1 "ifconfig -g bridge" exits 0 with no
+// output when there is no bridge (smith, 2026-11-23), so any error from it
+// fails the probe, as a failed "ifconfig BRIDGE" does.
+func TestReadBridges(t *testing.T) {
+	type reply struct {
+		out string
+		err error
+	}
+	fake := func(replies map[string]reply) commandOutput {
+		return func(_ context.Context, name string, args ...string) (string, error) {
+			if name != cmdIfconfig {
+				t.Fatalf("ran %s", name)
+			}
+			r, ok := replies[strings.Join(args, " ")]
+			if !ok {
+				t.Fatalf("unexpected ifconfig %v", args)
+			}
+			return r.out, r.err
+		}
+	}
+	exit1 := errors.New("exit status 1")
+	t.Run("none", func(t *testing.T) {
+		b, err := readBridges(context.Background(), fake(map[string]reply{"-g bridge": {}}))
+		if err != nil || b == nil || len(b) != 0 {
+			t.Fatalf("%v %v", b, err)
+		}
+	})
+	t.Run("two", func(t *testing.T) {
+		b, err := readBridges(context.Background(), fake(map[string]reply{
+			"-g bridge": {out: "bridge0\nbridge9\n"},
+			"bridge0":   {out: "\tbridge flags=1<VLANFILTER>\n\tmember: vtnet1 flags=143<LEARNING>\n"},
+			"bridge9":   {out: "\tbridge flags=0<>\n"},
+		}))
+		if err != nil || !reflect.DeepEqual(b, map[string]Bridge{"bridge0": {Members: []string{"vtnet1"}, VLANFilter: true}, "bridge9": {}}) {
+			t.Fatalf("%+v %v", b, err)
+		}
+	})
+	t.Run("group listing fails", func(t *testing.T) {
+		if _, err := readBridges(context.Background(), fake(map[string]reply{"-g bridge": {err: exit1}})); err == nil || !strings.Contains(err.Error(), "ifconfig -g bridge") {
+			t.Fatalf("err %v", err)
+		}
+	})
+	t.Run("one bridge fails", func(t *testing.T) {
+		_, err := readBridges(context.Background(), fake(map[string]reply{"-g bridge": {out: "bridge0 bridge9"}, "bridge0": {}, "bridge9": {err: exit1}}))
+		if err == nil || !strings.Contains(err.Error(), "ifconfig bridge9") {
+			t.Fatalf("err %v", err)
+		}
+	})
 }

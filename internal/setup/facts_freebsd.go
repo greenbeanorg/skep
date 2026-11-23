@@ -50,18 +50,8 @@ func (HostProber) Probe(ctx context.Context) (Facts, error) {
 		}
 		f.Interfaces[n] = parseIfconfigInet(out)
 	}
-	// Bridges as they are now. "ifconfig -g bridge" fails when there is
-	// none on some releases; that is no bridge, not an error. A bridge
-	// that cannot be read is an error: setup must not judge it as empty.
-	f.Bridges = map[string]Bridge{}
-	if out, err := output(ctx, cmdIfconfig, "-g", "bridge"); err == nil {
-		for _, n := range strings.Fields(out) {
-			bo, err := output(ctx, cmdIfconfig, n)
-			if err != nil {
-				return f, fmt.Errorf("ifconfig %s: %w", n, err)
-			}
-			f.Bridges[n] = parseIfconfigBridge(bo)
-		}
+	if f.Bridges, err = readBridges(ctx, output); err != nil {
+		return f, err
 	}
 	// No ZFS (a UFS host without the module) is not an error.
 	if out, err := output(ctx, cmdZpool, "list", "-H", "-o", "name,health"); err == nil {
