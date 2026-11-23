@@ -1,0 +1,13 @@
+delete jail succeeded None
+delete template succeeded None
+containers 0 templates 0
+want=3740c603b03b399655048fc48ac85140fd4b48f4fe29afd450911b196b751fed got=3740c603b03b399655048fc48ac85140fd4b48f4fe29afd450911b196b751fed
+-rw-------  1 root wheel 239 Nov 22 18:40 /usr/local/etc/skep/agent.json
+   JID  IP Address      Hostname                      Path
+skep_agent is running as pid 15115 (supervisor pid 15113).
+vtnet1: flags=1008802<BROADCAST,SIMPLEX,MULTICAST,LOWER_UP> metric 0 mtu 1500
+vtnet0 vtnet1 lo0
+zroot/skep
+zroot/skep/jail
+zroot/skep/templates
+zroot/skep/vm

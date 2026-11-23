@@ -1,0 +1,10 @@
+{"step": "agent.json sha256 before", "sha": "3740c603b03b399655048fc48ac85140fd4b48f4fe29afd450911b196b751fed", "matches": true}
+{"step": "bridge1", "rc": 0, "out": ["bridge1: flags=1008843<UP,BROADCAST,RUNNING,SIMPLEX,MULTICAST,LOWER_UP> metric 0 mtu 1500", "\toptions=10<VLAN_HWTAGGING>", "\tether 58:9c:fc:10:e8:9f", "\tid 00:00:00:00:00:00 priority 32768 hellotime 2 fwddelay 15", "\tmaxage 20 holdcnt 6 proto rstp maxaddr 2000 timeout 1200", "\troot id 00:00:00:00:00:00 priority 32768 ifcost 0 port 0", "\tbridge flags=1<VLANFILTER> defuntagged=1", "\tmember: vtnet1 flags=143<LEARNING,DISCOVER,AUTOEDGE,AUTOPTP>", "\t        port 2 priority 128 path cost 2000 vlan protocol 802.1q untagged 1", "\tgroups: bridge", "\tnd6 options=9<PERFORMNUD,IFDISABLED>"]}
+{"step": "agent.json edited", "rc": 0, "out": "11:    \"bridges\": [\"bridge1\"],"}
+{"step": "agent restart", "out": ["Stopping skep_agent.", "Waiting for PIDS: 56325.", "Starting skep_agent."]}
+{"step": "cleanup"}
+{"step": "agent.json restored", "sha": "3740c603b03b399655048fc48ac85140fd4b48f4fe29afd450911b196b751fed", "matches": true}
+{"step": "agent restart", "out": ["Stopping skep_agent.", "Waiting for PIDS: 56685.", "Starting skep_agent."]}
+{"step": "bridge1 destroy", "rc": 0}
+{"step": "end", "vtnet1": "vtnet1: flags=1008802<BROADCAST,SIMPLEX,MULTICAST,LOWER_UP> metric 0 mtu 1500", "ifaces": "vtnet0 vtnet1 lo0", "jls": "", "datasets": ["zroot/skep", "zroot/skep/jail", "zroot/skep/templates", "zroot/skep/vm"], "runfiles": "", "schg": "", "conf_sha": "3740c603b03b399655048fc48ac85140fd4b48f4fe29afd450911b196b751fed", "bak": "ls: /usr/local/etc/skep/agent.json.p57bak: No such file or directory", "agent": ["skep-agent 0.1.0 (commit eae2ab3, built 2026-11-23T12:23:10Z, go1.27.4 freebsd/amd64)", "skep_agent is running as pid 56786 (supervisor pid 56784).", "skep_api is running as pid 56399 (supervisor pid 56397)."]}
+template create: HTTP 401 {"error": {"code": "unauthenticated", "message": "authentication is required", "request_id": "6dbb11f8c935d06d3b6e16f7"}}

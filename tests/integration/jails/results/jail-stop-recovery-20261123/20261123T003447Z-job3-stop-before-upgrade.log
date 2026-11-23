@@ -1,0 +1,7 @@
+stop succeeded None
+stopped stopped [None]
+pkgadd-rc=0
+  agent socket: answers as 0.1.0+8fb036f
+  health: ok
+upgraded to 0.1.0+8fb036f; backups in /var/db/skep/backup/0.1.0+6a93dd2-20261123T003519Z
+skep-agent 0.1.0 (commit 8fb036f, built 2026-11-23T00:32:22Z, go1.27.4 freebsd/amd64)

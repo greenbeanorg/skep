@@ -1,0 +1,25 @@
+rc.shutdown.local: sleep 30
+before stop: {"state": "running", "desired_state": "running", "jid": 2, "state_detail": null} host_interface= ['epair0a']
+stop submitted 202 a253ad75-e0b9-4d55-b1b3-1a09de4b257e
+after 0.1s: epairs gone, jail -r pid 13405, jail still in jls
+kill -9 agent 12417 and jail -r 13405
+jls:
+skep-5ba2883c-6259-45d5-a6b2-ab531a8eff0e
+epairs:
+end
+
+agent back: 13473 /usr/local/sbin/skep-agent -data-dir /var/db/skep
+after restart: {"state": "running", "desired_state": "stopped", "jid": 2, "state_detail": null} host_interface= ['epair0a']
+jls:
+skep-5ba2883c-6259-45d5-a6b2-ab531a8eff0e
+epairs:
+bridge1:
+	member: vtnet1 flags=143<LEARNING,DISCOVER,AUTOEDGE,AUTOPTP>
+log:
+Nov 22 19:34:27 langrishe skep-api[11605]: {"time":"2026-11-22T19:34:27.322847375-05:00","level":"INFO","msg":"http request","method":"GET","path":"/api/v1/containers/5ba2883c-6259-45d5-a6b2-ab531a8eff0e","status":200,"bytes":658,"duration":2427153,"remote":"10.79.20.80:59966","request_id":"3cd733493b66b14a7e9a4291"}
+Nov 22 19:34:27 langrishe skep-agent[12416]: {"time":"2026-11-22T19:34:27.32861039-05:00","level":"INFO","msg":"task accepted","task_id":"a253ad75-e0b9-4d55-b1b3-1a09de4b257e","type":"container.stop","actor_id":"9f3f544d-959d-44df-8e5f-ee4fdd30b6ca","resource_type":"container","resource_id":"5ba2883c-6259-45d5-a6b2-ab531a8eff0e"
+Nov 22 19:34:27 langrishe skep-api[11605]: {"time":"2026-11-22T19:34:27.328999174-05:00","level":"INFO","msg":"http request","method":"POST","path":"/api/v1/containers/5ba2883c-6259-45d5-a6b2-ab531a8eff0e/actions","status":202,"bytes":388,"duration":3557052,"remote":"10.79.20.80:59970","request_id":"c24367f4b15a306337ff5a62"}
+Nov 22 19:34:27 langrishe skep-agent[12416]: {"time":"2026-11-22T19:34:27.364627542-05:00","level":"INFO","msg":"hostops: destroyed the jail's epairs before removing it","event":"jail_interfaces_destroyed","container_id":"5ba2883c-6259-45d5-a6b2-ab531a8eff0e","interfaces":["epair0a"]}
+Nov 22 19:34:32 langrishe skep-agent[12416]: {"time":"2026-11-22T19:34:32.813244484-05:00","level":"WARN","msg":"task interrupted by agent restart","task_id":"a253ad75-e0b9-4d55-b1b3-1a09de4b257e","type":"container.stop","resource_type":"container","resource_id":"5ba2883c-6259-45d5-a6b2-ab531a8eff0e"}
+Nov 22 19:34:36 langrishe skep-api[11605]: {"time":"2026-11-22T19:34:36.995224915-05:00","level":"INFO","msg":"http request","method":"GET","path":"/api/v1/containers/5ba2883c-6259-45d5-a6b2-ab531a8eff0e","status":200,"bytes":658,"duration":10107042,"remote":"10.79.20.80:38524","request_id":"b49b47a1cc900074bfccfc42"}
+

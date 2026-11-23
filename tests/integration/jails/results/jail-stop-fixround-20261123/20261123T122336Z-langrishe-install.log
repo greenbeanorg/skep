@@ -1,0 +1,31 @@
+## before
+3740c603b03b399655048fc48ac85140fd4b48f4fe29afd450911b196b751fed
+-rw-------  1 root wheel uarch 239 Nov 22 18:40 /usr/local/etc/skep/agent.json
+vtnet0 vtnet1 lo0
+vtnet1: flags=1008802<BROADCAST,SIMPLEX,MULTICAST,LOWER_UP> metric 0 mtu 1500
+   JID  IP Address      Hostname                      Path
+zroot/skep
+zroot/skep/jail
+zroot/skep/templates
+zroot/skep/vm
+if_epair loaded
+## install
+Installing skep-0.1.0...
+package skep is already installed, forced install
+Extracting skep-0.1.0: .......... done
+add-rc=0
+  installed: skep-agent, skep-api and skep-setup are 0.1.0+eae2ab3
+  service skep_api stop
+  skep-agent db backup: /var/db/skep/backup/0.1.0+90270cf-20261123T122337Z/agent.db sha256 05fcb231fc45637e6d13cee5ba4cb75c565e941d7cf9577f2025fd49354d32d6
+  skep-agent db backup: removed the old backup /var/db/skep/backup/0.1.0+8fb036f-20261123T021444Z
+  skep-api db backup: /var/db/skep/backup/0.1.0+90270cf-20261123T122337Z/api.db sha256 4b75aa8953e20a178717e0f7e304d0ba1183ab3343ac03cdb537be7f49dfb862
+  service skep_agent stop (from here on, Ctrl-C does not interrupt the upgrade)
+  skep_agent pid 56327 runs /usr/local/sbin/skep-agent at 0.1.0+eae2ab3
+  skep_api pid 56399 runs /usr/local/sbin/skep-api at 0.1.0+eae2ab3
+  agent socket: answers as 0.1.0+eae2ab3
+  health: ok
+upgraded to 0.1.0+eae2ab3; backups in /var/db/skep/backup/0.1.0+90270cf-20261123T122337Z
+upgrade-rc=0
+skep-agent 0.1.0 (commit eae2ab3, built 2026-11-23T12:23:10Z, go1.27.4 freebsd/amd64)
+skep_agent is running as pid 56327 (supervisor pid 56325).
+skep_api is running as pid 56399 (supervisor pid 56397).
