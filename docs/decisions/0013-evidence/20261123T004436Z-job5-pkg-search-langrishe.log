@@ -1,0 +1,77 @@
+15.1-RELEASE-p7
+15.1-RELEASE-p7
+ABI = "FreeBSD:15:amd64";
+ALTABI = "freebsd:15:x86:64";
+    url             : "pkg+https://pkg.FreeBSD.org/FreeBSD:15:amd64/quarterly",
+    url             : "pkg+https://pkg.FreeBSD.org/FreeBSD:15:amd64/kmods_quarterly_1",
+## corosync
+corosync2|2.4.6_2|net/corosync2|FreeBSD-ports|Corosync Cluster Engine
+corosync3|3.1.10|net/corosync3|FreeBSD-ports|Corosync Cluster Engine
+## pacemaker
+pacemaker2|2.1.11|net/pacemaker2|FreeBSD-ports|Scalable High-Availability cluster resource manager
+## libqb
+libqb|2.0.10|devel/libqb|FreeBSD-ports|High performance logging, tracing, IPC, and polling library
+## kronosnet
+kronosnet|1.26_2|devel/kronosnet|FreeBSD-ports|Network abstraction layer designed for high availability
+## knet
+darknet|4.p_4,1|misc/darknet|FreeBSD-ports|Open source neural networks in C
+knetwalk|26.08.3|games/knetwalk|FreeBSD-ports|Network Construction game
+## crmsh
+crmsh|4.6.0_6|net-mgmt/crmsh|FreeBSD-ports|Command-line interface for High-Availability cluster management
+## pcs
+appcsxcad|0.2.3_2|cad/appcsxcad|FreeBSD-ports|Minimal GUI Application using the QCSXCAD library
+kodi-addon-game.libretro.pcsx-rearmed|25.0.0.72.20260330|games/kodi-addon-game.libretro.pcsx-rearmed|FreeBSD-ports|Kodi game addon for Sony - PlayStation (PCSX ReARMed)
+libretro-pcsx2|0.20201030_6|emulators/libretro-pcsx2|FreeBSD-ports|Standalone port of pcsx2 to libretro
+libretro-pcsx_rearmed|0.20231025|games/libretro-pcsx_rearmed|FreeBSD-ports|Fork of PCSX with ARM optimizations
+## sanlock
+## etcd
+coreos-etcd|2.3.8_55|devel/etcd|FreeBSD-ports|Highly-available key value store and service discovery
+coreos-etcd34|3.4.45_4|devel/etcd34|FreeBSD-ports|Highly-available key value store and service discovery
+coreos-etcd35|3.5.28_10|devel/etcd35|FreeBSD-ports|Highly-available key value store and service discovery
+coreos-etcd36|3.6.14_3|devel/etcd36|FreeBSD-ports|Highly-available key value store and service discovery
+## consul
+consul|2.0.4_3|sysutils/consul|FreeBSD-ports|Service discovery and configuration made easy
+consul-alerts|0.6.0_47|sysutils/consul-alerts|FreeBSD-ports|Simple daemon to send notifications based on Consul health checks
+consul-replicate|0.4.0_47|sysutils/consul-replicate|FreeBSD-ports|Consul cross-DC KV replication daemon
+consul-template|0.43.0_3|textproc/consul-template|FreeBSD-ports|Generic template rendering and notifications with Consul
+## nomad
+nomad|1.9.6_15|sysutils/nomad|FreeBSD-ports|Cluster manager and scheduler
+nomad-driver-podman|0.6.4_13|sysutils/nomad-driver-podman|FreeBSD-ports|Nomad driver to support podman
+nomad-pot-driver|0.10.0_24|sysutils/nomad-pot-driver|FreeBSD-ports|Nomad driver to support pot jails
+nomadnet|0.8.0_1|net-p2p/nomadnet|FreeBSD-ports|Off-grid, resilient mesh communication
+## dqlite
+## raft
+aircraft-datcom|0.0.20120723_7|science/aircraft-datcom|FreeBSD-ports|Modified USAF Aircraft Stability and Control Data Compendium
+craft|1.0_10|games/craft|FreeBSD-ports|Simple Minecraft clone written in C using modern OpenGL
+crafty|25.2_1|games/crafty|FreeBSD-ports|Chess program for playing and analyzing games
+flightgear-aircraft|20260901|games/flightgear-aircraft|FreeBSD-ports|Selection of additional aircraft for the FlightGear flight simulator
+## rqlite
+rqlite|10.3.6_3|databases/rqlite|FreeBSD-ports|Lightweight, distributed relational database built on SQLite
+## garage
+coregarage|5.0.1|deskutils/coregarage|FreeBSD-ports|Settings manager for C Suite
+garage|2.4.1|www/garage|FreeBSD-ports|Open-source distributed storage service
+## ucarp
+ucarp|1.5.2.20171201|net/ucarp|FreeBSD-ports|Userlevel Common Address Redundancy Protocol
+## carp
+gpu-firmware-amd-kmod-yellow-carp|20260519.1501000|graphics/gpu-firmware-amd-kmod|FreeBSD-ports|Firmware modules for yellow_carp AMD GPUs
+rubygem-redcarpet|3.6.1|textproc/rubygem-redcarpet|FreeBSD-ports|Fast, safe and extensible Markdown to (X)HTML parser
+ucarp|1.5.2.20171201|net/ucarp|FreeBSD-ports|Userlevel Common Address Redundancy Protocol
+gpu-firmware-amd-kmod-yellow-carp|20260519.1501000|graphics/gpu-firmware-amd-kmod|FreeBSD-ports-kmods|Firmware modules for yellow_carp AMD GPUs
+## keepalived
+## haproxy
+haproxy|3.4.4|net/haproxy|FreeBSD-ports|Reliable, high performance TCP/HTTP load balancer
+haproxy-devel|3.3.d10|net/haproxy-devel|FreeBSD-ports|Reliable, high performance TCP/HTTP load balancer
+haproxy-lua|3.4.4|net/haproxy|FreeBSD-ports|Reliable, high performance TCP/HTTP load balancer
+haproxy-wolfssl|3.4.4|net/haproxy|FreeBSD-ports|Reliable, high performance TCP/HTTP load balancer
+## search raft
+p5-Net-Frame-Simple-1.09       Base framework for frame crafting
+p5-Net-Frame-1.21              Base framework for frame crafting
+rubygem-crass-1.0.7            CSS parser based on the CSS Syntax Level 3 draft
+nemesis-1.8.5_2,1              Command-line network packet crafting and injection utility
+rfcdiff-1.33_1                 Compare two versions of an Internet Draft and produce a diff
+openvsp-3.53.1                 Create a 3D model of an aircraft defined by engineering parameters
+flightgear-data-2024.1.7       FlightGear scenery, textures, and aircraft models
+b612-1.008                     Highly legible font family for aircraft cockpit screens
+moonlander-1.0_14              Land a spacecraft on the moon
+py312-ldns-1.9.2               Library for programs conforming to DNS RFCs and drafts
+## search quorum

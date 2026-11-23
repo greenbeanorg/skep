@@ -1,0 +1,20 @@
+## corosync3 deps:
+
+## pacemaker2 deps:
+
+## kronosnet deps:
+
+## libqb deps:
+
+## crmsh deps:
+
+## sbd
+## fence-agents
+fence-agents|4.12.1_1|net-mgmt/fence-agents
+## resource-agents
+resource-agents|4.13.0_2|net-mgmt/resource-agents
+## booth
+## watchdog
+/dev/fido
+/usr/share/man/man8/watchdogd.8.gz
+sysctl: unknown oid 'debug.watchdog'
