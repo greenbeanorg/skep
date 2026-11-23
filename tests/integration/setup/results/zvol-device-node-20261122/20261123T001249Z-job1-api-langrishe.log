@@ -1,0 +1,87 @@
+19:12:49 50 creates
+19:13:56 20 disk adds
+19:14:19 GPT VM
+19:14:22 20 clones
+19:14:37 20 rollbacks
+19:15:00 nodes
+19:15:01 start + force-stop every VM
+{
+ "host": "langrishe",
+ "pool": "zroot",
+ "paths": {
+  "create": {
+   "tasks": 51,
+   "failed": 0,
+   "repaired": 41,
+   "left_to_start": 0
+  },
+  "disk_add": {
+   "tasks": 20,
+   "failed": 0,
+   "repaired": 12,
+   "left_to_start": 0
+  },
+  "clone": {
+   "tasks": 20,
+   "failed": 0,
+   "repaired": 4,
+   "left_to_start": 0
+  },
+  "rollback": {
+   "tasks": 20,
+   "failed": 0,
+   "repaired": 0,
+   "left_to_start": 0
+  },
+  "start": {
+   "tasks": 71,
+   "failed": 0,
+   "repaired": 0,
+   "left_to_start": 0,
+   "repaired_agent_log": 0
+  }
+ },
+ "errors": [],
+ "gpt": {
+  "dataset": "zroot/skep/vm/b94982d7-20b6-4c12-bd33-a5662954a3b3/disk0",
+  "image_sha256": "82f82ed0cf4ae9f40ee0ed037ca720c6ff673220e132a2cba8a21864c86aa83e",
+  "disk_sha256": "82f82ed0cf4ae9f40ee0ed037ca720c6ff673220e132a2cba8a21864c86aa83e",
+  "match": true
+ },
+ "gpt_check_after_clones": {
+  "p_nodes": 0,
+  "conftxt_zvol_lines": 0
+ },
+ "rollback_sha_matches_image": 20,
+ "gpt_check_after_rollbacks": {
+  "p_nodes": 0,
+  "conftxt_zvol_lines": 0
+ },
+ "nodes_before_start": {
+  "volumes": 91,
+  "missing": [],
+  "volmode_not_dev": []
+ },
+ "started_and_running": 71,
+ "vm_count": 71,
+ "start_log_errors": [],
+ "create_seconds": {
+  "min": 0.103,
+  "median": 1.161,
+  "max": 1.222,
+  "with_repair_median": 1.166,
+  "without_repair": [
+   0.12,
+   0.11,
+   0.103,
+   0.103,
+   0.12,
+   0.146,
+   0.12,
+   0.116,
+   0.116,
+   0.103
+  ]
+ }
+}
+exit=0

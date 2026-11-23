@@ -1,0 +1,26 @@
+reader pid 2474 alive: yes
+USER     CMD          PID   FD MOUNT      INUM MODE         SZ|DV R/W NAME
+root     dd          2476    3 /dev        169 crw-r-----  zvol/tank/zvolprobe/a5  r  /dev/zvol/tank/zvolprobe/a5
+set none with node open: rc=0 err=[] volmode=none node=gone reader_alive=no
+set dev with reader still running: rc=0 err=[] node_after_tenths=0 volmode=dev reader_alive=no
+2 s later: node=present reader_alive=no
+reader exit status 124
+dd stderr:
+after reader ended: node=present
+geom: lines with zvol in kern.geom.conftxt: 0
+======== d
+g0 node missing after create; repairing first
+toggle tank/zvolprobe/g0 none_rc=0  node_under_none=gone dev_rc=0  node_after_tenths=0 volmode=dev
+67108864 bytes transferred in 0.094075 secs (713354767 bytes/sec)
+sha256 image 82f82ed0cf4ae9f40ee0ed037ca720c6ff673220e132a2cba8a21864c86aa83e zvol 82f82ed0cf4ae9f40ee0ed037ca720c6ff673220e132a2cba8a21864c86aa83e
+before the repair:
+crw-r-----  1 root operator 0xd6 Nov 22 18:26 g0
+geom: lines with zvol in kern.geom.conftxt: 0
+toggle tank/zvolprobe/g0 none_rc=0  node_under_none=gone dev_rc=0  node_after_tenths=0 volmode=dev
+after the repair:
+crw-r-----  1 root operator 0xd6 Nov 22 18:26 g0
+RESULT d: no /dev/zvol/tank/zvolprobe/g0p1
+geom: lines with zvol in kern.geom.conftxt: 0
+kern.geom.conftxt lines naming g0: 0
+gpart on it (expect nothing):
+gpart: No such geom: zvol/tank/zvolprobe/g0.

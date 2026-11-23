@@ -1,0 +1,80 @@
+=== langrishe
+fd574992f98b7711b768422c905e276d0a92ff4758fabc7bd3ed4ac12d3c3729
+a27b0c57033768f0d3a4a53e692b959fc985d70c28c3fc539896b91b84d1bdd9
+Installing skep-0.1.0...
+skep: created the skep group and user (UID and GID 409, no login shell, no home).
+Extracting skep-0.1.0: .......... done
+uid=409(skep) gid=409(skep) groups=409(skep)
+fd574992f98b7711b768422c905e276d0a92ff4758fabc7bd3ed4ac12d3c3729
+skep-setup apply, root /
+  add      /boot/loader.conf                  vmm_load="YES"
+                                                -> sysrc -f /boot/loader.conf vmm_load="YES"
+                                                bhyve; takes effect at the next boot (setup never reboots or runs kldload; now: kldload vmm)
+  add      /boot/loader.conf                  nmdm_load="YES"
+                                                -> sysrc -f /boot/loader.conf nmdm_load="YES"
+                                                VM serial consoles; takes effect at the next boot (now: kldload nmdm)
+  warn     /boot/loader.conf                  kern.racct.enable
+                                                left off (--no-racct): jail limits other than disk_quota are refused without RACCT
+  add      /etc/rc.conf                       kld_list+="if_epair netgraph ng_socket ng_ether ng_bpf"
+                                                -> sysrc kld_list+="if_epair netgraph ng_socket ng_ether ng_bpf"
+                                                appended; nothing removed or reordered; loaded at the next boot (now: kldload if_epair netgraph ng_socket ng_ether ng_bpf)
+  manual   network                            no guest bridge
+                                                guests can have no NIC until a bridge is allow-listed (--bridge, or --create-bridge with --uplink)
+  add      /etc/rc.conf                       skep_agent_enable="YES"
+                                                -> sysrc skep_agent_enable="YES"
+  add      /etc/rc.conf                       skep_api_enable="YES"
+                                                -> sysrc skep_api_enable="YES"
+  add      config                             /usr/local/etc/skep/agent.json
+                                                -> write /usr/local/etc/skep/agent.json (0600 root:wheel)
+                                                the agent's allow-lists
+  add      config                             /usr/local/etc/skep/api.json
+                                                -> write /usr/local/etc/skep/api.json (0640 root:skep)
+                                                listen address 10.79.20.82:8443
+  add      storage                            /var/db/skep/media
+                                                -> mkdir /var/db/skep/media (0700 root:wheel)
+                                                install media; Skep only reads it
+  manual   packages                           edk2-bhyve
+                                                UEFI firmware for VMs is not installed; jails do not need it
+                                                $ pkg install edk2-bhyve
+  add      services                           start skep_agent
+                                                -> service skep_agent start
+  add      services                           start skep_api
+                                                -> service skep_api start
+  add      api                                first administrator admin
+                                                -> skep-api admin create --username admin (as the skep user, once skep_api has created api.db; asks for the password, twice, without echo)
+                                                no API database yet; never a password in a flag, a file, or the journal
+  7 ok, 11 to add, 1 warnings, 0 conflicts, 2 for you, 0 refused
+  sysrc -f /boot/loader.conf vmm_load="YES"
+  sysrc -f /boot/loader.conf nmdm_load="YES"
+  sysrc kld_list+="if_epair netgraph ng_socket ng_ether ng_bpf"
+  sysrc skep_agent_enable="YES"
+  sysrc skep_api_enable="YES"
+  write /usr/local/etc/skep/agent.json (0600 root:wheel)
+  write /usr/local/etc/skep/api.json (0640 root:skep)
+  mkdir /var/db/skep/media (0700 root:wheel)
+  service skep_agent start
+  service skep_api start
+  skep-api admin create --username admin (as the skep user, once skep_api has created api.db; asks for the password, twice, without echo)
+New password for admin: 
+Repeat the password: 
+Administrator "admin" created (user ID 9f3f544d-959d-44df-8e5f-ee4fdd30b6ca).
+done: 11 changes, journal /var/db/skep/setup/20261122T234048Z (undo with: skep-setup rollback 20261122T234048Z)
+2 item(s) are left to you; see "manual" above.
+Connection to 10.79.20.82 closed.
+
+[ptyrun: exit 0]
+skep_agent is running as pid 3064 (supervisor pid 3062).
+skep_api is running as pid 3172 (supervisor pid 3170).
+kern.geom.label.disk_ident.enable="0"
+kern.geom.label.gptid.enable="0"
+zfs_load="YES"
+hw.vmm.vmx.cap.virtual_interrupt_delivery="0"
+vmm_load="YES"
+nmdm_load="YES"
+skep_agent_enable="YES"
+skep_api_enable="YES"
+source:       self-signed
+public key:   sha256:dafb11e935defc9af5b6987b07421512d60d0200c0ca5ce45b1f3b3187efaf23
+certificate:  sha256:54da5581ffaff190ef0b2708e03f74e33baf0c21ea5bce1295b7ed4f4216e336
+valid until:  2027-12-24T23:40:48Z
+names:        langrishe.greenbean.org, langrishe, localhost, 127.0.0.1, ::1, 10.79.20.82

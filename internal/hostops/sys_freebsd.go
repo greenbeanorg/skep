@@ -7,6 +7,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"strings"
 	"syscall"
@@ -66,6 +67,14 @@ func (kernel) SysctlExists(name string) (bool, error) {
 func (kernel) Exists(path string) bool {
 	_, err := os.Lstat(path)
 	return err == nil
+}
+
+func (kernel) LstatMode(path string) (fs.FileMode, error) {
+	fi, err := os.Lstat(path)
+	if err != nil {
+		return 0, err
+	}
+	return fi.Mode(), nil
 }
 
 func (kernel) Alive(pid int) bool {
