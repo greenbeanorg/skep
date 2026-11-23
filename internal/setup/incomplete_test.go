@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func wantIncomplete(t *testing.T, err error) *Incomplete {
@@ -124,15 +126,20 @@ func TestApplyAdminAloneFailsChangedNothing(t *testing.T) {
 	}
 }
 
-func TestRemoveFirstStopFailsChangedNothing(t *testing.T) {
+// A failed stop may have delivered its signal, so it is uncertain even
+// though the service still runs, and no status is read after it.
+func TestRemoveFailedStopStillRunningIsUncertain(t *testing.T) {
 	e, _, _ := appliedHost(t)
 	e.clock = e.clock.Add(60e9)
 	p := computeRemove(t, RemoveOptions{Root: e.root}, facts(), e.runner)
 	e.runner.fail["skep_api stop"] = errors.New("stop: boom")
 	j, err := e.remover().Apply(context.Background(), p)
-	wantNotIncomplete(t, err)
-	if !strings.Contains(err.Error(), "skep-setup rollback "+j.ID) {
-		t.Fatal(err)
+	inc := wantIncomplete(t, err)
+	if !listed(inc.Uncertain, "skep_api stop") || !strings.Contains(err.Error(), "skep-setup rollback "+j.ID) {
+		t.Fatalf("%+v", inc)
+	}
+	if last := e.runner.calls[len(e.runner.calls)-1]; !strings.Contains(last, "skep_api stop") {
+		t.Fatalf("a command ran after the failed stop: %s", last)
 	}
 }
 
@@ -143,7 +150,7 @@ func TestRemoveFailsAfterEarlierChanges(t *testing.T) {
 	e.runner.fail["skep_agent stop"] = errors.New("stop: boom")
 	j, err := e.remover().Apply(context.Background(), p)
 	inc := wantIncomplete(t, err)
-	if !listed(inc.Changed, "skep_api stop") || !listed(inc.NotChanged, "skep_agent stop") {
+	if !listed(inc.Changed, "skep_api stop") || !listed(inc.Uncertain, "skep_agent stop") {
 		t.Fatalf("%+v", inc)
 	}
 	msg := err.Error()
@@ -243,4 +250,142 @@ func TestRollbackFailsBeforeChangingAnything(t *testing.T) {
 		t.Fatalf("%+v %v", r, err)
 	}
 	wantNotIncomplete(t, RollbackError(r, err))
+}
+
+// writeNew must not touch a path that exists, whatever its content, so a
+// failure on one is no change.
+func TestFailedWriteOnExistingFileChangedNothing(t *testing.T) {
+	root := stockHost(t)
+	a := newApplyEnv(t, root).applier()
+	const rel = "/etc/skep-existing"
+	full := filepath.Join(root, rel)
+	if err := os.WriteFile(full, []byte("theirs"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	act := Action{Type: ActWrite, File: rel, Content: []byte("ours"), Mode: 0o600, Owner: "root", Group: "wheel"}
+	before := a.snapshot(act, "")
+	if err := a.writeNew(act); err == nil {
+		t.Fatal("writeNew replaced an existing file")
+	}
+	b, err := os.ReadFile(full)
+	st, serr := os.Stat(full)
+	if err != nil || serr != nil || string(b) != "theirs" || st.Mode().Perm() != 0o640 {
+		t.Fatalf("existing file changed: %q %v %v %v", b, st.Mode(), err, serr)
+	}
+	if got := a.failedEffect(act, "", before); got != effectNone {
+		t.Fatalf("effect %v", got)
+	}
+}
+
+// mkdir must not set a mode or owner on a directory that exists.
+func TestFailedMkdirOnExistingDirChangedNothing(t *testing.T) {
+	root := stockHost(t)
+	a := newApplyEnv(t, root).applier()
+	const rel = "/etc/skep-existing-dir"
+	full := filepath.Join(root, rel)
+	if err := os.Mkdir(full, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(full, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	act := Action{Type: ActMkdir, File: rel, Mode: 0o700, Owner: "root", Group: "wheel"}
+	before := a.snapshot(act, "")
+	if err := a.mkdir(act); err == nil {
+		t.Fatal("mkdir succeeded on an existing directory")
+	}
+	if st, err := os.Stat(full); err != nil || st.Mode().Perm() != 0o750 {
+		t.Fatalf("existing directory changed: %v %v", st.Mode(), err)
+	}
+	if got := a.failedEffect(act, "", before); got != effectNone {
+		t.Fatalf("effect %v", got)
+	}
+}
+
+func TestMarkInterrupted(t *testing.T) {
+	var killed *interruptedError
+	bg := context.Background()
+	if err := markInterrupted(bg, exec.Command("/bin/sh", "-c", "exit 3").Run()); errors.As(err, &killed) {
+		t.Fatalf("a clean non-zero exit counted as killed: %v", err)
+	}
+	if err := markInterrupted(bg, exec.Command("/bin/sh", "-c", "kill -9 $$").Run()); !errors.As(err, &killed) {
+		t.Fatalf("a killed command not marked: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(bg, 50*time.Millisecond)
+	defer cancel()
+	if err := markInterrupted(ctx, exec.CommandContext(ctx, "/bin/sleep", "5").Run()); !errors.As(err, &killed) {
+		t.Fatalf("a timed-out command not marked: %v", err)
+	}
+	if markInterrupted(bg, nil) != nil {
+		t.Fatal("nil error wrapped")
+	}
+}
+
+// adminOnlyPlan leaves a host where the administrator is the only action.
+func adminOnlyPlan(t *testing.T, e *applyEnv, root string) Plan {
+	t.Helper()
+	o := newBridgeOpts(root)
+	o.Start, o.Admin = true, "andy"
+	// skep_api never writes its pid file, so the first administrator fails.
+	if _, err := e.applier().Apply(context.Background(), compute(t, o, facts())); err == nil {
+		t.Fatal("the first run's administrator should fail")
+	}
+	f := facts()
+	f.Running = map[string]bool{"skep_agent": true, "skep_api": true}
+	p := compute(t, o, f)
+	if len(p.Actions()) != 1 {
+		t.Fatalf("plan %v", actions(p))
+	}
+	// Now skep_api is up, so the next attempt reaches the command.
+	for path, data := range map[string]string{apiPID: "1234\n", "/var/db/skep/api/api.db": ""} {
+		full := hostPath(root, path)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(data), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	e.clock = e.clock.Add(60e9)
+	return p
+}
+
+func TestApplyAdminAloneKilledIsUncertain(t *testing.T) {
+	root := stockHost(t)
+	e := newApplyEnv(t, root)
+	p := adminOnlyPlan(t, e, root)
+	e.runner.fail["admin create"] = exec.Command("/bin/sh", "-c", "kill -9 $$").Run()
+	j, err := e.applier().Apply(context.Background(), p)
+	inc := wantIncomplete(t, err)
+	var ae *AdminCreateError
+	if !errors.As(err, &ae) || !j.Complete || !listed(inc.Uncertain, "admin create") ||
+		!strings.Contains(err.Error(), "May have changed") || !strings.Contains(err.Error(), "Running the same command again is safe") {
+		t.Fatalf("%v complete=%v %+v", err, j.Complete, inc)
+	}
+}
+
+func TestApplyAdminAloneCleanExitStaysPlain(t *testing.T) {
+	root := stockHost(t)
+	e := newApplyEnv(t, root)
+	p := adminOnlyPlan(t, e, root)
+	e.runner.fail["admin create"] = exec.Command("/bin/sh", "-c", "exit 1").Run()
+	_, err := e.applier().Apply(context.Background(), p)
+	wantNotIncomplete(t, err)
+	var ae *AdminCreateError
+	if !errors.As(err, &ae) {
+		t.Fatal(err)
+	}
+}
+
+// A journal that cannot be saved with nothing changed says so and names
+// the rollback.
+func TestSaveFailedNothingChanged(t *testing.T) {
+	root := stockHost(t)
+	a := newApplyEnv(t, root).applier()
+	j := &Journal{ID: "20261123T000000Z", Command: "apply", Entries: []Entry{{Action: Action{Type: ActMkdir, File: "/x"}}}}
+	err := a.saveFailed(j, make([]effect, 1), errors.New("disk full"))
+	wantNotIncomplete(t, err)
+	if !strings.Contains(err.Error(), "nothing was changed") || !strings.Contains(err.Error(), "skep-setup rollback "+j.ID) || !strings.Contains(err.Error(), "disk full") {
+		t.Fatal(err)
+	}
 }

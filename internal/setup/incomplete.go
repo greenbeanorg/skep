@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
-	"time"
 )
 
 // Incomplete is an apply or remove that failed after changing something
@@ -42,9 +42,6 @@ func writeList(b *strings.Builder, label string, items []string) {
 		fmt.Fprintf(b, " %s: %s.", label, strings.Join(items, "; "))
 	}
 }
-
-// statusWait bounds the status read after a failed service stop.
-const statusWait = 10 * time.Second
 
 // effect is what one action did to the host.
 type effect int
@@ -181,9 +178,13 @@ func (a *Applier) changed(act Action, file string, before pathState) bool {
 }
 
 // failedEffect decides what a failed action left. It answers effectNone
-// only on evidence: the file is byte-identical and no parent directory was
-// missing, the directory still does not exist, or the service still runs.
-func (a *Applier) failedEffect(ctx context.Context, act Action, file string, before pathState) effect {
+// only on evidence: the file is byte-identical, or the path was there before
+// (writeNew and mkdir cannot change an existing path: link(2) and mkdir(2)
+// fail on it, and neither sets a mode or owner after that) or is still
+// absent, with no parent directory missing. A failed service stop is always
+// uncertain: the signal may have been delivered even if the service still
+// runs.
+func (a *Applier) failedEffect(act Action, file string, before pathState) effect {
 	switch act.Type {
 	case ActSysrc:
 		if file != "" && before.sumErr == nil {
@@ -199,13 +200,27 @@ func (a *Applier) failedEffect(ctx context.Context, act Action, file string, bef
 		if before.exists || errors.Is(err, fs.ErrNotExist) {
 			return effectNone
 		}
-	case ActServiceStop:
-		// Read-only. Still running means the failed stop changed nothing.
-		sctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), statusWait)
-		defer cancel()
-		if _, err := a.Runner.Run(sctx, Cmd{Name: cmdService, Args: []string{act.Service, "status"}}); err == nil {
-			return effectNone
-		}
 	}
 	return effectUncertain
+}
+
+// interruptedError is a command that was killed or timed out rather than
+// exiting by itself, so what it had done is unknown.
+type interruptedError struct{ err error }
+
+func (e *interruptedError) Error() string { return e.err.Error() }
+func (e *interruptedError) Unwrap() error { return e.err }
+
+// markInterrupted wraps err from a command that ran under ctx when the
+// command did not exit by itself.
+func markInterrupted(ctx context.Context, err error) error {
+	if err == nil {
+		return nil
+	}
+	var ee *exec.ExitError
+	if ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) ||
+		(errors.As(err, &ee) && !ee.Exited()) {
+		return &interruptedError{err}
+	}
+	return err
 }

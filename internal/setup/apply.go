@@ -132,8 +132,12 @@ func (a *Applier) Apply(ctx context.Context, p Plan) (*Journal, error) {
 			// simply retry; the run itself is not left unfinished.
 			e.Error = err.Error()
 			adminErr = &AdminCreateError{Username: act.Username, Journal: j.ID, Err: err}
+			var killed *interruptedError
+			if errors.As(err, &killed) {
+				effects[i] = effectUncertain
+			}
 		case err != nil:
-			effects[i] = a.failedEffect(ctx, act, e.File, before)
+			effects[i] = a.failedEffect(act, e.File, before)
 			return j, a.fail(j, i, effects, err)
 		default:
 			e.Done = true
@@ -211,7 +215,8 @@ func (a *Applier) fail(j *Journal, i int, effects []effect, err error) error {
 // saveFailed is a journal that could not be saved after an action.
 func (a *Applier) saveFailed(j *Journal, effects []effect, err error) error {
 	if !anyEffect(effects) {
-		return err
+		return fmt.Errorf("the journal could not be saved: %w; nothing was changed. Clear this run before running %s again: skep-setup rollback %s",
+			err, j.Command, j.ID)
 	}
 	inc := newIncomplete(j, effects, fmt.Sprintf("the journal could not be saved (%v), so it may not list the last change", err))
 	inc.Err = err
@@ -343,7 +348,7 @@ func (a *Applier) adminCreate(ctx context.Context, username string) error {
 	}
 	_, err = a.Runner.Run(ctx, Cmd{Name: hostPath(a.Root, apiBin), Args: append([]string{"admin", "create", "--username", username}, svc...),
 		Interactive: true, As: cred})
-	return err
+	return markInterrupted(ctx, err)
 }
 
 // skepCredential is the skep account's UID and primary GID from the
@@ -859,7 +864,7 @@ func Rollback(root, id string, now time.Time) (RollbackReport, error) {
 			if err := replaceFile(full, b); err != nil {
 				// The rename may have happened before a failed directory
 				// sync: report what is on disk.
-				if now, herr := fileSHA256(full); herr == nil && now == before {
+				if sum, herr := fileSHA256(full); herr == nil && sum == before {
 					r.Restored = append(r.Restored, path)
 				}
 				return r, err
