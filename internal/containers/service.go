@@ -316,6 +316,10 @@ func (s *Service) clearEpairs(ctx context.Context, c models.Container) models.Co
 // before it serves its socket: a jail outlives the agent (it is
 // persistent), and a restarted agent knows which are running before it
 // answers.
+//
+// When ctx is cancelled (the agent is shutting down) it stops before the
+// next container, leaves that one and the rest as recorded, and returns
+// ctx.Err() (amendment aa, rule 10).
 func (s *Service) ObserveAll(ctx context.Context) error {
 	running, err := s.jails.RunningJails(ctx)
 	if err != nil {
@@ -326,7 +330,12 @@ func (s *Service) ObserveAll(ctx context.Context) error {
 		return err
 	}
 	swept, completed := 0, 0
-	for _, id := range ids {
+	for i, id := range ids {
+		if err := ctx.Err(); err != nil {
+			s.log.Warn("containers: the agent is shutting down; the remaining containers were not observed and stay as recorded",
+				"event", "observe_cancelled", "not_observed", len(ids)-i)
+			return err
+		}
 		c, err := s.store.Get(ctx, id)
 		if err != nil {
 			s.log.Warn("containers: could not read a container", "container_id", id, "error", err)

@@ -317,6 +317,51 @@ func TestObserveAllCompletionCancelledStaysStopping(t *testing.T) {
 	}
 }
 
+// TestObserveAllStopsWhenCancelled: the agent shuts down during the first
+// of two stop completions. The second is never passed to StopJail, both
+// stay stopping, and the cancellation is logged once (amendment aa, rule 10).
+func TestObserveAllStopsWhenCancelled(t *testing.T) {
+	f := newFixture(t)
+	bg := context.Background()
+	a := f.create(models.ContainerCreate{Name: "first", TemplateID: f.minimal})
+	b := f.create(models.ContainerCreate{Name: "second", TemplateID: f.minimal})
+	for _, c := range []models.Container{a, b} {
+		f.succeed(f.svc.Action(bg, c.ID, models.ContainerAction{Action: "start"}, f.sub))
+		f.interruptStop(c.ID, true)
+	}
+	var logs bytes.Buffer
+	f.svc.log = slog.New(slog.NewJSONHandler(&logs, nil))
+	ctx, cancel := context.WithCancel(bg)
+	defer cancel()
+	stops := 0
+	f.fake.Set(func(fk *hostfake.Fake) {
+		fk.OnStop = func() { stops++; cancel() }
+		fk.FailStop = context.Canceled
+	})
+	if err := f.svc.ObserveAll(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("ObserveAll: %v, want context.Canceled", err)
+	}
+	if stops != 1 {
+		t.Fatalf("StopJail ran %d times, want 1", stops)
+	}
+	st := database.NewContainerStore(f.db)
+	for _, c := range []models.Container{a, b} {
+		rec, err := st.Get(bg, c.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if rec.State != models.ContainerStopping || rec.StateDetail != "" {
+			t.Fatalf("%s after the shutdown: %s %q", c.Name, rec.State, rec.StateDetail)
+		}
+	}
+	if n := strings.Count(logs.String(), `"event":"observe_cancelled"`); n != 1 {
+		t.Fatalf("observe_cancelled logged %d times: %s", n, logs.String())
+	}
+	if !strings.Contains(logs.String(), `"not_observed":1`) {
+		t.Fatalf("log: %s", logs.String())
+	}
+}
+
 // TestCompleteStopLogsBeforeWaiting: jail_stop_completing is logged at
 // WARN before StopJail, with the longest wait in seconds (Part 3).
 func TestCompleteStopLogsBeforeWaiting(t *testing.T) {
