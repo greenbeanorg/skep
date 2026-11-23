@@ -13,10 +13,18 @@ hearst was powered off and not contacted. Andy away; run unattended. Logs are in
 90 % and 86 %, none→dev restored every missing node (plain, clone, encrypted), and
 nothing reached GEOM. The agent's hostops code, driven on real ZFS by a harness, ended
 every one of 50 creates, 20 clones, and 20 rollbacks with a node, and refused both
-cases it must refuse. **Through the API nothing ran:** `vm.create` needs the
-`edk2-bhyve` firmware, which this run could not install, so the API loops, the real
-VM start, and the `vm.start` refusal stay **pending FreeBSD validation**. One code fix
-(Part 1b c).
+cases it must refuse. One code fix (Part 1b c).
+
+**Through the API (Part 4, a second unattended run the same night, with
+`edk2-bhyve` installed and vmm loaded): passed on both VMs.** With the late wait
+cut to 1 s, 51 `vm.create`, 20 disk adds, 20 `vm.clone`, and 20 rollbacks of a
+GPT disk all succeeded and all 91 volumes ended with a node; none was left to the
+next start, and starting all 71 VMs found nothing to repair. No `p` node and nothing
+in `kern.geom.conftxt` after the clones or the rollbacks. A real `vm.start` repaired
+a missing node and bhyve ran; `vm.start` of a disk set to `volmode=none` by hand
+failed with `disk_device_missing` and the exact command. One gap: the task's error
+carries code and message only, so `reason: volmode_none` is in the agent's log, not
+in the API (question for Andy, Part 4).
 
 ## Decisions taken unattended
 
@@ -204,6 +212,126 @@ through `CloneVM` (a filesystem clone, then the volume clone) missed its node fa
 often (4/20, 7/20) than a bare `zfs clone` of a zvol in Part 2 (17/20, 20/20); the
 reason was not investigated.
 
+## Part 4: through the API (second run, 2026-11-23 UTC)
+
+A second unattended run, Andy away. The VMs were **not** rolled back: both were
+as Part 3 left them (Skep from 64de929 running, no VMs, `tank` on smith). hearst
+was off and not contacted. Logs and the driver scripts are in
+[zvol-device-node-20261122/](zvol-device-node-20261122/) (files `20261123T*`,
+`zapi.py`, `zloop.py`, `zcleanup.py`).
+
+**Decisions taken unattended (Part 4).**
+
+1. **Same-version reinstall.** The rebuilt package is still 0.1.0, so it went on
+   with `pkg add -f` (no guests existed, so the pre-deinstall script had nothing to
+   warn about), then `skep-setup upgrade -yes` under `timeout -f`. Upgrade exited 3,
+   "health is degraded", because vmm and the netgraph modules were not loaded yet;
+   both services were restarted at 0ec6fec, as checked with `-version` and by the
+   upgrade itself.
+2. **Modules.** Besides vmm and nmdm, the kld_list modules (`if_epair netgraph
+   ng_socket ng_ether ng_bpf`) were kldloaded live, as approved. Nothing persistent.
+3. **Disk adds:** 20 (the first 20 create VMs, one 64 MiB thin disk each, through
+   `PUT /vms/{id}` `add_disks`); the job named no number.
+4. **Start path:** every VM (71 per host) was started once through the API and
+   force-stopped, so that a node left missing by an earlier path would show up there.
+5. **Before each rollback** 1 MiB of random data was written at offset 8 MiB of the
+   GPT disk, and its sha256 compared with the image after the rollback.
+6. **A missing node for the real start.** `zfs rename` there and back kept the node
+   5 times out of 5, so the stopped VM's zvol was destroyed and created again by hand
+   with the properties hostops gives it (`zfs create -s -V 64M -o volblocksize=16K
+   -o volmode=dev -o skep:vm_id=… -o skep:disk_id=…`); its node was missing at the
+   first try. Done on smith only.
+7. **The task error has no details.** Not changed: the `Task.error` schema is
+   `{code, message}`, and changing it is an API contract change.
+
+**Step 1, state.** Both as described: `skep-agent 0.1.0 (commit 64de929)`, both
+services running (`sudo service … status`), `tank` ONLINE on smith, `zroot` on
+langrishe, no VM. vmm was **not** loaded although `/boot/loader.conf` had
+`vmm_load="YES"`: apply wrote it at 18:40, after the 18:11 boot. The tunable
+`hw.vmm.vmx.cap.virtual_interrupt_delivery="0"` was in the kernel environment
+(`kenv` read 0).
+
+**Step 2, the wait.** `deviceLateWait` 5 s → 1 s (`fix(hostops)`, 0ec6fec). `go vet`
+and `go test ./...` passed on merrick (log `20261123T000806Z-job1-go-test.log`). `make
+stage`, `pkg create` on smith (staged sha256 matched `SHA256SUMS.stage`, package
+sha256 `e29e7684…82bd`), installed on both as in decision 1.
+
+**Step 3, what setup and the agent said before.** `skep-setup check -mgmt vtnet0`
+on both:
+
+```
+  manual   packages                           edk2-bhyve
+                                                UEFI firmware for VMs is not installed; jails do not need it
+                                                $ pkg install edk2-bhyve
+```
+
+`check` said **nothing about vmm**: it reads `loader.conf`, which had `vmm_load`, and
+does not look at whether the module is loaded. The agent did: `bhyve.available`
+false, "the vmm kernel module is not loaded … the UEFI firmware (BHYVE_UEFI.fd …",
+`firmware_found` false, capability `bhyve` unavailable. Then `pkg install -y
+edk2-bhyve` (g202508_3) and kldload of vmm, nmdm and the kld_list modules on both.
+**Hard rule 1:** `sysctl hw.vmm.vmx.cap.virtual_interrupt_delivery` read **0** on
+both before any VM start. The agent then reported bhyve available ("vmm is loaded,
+the UEFI firmware is installed, and nmdm is available").
+
+**Step 4, through the API.** VMs with 1 vCPU, 256 MiB, one 64 MiB thin disk, no
+NIC, driven from merrick (`zloop.py`, pinned key). Repairs per path are counted
+from each task's events ("repaired the device node of a disk"; "the device node
+of a disk is missing; the next start …" is a node left to the next start), and at
+start also from the agent's log ("bhyve: repaired a disk's device node before the
+start").
+
+| Path | smith (`tank`): tasks / repaired / left to the next start | langrishe (`zroot`) |
+|---|---|---|
+| `vm.create` (50 + the GPT VM) | 51 / **36** / 0 | 51 / **41** / 0 |
+| disk add (`add_disks`) | 20 / **18** / 0 | 20 / **12** / 0 |
+| `vm.clone` of the GPT VM's snapshot | 20 / **2** / 0 | 20 / **4** / 0 |
+| rollback of the GPT disk | 20 / **0** / 0 | 20 / **0** / 0 |
+| `vm.start` of every VM | 71 / **0** (log: 0) / – | 71 / **0** (log: 0) / – |
+| tasks failed | 0 | 0 |
+| volumes with a node before the starts | **91/91**, all `volmode=dev` | **91/91**, all `volmode=dev` |
+| VMs running after start | **71/71** | **71/71** |
+| create time, with a repair: median / max | 1.161 s / 1.201 s | 1.166 s / 1.222 s |
+| create time, node there at once (15 / 10 creates) | 0.097–0.125 s | 0.103–0.146 s |
+| GPT image on the disk: sha256 equal after the write | yes | yes |
+| rollbacks after which the disk's sha256 equalled the image | 20/20 | 20/20 |
+| after the clones: `p` nodes / `kern.geom.conftxt` lines with `zvol` | 0 / 0 | 0 / 0 |
+| after the rollbacks: the same | 0 / 0 | 0 / 0 |
+
+A create with a repair costs about 1.05 s more than one without: the 1 s late wait
+and one none→dev round. Through the API, creates missed less often (36/51, 41/51)
+than bare `zfs create` in Part 2 (45/50, 43/50), and disk adds on smith more (18/20);
+the reason was not investigated.
+
+**A real `vm.start` repaired a missing node (smith).** VM `zc-50`
+(86a3b481-…), stopped, its zvol made again by hand (decision 6): no node. `vm.start`
+through the API, task `14e333bc-…`, **succeeded** in 1.16 s. The agent's log:
+`hostops: zvol device node repaired … "rounds":1,"duration":34178430` and `bhyve:
+repaired a disk's device node before the start`. Afterwards the node existed,
+`/dev/vmm/skep-86a3b481-…` existed, the VM was observed `running` with pid 11880,
+and `pgrep` showed `11880 bhyve: skep-86a3b481-…`. Force-stopped. (Log
+`*-job1-start-repair-smith.log`.)
+
+**`vm.start` refused a disk at `volmode=none` (smith).** VM `zc-49`
+(e8189ac9-…), stopped; `zfs set volmode=none` on its disk by hand (node gone).
+`vm.start` task `ebd38466-…` **failed**:
+
+```
+"code": "disk_device_missing",
+"message": "tank/skep/vm/e8189ac9-dc92-48ad-8359-b0791e75d9ad/disk0 has volmode=none, so it has no device node; Skep does not change it on its own. An administrator who wants this disk usable again runs: zfs set volmode=dev tank/skep/vm/e8189ac9-dc92-48ad-8359-b0791e75d9ad/disk0"
+```
+
+The agent's log, at WARN: `hostops: zvol device repair refused … "reason":"volmode_none"`.
+After the refusal `volmode` was still `none` and no vmm instance existed; running
+the printed command brought the node back. **Gap:** the task's `error` in the API
+has only `code` and `message` (the `Task.error` schema), so the error's details
+(`reason`, `dataset`, `command`) are not visible through the API; the command is in
+the message, the reason only in the agent's log. Question for Andy: should a task
+error carry the error's details? (An API contract change; not made.)
+
+**Cleanup.** All 71 test VMs on each host deleted through the API (clones first),
+0 failures; `<pool>/skep/vm` empty, no snapshots, no `/dev/vmm`.
+
 ## Fixes made during the validation
 
 1. `toggleVolMode`: a failed `volmode=none` with `volmode=dev` set back is
@@ -211,12 +339,11 @@ reason was not investigated.
 
 ## Not validated
 
-- Through the API (`vm.create`, `vm.clone`, `vm.snapshot.rollback` loops), a real VM
-  started from a disk whose node was missing, and `vm.start` refused with
-  `disk_device_missing` and the command: need `edk2-bhyve` and vmm (backlog, before 0.1).
-- bhyve `Adapter.Start` calling `EnsureDevice` on FreeBSD (unit tests only).
+- The real start repair and the `volmode=none` refusal ran on smith only (the loops
+  ran on both).
 - The miss rate on a file-backed pool (hearst's `skeptest`; hearst was off).
 - What sends SIGTERM to a reader when `volmode=none` is set under it.
+- Through the API, a VM with a NIC (not in scope: the VMs had none).
 
 ## End state
 
@@ -228,3 +355,9 @@ reason was not investigated.
 - **langrishe:** the same on `zroot` (journal `20261122T234048Z`), without the
   `zfs_enable` line (it was already there).
 - No VM, no bridge, no probe dataset on either; `kern.geom.conftxt` has no `zvol` line.
+
+**After Part 4 (both VMs):** skep 0.1.0 from 0ec6fec installed and running (backups
+of both databases from 64de929 under `/var/db/skep/backup/0.1.0+64de929-…`);
+`edk2-bhyve` g202508_3 installed; vmm, nmdm, if_epair, netgraph, ng_socket, ng_ether,
+ng_bpf loaded live (nothing persistent beyond what apply had written); no VM, no
+zvol, no snapshot, no bridge.

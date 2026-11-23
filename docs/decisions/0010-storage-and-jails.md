@@ -2345,7 +2345,7 @@ host-safe specs pinned. Details in section 29 of
 
 - Status: **Proposed**, 2026-11-22. Built (`fix/zvol-device-node`), unit
   tested on merrick; FreeBSD validation on the lab VMs smith and langrishe,
-  2026-11-22 (results in
+  2026-11-22, and through the API on 2026-11-23 UTC (results in
   [zvol-device-node-20261122.md](../../tests/integration/setup/results/zvol-device-node-20261122.md)).
   Andy answered the questions on 2026-11-22 (below). Not to be merged
   until Andy has reviewed the validation results and marked it Accepted.
@@ -2438,14 +2438,33 @@ cannot tell its own interrupted repair from an administrator who set
 rollbacks of a GPT disk, each ending with a node (repairs: 47/45, 4/7,
 0/0, all in one round), no `p1` and nothing in GEOM after the clones and
 rollbacks, and the refusals `vm_not_stopped` and `volmode_none` (with the
-command) leaving the zvol unchanged. **Still owed**, because `vm.create`
-needs the `edk2-bhyve` firmware and a start needs vmm, neither approved
-on the lab VMs for that run: the same loops through the API, a real VM
-started from a disk whose node was missing, and `vm.start` refused with
-`disk_device_missing` for a disk at `volmode=none`. An upstream report
+command) leaving the zvol unchanged.
+
+**Through the API** (2026-11-23 UTC, both VMs, `edk2-bhyve` installed, vmm
+loaded, late wait 1 s): 51 `vm.create`, 20 disk adds, 20 `vm.clone`, and 20
+rollbacks of a GPT disk, VMs without NICs. Every task succeeded and all 91
+volumes ended with a node. Repairs per path, smith / langrishe: create 36 /
+41, disk add 18 / 12, clone 2 / 4, rollback 0 / 0; **left to the next start: 0
+everywhere**, and starting all 71 VMs on each host repaired nothing (71/71
+running). A create took about 1.16 s with a repair and 0.1 s without. No `p`
+node and nothing in `kern.geom.conftxt` after the clones and the rollbacks. On
+smith, a real `vm.start` of a VM whose node was missing repaired it (one round)
+and bhyve ran; `vm.start` of a disk set to `volmode=none` by hand failed with
+`disk_device_missing` and the exact `zfs set volmode=dev …` command, and left
+`volmode` at `none`. The reason `volmode_none` is in the agent's log but not in
+the API: a task's `error` carries only `code` and `message` (open question
+below). Results:
+[zvol-device-node-20261122.md](../../tests/integration/setup/results/zvol-device-node-20261122.md),
+Part 4. An upstream report
 with a Skep-free reproducer is drafted in
 [docs/upstream/openzfs-zvol-volmode-dev-node.md](../upstream/openzfs-zvol-volmode-dev-node.md);
 Andy files it.
+
+**Open question (2026-11-23).** Should a failed task's `error` carry the
+error's `details` (here `dataset`, `reason`, `command`)? Today the
+`Task.error` schema is `{code, message}`; the command is in the message, the
+reason only in the agent's log. Adding it is an API contract change, so it
+was not made.
 
 **Andy's answers** (2026-11-22; the status stays Proposed until Andy has
 reviewed the validation results and marks it Accepted).
