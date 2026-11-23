@@ -223,7 +223,26 @@ type manifest struct {
 	LicenseLogic string            `json:"licenselogic"`
 	Licenses     []string          `json:"licenses"`
 	Categories   []string          `json:"categories"`
+	Deps         map[string]dep    `json:"deps"`
 	Scripts      map[string]string `json:"scripts"`
+}
+
+// dep is one entry of the manifest's deps: pkg installs a missing one from
+// the configured repositories with "pkg install ./file.pkg", and refuses
+// "pkg add" of a file whose dependency it cannot find (see
+// docs/installation/packaging.md).
+type dep struct {
+	Origin  string `json:"origin"`
+	Version string `json:"version"`
+}
+
+// Dependencies of the package. edk2-bhyve is the bhyve UEFI firmware the
+// agent opens to start a VM (ADR 0009); without it no VM can be created.
+// The version is the one in the FreeBSD 15 package repository when the
+// dependency was added; pkg matches a dependency by name and origin, so a
+// newer firmware satisfies it.
+var deps = map[string]dep{
+	"edk2-bhyve": {Origin: "sysutils/edk2", Version: "g202508_3"},
 }
 
 // Manifest returns +MANIFEST for the version, with the scripts embedded.
@@ -246,6 +265,7 @@ func Manifest(repo, version string) ([]byte, error) {
 		LicenseLogic: "single",
 		Licenses:     []string{pkgLicense},
 		Categories:   []string{"sysutils"},
+		Deps:         deps,
 		Scripts:      map[string]string{},
 	}
 	for name, path := range scripts {
