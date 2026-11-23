@@ -30,14 +30,23 @@ the lab VMs.
   least two physical disks for the data pool (a mirror) besides the boot disk, at
   least two NICs (management, guest uplink). 16 GiB RAM or more.
 - Machine B (step 12 only): an AMD CPU with AMD-V and RVI (nested paging).
-- A switch port for the guest uplink that carries VLAN 60 untagged (DHCP for guests)
-  and one tagged test VLAN, plus a second machine on that network for step 10.
+- A switch port for the guest uplink that carries VLAN 60 untagged (DHCP for guests),
+  plus a second machine on that network for step 10. No tagged VLAN is needed: Skep 0.1
+  has no per-NIC VLAN setting, so step 10 only checks that tagged frames are stopped.
 - FreeBSD 15.1-RELEASE amd64 install media; the Skep package for the release being
   checked, built as in [packaging](../../../docs/installation/packaging.md).
 
-Throughout: `A=-mgmt <mgmt-if> -pool tank`, `SK="skepctl"` logged in from the
-workstation with the key pin compared to `skep-api tls fingerprint` on the host
-(never skip the comparison).
+Throughout, `skep-setup` and `skep-api` run **as root on the host** (`skep-api`'s local
+commands then drop to the `skep` account themselves), and `skepctl` runs on the
+workstation. `A="-mgmt <mgmt-if> -pool tank"`, `SK="skepctl"`, logged in with:
+
+```sh
+skep-api tls fingerprint                                     # on the host, as root
+skepctl login --server https://<host>:8443 --username <name> # on the workstation
+```
+
+Compare the key `skepctl` shows with the fingerprint before accepting it (never skip
+the comparison).
 
 ## 1. Record the hardware
 
@@ -64,9 +73,29 @@ skep-setup apply $A --create-bridge bridge0 --uplink <guest-if> -start -admin <n
 shutdown -r now
 ```
 
-Pass: `pkg install` lists `edk2-bhyve` "required by skep"; after the reboot `skep-setup
-check $A` has no `kernel modules` warning, no firmware warning, `vlanfilter` on
-`bridge0`, both services running, health `ok` (`skepctl system`).
+What setup does itself: it writes the `rc.conf` and `loader.conf` lines (including
+`cloned_interfaces`, `ifconfig_<guest-if>` and `ifconfig_bridge0` with `vlanfilter`) and
+`agent.json`, starts the services and creates the administrator. **It never runs
+`ifconfig` and never loads a module.** The plan also prints `ifconfig bridge0 create`,
+`addm` and `vlanfilter up` commands under `manual network`: those are for an administrator
+who wants the bridge before the next boot, from the console. This runbook reboots
+instead, so do not run them.
+
+After the reboot, record the ACLs of the paths the agent's start check covers:
+
+```sh
+getfacl / /usr /usr/local /usr/local/sbin /usr/local/sbin/skep-agent \
+  /usr/local/etc /usr/local/etc/skep /usr/local/etc/skep/agent.json \
+  /var /var/db /var/db/skep /var/db/skep/agent /var/run /var/run/skep
+grep -c 'refusing to start' /var/log/daemon.log     # must be 0
+skepctl system --json | jq -r .health.status        # on the workstation
+```
+
+Pass: `pkg install` lists `edk2-bhyve` "required by skep"; **the agent starts on the fresh
+Auto-ZFS install with no path changed by hand** (no `refusing to start` in `daemon.log`,
+also none collapsed into "last message repeated"), with the `getfacl` output in the
+results file; after the reboot `skep-setup check $A` has no `kernel modules` warning, no
+firmware warning, `vlanfilter` on `bridge0`, both services running, health `ok`.
 
 ## 3. Discovery on real hardware
 
@@ -119,12 +148,21 @@ then in the guest:
 ```sh
 sysctl hw.ncpu kern.smp.cores kern.smp.threads_per_core
 camcontrol devlist; nvmecontrol devlist; ifconfig em0; ifconfig vtnet0
-dd if=/dev/zero of=/root/fill bs=1m count=1024 && sync    # on the nvme disk
+# random data, so that compression cannot hide a bad write
+dd if=/dev/random of=/root/fill bs=1m count=1024 && sync     # on the nvme disk
+sha256 /root/fill
+dd if=/dev/random of=/dev/ada0 bs=1m count=1024 && sync      # the empty ahci-hd disk
+dd if=/dev/ada0 bs=1m count=1024 | sha256
+shutdown -r now
+# after the guest is back, both hashes must be the same as before:
+sha256 /root/fill
+dd if=/dev/ada0 bs=1m count=1024 | sha256
 ```
 
 Pass: the non-thin zvols have `refreservation` equal to their size; the guest sees 4 CPUs
 as 2 cores × 2 threads (pending: "SMT topology in the guest"); `nda0` (nvme) and `ada0`
-(ahci-hd) work beyond boot: install, reboot, 1 GiB written and read back (pending:
+(ahci-hd) work beyond boot: install, reboot, 1 GiB of random data on each with the same
+SHA-256 after a guest reboot (pending:
 "`nvme` and `ahci-hd` beyond a smoke boot"); `em0` (`e1000`) and `vtnet0` both get a
 DHCP address on VLAN 60 and pass traffic (pending: "an `e1000` NIC"). Stop, force-stop
 and restart all work.
@@ -163,11 +201,13 @@ degraded; after `online` and the resilver, `ONLINE` again and health `ok`.
 On the machine's own console (keyboard and screen, or IPMI serial), as root:
 
 ```sh
-skep-api admin create <name2>
+skep-api admin create --username <name2>
+skep-api admin exists --username <name2>; echo $?     # 0: it exists
+skep-api admin delete --username <name2> --yes
 ```
 
-Pass: the password prompt does not echo, a mismatch is refused, the user exists after
-(pending: "password prompt on the system console"). Delete the user afterwards.
+Pass: the password prompt does not echo, a mismatch is refused, `admin exists` exits 0
+before the delete (pending: "password prompt on the system console").
 
 ## 10. Guest ports on a physical uplink: isolation, VLANs, throughput
 
@@ -177,6 +217,8 @@ the same switch.
 ```sh
 # in jail 1: change its MAC, then its IPv4 address; send a VLAN-tagged frame
 # (the spoofing checks of tests/integration/jails, step 10)
+# on the host, while sending: tagged frames must not leave on the uplink
+tcpdump -nei <guest-if> vlan
 # throughput, guest to the second machine, 30 s, 3 runs each:
 iperf3 -c <second-machine> -t 30                       # with the filter (normal)
 ```
@@ -184,18 +226,24 @@ iperf3 -c <second-machine> -t 30                       # with the filter (normal
 For the comparison without the filter, a jail outside Skep on an epair on the same
 bridge (ADR 0011 probe part 2 section 11 method).
 
-Pass: spoofed MAC, spoofed IPv4 and tagged frames do not reach the second machine
-(`tcpdump` there); the guests' own traffic does. Throughput with the filter is recorded
+Pass: spoofed MAC and spoofed IPv4 from a **static-IPv4** jail do not reach the second
+machine (`tcpdump` there; DHCP jails and VMs are not IPv4-pinned, ADR 0011); tagged frames
+do not appear on the uplink (`tcpdump` on the host, so the result does not depend on what
+the switch carries); the guests' own traffic does. Throughput with the filter is recorded
 next to the unfiltered number (VM measurement: about 12 % less); ADR 0011 decision 9 is
 revisited if the loss is much larger.
 
 ## 11. Reboot with guests
 
-Set one VM and one jail to start at boot (desired running), `shutdown -r now`.
+Start one VM and one jail (desired `running`), then `shutdown -r now`. Skep 0.1 has no
+autostart.
 
-Pass: the host comes back; both services run; the guests come back as the docs say
-(or stay stopped as the docs say), with no leftover epairs or taps
-(`ifconfig -l`); `skep-setup check $A` clean.
+Pass, as the [VM](../../../docs/administration/virtual-machines.md) and
+[jail](../../../docs/administration/jails.md) guides document: the host comes back and both
+services run; **neither guest is started**; the VM reads observed `stopped`, desired
+`running`, with drift; the jail is stopped and its `state_detail` says it should be
+running; no leftover epairs or taps (`ifconfig -l`); `skep-setup check $A` reports nothing
+new compared with step 2.
 
 ## 12. AMD-V host (machine B)
 

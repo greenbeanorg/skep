@@ -1,5 +1,8 @@
 # Pre-publication report — 2026-11-23
 
+> **The scan is rerun at the tag commit.** Counts here are as of
+> 2026-11-23 02:50Z.
+
 What would become public if the GitHub repository `greenbeanorg/skep` were
 made public today. Written unattended; no value found by the scans is
 reproduced here (file, commit and kind only). Logs on merrick:
@@ -12,9 +15,11 @@ reproduced here (file, commit and kind only). Logs on merrick:
   (`refs/pull/*/head`, 63 refs, fetched for the scan and removed again):
   GitHub serves those to anyone once the repository is public, even for
   squash-merged and deleted branches. 454 commits.
-- Not covered: GitHub-side data outside git (issues, PR descriptions and
-  comments, Actions logs and artifacts, the wiki). Actions logs in particular
-  contain test output; review them, or delete old runs, before publishing.
+- PR text is covered separately below.
+- Not covered: issue bodies (the token used gets 403 on the issues list),
+  Actions logs and artifacts. The repository has no wiki. Actions logs in
+  particular contain test output; review them, or delete old runs, before
+  publishing.
 
 ## Secret scan
 
@@ -40,6 +45,24 @@ commits (`git grep` per revision):
 | `ssh-ed25519 AAAA…` | `tests/integration/jails/results/step7/ssh-before-start.txt`, `step8/dhcp-jail.txt`, `step10-hearst-run3.txt` | Public host keys of deleted test jails |
 
 Nothing needs removing from history for secrets.
+
+## PR titles, bodies and comments
+
+Dumped with `gh api` on 2026-11-23 and scanned with gitleaks v8.21.2, default
+rules, `--redact`: 67 pull requests (titles and bodies), 14 conversation
+comments, 0 review comments, 0 reviews. **No findings.** Issue bodies could
+not be read (403, above). Log on merrick:
+`/home/aba/skep-test-logs/20261123T205012Z-jobC-pr-text-gitleaks/`.
+
+## The hard-coded integration-test password
+
+`tests/integration/adminprompt/main.go` and `tests/integration/skepctl/main.go`
+hard-code one password. Checked 2026-11-23:
+
+- **smith and langrishe: not in use.** Each has one account, `admin`, and its
+  working password differs from the hard-coded one (compared locally, no
+  value printed or logged).
+- **hearst: not checked, powered off: s7admin, s7oper, s7viewer.**
 
 ## Identities that would become public
 
