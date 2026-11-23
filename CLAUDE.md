@@ -148,7 +148,7 @@ Adjust the layout when implementation shows a better boundary, and record substa
 - Don't substitute Linux functionality for FreeBSD functionality without saying so.
 - Whenever `make test` or `go test` runs, tee the full output to `~/skep-test-logs/<UTC timestamp>-<target>.log` (outside the repo; for example `~/skep-test-logs/20261121T104900Z-make-test.log`), so an intermittent failure keeps its package and test name. Report the log path with the result.
 - Every background or stress process (CPU burners, repeated test binaries, load loops, anything started with `&` or `run_in_background`) must be time-bounded: wrap it in `timeout`, for example `timeout 600 ./stress.sh ...`. Kill it at the end of the step that started it; don't leave it for a later step or session. In `sh` scripts, record each background PID with `$!` at the moment you start it. Never use `$(jobs -p)`: dash runs it in a subshell, which returns nothing, so a later `kill` silently does nothing.
-- Before writing any stop report, run `pgrep -u aba -af 'scratchpad|\.test'` and list anything still running in the report. Expected: nothing.
+- Before writing any stop report, run `pgrep -u aba -af 'scratchpad|\.test|skep-local-ci|until '` and list anything still running in the report. Expected: nothing.
 
 **Docs:** update the README, architecture docs, API docs, install and dev instructions, security docs, and ADRs whenever behavior or architecture changes.
 

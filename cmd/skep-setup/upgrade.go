@@ -51,13 +51,19 @@ func runUpgrade(ctx context.Context, args []string, e env) error {
 	}
 	u := &setup.Upgrader{Root: *root, Runner: e.runner, Prober: e.prober, Agent: agent, Now: e.now, Out: e.stdout,
 		Self: version.Get(), Force: *force, Wait: taskWait, Keep: *keep, Sleep: e.sleep, Inode: e.inode}
-	err := u.Upgrade(ctx)
-	var r *setup.UpgradeRefusal
-	if errors.As(err, &r) {
-		return &exitError{code: exitRefused, msg: err.Error()}
+	return upgradeExit(u.Upgrade(ctx))
+}
+
+// upgradeExit maps upgrade's outcome to an exit: 4 (incomplete) when
+// changes were made and the result could not be verified, 3 for a refusal
+// and for every other failure.
+func upgradeExit(err error) error {
+	if err == nil {
+		return nil
 	}
-	if err != nil {
-		return &exitError{code: exitRefused, msg: err.Error()}
+	var inc *setup.UpgradeIncomplete
+	if errors.As(err, &inc) {
+		return &exitError{code: exitIncomplete, msg: err.Error()}
 	}
-	return nil
+	return &exitError{code: exitRefused, msg: err.Error()}
 }

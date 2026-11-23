@@ -15,6 +15,25 @@ pre-deinstall refusal, which pkg does not enforce** (section 2); the
 script now says so and only warns (ADR 0012, fix-round amendment). The
 reworded scripts are pending FreeBSD validation.
 
+**Dependency on the firmware.** The package depends on `edk2-bhyve`, the
+bhyve UEFI firmware the agent opens to start a VM. How pkg resolves it for
+a local package file (pkg 2.9.2 on langrishe, 2026-11-23, with the
+firmware removed first):
+
+- `pkg install ./skep-0.1.0.pkg` (also `-f` over an installed skep) installs
+  `edk2-bhyve` from the configured FreeBSD-ports repository first, then
+  skep ("edk2-bhyve: g202508_3 [FreeBSD-ports] (required by skep)").
+  **Use this for a local file.**
+- `pkg add ./skep-0.1.0.pkg` does not fetch it: "pkg: Missing dependency
+  'edk2-bhyve'", exit 1, and the installed skep is left as it was. It
+  works once the firmware is installed (`pkg install edk2-bhyve`).
+- From a repository (`pkg install skep`, Decision 8, not built yet) pkg
+  resolves the dependency like any other.
+
+A host installed by hand (binaries copied, as on hearst) has no package and
+so no dependency; `skep-setup check` and `plan` still warn when the
+firmware files are missing.
+
 ## 1. Stage (development machine)
 
 ```sh
@@ -29,7 +48,7 @@ directory it did not make):
 | Path | What |
 |---|---|
 | `dist/pkg/stage/usr/local/...` | The package's files |
-| `dist/pkg/+MANIFEST` | Name `skep`, origin `sysutils/skep`, ABI `FreeBSD:15:amd64` (set here, not detected: Go stamps a FreeBSD 12.3 note into its binaries), prefix `/usr/local`, license `BSD2CLAUSE`, and the two package scripts |
+| `dist/pkg/+MANIFEST` | Name `skep`, origin `sysutils/skep`, ABI `FreeBSD:15:amd64` (set here, not detected: Go stamps a FreeBSD 12.3 note into its binaries), prefix `/usr/local`, license `BSD2CLAUSE`, one dependency (`edk2-bhyve`, origin `sysutils/edk2`; see below), and the two package scripts |
 | `dist/pkg/plist` | Every file with its owner and mode, `@(root,wheel,0555) sbin/skep-agent` |
 | `dist/pkg/SHA256SUMS.stage` | SHA-256 of every staged file, to compare on the VM |
 
@@ -101,7 +120,7 @@ pkg info -R -F out/skep-0.1.0.pkg | grep -A3 scripts
 
 On a VM restored from its clean snapshot:
 
-1. `pkg add out/skep-0.1.0.pkg`: the account appears as `skep:409:409`
+1. `pkg install ./out/skep-0.1.0.pkg` (pulls in `edk2-bhyve`; `pkg add` needs it installed first): the account appears as `skep:409:409`
    (`id skep`), nothing in `rc.conf` changed (`sha256 /etc/rc.conf` before
    and after), no service started.
 2. Run it again with the account already present: no change.
