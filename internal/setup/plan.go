@@ -330,6 +330,7 @@ func Compute(ctx context.Context, o Options, f Facts) (Plan, error) {
 	b.editability()
 	b.loaderLines()
 	b.kldList()
+	b.liveModules()
 	b.storage()
 	b.management()
 	b.bridges()
@@ -559,9 +560,9 @@ func (b *builder) setVar(file string, conf RCConf, editable bool, name, want, de
 
 func (b *builder) loaderLines() {
 	b.setVar(loaderConfPath, b.loader, b.loaderOK, "vmm_load", "YES",
-		"bhyve; takes effect at the next boot (setup never reboots or runs kldload; now: kldload vmm)")
+		"bhyve; takes effect at the next boot (setup never reboots or runs kldload; see \"kernel modules\")")
 	b.setVar(loaderConfPath, b.loader, b.loaderOK, "nmdm_load", "YES",
-		"VM serial consoles; takes effect at the next boot (now: kldload nmdm)")
+		"VM serial consoles; takes effect at the next boot (see \"kernel modules\")")
 	if b.o.NoRACCT {
 		if v, _ := b.loader.Get("kern.racct.enable"); v != "1" {
 			b.warn(loaderConfPath, "kern.racct.enable", "left off (--no-racct): jail limits other than disk_quota are refused without RACCT")
@@ -1120,9 +1121,10 @@ func missingFirmware(root string) []string {
 func (b *builder) readOnlyChecks() {
 	if missing := missingFirmware(b.o.Root); len(missing) > 0 {
 		// A warning, not a manual step: setup does not install the
-		// package and the skep package does not depend on it, because a
-		// jails-only host needs no firmware. But without it no VM can be
-		// created, so the operator is told plainly.
+		// package. The skep package depends on it, so this is for a host
+		// installed by hand or one where the firmware was removed later;
+		// without it no VM can be created, so the operator is told
+		// plainly.
 		b.item(Item{Kind: Warn, Area: "packages", What: "edk2-bhyve",
 			Detail: "the bhyve UEFI firmware package edk2-bhyve is not installed (" + strings.Join(missing, ", ") +
 				" missing in " + firmwareDir + "): VMs cannot be created without it; jails do not need it. Setup does not install it",

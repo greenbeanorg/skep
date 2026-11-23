@@ -36,6 +36,12 @@ const (
 	exitPending = 1 // check: there is work for apply, or something for the operator
 	exitUsage   = 2
 	exitRefused = 3 // a refusal: nothing was (or would be) done
+	// exitIncomplete: incomplete: changes were made and the result could
+	// not be verified. Today only upgrade uses it: the agent was stopped
+	// and did not come back as the new build (its start or its check
+	// failed), skep_api did not come up after the agent's restart, the
+	// agent's socket did not answer within the wait, or health was not ok.
+	exitIncomplete = 4
 )
 
 // env is what the program takes from its surroundings. Tests replace it.

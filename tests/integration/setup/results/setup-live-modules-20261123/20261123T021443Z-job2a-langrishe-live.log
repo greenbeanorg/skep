@@ -1,0 +1,49 @@
++ sudo timeout -f 300 skep-setup upgrade -yes
+  installed: skep-agent, skep-api and skep-setup are 0.1.0+b959cc8
+  service skep_api stop
+  skep-agent db backup: /var/db/skep/backup/0.1.0+8fb036f-20261123T021444Z/agent.db sha256 af51d9a2da9f201ff8859ced5a7e72aae2daaf8dedb031108865dbc2834d5f4e
+  skep-agent db backup: removed the old backup /var/db/skep/backup/0.1.0+64de929-20261123T000939Z
+  skep-api db backup: /var/db/skep/backup/0.1.0+8fb036f-20261123T021444Z/api.db sha256 8aa8936535a8172b798b9cc9ea3a97cb666ca9ad39d027213bd4dc555d20e4ee
+  service skep_agent stop (from here on, Ctrl-C does not interrupt the upgrade)
+  skep_agent pid 21124 runs /usr/local/sbin/skep-agent at 0.1.0+b959cc8
+  skep_api pid 21196 runs /usr/local/sbin/skep-api at 0.1.0+b959cc8
+  agent socket: answers as 0.1.0+b959cc8
+  health: ok
+upgraded to 0.1.0+b959cc8; backups in /var/db/skep/backup/0.1.0+8fb036f-20261123T021444Z
+upgrade-rc=0
++ echo 'upgrade-rc=0'
++ jls -q name
++ ls /dev/vmm
++ pgrep -l bhyve
++ sudo skep-setup check
+check1-rc=2
++ echo 'check1-rc=2'
++ grep -A1 'kernel modules' /tmp/c1
++ grep -E 'ok, .* refused' /tmp/c1
++ sudo kldunload nmdm
+unload-rc=0
++ echo 'unload-rc=0'
++ kldstat -q -m nmdm
+nmdm-present=1
++ echo 'nmdm-present=1'
++ sudo skep-setup check
+check2-rc=2
++ echo 'check2-rc=2'
++ grep -A8 'kernel modules' /tmp/c2
++ grep -E 'ok, .* refused' /tmp/c2
++ sudo skep-setup plan
+plan-rc=2
++ echo 'plan-rc=2'
++ grep -A8 'kernel modules' /tmp/p2
++ sudo kldload -n nmdm
+load-rc=0
++ echo 'load-rc=0'
++ kldstat -q -m nmdm
+nmdm-present=0
++ echo 'nmdm-present=0'
++ sudo skep-setup check
+check3-rc=2
++ echo 'check3-rc=2'
++ grep -A1 'kernel modules' /tmp/c3
++ grep -E 'ok, .* refused' /tmp/c3
++ rm -f /tmp/c1 /tmp/c2 /tmp/c3 /tmp/p2
