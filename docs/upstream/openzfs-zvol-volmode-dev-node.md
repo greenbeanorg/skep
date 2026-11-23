@@ -5,8 +5,8 @@ Status: **draft, not filed.** Andy files it (OpenZFS issue tracker,
 Bugzilla if wanted). The versions and figures below are real: two fresh
 FreeBSD 15.1-p7 VMs, 2026-11-22 (Skep's record:
 `tests/integration/setup/results/zvol-device-node-20261122.md`, with the
-probe script and logs). Still to do before filing: run the reproducer on
-a file-backed pool, and paste anything `dmesg` shows on the filing run.
+probe script and logs). The file-backed runs are recorded below. Still to
+do before filing: paste anything `dmesg` shows on the filing run.
 Nothing below mentions Skep. It is not needed to reproduce.
 
 ---
@@ -62,8 +62,8 @@ error). So the toggle is only safe while nothing has the volume open.
 ### How to reproduce
 
 Run as root on a scratch pool. Adjust `POOL` to an existing test pool, or
-create a file-backed one as shown. (Whether a file-backed pool reproduces
-it as readily as the disk-backed pools above is still to be confirmed.)
+create a file-backed one as shown. File-backed pools have given different
+results on different hosts; see "File-backed pools" below.
 
 ```sh
 #!/bin/sh
@@ -101,7 +101,8 @@ rm -f /var/tmp/zvoltest.img
 ```
 
 Expected: `no node for 0 of 50 zvols`. Observed (disk-backed pools):
-45 and 43 of 50 missing (90 % and 86 %).
+45 and 43 of 50 missing (90 % and 86 %). For file-backed pools, see
+"File-backed pools" below.
 
 ### Include any warning/errors/backtraces from the system logs
 
@@ -110,13 +111,40 @@ anything seen on the filing run).
 
 ### Notes
 
-- Not yet checked: a file-backed pool (the reproducer above uses one).
+- File-backed pools: reproduced on Host A, did not reproduce on another
+  host (see "File-backed pools" below). The cause of the difference is not
+  known.
 - Hosts that need a guaranteed node can work around it today with the
   none→dev toggle while nothing has the volume open.
 
-### Configuration where it did not reproduce
+### File-backed pools
+
+#### Configuration where it did not reproduce
 
 With the same probe and pacing on FreeBSD 15.1-RELEASE-p7, on a pool backed
 by a file on UFS, 0/100 creates and 0/100 clones were missing a node at 0, 1
 and 5 s. This was one run on one host. That host differs from the reproducing
 ones in more than the pool's backing, so no cause is claimed.
+
+#### Configuration where it did reproduce
+
+On Host A (2026-11-23, 2 vCPUs, booted minutes before, same OpenZFS version), one run
+of each, the disk-backed pool first. Both used `-s -V 1G -o volblocksize=16K
+-o volmode=dev` for creates and `zfs clone -o volmode=dev` of one zvol
+snapshot for clones, one per second. Each node was checked right after the
+command, 1 s later and 5 to 6 s later.
+
+| No node, at 0 s / 1 s / 5 s | Disk-backed pool (`da1`, 15.5 GiB) | Pool on a 4 GiB file on the UFS root |
+|---|---|---|
+| creates | 46 / 46 / 46 of 50 | 98 / 98 / 98 of 100 |
+| clones | 12 / 12 / 12 of 20 | 70 / 70 / 70 of 100 |
+
+No node that was missing at 0 s appeared by 5 s. `dmesg` gained no lines
+during either run.
+
+This shows that a pool backed by a file on UFS is not enough to avoid the
+problem: the two file-backed results disagree, so file backing does not
+explain the host where it did not reproduce. It does not show why that host
+behaved differently, and it does not compare the two backings on Host A: the
+counts differ, the pools differ in size, and each is one run in a fixed order.
+No cause is claimed.
