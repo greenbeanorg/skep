@@ -890,7 +890,9 @@ export interface paths {
          * Jails
          * @description Requires `container:read`. Jails by name, cursor paginated. The
          *     state is what `jls` reports at the time of the request; a jail
-         *     that should run but does not says so in `state_detail`.
+         *     that should run but does not says so in `state_detail`, and so
+         *     does a jail that runs although it should be stopped (with the
+         *     reason its stop failed, when one was recorded).
          */
         get: operations["listContainers"];
         put?: never;

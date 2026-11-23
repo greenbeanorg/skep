@@ -1,0 +1,6 @@
+build bin/freebsd-amd64/skepctl -tags skep_webui
+build bin/freebsd-amd64/skep-setup -tags skep_webui
+go run ./scripts/pkgstage -bin bin/freebsd-amd64 -out dist/pkg -version 0.1.0
+pkgstage: staged dist/pkg/stage
+pkgstage: manifest dist/pkg/+MANIFEST, plist dist/pkg/plist, checksums dist/pkg/SHA256SUMS.stage
+pkgstage: on a FreeBSD 15 amd64 lab VM: pkg create -M dist/pkg/+MANIFEST -p dist/pkg/plist -r dist/pkg/stage -o <dir>
