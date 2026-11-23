@@ -249,11 +249,12 @@ func (s *Service) observe(ctx context.Context, c models.Container, running map[s
 	}
 	if state == models.ContainerStopped && c.DesiredState == models.ContainerRunning {
 		detail = "the jail is not running although it should be: it was removed outside Skep, or the host restarted"
-		// A detail recorded when the jail stopped (a failed start, the
-		// start-up sweep) says more; keep it while the jail stays stopped.
-		if c.State == models.ContainerStopped && c.StateDetail != "" {
-			detail = c.StateDetail
-		}
+	}
+	// A detail recorded when the jail stopped (a failed start, a start-up
+	// sweep, a stop completed at agent start) says more; keep it while the
+	// jail stays stopped.
+	if state == models.ContainerStopped && c.State == models.ContainerStopped && c.StateDetail != "" {
+		detail = c.StateDetail
 	}
 	if state != models.ContainerRunning {
 		c = s.clearEpairs(ctx, c)
@@ -305,7 +306,7 @@ func (s *Service) ObserveAll(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	swept := 0
+	swept, completed := 0, 0
 	for _, id := range ids {
 		c, err := s.store.Get(ctx, id)
 		if err != nil {
@@ -318,6 +319,16 @@ func (s *Service) ObserveAll(ctx context.Context) error {
 				delete(running, c.ID)
 				s.sweepLeftoverDevfs(ctx, c)
 			}
+			continue
+		}
+		if c.State == models.ContainerStopping {
+			// A stop interrupted by an agent restart: finish it
+			// (amendment aa). The jail may run with its epairs already
+			// destroyed, or be gone with its epairs left.
+			if s.completeStop(ctx, c) {
+				completed++
+			}
+			delete(running, c.ID)
 			continue
 		}
 		if _, ok := running[c.ID]; ok && c.State == models.ContainerStarting {
@@ -338,8 +349,41 @@ func (s *Service) ObserveAll(ctx context.Context) error {
 			s.sweepLeftoverDevfs(ctx, c)
 		}
 	}
-	s.log.Info("containers: observed the jails", "containers", len(ids), "running", len(running), "removed_without_exec_stop", swept)
+	s.log.Info("containers: observed the jails", "containers", len(ids), "running", len(running), "removed_without_exec_stop", swept,
+		"stops_completed", completed)
 	return nil
+}
+
+// completeStop finishes, at agent start, the stop of a container still
+// recorded stopping (amendment aa): the stop task was interrupted by an
+// agent restart, after StopJail destroyed the epairs and perhaps before
+// jail -r finished. It runs StopJail again with the default stop timeout
+// (exec.stop, as a stop does; a jail already gone only has its epairs
+// destroyed) and records the container stopped with no epairs. On a
+// failure the container is recorded unknown, as a failed stop task
+// records it, and the failure logged. It reports whether the stop was
+// completed.
+func (s *Service) completeStop(ctx context.Context, c models.Container) bool {
+	if err := s.jails.StopJail(ctx, s.spec(c, 0)); err != nil {
+		s.log.Error("containers: could not complete a stop an agent restart interrupted", "event", "jail_stop_interrupted",
+			"container_id", c.ID, "error", err)
+		detail := "a stop interrupted by an agent restart could not be completed at agent start: " + err.Error() + "; stop it again"
+		if serr := s.store.SaveObserved(ctx, c.ID, models.ContainerUnknown, nil, detail, s.now().UTC()); serr != nil {
+			s.log.Warn("containers: could not record the observed state", "container_id", c.ID, "error", serr)
+		}
+		return false
+	}
+	s.log.Warn("containers: completed a stop an agent restart interrupted", "event", "jail_stop_completed",
+		"container_id", c.ID)
+	if err := s.store.SaveEpairs(ctx, c.ID, nil); err != nil {
+		s.log.Warn("containers: could not clear the observed epairs", "container_id", c.ID, "error", err)
+	}
+	detail := "a stop interrupted by an agent restart was completed at agent start"
+	if err := s.store.SaveObserved(ctx, c.ID, models.ContainerStopped, nil, detail, s.now().UTC()); err != nil {
+		s.log.Warn("containers: could not record the observed state", "container_id", c.ID, "error", err)
+	}
+	s.sweepLeftoverDevfs(ctx, c)
+	return true
 }
 
 // sweepLeftoverDevfs unmounts a devfs that a removal outside Skep left
