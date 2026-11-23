@@ -74,11 +74,17 @@ func vlanfilterSteps(br, line string, inRC, rcFilter bool, rcMembers, now []stri
 
 	if rcFilter {
 		// (a) Only the live state is off: the line already has it.
-		it.Detail = "in ifconfig_" + br + " in rc.conf but off now: it takes effect at the next boot, or run these steps from the console to turn it on now (each member's PVID first, then defuntagged, then vlanfilter). rc.conf needs no change. Until then the agent reports bridge_vlan_unfiltered"
-		if bad := unsafeNames(now); bad != "" {
+		it.Detail = "in ifconfig_" + br + " in rc.conf but off now: it takes effect at the next boot, or run these steps from the console to turn it on now (each member's PVID first, then defuntagged, then vlanfilter, then each member up). Until then the agent reports bridge_vlan_unfiltered"
+		if bad := unsafeNames(append(slices.Clone(now), rcMembers...)); bad != "" {
 			return noSteps(it, bad)
 		}
-		it.Steps = liveSteps
+		it.Steps = append(liveSteps, upLive(br, now, exists)...)
+		persist, note := uplinksUp(rcMembers, rc)
+		it.Steps = append(it.Steps, persist...)
+		if len(persist) == 0 && note == "" {
+			it.Detail += ". rc.conf needs no change"
+		}
+		it.Detail += note
 		return it
 	}
 
@@ -118,7 +124,7 @@ func vlanfilterSteps(br, line string, inRC, rcFilter bool, rcMembers, now []stri
 	}
 	words = append(words, "vlanfilter", "up")
 
-	it.Steps = liveSteps
+	it.Steps = append(liveSteps, upLive(br, now, exists)...)
 	if !inRC {
 		// (b) A bridge rc.conf does not create is gone after a reboot,
 		// whatever its ifconfig_ line says.
@@ -127,14 +133,53 @@ func vlanfilterSteps(br, line string, inRC, rcFilter bool, rcMembers, now []stri
 		}
 	}
 	it.Steps = append(it.Steps, fmt.Sprintf(`sysrc ifconfig_%s="%s"`, br, strings.Join(words, " ")))
+	persist, note := uplinksUp(uplinks, rc)
+	it.Steps = append(it.Steps, persist...)
 
 	switch {
 	case exists:
-		it.Detail = "not set; changing an existing bridge can cut off its members, so setup prints the steps (each member's PVID first, then defuntagged, then vlanfilter); run them from the console. Without it the agent reports bridge_vlan_unfiltered"
+		it.Detail = "not set; changing an existing bridge can cut off its members, so setup prints the steps (each member's PVID first, then defuntagged, then vlanfilter, then each member up); run them from the console. Without it the agent reports bridge_vlan_unfiltered"
 	default:
 		it.Detail = "not set in ifconfig_" + br + " in rc.conf; the bridge does not exist now, so only the rc.conf line is printed (it takes effect when the bridge is created at the next boot). Without it the agent reports bridge_vlan_unfiltered"
 	}
+	it.Detail += note
 	return it
+}
+
+// upLive is the live step for each member: adding a member to a bridge
+// does not bring it up, and a bridge whose uplink is down passes nothing.
+// It comes after vlanfilter, so no frame crosses the bridge unfiltered.
+func upLive(br string, members []string, exists bool) []string {
+	if !exists {
+		return nil
+	}
+	var out []string
+	for _, m := range members {
+		out = append(out, "ifconfig "+m+" up")
+	}
+	return out
+}
+
+// uplinksUp is what keeps each uplink up across reboots: a sysrc step for
+// one with no ifconfig_ line. An existing line is never replaced; if it
+// neither says up nor configures an address by DHCP, note says to add up.
+func uplinksUp(uplinks []string, rc RCConf) (steps []string, note string) {
+	var edit []string
+	for _, u := range uplinks {
+		line, ok := rc.Get("ifconfig_" + u)
+		if !ok {
+			steps = append(steps, fmt.Sprintf(`sysrc ifconfig_%s="up"`, u))
+			continue
+		}
+		words := strings.Fields(strings.ToLower(line))
+		if !slices.Contains(words, "up") && !slices.Contains(words, "dhcp") && !slices.Contains(words, "syncdhcp") {
+			edit = append(edit, u)
+		}
+	}
+	if len(edit) > 0 {
+		note = fmt.Sprintf(". Add the word up to the ifconfig_ line of %v in rc.conf by hand: without it the uplink is down after a reboot and the bridge passes nothing", edit)
+	}
+	return steps, note
 }
 
 // unsafeNames returns the first name that does not match safeNameRE.

@@ -152,8 +152,9 @@ steps are:
   It takes effect at the next boot, or run the printed live steps now;
   there is no `sysrc` step, because the line already has it.
 - **a bridge that exists now**: the live steps (each member's PVID with
-  `ifuntagged MEMBER 1`, then `defuntagged 1`, then `vlanfilter`), run from
-  the console, then the `sysrc` line that keeps it across reboots.
+  `ifuntagged MEMBER 1`, then `defuntagged 1`, then `vlanfilter`, then
+  `ifconfig MEMBER up`, because adding a member does not bring it up), run
+  from the console, then the `sysrc` lines that keep it across reboots.
 - **a bridge that exists only at run time**: also
   `sysrc cloned_interfaces+="BRIDGE"`, unless `cloned_interfaces` already
   names it; without it the bridge is not created at boot.
@@ -162,7 +163,10 @@ steps are:
 The `sysrc ifconfig_BRIDGE=` line names only real uplinks: for a bridge in
 `rc.conf`, its `rc.conf` members (the existing line, with `ifuntagged`,
 `defuntagged` and `vlanfilter` added where missing); for a run-time
-bridge, its live members. Every interface name put into a printed command must be letters,
+bridge, its live members. An uplink with no `ifconfig_` line also gets
+`sysrc ifconfig_UPLINK="up"`; an existing line is never replaced, and if it
+does not bring the uplink up the item says to add `up` by hand. Every
+interface name put into a printed command must be letters,
 digits, `.` and `_`, and every word of a reprinted `rc.conf` line letters,
 digits and `. _ : / -`; otherwise setup prints no steps for that bridge and
 says which name stopped it.

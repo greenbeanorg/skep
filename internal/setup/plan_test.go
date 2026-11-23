@@ -217,7 +217,7 @@ func TestPlanHearst(t *testing.T) {
 	want(t, p, Add, "kld_list+=", "")
 	want(t, p, OK, "bridge0", "changes nothing")
 	it := want(t, p, Manual, "bridge0 vlanfilter", "PVID first")
-	wantSteps := []string{"ifconfig bridge0 ifuntagged vtnet1 1", "ifconfig bridge0 defuntagged 1", "ifconfig bridge0 vlanfilter",
+	wantSteps := []string{"ifconfig bridge0 ifuntagged vtnet1 1", "ifconfig bridge0 defuntagged 1", "ifconfig bridge0 vlanfilter", "ifconfig vtnet1 up",
 		`sysrc ifconfig_bridge0="addm vtnet1 ifuntagged vtnet1 1 defuntagged 1 vlanfilter up"`}
 	if strings.Join(it.Steps, "\n") != strings.Join(wantSteps, "\n") {
 		t.Errorf("steps:\n%s", strings.Join(it.Steps, "\n"))
@@ -408,7 +408,8 @@ func TestPlanLiveBridges(t *testing.T) {
 		appendFile(t, filepath.Join(root, "etc/rc.conf"), "cloned_interfaces=\"bridge9\"\nifconfig_bridge9=\"addm vtnet1 ifuntagged vtnet1 1 defuntagged 1 vlanfilter up\"\n")
 		p := compute(t, Options{Root: root, Mgmt: []string{"vtnet0"}, Bridges: []string{"bridge9"}}, live(Bridge{Members: []string{"vtnet1"}}))
 		it := want(t, p, Manual, "bridge9 vlanfilter", "in ifconfig_bridge9 in rc.conf but off now: it takes effect at the next boot")
-		wantSteps(t, it, "ifconfig bridge9 ifuntagged vtnet1 1", "ifconfig bridge9 defuntagged 1", "ifconfig bridge9 vlanfilter")
+		wantSteps(t, it, "ifconfig bridge9 ifuntagged vtnet1 1", "ifconfig bridge9 defuntagged 1", "ifconfig bridge9 vlanfilter",
+			"ifconfig vtnet1 up", `sysrc ifconfig_vtnet1="up"`)
 	})
 	t.Run("members differ", func(t *testing.T) {
 		root := stockHost(t)
@@ -817,15 +818,35 @@ func TestPlanVLANFilterSteps(t *testing.T) {
 	t.Run("a: in rc.conf, off now, uplink only", func(t *testing.T) {
 		it := run(t, "cloned_interfaces=\"bridge9\"\nifconfig_bridge9=\"addm vtnet1 vlanfilter up\"\n",
 			&Bridge{Members: []string{"vtnet1"}})
-		if it.Kind != Manual || !strings.Contains(it.Detail, "rc.conf needs no change") {
+		if it.Kind != Manual || strings.Contains(it.Detail, "rc.conf needs no change") {
 			t.Fatalf("%+v", it)
 		}
-		wantSteps(t, it, "ifconfig bridge9 ifuntagged vtnet1 1", "ifconfig bridge9 defuntagged 1", "ifconfig bridge9 vlanfilter")
+		wantSteps(t, it, "ifconfig bridge9 ifuntagged vtnet1 1", "ifconfig bridge9 defuntagged 1", "ifconfig bridge9 vlanfilter",
+			"ifconfig vtnet1 up", `sysrc ifconfig_vtnet1="up"`)
+	})
+	t.Run("a: the uplink's line already says up: rc.conf needs no change", func(t *testing.T) {
+		it := run(t, "cloned_interfaces=\"bridge9\"\nifconfig_vtnet1=\"up\"\nifconfig_bridge9=\"addm vtnet1 vlanfilter up\"\n",
+			&Bridge{Members: []string{"vtnet1"}})
+		if !strings.Contains(it.Detail, "rc.conf needs no change") {
+			t.Fatalf("%+v", it)
+		}
+		wantSteps(t, it, "ifconfig bridge9 ifuntagged vtnet1 1", "ifconfig bridge9 defuntagged 1", "ifconfig bridge9 vlanfilter", "ifconfig vtnet1 up")
+	})
+	t.Run("an uplink line without up is never replaced", func(t *testing.T) {
+		it := run(t, "ifconfig_vtnet1=\"-lro\"\n", &Bridge{Members: []string{"vtnet1"}})
+		for _, s := range it.Steps {
+			if strings.Contains(s, "ifconfig_vtnet1") {
+				t.Fatalf("replaces the operator's line: %q", it.Steps)
+			}
+		}
+		if !strings.Contains(it.Detail, "Add the word up to the ifconfig_ line of [vtnet1]") {
+			t.Fatalf("%+v", it)
+		}
 	})
 	t.Run("b: run-time bridge, not in cloned_interfaces", func(t *testing.T) {
 		it := run(t, "", &Bridge{Members: []string{"vtnet1"}})
-		wantSteps(t, it, "ifconfig bridge9 ifuntagged vtnet1 1", "ifconfig bridge9 defuntagged 1", "ifconfig bridge9 vlanfilter",
-			`sysrc cloned_interfaces+="bridge9"`, `sysrc ifconfig_bridge9="addm vtnet1 ifuntagged vtnet1 1 defuntagged 1 vlanfilter up"`)
+		wantSteps(t, it, "ifconfig bridge9 ifuntagged vtnet1 1", "ifconfig bridge9 defuntagged 1", "ifconfig bridge9 vlanfilter", "ifconfig vtnet1 up",
+			`sysrc cloned_interfaces+="bridge9"`, `sysrc ifconfig_bridge9="addm vtnet1 ifuntagged vtnet1 1 defuntagged 1 vlanfilter up"`, `sysrc ifconfig_vtnet1="up"`)
 	})
 	t.Run("b: run-time bridge, already in cloned_interfaces", func(t *testing.T) {
 		it := run(t, "cloned_interfaces=\"bridge3 bridge9\"\n", &Bridge{Members: []string{"vtnet1"}})
@@ -852,18 +873,18 @@ func TestPlanVLANFilterSteps(t *testing.T) {
 		it := run(t, "cloned_interfaces=\"bridge9\"\nifconfig_bridge9=\"addm vtnet1 up\"\n",
 			&Bridge{Members: []string{"vtnet1", "vtnet2"}})
 		wantSteps(t, it, "ifconfig bridge9 ifuntagged vtnet1 1", "ifconfig bridge9 ifuntagged vtnet2 1",
-			"ifconfig bridge9 defuntagged 1", "ifconfig bridge9 vlanfilter",
-			`sysrc ifconfig_bridge9="addm vtnet1 ifuntagged vtnet1 1 defuntagged 1 vlanfilter up"`)
+			"ifconfig bridge9 defuntagged 1", "ifconfig bridge9 vlanfilter", "ifconfig vtnet1 up", "ifconfig vtnet2 up",
+			`sysrc ifconfig_bridge9="addm vtnet1 ifuntagged vtnet1 1 defuntagged 1 vlanfilter up"`, `sysrc ifconfig_vtnet1="up"`)
 	})
 	t.Run("c: rc.conf line with some settings already", func(t *testing.T) {
 		it := run(t, "cloned_interfaces=\"bridge9\"\nifconfig_bridge9=\"addm vtnet1 ifuntagged vtnet1 1 up\"\n", &Bridge{Members: []string{"vtnet1"}})
-		if last := it.Steps[len(it.Steps)-1]; last != `sysrc ifconfig_bridge9="addm vtnet1 ifuntagged vtnet1 1 defuntagged 1 vlanfilter up"` {
-			t.Fatalf("line %q", last)
+		if !slices.Contains(it.Steps, `sysrc ifconfig_bridge9="addm vtnet1 ifuntagged vtnet1 1 defuntagged 1 vlanfilter up"`) {
+			t.Fatalf("steps %q", it.Steps)
 		}
 	})
 	t.Run("rc.conf bridge not created yet: only the line", func(t *testing.T) {
 		it := run(t, "cloned_interfaces=\"bridge9\"\nifconfig_bridge9=\"addm vtnet1 up\"\n", nil)
-		wantSteps(t, it, `sysrc ifconfig_bridge9="addm vtnet1 ifuntagged vtnet1 1 defuntagged 1 vlanfilter up"`)
+		wantSteps(t, it, `sysrc ifconfig_bridge9="addm vtnet1 ifuntagged vtnet1 1 defuntagged 1 vlanfilter up"`, `sysrc ifconfig_vtnet1="up"`)
 	})
 	for _, c := range []struct {
 		name, rc string
