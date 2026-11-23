@@ -288,6 +288,15 @@ finds a jail still recorded `starting` (a start that ended without
 recording its outcome) is refused with `container_quarantined` for the
 same reason; the next agent start removes it.
 
+A jail whose **stop** the agent's death interrupted (its epairs already
+destroyed, `/etc/rc.shutdown` perhaps not finished) has its stop completed
+at the next agent start, with `/etc/rc.shutdown` run again as a stop runs
+it; it ends `stopped` with no epairs, and `state_detail` says the stop was
+completed at agent start. This can delay the agent's start by up to the
+jail's start timeout plus its stop timeout (about 160 s with the defaults)
+per such jail. If the completion fails, the jail is shown `unknown` with
+the reason; stop it again. (ADR 0010 amendment aa, Proposed.)
+
 ## Limits
 
 `limits` on create, or on an update of a stopped jail (which replaces
