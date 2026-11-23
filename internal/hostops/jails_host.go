@@ -24,6 +24,15 @@ import (
 // mounting devfs and the kernel's removal take a moment.
 const jailCommandSlack = 30 * time.Second
 
+// StopMaxWait is the longest StopJail can take for this spec before it
+// returns: jail -r is killed after the start timeout (exec.timeout, which
+// bounds exec.stop) plus the stop timeout plus jailCommandSlack, and a
+// failed jail -r is followed by jail -R, bounded by jailCommandSlack
+// (amendment u). The ifconfig and jls calls around them are not counted.
+func (s JailSpec) StopMaxWait() time.Duration {
+	return s.StartTimeout + s.StopTimeout + 2*jailCommandSlack
+}
+
 // jailRCArgs runs a jail's /etc/rc after the /dev guard (amendment i):
 // as the jail's root, in the clean login environment exec.clean gave
 // before. jexec is never reachable through the API (decision 12).

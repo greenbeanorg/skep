@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/greenbeanorg/skep/internal/portfilter"
 	"github.com/greenbeanorg/skep/pkg/models"
@@ -503,5 +504,38 @@ func TestCheckMACsFree(t *testing.T) {
 	}
 	if len(callsWith(run.calls, "ifconfig -j")) != 0 {
 		t.Fatalf("calls: %q", run.calls)
+	}
+}
+
+// TestStopJailOfGoneJailChecksOwnership: at agent start a gone jail's
+// stop is completed (ADR 0010 amendment aa). StopJail never receives the
+// host_interface names recorded on the container (JailSpec has none): an
+// interface that now carries another owner's description, such as a name
+// recorded for this jail and since reused, is left; only the host ends
+// described skep:<this-id>:<slot> are destroyed.
+func TestStopJailOfGoneJailChecksOwnership(t *testing.T) {
+	h, run, _ := jailHost(t)
+	run.answers["jls -j skep-"+ctrA+" jid"] = &CommandError{Name: "jls", ExitCode: 1, Stderr: "jls: jail \"skep-" + ctrA + "\" not found", Err: errors.New("exit status 1")}
+	run.answers["ifconfig -g epair"] = "epair0a\nepair0b\nepair1a\nepair1b\n"
+	run.answers["ifconfig epair0a"] = ifconfigShow("epair0a", "skep:"+ctrB+":0")
+	run.answers["ifconfig epair1a"] = ifconfigShow("epair1a", "skep:"+ctrA+":0")
+	spec := jailSpec()
+	spec.NICs = []JailNIC{{Slot: 0, Bridge: "bridge0", MAC: "02:00:00:00:00:01", DHCP: true}}
+	if err := h.StopJail(context.Background(), spec); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range run.calls {
+		if strings.HasSuffix(c, " destroy") && c != "ifconfig epair1a destroy" {
+			t.Fatalf("destroyed %q: not described as this jail's", c)
+		}
+	}
+	if !slices.Contains(run.calls, "ifconfig epair1a destroy") {
+		t.Fatalf("calls: %q", run.calls)
+	}
+}
+
+func TestStopMaxWait(t *testing.T) {
+	if got := jailSpec().StopMaxWait(); got != 190*time.Second {
+		t.Fatalf("StopMaxWait = %s, want 190s (120 + 10 + 2 x 30)", got)
 	}
 }

@@ -1,0 +1,20 @@
+vtnet0 vtnet1 lo0
+vtnet1: flags=1008802<BROADCAST,SIMPLEX,MULTICAST,LOWER_UP> metric 0 mtu 1500
+	options=ec079b<RXCSUM,TXCSUM,VLAN_MTU,VLAN_HWTAGGING,VLAN_HWCSUM,TSO4,TSO6,LRO,VLAN_HWTSO,LINKSTATE,RXCSUM_IPV6,TXCSUM_IPV6,HWSTATS>
+sha256: /usr/local/etc/skep/agent.json: Permission denied
+{
+  "storage": {
+    "pools": [
+      "zroot"
+    ],
+    "directories": [],
+    "dataset_root": "skep",
+    "media_dir": "/var/db/skep/media"
+  },
+  "network": {
+    "bridges": [],
+    "management_interfaces": [
+      "vtnet0"
+    ]
+  }
+}

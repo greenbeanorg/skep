@@ -1,0 +1,16 @@
+head 90270cf label j4c host 10.79.20.82
+checksum compare (format may differ):
+2251d7220c75229d128d8ecef38187c76432f8ea6092d2f85de659713c176079  /usr/local/share/licenses/skep/THIRD_PARTY_NOTICES
+3c951fff728033c34d5cde938004554481ce96cb3d7cb38a12809248af666485  /usr/local/sbin/skep-api
+3db94ce1c4e44455e6010235327c276064453aec48a1dd01217bb0bbe87ddaea  /usr/local/etc/rc.d/skep_api
+3c951fff728033c34d5cde938004554481ce96cb3d7cb38a12809248af666485 stage/usr/local/sbin/skep-api
+4082976bbd6b8ff7c31c493559eb64124620c48d4486fe65560e8f99cfbfba3a stage/usr/local/bin/skepctl
+b4e51c089c4ae9056e367e5c1aaf1469e9eecb1bd8a7097b4d9d3f3e8b6027a0 stage/usr/local/sbin/skep-agent
+total 14661
+-rw-r--r--  1 aba aba 16174784 Nov 22 21:38 skep-0.1.0.pkg
+SHA256 (out/skep-0.1.0.pkg) = 71eb80e484a8d215faf599666052622018b100e0d8d1bad812e267b9205f2182
+skep-0.1.0
+Name           : skep
+Version        : 0.1.0
+skep-0.1.0:
+skep-setup 0.1.0 (commit 90270cf, built 2026-11-23T02:38:34Z, go1.27.4 freebsd/amd64)
