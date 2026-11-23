@@ -21,7 +21,7 @@ hardware), and the zvol device-node miss rate
 **Already settled on the lab VMs, not repeated here:** ZFS-root (langrishe), the
 package and `skep-setup` (smith, langrishe), the zvol repair and refusal, persistent
 `kld_list` and `vlanfilter` across a reboot (hearst). Items that do not need hardware
-(a tmpfs `/var/run`, QEMU detection, a host installed from distribution sets) belong to
+(guests with a tmpfs `/var/run`, QEMU detection, a host installed from distribution sets) belong to
 the lab VMs.
 
 ## What you need

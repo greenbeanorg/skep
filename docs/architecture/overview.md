@@ -423,7 +423,7 @@ imported, both as an unprivileged user and as root.
 | Core count on a host with SMT | **Pending FreeBSD validation** (the lab VM has no SMT) |
 | Running under rc.d as a service: start, stop, restart, status, crash supervision, start at boot | Validated (2026-11-12, Milestone 3 as `skep`, and again for Milestone 4 with the agent as root; see `tests/integration/rcd`) |
 | A crash loop (agent exits at every start) and `skep_agent_restart_delay=0` under rc.d | Validated (2026-11-12, see `tests/integration/rcd`) |
-| A tmpfs `/var/run` | **Pending FreeBSD validation** |
+| A tmpfs `/var/run` | **Verified for service start** on smith (UFS root, FreeBSD 15.1-RELEASE-p7, build 2323afd, 2026-11-23): both services start at boot, their rc.d scripts create `/var/run/skep` as `root:skep 0750`, the agent's start check passes, health `ok`. **Still pending:** running a VM or jail with `/var/run` on tmpfs, and a ZFS-root host |
 | Agent on a Unix socket only, API through the socket, peer UID check, mandatory actor: both processes as one ordinary user | Validated (2026-11-12) |
 | Unit tests of the new packages run natively (`internalapi`, `agentclient`, `apitls`, `auth`, `apidb`, `api`, `privdrop`, `sysaccount`, `tests/e2e`, both commands) | Validated (2026-11-12) |
 | TLS: certificate generation, file modes, TLS 1.3 only, renewal with the same key on a live server, `SIGHUP` reload, `tls regenerate`, `tls fingerprint`, operator certificates | Validated as an ordinary user (2026-11-12, see `tests/integration/apitls`) |
