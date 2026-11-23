@@ -2490,7 +2490,8 @@ and accepted the amendment).
 - Status: **Proposed**, 2026-11-23 (unattended run; Andy away). Written
   before the build, as asked. Andy's answers to the four questions are
   recorded below (2026-11-23, with the Fable review's fix round, rules 6–9);
-  the amendment stays Proposed until Andy marks it Accepted. (Amendment z
+  the amendment stays Proposed until Andy marks it Accepted (2026-11-23:
+  not yet; the review reads the diff first). (Amendment z
   is on PR #55.)
 
 **The problem.** A jail stop is: record desired `stopped` and observed
@@ -2569,7 +2570,8 @@ completed:
    on the container are only cleared. An interface named as recorded but
    now described as another owner's, or not described, is left (unit test
    `TestStopJailOfGoneJailChecksOwnership`). A normal stop task is
-   unchanged.
+   unchanged. Andy's answer, 2026-11-23: the description check stays the
+   only ownership check; no interface index is recorded.
 
 **Why exec.stop, and not a removal without it.** The half-started sweep
 removes the jail without `/etc/rc.shutdown` because the `/dev` guard may not
