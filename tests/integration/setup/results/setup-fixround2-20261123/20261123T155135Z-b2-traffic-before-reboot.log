@@ -1,0 +1,13 @@
+frames seen on bridge9 from the uplink (20 s, headers only, no payload):
+tcpdump: verbose output suppressed, use -v[v]... for full protocol decode
+listening on bridge9, link-type EN10MB (Ethernet), snapshot length 262144 bytes
+
+0 packets captured
+0 packets received by filter
+0 packets dropped by kernel
+
+learned addresses on bridge9:        0
+bridge9 Ipkts=0
+uptime: 10:51AM  up 16:40, 0 users, load averages: 0.33, 0.27, 0.24
+hw.vmm.vmx.cap.virtual_interrupt_delivery: 0
+       1

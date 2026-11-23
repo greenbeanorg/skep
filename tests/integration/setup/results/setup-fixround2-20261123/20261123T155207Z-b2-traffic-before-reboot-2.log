@@ -1,0 +1,11 @@
+vtnet1: flags=1008902<BROADCAST,PROMISC,SIMPLEX,MULTICAST,LOWER_UP> metric 0 mtu 1500
+vtnet1 before Ipkts=0
+on vtnet1:
+
+0 packets captured
+on bridge9:
+
+0 packets captured
+vtnet1 after Ipkts=0
+learned:        0
+       0

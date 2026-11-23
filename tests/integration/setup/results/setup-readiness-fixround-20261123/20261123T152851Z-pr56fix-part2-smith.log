@@ -1,0 +1,6 @@
+ifconfig -l: vtnet0 vtnet1 lo0
+ifconfig -g bridge: exit 0
+stdout bytes:        0
+stderr bytes:        0
+== check (Probe incl. readBridges) succeeds:
+check exit 1

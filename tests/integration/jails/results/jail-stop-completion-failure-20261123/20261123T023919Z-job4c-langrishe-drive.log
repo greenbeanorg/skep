@@ -1,0 +1,16 @@
+{"step": "template", "id": "fc1f59d7-8f19-43d2-b545-2afd6cf01813", "status": "succeeded", "error": null}
+{"step": "container", "id": "778c3da8-7efe-4289-bbc7-c9e9cbf47031", "status": "succeeded"}
+{"step": "start", "status": "succeeded"}
+{"step": "before-stop", "state": "running", "desired_state": "running", "jid": 5, "state_detail": null}
+{"step": "stop-submitted", "http": 202}
+{"step": "window", "seconds": 0.1, "jail_r_pid": "24939"}
+{"step": "schg", "rc": 1, "ls": "ls: /var/run/skep/jails/778c3da8-7efe-4289-bbc7-c9e9cbf47031/jail.conf: Permission denied"}
+{"step": "kill", "agent": "24296", "jail_r": "24939", "output": "skep-778c3da8-7efe-4289-bbc7-c9e9cbf47031"}
+{"step": "agent-back", "pid": "25007"}
+{"step": "after-restart", "state": "running", "desired_state": "stopped", "jid": 5, "state_detail": null}
+{"step": "log", "lines": ["Nov 22 19:36:07 langrishe skep-agent[14025]: {\"time\":\"2026-11-22T19:36:07.694962668-05:00\",\"level\":\"WARN\",\"msg\":\"containers: completed a stop an agent restart interrupted\",\"event\":\"jail_stop_completed\",\"container_id\":\"5ba2883c-6259-45d5-a6b2-ab531a8eff0e\"}", "Nov 22 19:36:07 langrishe skep-agent[14025]: {\"time\":\"2026-11-22T19:36:07.699375557-05:00\",\"level\":\"INFO\",\"msg\":\"containers: observed the jails\",\"containers\":1,\"running\":0,\"removed_without_exec_stop\":0,\"stops_completed\":1}", "Nov 22 21:40:54 langrishe skep-agent[24295]: {\"time\":\"2026-11-22T21:40:54.757290987-05:00\",\"level\":\"ERROR\",\"msg\":\"containers: could not complete a stop an agent restart interrupted\",\"event\":\"jail_stop_interrupted\",\"container_id\":\"778c3da8-7efe-4289-bbc7-c9e9cbf47031\",\"error\":\"rename /var/run/skep/jails/778c3da8-7efe-4289-bbc7-c9e9cbf47031/jail.conf.tmp /var/run/skep/jails/778c3da8-7efe-4289-bbc7-c9e9cbf47031/jail.conf: operation not permitted\"}"]}
+{"step": "stop-again", "http": 202, "status": "failed"}
+{"step": "after-stop-again", "state": "running", "desired_state": "stopped", "jid": 5, "state_detail": null}
+{"step": "delete-container", "status": [409, {"error": {"code": "container_not_stopped", "message": "the jail is running; stop it first", "request_id": "0e7a572043080ddc32409dfc", "details": {"container_id": "778c3da8-7efe-4289-bbc7-c9e9cbf47031"}}}]}
+{"step": "delete-template", "status": "failed"}
+{"step": "end", "jls": "skep-778c3da8-7efe-4289-bbc7-c9e9cbf47031", "datasets": ["zroot/skep", "zroot/skep/jail", "zroot/skep/jail/778c3da8-7efe-4289-bbc7-c9e9cbf47031", "zroot/skep/templates", "zroot/skep/templates/fc1f59d7-8f19-43d2-b545-2afd6cf01813", "zroot/skep/vm"], "mounts": "5", "runfiles": "778c3da8-7efe-4289-bbc7-c9e9cbf47031"}

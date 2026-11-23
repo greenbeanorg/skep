@@ -7,10 +7,13 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/greenbeanorg/skep/internal/config"
+	"github.com/greenbeanorg/skep/internal/hostops"
+	"github.com/greenbeanorg/skep/internal/pkgrepo"
 )
 
 // fixture copies testdata/<name> into a fresh root and returns it.
@@ -62,13 +65,26 @@ func withSkep(t *testing.T, root, id string) string {
 	return root
 }
 
+// installFirmware puts the files of the edk2-bhyve package the agent needs
+// under root.
+func installFirmware(t *testing.T, root string) {
+	t.Helper()
+	dir := filepath.Join(root, "usr/local/share/edk2-bhyve")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range []string{hostops.FirmwareCodeFile, hostops.FirmwareVarsFile} {
+		if err := os.WriteFile(filepath.Join(dir, f), []byte("fd"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 // stockHost is a stock UFS install with the package installed.
 func stockHost(t *testing.T) string {
 	t.Helper()
 	root := withSkep(t, fixture(t, "stock-ufs"), "409")
-	if err := os.MkdirAll(filepath.Join(root, "usr/local/share/edk2-bhyve"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	installFirmware(t, root)
 	appendFile(t, filepath.Join(root, "var/run/dmesg.boot"), "  VT-x: PAT,HLT,MTF,PAUSE,EPT,UG,VPID\n")
 	appendFile(t, filepath.Join(root, "usr/local/etc/pkg/repos/FreeBSD.conf"), "FreeBSD-base: { enabled: yes }\n")
 	return root
@@ -201,7 +217,7 @@ func TestPlanHearst(t *testing.T) {
 	want(t, p, Add, "kld_list+=", "")
 	want(t, p, OK, "bridge0", "changes nothing")
 	it := want(t, p, Manual, "bridge0 vlanfilter", "PVID first")
-	wantSteps := []string{"ifconfig bridge0 ifuntagged vtnet1 1", "ifconfig bridge0 defuntagged 1", "ifconfig bridge0 vlanfilter",
+	wantSteps := []string{"ifconfig bridge0 ifuntagged vtnet1 1", "ifconfig bridge0 defuntagged 1", "ifconfig bridge0 vlanfilter", "ifconfig vtnet1 up",
 		`sysrc ifconfig_bridge0="addm vtnet1 ifuntagged vtnet1 1 defuntagged 1 vlanfilter up"`}
 	if strings.Join(it.Steps, "\n") != strings.Join(wantSteps, "\n") {
 		t.Errorf("steps:\n%s", strings.Join(it.Steps, "\n"))
@@ -334,6 +350,81 @@ func TestPlanExistingBridgeRefusals(t *testing.T) {
 	})
 }
 
+// TestPlanLiveBridges: a bridge is judged as it is now (ifconfig), not only
+// by rc.conf (found on smith, 2026-11-22: a new bridge was planned on an
+// uplink that was a live member of another bridge, and a hand-made bridge
+// passed the management check as "members []").
+func TestPlanLiveBridges(t *testing.T) {
+	live := func(br Bridge) Facts {
+		f := facts()
+		f.Interfaces["bridge9"] = nil
+		f.Bridges = map[string]Bridge{"bridge9": br}
+		return f
+	}
+	t.Run("new bridge on a live member", func(t *testing.T) {
+		p := compute(t, Options{Root: stockHost(t), Mgmt: []string{"vtnet0"}, CreateBridge: "bridge1", Uplink: "vtnet1"},
+			live(Bridge{Members: []string{"vtnet1"}}))
+		want(t, p, Refuse, "bridge1", "vtnet1 is a member of bridge9 now")
+		if !p.Refused() {
+			t.Fatal("the plan is not refused")
+		}
+	})
+	t.Run("hand-made bridge with management member", func(t *testing.T) {
+		p := compute(t, Options{Root: stockHost(t), Mgmt: []string{"vtnet0"}, Bridges: []string{"bridge9"}},
+			live(Bridge{Members: []string{"vtnet1", "vtnet0"}, VLANFilter: true}))
+		want(t, p, Refuse, "bridge9", "management interface vtnet0 as a member (now)")
+	})
+	t.Run("rc.conf member counts too", func(t *testing.T) {
+		root := stockHost(t)
+		appendFile(t, filepath.Join(root, "etc/rc.conf"), "cloned_interfaces=\"bridge9\"\nifconfig_bridge9=\"addm vtnet0 up\"\n")
+		p := compute(t, Options{Root: root, Mgmt: []string{"vtnet0"}, Bridges: []string{"bridge9"}}, live(Bridge{Members: []string{"vtnet1"}}))
+		want(t, p, Refuse, "bridge9", "management interface vtnet0 as a member (in rc.conf)")
+	})
+	t.Run("hand-made bridge, vlanfilter on now", func(t *testing.T) {
+		p := compute(t, Options{Root: stockHost(t), Mgmt: []string{"vtnet0"}, Bridges: []string{"bridge9"}},
+			live(Bridge{Members: []string{"vtnet1"}, VLANFilter: true}))
+		want(t, p, OK, "bridge9", "members [vtnet1]")
+		want(t, p, OK, "bridge9 vlanfilter", "on")
+		want(t, p, Warn, "bridge9", "exists only at run time")
+	})
+	t.Run("hand-made bridge, vlanfilter off now", func(t *testing.T) {
+		p := compute(t, Options{Root: stockHost(t), Mgmt: []string{"vtnet0"}, Bridges: []string{"bridge9"}},
+			live(Bridge{Members: []string{"vtnet1"}}))
+		it := want(t, p, Manual, "bridge9 vlanfilter", "not set")
+		if !slices.Contains(it.Steps, "ifconfig bridge9 ifuntagged vtnet1 1") ||
+			!slices.Contains(it.Steps, `sysrc ifconfig_bridge9="addm vtnet1 ifuntagged vtnet1 1 defuntagged 1 vlanfilter up"`) {
+			t.Fatalf("steps %q", it.Steps)
+		}
+	})
+	t.Run("vlanfilter on now, not in rc.conf", func(t *testing.T) {
+		root := stockHost(t)
+		appendFile(t, filepath.Join(root, "etc/rc.conf"), "cloned_interfaces=\"bridge9\"\nifconfig_bridge9=\"addm vtnet1 up\"\n")
+		p := compute(t, Options{Root: root, Mgmt: []string{"vtnet0"}, Bridges: []string{"bridge9"}}, live(Bridge{Members: []string{"vtnet1"}, VLANFilter: true}))
+		want(t, p, OK, "bridge9 vlanfilter", "on")
+		want(t, p, Warn, "bridge9 vlanfilter", "off after a reboot")
+	})
+	t.Run("vlanfilter in rc.conf, off now", func(t *testing.T) {
+		root := stockHost(t)
+		appendFile(t, filepath.Join(root, "etc/rc.conf"), "cloned_interfaces=\"bridge9\"\nifconfig_bridge9=\"addm vtnet1 ifuntagged vtnet1 1 defuntagged 1 vlanfilter up\"\n")
+		p := compute(t, Options{Root: root, Mgmt: []string{"vtnet0"}, Bridges: []string{"bridge9"}}, live(Bridge{Members: []string{"vtnet1"}}))
+		it := want(t, p, Manual, "bridge9 vlanfilter", "in ifconfig_bridge9 in rc.conf but off now: it takes effect at the next boot")
+		wantSteps(t, it, "ifconfig bridge9 ifuntagged vtnet1 1", "ifconfig bridge9 defuntagged 1", "ifconfig bridge9 vlanfilter",
+			"ifconfig vtnet1 up", `sysrc ifconfig_vtnet1="up"`)
+	})
+	t.Run("members differ", func(t *testing.T) {
+		root := stockHost(t)
+		appendFile(t, filepath.Join(root, "etc/rc.conf"), "cloned_interfaces=\"bridge9\"\nifconfig_bridge9=\"addm vtnet2 vlanfilter up\"\n")
+		p := compute(t, Options{Root: root, Mgmt: []string{"vtnet0"}, Bridges: []string{"bridge9"}}, live(Bridge{Members: []string{"vtnet1"}, VLANFilter: true}))
+		want(t, p, OK, "bridge9", "members now [vtnet1], in rc.conf [vtnet2]")
+	})
+	t.Run("not a bridge", func(t *testing.T) {
+		f := live(Bridge{})
+		delete(f.Bridges, "bridge9")
+		p := compute(t, Options{Root: stockHost(t), Mgmt: []string{"vtnet0"}, Bridges: []string{"bridge9"}}, f)
+		want(t, p, Refuse, "bridge9", "not a bridge")
+	})
+}
+
 func TestPlanNewBridgeRefusals(t *testing.T) {
 	cases := []struct {
 		name, rc, uplink, detail string
@@ -382,7 +473,7 @@ func TestPlanNewBridgeRefusals(t *testing.T) {
 func TestPlanAccountRefusals(t *testing.T) {
 	base := func(t *testing.T) string {
 		root := fixture(t, "stock-ufs")
-		os.MkdirAll(filepath.Join(root, "usr/local/share/edk2-bhyve"), 0o755)
+		installFirmware(t, root)
 		return root
 	}
 	t.Run("only the user", func(t *testing.T) {
@@ -585,11 +676,41 @@ func TestPlanReadOnlyChecks(t *testing.T) {
 	root := fixture(t, "stock-ufs")
 	withSkep(t, root, "409")
 	p := compute(t, Options{Root: root, Mgmt: []string{"vtnet0"}}, facts())
-	want(t, p, Manual, "edk2-bhyve", "")
-	want(t, p, Manual, "FreeBSD-base", "disabled")
+	if it := want(t, p, Warn, "edk2-bhyve", "VMs cannot be created without it"); len(it.Steps) != 1 || it.Steps[0] != "pkg install edk2-bhyve" {
+		t.Fatalf("edk2-bhyve item: %+v", it)
+	}
+	if it := want(t, p, Manual, "FreeBSD-base", "disabled"); len(it.Steps) != 1 || it.Steps[0] != pkgrepo.EnableBase {
+		t.Fatalf("FreeBSD-base item: %+v", it)
+	}
 	want(t, p, Warn, "virtualization", "cannot read")
 	appendFile(t, filepath.Join(root, "var/run/dmesg.boot"), "VT-x: PAT,HLT\n")
 	want(t, compute(t, Options{Root: root, Mgmt: []string{"vtnet0"}}, facts()), Warn, "virtualization", "VMs will be unavailable")
+}
+
+// TestPlanFirmwareFiles: the warning goes by the files the agent opens, not
+// by the directory; one missing file is enough, and a link to a file counts.
+func TestPlanFirmwareFiles(t *testing.T) {
+	root := stockHost(t)
+	dir := filepath.Join(root, "usr/local/share/edk2-bhyve")
+	want(t, compute(t, Options{Root: root, Mgmt: []string{"vtnet0"}}, facts()), OK, "edk2-bhyve", "")
+	if err := os.Remove(filepath.Join(dir, hostops.FirmwareVarsFile)); err != nil {
+		t.Fatal(err)
+	}
+	want(t, compute(t, Options{Root: root, Mgmt: []string{"vtnet0"}}, facts()), Warn, "edk2-bhyve", hostops.FirmwareVarsFile+" missing")
+	if err := os.Symlink(hostops.FirmwareCodeFile, filepath.Join(dir, hostops.FirmwareVarsFile)); err != nil {
+		t.Fatal(err)
+	}
+	want(t, compute(t, Options{Root: root, Mgmt: []string{"vtnet0"}}, facts()), OK, "edk2-bhyve", "")
+}
+
+// TestFirmwareFilesMatchAgent: setup checks the files the agent needs.
+func TestFirmwareFilesMatchAgent(t *testing.T) {
+	if len(firmwareFiles) != 2 || firmwareFiles[0] != hostops.FirmwareCodeFile || firmwareFiles[1] != hostops.FirmwareVarsFile {
+		t.Fatalf("firmwareFiles %v, agent needs %s and %s", firmwareFiles, hostops.FirmwareCodeFile, hostops.FirmwareVarsFile)
+	}
+	if firmwareDir != config.DefaultFirmwareDir {
+		t.Fatalf("firmwareDir %s, agent default %s", firmwareDir, config.DefaultFirmwareDir)
+	}
 }
 
 func TestPlanGuests(t *testing.T) {
@@ -632,6 +753,173 @@ func TestValidateOptions(t *testing.T) {
 	for i, o := range bad {
 		if err := ValidateOptions(o); err == nil {
 			t.Errorf("case %d accepted: %+v", i, o)
+		}
+	}
+}
+
+// TestBaseRepoEnabledRoot: the FreeBSD-base check reads the files under
+// the root it is given. Compute never hands it an empty root (os.DirFS("")
+// fails every read, so it would always say disabled): an empty root is
+// refused before anything is read.
+func TestBaseRepoEnabledRoot(t *testing.T) {
+	if !baseRepoEnabled(stockHost(t)) {
+		t.Fatal("stock host with the override: disabled")
+	}
+	if baseRepoEnabled(fixture(t, "stock-ufs")) {
+		t.Fatal("stock host without the override: enabled")
+	}
+	if _, err := fs.ReadDir(os.DirFS(""), "etc"); err == nil {
+		t.Fatal(`os.DirFS("") read a directory; the guard below is moot`)
+	}
+	if _, err := Compute(context.Background(), Options{Mgmt: []string{"vtnet0"}}, facts()); err == nil || !strings.Contains(err.Error(), "root must not be empty") {
+		t.Fatalf("empty root: %v", err)
+	}
+	p := compute(t, Options{Root: stockHost(t), Mgmt: []string{"vtnet0"}}, facts())
+	want(t, p, OK, "FreeBSD-base repository", "enabled")
+}
+
+// wantSteps checks an item's steps exactly.
+func wantSteps(t *testing.T, it Item, steps ...string) {
+	t.Helper()
+	if !slices.Equal(it.Steps, steps) {
+		t.Fatalf("steps\n got %q\nwant %q", it.Steps, steps)
+	}
+}
+
+// TestPlanVLANFilterSteps: the steps for an allow-listed bridge without
+// vlanfilter. (a) vlanfilter in rc.conf but off now: live steps only, no
+// sysrc. (b) a run-time bridge gets a cloned_interfaces step unless
+// rc.conf has it. (c) the persisted line names only real uplinks, and a
+// name that is not plain gets no steps at all.
+func TestPlanVLANFilterSteps(t *testing.T) {
+	run := func(t *testing.T, rc string, br *Bridge) Item {
+		t.Helper()
+		root := stockHost(t)
+		appendFile(t, filepath.Join(root, "etc/rc.conf"), rc)
+		f := facts()
+		if br != nil {
+			f.Interfaces["bridge9"] = nil
+			f.Bridges = map[string]Bridge{"bridge9": *br}
+		}
+		p := compute(t, Options{Root: root, Mgmt: []string{"vtnet0"}, Bridges: []string{"bridge9"}}, f)
+		for _, it := range p.Items {
+			if it.What == "bridge9 vlanfilter" {
+				return it
+			}
+		}
+		t.Fatalf("no vlanfilter item: %+v", p.Items)
+		return Item{}
+	}
+	t.Run("a: in rc.conf, off now, with a guest port", func(t *testing.T) {
+		it := run(t, "cloned_interfaces=\"bridge9\"\nifconfig_bridge9=\"addm vtnet1 vlanfilter up\"\n",
+			&Bridge{Members: []string{"vtnet1", "epair3a"}})
+		wantGuestPortRefusal(t, it, "epair3a")
+	})
+	t.Run("a: in rc.conf, off now, uplink only", func(t *testing.T) {
+		it := run(t, "cloned_interfaces=\"bridge9\"\nifconfig_bridge9=\"addm vtnet1 vlanfilter up\"\n",
+			&Bridge{Members: []string{"vtnet1"}})
+		if it.Kind != Manual || strings.Contains(it.Detail, "rc.conf needs no change") {
+			t.Fatalf("%+v", it)
+		}
+		wantSteps(t, it, "ifconfig bridge9 ifuntagged vtnet1 1", "ifconfig bridge9 defuntagged 1", "ifconfig bridge9 vlanfilter",
+			"ifconfig vtnet1 up", `sysrc ifconfig_vtnet1="up"`)
+	})
+	t.Run("a: the uplink's line already says up: rc.conf needs no change", func(t *testing.T) {
+		it := run(t, "cloned_interfaces=\"bridge9\"\nifconfig_vtnet1=\"up\"\nifconfig_bridge9=\"addm vtnet1 vlanfilter up\"\n",
+			&Bridge{Members: []string{"vtnet1"}})
+		if !strings.Contains(it.Detail, "rc.conf needs no change") {
+			t.Fatalf("%+v", it)
+		}
+		wantSteps(t, it, "ifconfig bridge9 ifuntagged vtnet1 1", "ifconfig bridge9 defuntagged 1", "ifconfig bridge9 vlanfilter", "ifconfig vtnet1 up")
+	})
+	t.Run("an uplink line without up is never replaced", func(t *testing.T) {
+		it := run(t, "ifconfig_vtnet1=\"-lro\"\n", &Bridge{Members: []string{"vtnet1"}})
+		for _, s := range it.Steps {
+			if strings.Contains(s, "ifconfig_vtnet1") {
+				t.Fatalf("replaces the operator's line: %q", it.Steps)
+			}
+		}
+		if !strings.Contains(it.Detail, "Add the word up to the ifconfig_ line of [vtnet1]") {
+			t.Fatalf("%+v", it)
+		}
+	})
+	t.Run("b: run-time bridge, not in cloned_interfaces", func(t *testing.T) {
+		it := run(t, "", &Bridge{Members: []string{"vtnet1"}})
+		wantSteps(t, it, "ifconfig bridge9 ifuntagged vtnet1 1", "ifconfig bridge9 defuntagged 1", "ifconfig bridge9 vlanfilter", "ifconfig vtnet1 up",
+			`sysrc cloned_interfaces+="bridge9"`, `sysrc ifconfig_bridge9="addm vtnet1 ifuntagged vtnet1 1 defuntagged 1 vlanfilter up"`, `sysrc ifconfig_vtnet1="up"`)
+	})
+	t.Run("b: run-time bridge, already in cloned_interfaces", func(t *testing.T) {
+		it := run(t, "cloned_interfaces=\"bridge3 bridge9\"\n", &Bridge{Members: []string{"vtnet1"}})
+		for _, s := range it.Steps {
+			if strings.Contains(s, "cloned_interfaces") {
+				t.Fatalf("cloned_interfaces step although rc.conf has it: %q", it.Steps)
+			}
+		}
+	})
+	t.Run("run-time bridge with guest ports: no steps", func(t *testing.T) {
+		it := run(t, "", &Bridge{Members: []string{"vtnet1", "epair0a", "tap4", "lagg0.60"}})
+		wantGuestPortRefusal(t, it, "epair0a", "tap4")
+	})
+	t.Run("rc.conf bridge with a guest port: no steps", func(t *testing.T) {
+		it := run(t, "cloned_interfaces=\"bridge9\"\nifconfig_bridge9=\"addm vtnet1 up\"\n",
+			&Bridge{Members: []string{"vtnet1", "epair0a", "vtnet2"}})
+		wantGuestPortRefusal(t, it, "epair0a")
+	})
+	t.Run("guest port with an odd name: no steps, name quoted", func(t *testing.T) {
+		it := run(t, "", &Bridge{Members: []string{"vtnet1", "tap$x"}})
+		wantGuestPortRefusal(t, it, "tap$x")
+	})
+	t.Run("c: rc.conf bridge, the line keeps the rc.conf members only", func(t *testing.T) {
+		it := run(t, "cloned_interfaces=\"bridge9\"\nifconfig_bridge9=\"addm vtnet1 up\"\n",
+			&Bridge{Members: []string{"vtnet1", "vtnet2"}})
+		wantSteps(t, it, "ifconfig bridge9 ifuntagged vtnet1 1", "ifconfig bridge9 ifuntagged vtnet2 1",
+			"ifconfig bridge9 defuntagged 1", "ifconfig bridge9 vlanfilter", "ifconfig vtnet1 up", "ifconfig vtnet2 up",
+			`sysrc ifconfig_bridge9="addm vtnet1 ifuntagged vtnet1 1 defuntagged 1 vlanfilter up"`, `sysrc ifconfig_vtnet1="up"`)
+	})
+	t.Run("c: rc.conf line with some settings already", func(t *testing.T) {
+		it := run(t, "cloned_interfaces=\"bridge9\"\nifconfig_bridge9=\"addm vtnet1 ifuntagged vtnet1 1 up\"\n", &Bridge{Members: []string{"vtnet1"}})
+		if !slices.Contains(it.Steps, `sysrc ifconfig_bridge9="addm vtnet1 ifuntagged vtnet1 1 defuntagged 1 vlanfilter up"`) {
+			t.Fatalf("steps %q", it.Steps)
+		}
+	})
+	t.Run("rc.conf bridge not created yet: only the line", func(t *testing.T) {
+		it := run(t, "cloned_interfaces=\"bridge9\"\nifconfig_bridge9=\"addm vtnet1 up\"\n", nil)
+		wantSteps(t, it, `sysrc ifconfig_bridge9="addm vtnet1 ifuntagged vtnet1 1 defuntagged 1 vlanfilter up"`, `sysrc ifconfig_vtnet1="up"`)
+	})
+	for _, c := range []struct {
+		name, rc string
+		br       *Bridge
+		why      string
+	}{
+		{"c: odd live member", "", &Bridge{Members: []string{"vtnet1", "we$rd"}}, `member name "we$rd"`},
+		{"c: odd rc.conf member", "cloned_interfaces=\"bridge9\"\nifconfig_bridge9=\"addm vt-1 up\"\n", &Bridge{Members: []string{"vtnet1"}}, `member name "vt-1"`},
+		{"c: odd rc.conf word", "cloned_interfaces=\"bridge9\"\nifconfig_bridge9=\"addm vtnet1 descr 'a;b' up\"\n", &Bridge{Members: []string{"vtnet1"}}, "has the word"},
+		{"a: odd live member", "cloned_interfaces=\"bridge9\"\nifconfig_bridge9=\"addm vtnet1 vlanfilter up\"\n", &Bridge{Members: []string{"vtnet1", "x\"y"}}, "member name"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			it := run(t, c.rc, c.br)
+			if len(it.Steps) != 0 || !strings.Contains(it.Detail, "setup prints no steps") || !strings.Contains(it.Detail, c.why) {
+				t.Fatalf("%+v", it)
+			}
+		})
+	}
+}
+
+// wantGuestPortRefusal: a bridge with live guest ports gets no step at
+// all, live or sysrc, and the item names the ports and what to do.
+func wantGuestPortRefusal(t *testing.T, it Item, ports ...string) {
+	t.Helper()
+	if it.Kind != Manual || len(it.Steps) != 0 {
+		t.Fatalf("want a manual item with no steps: %+v", it)
+	}
+	for _, w := range []string{"stop the Skep guests on this bridge first, then run plan again", "The agent sets each guest port when the guest starts"} {
+		if !strings.Contains(it.Detail, w) {
+			t.Fatalf("detail lacks %q: %s", w, it.Detail)
+		}
+	}
+	for _, port := range ports {
+		if !strings.Contains(it.Detail, strconv.Quote(port)) {
+			t.Fatalf("detail does not name %s: %s", port, it.Detail)
 		}
 	}
 }

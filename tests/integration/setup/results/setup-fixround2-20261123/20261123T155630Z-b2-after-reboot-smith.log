@@ -1,0 +1,22 @@
+boot: { sec = 1795449373, usec = 10169 } Mon Nov 23 10:56:13 2026
+=== after reboot
+bridge9: flags=1008843<UP,BROADCAST,RUNNING,SIMPLEX,MULTICAST,LOWER_UP> metric 0 mtu 1500
+	bridge flags=1<VLANFILTER> defuntagged=1
+	member: vtnet1 flags=143<LEARNING,DISCOVER,AUTOEDGE,AUTOPTP>
+	        port 2 priority 128 path cost 2000 vlan protocol 802.1q untagged 1
+vtnet1: flags=1008943<UP,BROADCAST,RUNNING,PROMISC,SIMPLEX,MULTICAST,LOWER_UP> metric 0 mtu 1500
+  ok       network                            bridge9
+  ok       network                            bridge9 vlanfilter
+learned from uplink:        0
+skep_agent is running as pid 1457 (supervisor pid 1455).
+skep_api is running as pid 1492 (supervisor pid 1490).
+=== cleanup
+rc.conf b8c48f274581f6bd306ab2c37094a07919b69a77d4f9eaf384b7f180b3646e39 (want b8c48f274581f6bd306ab2c37094a07919b69a77d4f9eaf384b7f180b3646e39)
+-rw-r--r--  1 root wheel 340 Nov 22 18:40 /etc/rc.conf
+ifconfig -l: vtnet0 vtnet1 lo0
+bridges: []
+vtnet1: flags=1008802<BROADCAST,SIMPLEX,MULTICAST,LOWER_UP> metric 0 mtu 1500
+0
+       1
+1
+  12 ok, 1 to add, 0 warnings, 1 conflicts, 3 for you, 0 refused

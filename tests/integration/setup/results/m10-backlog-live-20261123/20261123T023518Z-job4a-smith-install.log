@@ -1,0 +1,15 @@
+Installing skep-0.1.0...
+package skep is already installed, forced install
+Extracting skep-0.1.0: .......... done
+add-rc=0
+  installed: skep-agent, skep-api and skep-setup are 0.1.0+571f7b2
+  service skep_api stop
+  skep-agent db backup: /var/db/skep/backup/0.1.0+6a93dd2-20261123T023519Z/agent.db sha256 ae0e48af5da55e5908e0e2b82cf74d84f6e76725efe84aae458abedd54768a2e
+  skep-api db backup: /var/db/skep/backup/0.1.0+6a93dd2-20261123T023519Z/api.db sha256 c01be58c086b099e4c1fc979700f9aaa70944415c0fa315b1a6d1c0ec6e3a575
+  service skep_agent stop (from here on, Ctrl-C does not interrupt the upgrade)
+  skep_agent pid 21180 runs /usr/local/sbin/skep-agent at 0.1.0+571f7b2
+  skep_api pid 21252 runs /usr/local/sbin/skep-api at 0.1.0+571f7b2
+  agent socket: answers as 0.1.0+571f7b2
+  health: ok
+upgraded to 0.1.0+571f7b2; backups in /var/db/skep/backup/0.1.0+6a93dd2-20261123T023519Z
+upgrade-rc=0

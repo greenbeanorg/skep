@@ -1,0 +1,15 @@
+=== smith: sudo skep-setup check -mgmt vtnet0 (build skep-setup 0.1.0 (commit 2c3040c, built 2026-11-23T15:27:04Z, go1.27.4 freebsd/amd64))
+                                                }
+  manual   packages                           FreeBSD-base repository
+                                                disabled; the pkgbase jail template source needs it (or use the dist source)
+                                                $ mkdir -p /usr/local/etc/pkg/repos && printf 'FreeBSD-base: { enabled: yes }\n' >> /usr/local/etc/pkg/repos/FreeBSD.conf
+rc=1
+=== smith: GET /api/v1/storage/template-sources
+{"host_release":"15.1-RELEASE-p7","pkgbase":{"available":false,"reason":"the FreeBSD-base repository is not enabled (/etc/pkg/FreeBSD.conf); enable it with mkdir -p /usr/local/etc/pkg/repos \u0026\u0026 printf 'FreeBSD-base: { enabled: yes }\\n' \u003e\u003e /usr/local/etc/pkg/repos/FreeBSD.conf, or use the dist source"},"packages":["FreeBSD-set-minimal","FreeBSD-ssh"],"dist":{"available":false,"reason":"storage.dist_dir is not set in the agent's configuration"}}
+
+=== langrishe: sudo skep-setup check -mgmt vtnet0 (build skep-setup 0.1.0 (commit 2c3040c, built 2026-11-23T15:27:04Z, go1.27.4 freebsd/amd64))
+                                                }
+rc=1
+=== langrishe: GET /api/v1/storage/template-sources
+{"host_release":"15.1-RELEASE-p7","pkgbase":{"available":true},"packages":["FreeBSD-set-minimal","FreeBSD-ssh"],"dist":{"available":false,"reason":"storage.dist_dir is not set in the agent's configuration"}}
+

@@ -30,6 +30,9 @@ func runRemove(ctx context.Context, args []string, e env) error {
 			return err
 		}
 	}
+	if err := e.checkDataDir(o.Root); err != nil {
+		return err
+	}
 	f, err := e.prober.Probe(ctx)
 	if err != nil {
 		return err

@@ -1,0 +1,14 @@
+=== 10.79.20.82: sudo skep-setup plan -mgmt vtnet0 (FreeBSD-base line)
+  ok       packages                           FreeBSD-base repository
+                                                enabled
+  ok       hardware                           virtualization
+--
+rc=0
+=== 10.79.20.81: sudo skep-setup plan -mgmt vtnet0 (FreeBSD-base line)
+  manual   packages                           FreeBSD-base repository
+                                                disabled; the pkgbase jail template source needs it (or use the dist source)
+                                                $ mkdir -p /usr/local/etc/pkg/repos && printf 'FreeBSD-base: { enabled: yes }\n' >> /usr/local/etc/pkg/repos/FreeBSD.conf
+  ok       hardware                           virtualization
+                                                VT-x with EPT and unrestricted guest, or AMD-V with nested paging
+--
+rc=0

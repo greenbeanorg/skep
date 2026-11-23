@@ -1,0 +1,5 @@
+boot before: { sec = 1795389104, usec = 907255 } Sun Nov 22 18:11:44 2026
+System shutdown time has arrived
+smith went down
+ssh back rc=0
+GATE hw.vmm.vmx.cap.virtual_interrupt_delivery=0
