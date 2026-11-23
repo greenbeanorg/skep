@@ -2394,10 +2394,13 @@ Removing it without exec.stop (alternative B) would be faster and run none
 of the jail's code at agent start, but would cut off an orderly shutdown
 the operator asked for.
 
-**Cost.** The agent's start waits for each half-stopped jail's stop: at
-most the default stop timeout (10 s) plus `jail(8)`'s slack per jail, one
-after another. Running VMs and jails are not affected; only the agent's
-socket comes up later.
+**Cost.** The agent's start waits for each half-stopped jail's stop, one
+after another. `exec.stop` is bounded by `exec.timeout` (the start timeout,
+120 s), then `stop.timeout` (10 s), and `jail -r` as a whole by those plus
+30 s of slack: **up to about 160 s per jail**, not the 10 s stop timeout
+alone (measured: a jail whose `/etc/rc.shutdown.local` sleeps 30 s delayed
+the agent's start by 30 s). Running VMs and jails are not affected; only
+the agent's socket comes up later.
 
 **Questions for Andy.**
 
@@ -2407,9 +2410,31 @@ socket comes up later.
    for (which is in its payload): acceptable?
 3. Should the completion also write an entry to the agent's audit log
    (today the start-up sweeps only log), and if so with which actor?
+4. The start can wait up to about 160 s per half-stopped jail (Cost).
+   Acceptable, or should the completion run after the socket is served
+   (the jail would show `stopping` meanwhile)?
 
-**Validation (to do).** On a lab VM: build a template, start a jail with a
-DHCP NIC on a test bridge on vtnet1, kill the agent during the stop
-(between the epair destruction and the end of `jail -r`), start the agent,
-and show the jail ends `stopped`, no epair left, no `host_interface`
-recorded, desired `stopped`. Results go below.
+**Validation (langrishe, 2026-11-23 UTC, unattended).** A pkgbase template
+built through the API (41 s), a jail with a DHCP NIC on a test bridge
+`bridge1` on vtnet1 (vlanfilter on; lease 10.79.60.137 inside the jail),
+`/etc/rc.shutdown.local` in the jail set to `sleep 30` so the stop could be
+caught. The test (`j3kill.py`) submits `container.stop`, waits until the
+epair is gone while `jail -r` still runs and the jail is still in `jls`
+(0.1–0.2 s), then `kill -9`s the agent and that `jail -r`; daemon(8)
+restarts the agent.
+
+| | Build without the fix (6a93dd2) | With the fix (8fb036f) |
+|---|---|---|
+| After the restart: state / desired / JID | `running` / `stopped` / 2 | **`stopped` / `stopped` / null** |
+| `host_interface` recorded | `epair0a` (no such interface) | **none** |
+| Jail in `jls` | still there | **gone** |
+| Epairs on the host | none | none |
+| `state_detail` | none | "a stop interrupted by an agent restart was completed at agent start" |
+| Agent log | `task interrupted by agent restart` | that, then `jail_stop_completed` (WARN) 30 s later |
+
+The interrupted task stayed `interrupted` (ADR 0005). The jail, the
+template, and the bridge were removed afterwards, `agent.json` restored
+(sha256 checked). Logs:
+[jail-stop-recovery-20261123/](../../tests/integration/jails/results/jail-stop-recovery-20261123/).
+The failure path (completion fails → `unknown` with a detail) is covered by
+unit tests only.
