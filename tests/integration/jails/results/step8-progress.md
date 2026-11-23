@@ -268,6 +268,8 @@ start-up line now carries `half_started_removed`.
 
 - While a start runs, a container keeps the previous start's failure as
   its `state_detail` (`MarkStarting` does not clear it). Cosmetic.
+  **Fixed 2026-11-23** (`chore/backlog-2`): `MarkStarting` clears the
+  detail; unit-tested, pending FreeBSD validation.
 - Pre-existing flake: `TestNetworkRefusals` (internal/containers), the
   duplicate-MAC case, failed once in about 240 runs on merrick: the
   second create returned the first container ("a") instead of a refusal.
