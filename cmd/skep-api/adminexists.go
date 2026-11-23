@@ -73,10 +73,6 @@ func adminExists(ctx context.Context, args []string, e env) error {
 	if err != nil {
 		return fail(fmt.Errorf("read %s: %w", path, err))
 	}
-	state := ""
-	if disabled != 0 {
-		state = ", disabled"
-	}
-	fmt.Fprintf(e.stdout, "user %q exists (role %s%s)\n", *username, role, state)
+	fmt.Fprintln(e.stdout, auth.UserExistsAnswer(*username, role, disabled != 0))
 	return nil
 }

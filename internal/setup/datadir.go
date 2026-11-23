@@ -9,11 +9,24 @@ import (
 	"syscall"
 )
 
-// dataDirChain is Skep's data directory and its parents, which setup
-// checks before it reads or writes anything there (journals, database
-// backups): a directory someone other than root can change lets them plant
-// or swap what root later reads or writes.
-var dataDirChain = []string{"/var/db/skep", "/var/db", "/var"}
+// dataDirChain is Skep's data directory, setup's directory in it, and the
+// parents, outermost first. Setup checks them before it reads or writes
+// anything there (journals, database backups): a directory someone other
+// than root can change lets them plant or swap what root later reads or
+// writes. The entries from firstOptional on may be missing and must not be
+// symbolic links.
+var dataDirChain = []string{"/var", "/var/db", "/var/db/skep", "/var/db/skep/setup"}
+
+const firstOptional = 2
+
+// DataDirRefusal is setup refusing Skep's data directory. Every command
+// exits 3 on it.
+type DataDirRefusal struct{ Err error }
+
+func (r *DataDirRefusal) Error() string { return r.Err.Error() }
+
+// Unwrap returns the reason.
+func (r *DataDirRefusal) Unwrap() error { return r.Err }
 
 // statUID returns the UID that owns a file, from stat(2).
 func statUID(st fs.FileInfo) (uint32, bool) {
@@ -24,18 +37,18 @@ func statUID(st fs.FileInfo) (uint32, bool) {
 	return sys.Uid, true
 }
 
-// checkDataDir refuses when /var/db/skep or a parent under root is not
-// owned by root or is writable by its group or others. /var/db/skep must
-// be a real directory (not a symbolic link); a missing /var/db/skep is
-// fine (nothing is there yet), its parents must exist. It is applied to
-// the real root only (CheckDataDir): with -root, which is for tests, the
+// checkDataDir refuses when /var/db/skep/setup, /var/db/skep or a parent
+// under root is not owned by root or is writable by its group or others.
+// /var/db/skep and /var/db/skep/setup must be real directories (not
+// symbolic links); either may be missing (nothing is there yet), their
+// parents must exist. It is applied to the real root only (CheckDataDir): with -root, which is for tests, the
 // files belong to whoever runs them.
 func checkDataDir(root string, uidOf func(fs.FileInfo) (uint32, bool)) error {
 	for i, p := range dataDirChain {
 		full := filepath.Join(root, p)
 		var st fs.FileInfo
 		var err error
-		if i == 0 {
+		if i >= firstOptional {
 			st, err = os.Lstat(full)
 			if errors.Is(err, fs.ErrNotExist) {
 				continue
@@ -63,10 +76,18 @@ func checkDataDir(root string, uidOf func(fs.FileInfo) (uint32, bool)) error {
 }
 
 // CheckDataDir is checkDataDir on the real root; for any other root it
-// does nothing.
+// does nothing. A refusal is a *DataDirRefusal. A permission error is
+// returned as it is: the caller is not root, and the directory may be fine.
 func CheckDataDir(root string) error {
 	if filepath.Clean(root) != "/" {
 		return nil
 	}
-	return checkDataDir("/", statUID)
+	return asRefusal(checkDataDir("/", statUID))
+}
+
+func asRefusal(err error) error {
+	if err == nil || errors.Is(err, fs.ErrPermission) {
+		return err
+	}
+	return &DataDirRefusal{Err: err}
 }

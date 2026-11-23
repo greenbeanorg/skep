@@ -12,6 +12,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/greenbeanorg/skep/internal/auth"
 )
 
 // fakeRunner emulates sysrc(8) on the fixture files and records every
@@ -946,6 +948,26 @@ func TestPlanAdminDisabledOrNotAdmin(t *testing.T) {
 				t.Fatalf("%s: plans an admin create", c.detail)
 			}
 		}
+	}
+}
+
+// TestParseAdminExistsReadsSkepAPIsAnswer takes the answer from the code
+// skep-api prints it with, so the two cannot drift apart.
+func TestParseAdminExistsReadsSkepAPIsAnswer(t *testing.T) {
+	for _, c := range []struct {
+		name, role string
+		disabled   bool
+	}{
+		{"admin enabled", "admin", false},
+		{"admin disabled", "admin", true},
+		{"another role", "operator", false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			role, disabled, ok := parseAdminExists(auth.UserExistsAnswer("andy", c.role, c.disabled))
+			if !ok || role != c.role || disabled != c.disabled {
+				t.Fatalf("parsed %q %v %v", role, disabled, ok)
+			}
+		})
 	}
 }
 
