@@ -40,8 +40,8 @@ func guestPort(name string) bool {
 // run-time bridge, the cloned_interfaces step unless rc.conf already has
 // it; and the sysrc line that keeps it across reboots, which names only
 // real uplinks (the rc.conf members, or the live members). When vlanfilter
-// is already in rc.conf it prints only the live steps. Any name that does
-// not match safeNameRE, or a word of the line that does not match
+// is already in rc.conf it prints only the live steps. Any name, the
+// bridge's own included, that does not match safeNameRE, or a word of the line that does not match
 // safeWordRE, means no steps at all.
 //
 // A bridge with a guest port as a live member gets no steps at all: setup
@@ -49,6 +49,10 @@ func guestPort(name string) bool {
 // agent sets each one when its guest starts, so the item says to stop the
 // guests on the bridge and run plan again.
 func vlanfilterSteps(br, line string, inRC, rcFilter bool, rcMembers, now []string, exists, isLive bool, rc RCConf) Item {
+	if !safeNameRE.MatchString(br) {
+		return Item{Kind: Manual, Area: "network", What: strconv.Quote(br) + " vlanfilter",
+			Detail: fmt.Sprintf("not set; setup prints no steps: the bridge name %q is not a plain interface name (letters, digits, dot, underscore), and setup will not put it into a command. Set the PVIDs, defuntagged and vlanfilter by hand. Without it the agent reports bridge_vlan_unfiltered", br)}
+	}
 	it := Item{Kind: Manual, Area: "network", What: br + " vlanfilter"}
 
 	if isLive {
