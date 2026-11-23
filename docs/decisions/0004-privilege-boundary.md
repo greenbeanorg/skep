@@ -522,11 +522,13 @@ hearst layout under `/home/aba/skep-m6`, removed since) would be refused:
   agent refuses to start if that differs from the path checked.
 - **The database's directory** is checked too when it is not the data
   directory (by default `/var/db/skep/agent`). It may not exist yet.
-- **ZFS modes that need deny entries are refused.** A mode whose owner has
-  fewer rights than its group or others (for example `0705`) is represented
-  on ZFS with `deny` entries, which are not a trivial ACL here. Such a path
-  is refused as an extended ACL even though its mode has no group or other
-  write bit.
+- **ZFS modes that need deny entries are refused.** A mode that gives a
+  class fewer rights than a broader class, for example `0705` (the group has
+  less than others), is represented on ZFS with `deny` entries, which are not
+  a trivial ACL here. Such a path is refused as an extended ACL even though
+  its mode has no group or other write bit (seen on langrishe, 2026-11-23).
+  The fix is a mode without that gap, such as `0755` or `0700`; the refusal's
+  generic `setfacl -b` hint has not been tested for this case.
 - The error names the owner by UID (`owner UID 0`), not by name.
 - `skep-setup check` does not report these paths yet: it needs the host
   check, the configuration's path resolution and a plan item, which is more
