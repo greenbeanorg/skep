@@ -8,6 +8,7 @@ import { useSession } from "@/app/session";
 import { ChevronLeftIcon } from "@/components/icons";
 import { ErrorNotice, Fact, Facts, LoadingCards, PageHeader, RefreshButton } from "@/components/page";
 import { TaskStatusBadge } from "@/components/status";
+import { TaskErrorDetails } from "@/components/task-error-details";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -95,6 +96,7 @@ function TaskView({ task }: { task: TaskDetail }) {
             <div className="mt-4 rounded-md border border-bad/40 bg-bad-soft px-3 py-2 text-sm">
               <div className="font-mono text-xs text-bad">{task.error.code}</div>
               <div className="mt-0.5">{task.error.message}</div>
+              <TaskErrorDetails details={task.error.details} />
             </div>
           ) : null}
           {task.status === "interrupted" ? (

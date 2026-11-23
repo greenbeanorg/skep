@@ -34,7 +34,12 @@ const taskColumns = `id, COALESCE(node_id, ''), type, status,
 	COALESCE(resource_type, ''), COALESCE(resource_id, ''), COALESCE(idempotency_key, ''),
 	actor_id, actor_name, peer_uid, COALESCE(request_id, ''), request_hash, payload,
 	cancellable, cancel_requested_at, result, COALESCE(error_code, ''), COALESCE(error, ''),
-	created_at, started_at, finished_at`
+	created_at, started_at, finished_at,
+	CASE WHEN tasks.error_code IS NOT NULL THEN
+		(SELECT a.details FROM audit_log a
+		 WHERE a.task_id = tasks.id AND a.phase = 'finished' AND a.outcome = 'failure'
+		 ORDER BY a.id DESC LIMIT 1)
+	END`
 
 type rowScanner interface {
 	Scan(dest ...any) error
@@ -47,14 +52,28 @@ func scanTask(row rowScanner) (tasks.Task, error) {
 		peerUID                             int64
 		cancellable                         int
 		cancelAt, result, started, finished sql.NullString
+		errDetails                          sql.NullString
 	)
 	err := row.Scan(&t.ID, &t.NodeID, &t.Type, &status,
 		&t.ResourceType, &t.ResourceID, &t.IdempotencyKey,
 		&t.Actor.ID, &t.Actor.Name, &peerUID, &t.RequestID, &t.RequestHash, &payload,
 		&cancellable, &cancelAt, &result, &t.ErrorCode, &t.ErrorMessage,
-		&created, &started, &finished)
+		&created, &started, &finished, &errDetails)
 	if err != nil {
 		return tasks.Task{}, err
+	}
+	// The failure's details are those of the task's "finished" audit entry
+	// (applyTransition writes them there with the error code). An entry
+	// that cannot be read leaves the error without details: the task
+	// itself is still served.
+	if errDetails.Valid && errDetails.String != "" {
+		var d map[string]any
+		if json.Unmarshal([]byte(errDetails.String), &d) == nil {
+			delete(d, "error_code")
+			if len(d) > 0 {
+				t.ErrorDetails = d
+			}
+		}
 	}
 	t.Status = models.TaskStatus(status)
 	t.PeerUID = uint32(peerUID)

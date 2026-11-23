@@ -8,6 +8,7 @@ import { useSession } from "@/app/session";
 import { InlineError } from "@/components/errors";
 import { ErrorNotice, Fact, Facts, LoadingCards, PageHeader, RefreshButton } from "@/components/page";
 import { TaskStatusBadge, VMStateBadge } from "@/components/status";
+import { TaskErrorDetails } from "@/components/task-error-details";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -45,6 +46,7 @@ function TaskLine({ task }: { task: Task }) {
       <Link to={`/tasks/${t.id}`} className="text-xs text-muted-foreground hover:underline">
         task details
       </Link>
+      {t.error ? <TaskErrorDetails details={t.error.details} className="basis-full" /> : null}
     </div>
   );
 }
