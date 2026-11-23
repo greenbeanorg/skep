@@ -31,6 +31,7 @@ import (
 	"syscall"
 
 	"github.com/greenbeanorg/skep/internal/config"
+	"github.com/greenbeanorg/skep/internal/pkgrepo"
 )
 
 // Kind is what the plan says about one item.
@@ -1151,30 +1152,12 @@ func vmxReady(dmesg string) bool {
 	return false
 }
 
-var baseRepoRE = regexp.MustCompile(`(?s)FreeBSD-base\s*:\s*\{[^}]*enabled\s*:\s*(yes|true)`)
-
 // baseRepoEnabled reads the pkg repository files (/etc/pkg, then
 // /usr/local/etc/pkg/repos, which wins).
+// baseRepoEnabled reports whether pkg's repository files under root enable
+// FreeBSD-base, by the same rules the agent uses (package pkgrepo).
 func baseRepoEnabled(root string) bool {
-	enabled := false
-	for _, dir := range []string{"/etc/pkg", "/usr/local/etc/pkg/repos"} {
-		entries, _ := os.ReadDir(hostPath(root, dir))
-		for _, e := range entries {
-			if !strings.HasSuffix(e.Name(), ".conf") {
-				continue
-			}
-			bs, err := os.ReadFile(hostPath(root, dir+"/"+e.Name()))
-			if err != nil {
-				continue
-			}
-			s := string(bs)
-			if baseRepoRE.MatchString(s) {
-				enabled = true
-			} else if regexp.MustCompile(`FreeBSD-base\s*:`).MatchString(s) {
-				enabled = false
-			}
-		}
-	}
+	enabled, _ := pkgrepo.Base(os.DirFS(root))
 	return enabled
 }
 

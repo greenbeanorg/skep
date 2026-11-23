@@ -53,7 +53,11 @@ configuration.
 use, and why not:
 
 - **pkgbase**: the host's own pkgbase repository configuration and
-  signing keys (`/usr/local/sbin/pkg` must be installed), a non-empty
+  signing keys (`/usr/local/sbin/pkg` must be installed, and pkg's
+  repository files must enable `FreeBSD-base`: on a host installed from the
+  dist sets `/etc/pkg/FreeBSD.conf` has `enabled: no`, and an override such as
+  `FreeBSD-base: { enabled: yes }` in `/usr/local/etc/pkg/repos/FreeBSD.conf`
+  enables it; `skep-setup check` reads the files by the same rules), a non-empty
   `storage.template_packages`, and a compiled allowlist for the host's
   major.minor. Skep 0.1 has one for 15.1.
 - **dist**: `base.txz` and `MANIFEST` in `storage.dist_dir`. The archive's

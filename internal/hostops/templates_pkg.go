@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/greenbeanorg/skep/internal/pkgrepo"
 	"github.com/greenbeanorg/skep/pkg/models"
 )
 
@@ -144,12 +145,24 @@ func (h *host) HostRelease(ctx context.Context) (string, error) {
 	return rel, nil
 }
 
-// PkgbaseAvailable implements Templates.
+// PkgbaseAvailable implements Templates: pkg is installed, and its
+// repository files enable FreeBSD-base (package pkgrepo, the rules
+// skep-setup's check uses too). Without that repository the build's
+// "pkg install FreeBSD-..." finds nothing (seen on smith, 2026-11-22).
 func (h *host) PkgbaseAvailable() (bool, string) {
 	for _, p := range []string{pkgBootstrap, pkgBinary} {
 		if !h.sys.Exists(p) {
 			return false, p + " is not installed on this host"
 		}
+	}
+	if enabled, where := pkgrepo.Base(h.rootFS); !enabled {
+		why := "the FreeBSD-base repository is not enabled"
+		if where != "" {
+			why += " (" + where + ")"
+		} else {
+			why += " (no repository file defines it)"
+		}
+		return false, why + `; enable it with printf 'FreeBSD-base: { enabled: yes }\n' >> /usr/local/etc/pkg/repos/FreeBSD.conf, or use the dist source`
 	}
 	return true, ""
 }

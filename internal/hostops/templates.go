@@ -38,8 +38,9 @@ type Templates interface {
 	// HostRelease is freebsd-version -k of the host.
 	HostRelease(ctx context.Context) (string, error)
 	// PkgbaseAvailable says whether the host has the pkg the builder runs
-	// (/usr/local/sbin/pkg, which the /usr/sbin/pkg bootstrap execs), and
-	// if not, why.
+	// (/usr/local/sbin/pkg, which the /usr/sbin/pkg bootstrap execs) and
+	// a FreeBSD-base repository enabled in pkg's repository files, and if
+	// not, why.
 	PkgbaseAvailable() (bool, string)
 	// DistAvailable says whether base.txz and MANIFEST are in the
 	// configured dist directory, and if not, why.

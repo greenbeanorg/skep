@@ -2,7 +2,9 @@ package hostops
 
 import (
 	"errors"
+	"io/fs"
 	"log/slog"
+	"os"
 	"sync"
 	"syscall"
 	"time"
@@ -70,13 +72,18 @@ type host struct {
 	// mounts reads the mount table and unmounts a leftover devfs by its
 	// fsid (amendment l); tests replace it.
 	mounts mountTable
+
+	// rootFS is the host's / for reading pkg's repository files
+	// (PkgbaseAvailable); tests replace it.
+	rootFS fs.FS
 }
 
 func newHost(conf Confinement, run Runner, sys system, log *slog.Logger) *host {
 	if log == nil {
 		log = slog.Default()
 	}
-	return &host{conf: conf, run: run, sys: sys, log: log, ignoredMedia: map[string]bool{}, listDev: listJailDev, mounts: kernelMounts{}}
+	return &host{conf: conf, run: run, sys: sys, log: log, ignoredMedia: map[string]bool{}, listDev: listJailDev, mounts: kernelMounts{},
+		rootFS: os.DirFS("/")}
 }
 
 // NewFiles returns the Files implementation alone. It is plain file I/O
