@@ -1,0 +1,38 @@
++ P=/home/aba/skep-pkgs/j2/pkg/out/skep-0.1.0.pkg
++ sudo timeout -f 300 pkg install -f -y /home/aba/skep-pkgs/j2/pkg/out/skep-0.1.0.pkg
+Updating FreeBSD-ports repository catalogue...
+FreeBSD-ports repository is up to date.
+Updating FreeBSD-ports-kmods repository catalogue...
+FreeBSD-ports-kmods repository is up to date.
+Updating FreeBSD-base repository catalogue...
+FreeBSD-base repository is up to date.
+All repositories are up to date.
+Checking integrity... done (0 conflicting)
+The following 2 package(s) will be affected (of 0 checked):
+
+New packages to be INSTALLED:
+	edk2-bhyve: g202508_3 [FreeBSD-ports] (required by skep)
+	skep: 0.1.0 [unknown-repository]
+
+Number of packages to be installed: 2
+
+The process will require 52 MiB more space.
+[1/1] Installing edk2-bhyve-g202508_3...
+Extracting edk2-bhyve-g202508_3: ......... done
+[2/2] Installing skep-0.1.0...
+[2/2] Extracting skep-0.1.0: .......... done
+inst-rc=0
++ echo 'inst-rc=0'
++ pkg query '%n %v %R' edk2-bhyve skep
+edk2-bhyve g202508_3 FreeBSD-ports
+skep 0.1.0 unknown-repository
++ ls /usr/local/share/edk2-bhyve
+BHYVE_UEFI.fd
+BHYVE_UEFI_CODE.fd
+BHYVE_UEFI_VARS.fd
++ /usr/local/sbin/skep-setup -version
+skep-setup 0.1.0 (commit b959cc8, built 2026-11-23T02:13:32Z, go1.27.4 freebsd/amd64)
++ sudo service skep_agent status
+skep_agent is running as pid 15115 (supervisor pid 15113).
++ sudo service skep_api status
+skep_api is running as pid 14101 (supervisor pid 14099).
