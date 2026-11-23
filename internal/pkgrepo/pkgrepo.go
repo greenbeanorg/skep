@@ -26,6 +26,13 @@ var Dirs = []string{"etc/pkg", "usr/local/etc/pkg/repos"}
 // BaseName is the name of the pkgbase repository on FreeBSD 15.
 const BaseName = "FreeBSD-base"
 
+// EnableBase is the shell command skep-setup's check and the agent print
+// to enable FreeBSD-base. It creates /usr/local/etc/pkg/repos first: a
+// host installed from the distribution sets has no such directory (smith,
+// 2026-11-23), and the append alone then fails. The file it appends to is
+// read after /etc/pkg/FreeBSD.conf, so its "enabled: yes" wins.
+const EnableBase = `mkdir -p /usr/local/etc/pkg/repos && printf 'FreeBSD-base: { enabled: yes }\n' >> /usr/local/etc/pkg/repos/FreeBSD.conf`
+
 var (
 	// blockRE finds a repository block: NAME: { ... } (UCL, as pkg's
 	// files are written; the name may be quoted). Nested braces do not

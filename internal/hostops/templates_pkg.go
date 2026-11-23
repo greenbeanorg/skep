@@ -162,7 +162,7 @@ func (h *host) PkgbaseAvailable() (bool, string) {
 		} else {
 			why += " (no repository file defines it)"
 		}
-		return false, why + `; enable it with printf 'FreeBSD-base: { enabled: yes }\n' >> /usr/local/etc/pkg/repos/FreeBSD.conf, or use the dist source`
+		return false, why + "; enable it with " + pkgrepo.EnableBase + ", or use the dist source"
 	}
 	return true, ""
 }
