@@ -35,7 +35,7 @@ func (hostFS) Lstat(path string) (Info, error) {
 	return Info{UID: sys.Uid, Perm: st.Mode().Perm(), Symlink: st.Mode()&fs.ModeSymlink != 0}, nil
 }
 
-func (hostFS) EvalSymlinks(path string) (string, error) { return filepath.EvalSymlinks(path) }
+func (hostFS) Readlink(path string) (string, error) { return os.Readlink(path) }
 
 // ACL runs getfacl with fixed arguments and environment. path is absolute,
 // so it cannot be read as an option.

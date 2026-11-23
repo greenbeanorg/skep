@@ -816,6 +816,10 @@ the configuration file it reads, its data directory, the socket's directory,
 and every parent of each are owned by root, not writable by their group or
 others, and carry no ACL beyond the entries that mirror the mode. If
 `/bin/getfacl` fails or its output is not understood, the agent refuses.
+Symbolic links are followed one component at a time, checking the directory
+that holds each link; more than 16 links in a path, or a loop, is a refusal.
+The database's directory is checked as well, and a ZFS path whose mode needs
+`deny` entries (for example `0705`) is refused.
 There is no override. See
 [ADR 0004](../decisions/0004-privilege-boundary.md), amendment of 2026-11-23.
 

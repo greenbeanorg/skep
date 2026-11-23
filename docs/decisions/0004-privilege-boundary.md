@@ -512,6 +512,21 @@ hearst layout under `/home/aba/skep-m6`, removed since) would be refused:
   understood. Both are refused.
 - **Also refused:** a path with a `..` component (it cannot be checked
   component by component) and a dangling symbolic link.
+- **Symbolic links** are walked one component at a time, as the kernel
+  resolves them. At a link the target is read (a relative target resolves
+  against the link's directory) and walked the same way, so the directory
+  holding every link in a chain is checked. At most 16 links per path: a
+  17th, or a loop, is a refusal.
+- **One resolver.** `config.ResolvePath` decides which file is read, for both
+  the loader and the check. The loader reports the path it read, and the
+  agent refuses to start if that differs from the path checked.
+- **The database's directory** is checked too when it is not the data
+  directory (by default `/var/db/skep/agent`). It may not exist yet.
+- **ZFS modes that need deny entries are refused.** A mode whose owner has
+  fewer rights than its group or others (for example `0705`) is represented
+  on ZFS with `deny` entries, which are not a trivial ACL here. Such a path
+  is refused as an extended ACL even though its mode has no group or other
+  write bit.
 - The error names the owner by UID (`owner UID 0`), not by name.
 - `skep-setup check` does not report these paths yet: it needs the host
   check, the configuration's path resolution and a plan item, which is more

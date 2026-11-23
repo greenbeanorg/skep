@@ -15,6 +15,9 @@ import (
 	"strings"
 )
 
+// maxLinkHops is how many symbolic links one path may pass through.
+const maxLinkHops = 16
+
 // Info is what the check needs from lstat(2).
 type Info struct {
 	UID     uint32
@@ -27,8 +30,8 @@ type FS interface {
 	// Lstat reads a path without following a final symbolic link. A
 	// missing path is an error matching fs.ErrNotExist.
 	Lstat(path string) (Info, error)
-	// EvalSymlinks returns the path with every symbolic link resolved.
-	EvalSymlinks(path string) (string, error)
+	// Readlink returns a symbolic link's target as stored.
+	Readlink(path string) (string, error)
 	// ACL returns the output of getfacl -q -n for path.
 	ACL(path string) (string, error)
 }
@@ -83,50 +86,103 @@ func (c *checker) target(t Target) error {
 	if err != nil {
 		return &Refusal{Path: t.Path, Why: "cannot be made absolute: " + err.Error()}
 	}
-	missing, err := c.chain(abs, t)
-	if err != nil {
-		return err
-	}
-	resolved, err := c.fsys.EvalSymlinks(abs)
-	switch {
-	case errors.Is(err, fs.ErrNotExist) && t.Optional && missing:
-		return nil
-	case err != nil:
-		return &Refusal{Path: abs, Why: "cannot be resolved: " + err.Error()}
-	case resolved == abs:
-		return nil
-	}
-	_, err = c.chain(resolved, t)
-	return err
+	return c.walk(abs, t)
 }
 
-// chain checks path and its parents, outermost first. A symbolic link's
-// own owner and mode do not matter: it can only be replaced, which takes
-// write access to its directory, and that directory is in the chain.
-func (c *checker) chain(path string, t Target) (missing bool, err error) {
-	for _, p := range components(path) {
-		if c.passed[p] {
-			continue
+// step is one path component still to walk. viaLink marks a component that
+// came from a symbolic link's target: if it is missing the link dangles,
+// which is not the same as a state directory not created yet.
+type step struct {
+	name    string
+	viaLink bool
+}
+
+func steps(path string, viaLink bool) []step {
+	var out []step
+	for _, part := range strings.Split(path, "/") {
+		if part != "" && part != "." {
+			out = append(out, step{part, viaLink})
 		}
-		st, err := c.fsys.Lstat(p)
-		if errors.Is(err, fs.ErrNotExist) {
-			if t.Optional {
-				return true, nil
-			}
-			return true, &Refusal{Path: p, Why: "does not exist"}
-		}
-		if err != nil {
-			return false, &Refusal{Path: p, Why: "cannot be read: " + err.Error()}
-		}
-		if st.Symlink {
-			continue
-		}
-		if err := c.one(p, st, t.What); err != nil {
-			return false, err
-		}
-		c.passed[p] = true
 	}
-	return false, nil
+	return out
+}
+
+// walk resolves abs one component at a time, as the kernel does, and checks
+// every real directory and file it passes, so the directory holding each
+// link in a chain is checked. A link's own owner and mode do not matter: it
+// can only be replaced, which takes write access to its directory.
+func (c *checker) walk(abs string, t Target) error {
+	root, err := c.fsys.Lstat("/")
+	if err != nil {
+		return &Refusal{Path: "/", Why: "cannot be read: " + err.Error()}
+	}
+	if err := c.verify("/", root, t.What); err != nil {
+		return err
+	}
+	cur, pending, hops := "/", steps(abs, false), 0
+	seen := map[string]bool{}
+	for len(pending) > 0 {
+		s := pending[0]
+		pending = pending[1:]
+		if s.name == ".." { // only from a link's target; cur is already resolved
+			cur = filepath.Dir(cur)
+			continue
+		}
+		next := filepath.Join(cur, s.name)
+		st, err := c.fsys.Lstat(next)
+		switch {
+		case errors.Is(err, fs.ErrNotExist) && s.viaLink:
+			return &Refusal{Path: next, Why: "cannot be resolved: a symbolic link on the way to " + abs + " points to it and it does not exist"}
+		case errors.Is(err, fs.ErrNotExist) && t.Optional:
+			return nil
+		case errors.Is(err, fs.ErrNotExist):
+			return &Refusal{Path: next, Why: "does not exist"}
+		case err != nil:
+			return &Refusal{Path: next, Why: "cannot be read: " + err.Error()}
+		}
+		if !st.Symlink {
+			if err := c.verify(next, st, t.What); err != nil {
+				return err
+			}
+			cur = next
+			continue
+		}
+		key := next
+		for _, r := range pending {
+			key += "/" + r.name
+		}
+		if seen[key] {
+			return &Refusal{Path: next, Why: "is part of a symbolic link loop on the way to " + abs}
+		}
+		seen[key] = true
+		if hops++; hops > maxLinkHops {
+			return &Refusal{Path: next, Why: fmt.Sprintf("is more than %d symbolic links deep on the way to %s", maxLinkHops, abs)}
+		}
+		to, err := c.fsys.Readlink(next)
+		if err != nil {
+			return &Refusal{Path: next, Why: "cannot be resolved: " + err.Error()}
+		}
+		if to == "" {
+			return &Refusal{Path: next, Why: "cannot be resolved: the symbolic link is empty"}
+		}
+		if filepath.IsAbs(to) {
+			cur = "/"
+		}
+		pending = append(steps(to, true), pending...)
+	}
+	return nil
+}
+
+// verify checks one real path once.
+func (c *checker) verify(p string, st Info, what string) error {
+	if c.passed[p] {
+		return nil
+	}
+	if err := c.one(p, st, what); err != nil {
+		return err
+	}
+	c.passed[p] = true
+	return nil
 }
 
 func (c *checker) one(p string, st Info, what string) error {
@@ -151,20 +207,6 @@ func (c *checker) one(p string, st Info, what string) error {
 	default:
 		return &Refusal{Path: p, Why: "has getfacl output the agent does not understand; the agent refuses what it cannot check"}
 	}
-}
-
-// components returns /, /a, /a/b for /a/b.
-func components(path string) []string {
-	out := []string{"/"}
-	cur := ""
-	for _, part := range strings.Split(strings.Trim(path, "/"), "/") {
-		if part == "" {
-			continue
-		}
-		cur += "/" + part
-		out = append(out, cur)
-	}
-	return out
 }
 
 type aclResult int

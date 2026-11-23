@@ -2,6 +2,7 @@ package startcheck
 
 import (
 	"errors"
+	"fmt"
 	"io/fs"
 	"strings"
 	"testing"
@@ -42,18 +43,12 @@ func (f *fakeFS) Lstat(p string) (Info, error) {
 	return st, nil
 }
 
-func (f *fakeFS) EvalSymlinks(p string) (string, error) {
-	cur := ""
-	for _, c := range strings.Split(strings.Trim(p, "/"), "/") {
-		cur += "/" + c
-		if to, ok := f.links[cur]; ok {
-			cur = to
-		}
-		if _, ok := f.st[cur]; !ok {
-			return "", fs.ErrNotExist
-		}
+func (f *fakeFS) Readlink(p string) (string, error) {
+	to, ok := f.links[p]
+	if !ok {
+		return "", errors.New("not a link")
 	}
-	return cur, nil
+	return to, nil
 }
 
 func (f *fakeFS) ACL(p string) (string, error) {
@@ -65,6 +60,20 @@ func (f *fakeFS) ACL(p string) (string, error) {
 		return a, nil
 	}
 	return posixOK, nil
+}
+
+// components returns /, /a, /a/b for /a/b.
+func components(path string) []string {
+	out := []string{"/"}
+	cur := ""
+	for _, part := range strings.Split(strings.Trim(path, "/"), "/") {
+		if part == "" {
+			continue
+		}
+		cur += "/" + part
+		out = append(out, cur)
+	}
+	return out
 }
 
 func refusal(t *testing.T, err error) *Refusal {
@@ -182,6 +191,95 @@ func TestCheckSymlinkChecksBothChains(t *testing.T) {
 	f.st["/usr/local/etc/skep"] = Info{Perm: 0o775}
 	if r := refusal(t, Check(f, []Target{tgt})); r.Path != "/usr/local/etc/skep" {
 		t.Errorf("the directory holding the link: %v", r)
+	}
+}
+
+func link(f *fakeFS, from, to string) {
+	f.st[from] = Info{Symlink: true}
+	f.links[from] = to
+}
+
+// A config that is a link to a link: the directory of the middle link is
+// neither the first path's nor the final file's.
+func TestCheckTwoHopLinkDirectory(t *testing.T) {
+	f := newFake("/etc/skep", "/hop", "/real/agent.json")
+	link(f, "/etc/skep/agent.json", "/hop/next.json")
+	link(f, "/hop/next.json", "/real/agent.json")
+	tgt := Target{Path: "/etc/skep/agent.json", What: "c"}
+	if err := Check(f, []Target{tgt}); err != nil {
+		t.Fatalf("clean chain: %v", err)
+	}
+	f.st["/hop"] = Info{Perm: 0o775}
+	if r := refusal(t, Check(f, []Target{tgt})); r.Path != "/hop" || !strings.Contains(r.Why, "writable") {
+		t.Errorf("want /hop named: %v", r)
+	}
+}
+
+func TestCheckLinkInTheMiddle(t *testing.T) {
+	f := newFake("/usr/local", "/data/etc/agent.json")
+	link(f, "/usr/local/etc", "/data/etc")
+	tgt := Target{Path: "/usr/local/etc/agent.json", What: "c"}
+	if err := Check(f, []Target{tgt}); err != nil {
+		t.Fatalf("clean: %v", err)
+	}
+	f.st["/data/etc/agent.json"] = Info{Perm: 0o666}
+	if r := refusal(t, Check(f, []Target{tgt})); r.Path != "/data/etc/agent.json" {
+		t.Errorf("the file behind the middle link: %v", r)
+	}
+	// An optional path missing below a real link is "not created yet".
+	f = newFake("/var", "/data/run")
+	link(f, "/var/run", "/data/run")
+	if err := Check(f, []Target{{Path: "/var/run/skep", What: "d", Optional: true}}); err != nil {
+		t.Errorf("optional below a link: %v", err)
+	}
+}
+
+func TestCheckRelativeLink(t *testing.T) {
+	f := newFake("/a/b", "/a/c/agent.json")
+	link(f, "/a/b/agent.json", "../c/agent.json")
+	tgt := Target{Path: "/a/b/agent.json", What: "c"}
+	if err := Check(f, []Target{tgt}); err != nil {
+		t.Fatalf("clean: %v", err)
+	}
+	f.st["/a/c"] = Info{Perm: 0o777}
+	if r := refusal(t, Check(f, []Target{tgt})); r.Path != "/a/c" {
+		t.Errorf("relative to the link's directory: %v", r)
+	}
+	f = newFake("/a/b/agent.json")
+	link(f, "/a/l", "b/agent.json")
+	f.st["/a/b"] = Info{UID: 5, Perm: 0o755}
+	if r := refusal(t, Check(f, []Target{{Path: "/a/l", What: "c"}})); r.Path != "/a/b" {
+		t.Errorf("a sibling target: %v", r)
+	}
+}
+
+func TestCheckLinkLoop(t *testing.T) {
+	f := newFake("/a")
+	link(f, "/a/x", "/a/y")
+	link(f, "/a/y", "x")
+	if r := refusal(t, Check(f, []Target{{Path: "/a/x", What: "c", Optional: true}})); !strings.Contains(r.Why, "loop") {
+		t.Errorf("loop: %v", r)
+	}
+}
+
+func TestCheckLinkHopLimit(t *testing.T) {
+	chain := func(n int) *fakeFS {
+		f := newFake("/l", "/real/agent.json")
+		for i := 0; i < n; i++ {
+			to := fmt.Sprintf("/l/%d", i+1)
+			if i == n-1 {
+				to = "/real/agent.json"
+			}
+			link(f, fmt.Sprintf("/l/%d", i), to)
+		}
+		return f
+	}
+	tgt := Target{Path: "/l/0", What: "c"}
+	if err := Check(chain(16), []Target{tgt}); err != nil {
+		t.Errorf("16 hops are allowed: %v", err)
+	}
+	if r := refusal(t, Check(chain(17), []Target{tgt})); !strings.Contains(r.Why, "more than 16") {
+		t.Errorf("17 hops: %v", r)
 	}
 }
 

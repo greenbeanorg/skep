@@ -1,6 +1,10 @@
 package main
 
 import (
+	"errors"
+	"os"
+	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/greenbeanorg/skep/internal/config"
@@ -43,10 +47,55 @@ func TestStateTargets(t *testing.T) {
 	var cfg config.Config
 	cfg.DataDir = "/var/db/skep"
 	cfg.Socket.Path = "/var/run/skep/agent.sock"
-	got := stateTargets(cfg)
-	want := []startcheck.Target{{Path: "/var/db/skep", What: "the agent's data directory", Optional: true},
-		{Path: "/var/run/skep", What: "the agent socket's directory", Optional: true}}
-	if len(got) != 2 || got[0] != want[0] || got[1] != want[1] {
-		t.Fatalf("%+v", got)
+	cfg.Database.Path = "/var/db/skep/agent/agent.db"
+	data := startcheck.Target{Path: "/var/db/skep", What: "the agent's data directory", Optional: true}
+	db := startcheck.Target{Path: "/var/db/skep/agent", What: "the agent's database directory", Optional: true}
+	sock := startcheck.Target{Path: "/var/run/skep", What: "the agent socket's directory", Optional: true}
+	if got := stateTargets(cfg); !slices.Equal(got, []startcheck.Target{data, db, sock}) {
+		t.Fatalf("database in its own directory: %+v", got)
+	}
+	cfg.Database.Path = "/var/db/skep/agent.db"
+	if got := stateTargets(cfg); !slices.Equal(got, []startcheck.Target{data, sock}) {
+		t.Fatalf("database in the data directory: %+v", got)
+	}
+}
+
+// The check and the loader must name the same file, from the same resolver.
+func TestConfigCheckedIsConfigRead(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "agent.json")
+	if err := os.WriteFile(file, []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	env := func(k string) (string, bool) {
+		if k == config.EnvConfig {
+			return file, true
+		}
+		return "", false
+	}
+	checked := configToCheck("", env, func(string) bool { return false })
+	_, read, err := config.LoadReportingPath(config.LoadOptions{LookupEnv: env})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if checked != file || read != file || checkConfigRead(checked, read) != nil {
+		t.Errorf("checked %q, read %q", checked, read)
+	}
+	none := func(string) (string, bool) { return "", false }
+	_, read, err = config.LoadReportingPath(config.LoadOptions{DefaultPath: filepath.Join(dir, "absent.json"), LookupEnv: none})
+	if err != nil || read != "" {
+		t.Errorf("a missing default file reads nothing: %q, %v", read, err)
+	}
+}
+
+func TestCheckConfigReadRefusesADifference(t *testing.T) {
+	for _, c := range [][2]string{{"/a.json", "/b.json"}, {"", "/usr/local/etc/skep/agent.json"}, {"/a.json", ""}} {
+		var r *startcheck.Refusal
+		if err := checkConfigRead(c[0], c[1]); !errors.As(err, &r) {
+			t.Errorf("checked %q, read %q: %v", c[0], c[1], err)
+		}
+	}
+	if err := checkConfigRead("", ""); err != nil {
+		t.Errorf("no file at all: %v", err)
 	}
 }
