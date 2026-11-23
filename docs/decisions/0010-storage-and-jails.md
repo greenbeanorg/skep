@@ -2485,14 +2485,12 @@ and accepted the amendment).
    `command`. A failed `volmode=none` after which `volmode=dev` was set
    back is `repair_failed`, with the `zfs` error in `error`.
 
-## Amendment aa (Proposed): the agent finishes a half-stopped jail at start
+## Amendment aa (Accepted): the agent finishes a half-stopped jail at start
 
-- Status: **Proposed**, 2026-11-23 (unattended run; Andy away). Written
-  before the build, as asked. Andy's answers to the four questions are
-  recorded below (2026-11-23, with the Fable review's fix round, rules 6–9);
-  the amendment stays Proposed until Andy marks it Accepted (2026-11-23:
-  not yet; the review reads the diff first). (Amendment z
-  is on PR #55.)
+- Status: **Accepted**, 2026-11-23 (Andy). Written before the build, as
+  asked. Andy's answers to the four questions are recorded below (2026-11-23,
+  with the Fable review's fix round, rules 6–9); rule 10 was added with the
+  review's approval. (Amendment z is on PR #55.)
 
 **The problem.** A jail stop is: record desired `stopped` and observed
 `stopping`; `hostops.StopJail`, which destroys the jail's epairs first and
@@ -2572,6 +2570,16 @@ completed:
    `TestStopJailOfGoneJailChecksOwnership`). A normal stop task is
    unchanged. Andy's answer, 2026-11-23: the description check stays the
    only ownership check; no interface index is recorded.
+10. **Agent shutdown between containers.** At the top of each iteration
+    `ObserveAll` checks its context. If it is cancelled, it logs
+    `observe_cancelled` (WARN) once, with `not_observed`, the number of
+    containers not reached, and returns the context's error. Those
+    containers are not passed to `StopJail` and nothing is recorded about
+    them: one recorded `stopping` stays so, and the next agent start
+    completes its stop. The agent's start then stops the task engine and
+    exits as a normal stop, without the later checks and without serving
+    its socket (unit tests `TestObserveAllStopsWhenCancelled`,
+    `TestObserveContainersShutdown`).
 
 **Why exec.stop, and not a removal without it.** The half-started sweep
 removes the jail without `/etc/rc.shutdown` because the `/dev` guard may not
@@ -2609,8 +2617,8 @@ the agent's socket comes up later.
    per half-stopped jail. Acceptable, or should the completion run after
    the socket is served (the jail would show `stopping` meanwhile)? —
    **The completion stays before the socket is served, for 0.1.**
-   (`skep-setup upgrade` waits 30 s for the socket; see the PR #57 fix
-   round report for what it says when the agent takes longer.)
+   (The wait of `skep-setup upgrade` for the socket becomes 200 s in
+   PR #61.)
 
 **Validation (langrishe, 2026-11-23 UTC, unattended).** A pkgbase template
 built through the API (41 s), a jail with a DHCP NIC on a test bridge

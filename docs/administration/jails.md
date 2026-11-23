@@ -300,13 +300,16 @@ Before each one the agent logs `jail_stop_completing` (WARN) with the
 container ID and that bound in `max_wait_seconds`, so a slow start can be
 explained from the log while it happens. If the agent is stopped during a
 completion, nothing is recorded: the jail stays `stopping` and the next
-agent start completes it (`jail_stop_completion_cancelled` in the log). If the completion fails, the agent records the jail
-`unknown` with the reason. What a read then shows depends on the host:
-while the jail still runs (the usual case: `jail -r` and then `jail -R`
-failed), `GET /api/v1/containers/{id}` and the list show `state: running`,
+agent start completes it (`jail_stop_completion_cancelled` in the log).
+Containers it had not reached yet stay as recorded (`observe_cancelled`,
+with their number), and the agent exits as a normal stop. If the
+completion fails, the agent records the jail `unknown` with the reason.
+What a read then shows depends on the host: while the jail still runs
+(the usual case: `jail -r` and then `jail -R` failed),
+`GET /api/v1/containers/{id}` and the list show `state: running`,
 `desired_state: stopped`, its `jid`, and that reason in `state_detail`;
 stop it again. If the jail is gone, they show `stopped` with no detail.
-(ADR 0010 amendment aa, Proposed.)
+(ADR 0010 amendment aa.)
 
 **A jail running although it should be stopped.** Whenever a jail runs
 while its desired state is `stopped`, reads show the observed state,
