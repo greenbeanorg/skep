@@ -1,0 +1,5 @@
+{"step": "stop", "http": 202, "status": "succeeded", "error": null}
+{"step": "state", "state": "stopped", "desired_state": "stopped", "jid": null, "state_detail": null}
+{"step": "delete-container", "status": "succeeded"}
+{"step": "delete-template", "http": 202, "status": "succeeded", "error": null, "body": null}
+{"step": "end", "jls": "", "datasets": ["zroot/skep", "zroot/skep/jail", "zroot/skep/templates", "zroot/skep/vm"], "mounts": "zroot/skep/templates on /zroot/skep/templates (zfs, local, noatime, nfsv4acls)\nzroot/skep/jail on /zroot/skep/jail (zfs, local, noatime, nfsv4acls)", "runfiles": "", "containers": [], "templates": []}
