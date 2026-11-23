@@ -1031,10 +1031,32 @@ func (b *builder) media() {
 	}
 }
 
+// firmwareFiles are the files of the edk2-bhyve package the agent needs to
+// create a VM: hostops.FirmwareCodeFile and hostops.FirmwareVarsFile.
+var firmwareFiles = []string{"BHYVE_UEFI.fd", "BHYVE_UEFI_VARS.fd"}
+
+// missingFirmware returns the firmware files that are not regular files in
+// firmwareDir (a symbolic link to one counts).
+func missingFirmware(root string) []string {
+	var missing []string
+	for _, f := range firmwareFiles {
+		if st, err := os.Stat(hostPath(root, firmwareDir+"/"+f)); err != nil || !st.Mode().IsRegular() {
+			missing = append(missing, f)
+		}
+	}
+	return missing
+}
+
 func (b *builder) readOnlyChecks() {
-	if st, err := os.Stat(hostPath(b.o.Root, firmwareDir)); err != nil || !st.IsDir() {
-		b.item(Item{Kind: Manual, Area: "packages", What: "edk2-bhyve",
-			Detail: "UEFI firmware for VMs is not installed; jails do not need it", Steps: []string{"pkg install edk2-bhyve"}})
+	if missing := missingFirmware(b.o.Root); len(missing) > 0 {
+		// A warning, not a manual step: setup does not install the
+		// package and the skep package does not depend on it, because a
+		// jails-only host needs no firmware. But without it no VM can be
+		// created, so the operator is told plainly.
+		b.item(Item{Kind: Warn, Area: "packages", What: "edk2-bhyve",
+			Detail: "the bhyve UEFI firmware package edk2-bhyve is not installed (" + strings.Join(missing, ", ") +
+				" missing in " + firmwareDir + "): VMs cannot be created without it; jails do not need it. Setup does not install it",
+			Steps: []string{"pkg install edk2-bhyve"}})
 	} else {
 		b.ok("packages", "edk2-bhyve", firmwareDir)
 	}

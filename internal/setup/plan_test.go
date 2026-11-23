@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/greenbeanorg/skep/internal/config"
+	"github.com/greenbeanorg/skep/internal/hostops"
 )
 
 // fixture copies testdata/<name> into a fresh root and returns it.
@@ -62,13 +63,26 @@ func withSkep(t *testing.T, root, id string) string {
 	return root
 }
 
+// installFirmware puts the files of the edk2-bhyve package the agent needs
+// under root.
+func installFirmware(t *testing.T, root string) {
+	t.Helper()
+	dir := filepath.Join(root, "usr/local/share/edk2-bhyve")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range []string{hostops.FirmwareCodeFile, hostops.FirmwareVarsFile} {
+		if err := os.WriteFile(filepath.Join(dir, f), []byte("fd"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 // stockHost is a stock UFS install with the package installed.
 func stockHost(t *testing.T) string {
 	t.Helper()
 	root := withSkep(t, fixture(t, "stock-ufs"), "409")
-	if err := os.MkdirAll(filepath.Join(root, "usr/local/share/edk2-bhyve"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	installFirmware(t, root)
 	appendFile(t, filepath.Join(root, "var/run/dmesg.boot"), "  VT-x: PAT,HLT,MTF,PAUSE,EPT,UG,VPID\n")
 	appendFile(t, filepath.Join(root, "usr/local/etc/pkg/repos/FreeBSD.conf"), "FreeBSD-base: { enabled: yes }\n")
 	return root
@@ -382,7 +396,7 @@ func TestPlanNewBridgeRefusals(t *testing.T) {
 func TestPlanAccountRefusals(t *testing.T) {
 	base := func(t *testing.T) string {
 		root := fixture(t, "stock-ufs")
-		os.MkdirAll(filepath.Join(root, "usr/local/share/edk2-bhyve"), 0o755)
+		installFirmware(t, root)
 		return root
 	}
 	t.Run("only the user", func(t *testing.T) {
@@ -585,11 +599,39 @@ func TestPlanReadOnlyChecks(t *testing.T) {
 	root := fixture(t, "stock-ufs")
 	withSkep(t, root, "409")
 	p := compute(t, Options{Root: root, Mgmt: []string{"vtnet0"}}, facts())
-	want(t, p, Manual, "edk2-bhyve", "")
+	if it := want(t, p, Warn, "edk2-bhyve", "VMs cannot be created without it"); len(it.Steps) != 1 || it.Steps[0] != "pkg install edk2-bhyve" {
+		t.Fatalf("edk2-bhyve item: %+v", it)
+	}
 	want(t, p, Manual, "FreeBSD-base", "disabled")
 	want(t, p, Warn, "virtualization", "cannot read")
 	appendFile(t, filepath.Join(root, "var/run/dmesg.boot"), "VT-x: PAT,HLT\n")
 	want(t, compute(t, Options{Root: root, Mgmt: []string{"vtnet0"}}, facts()), Warn, "virtualization", "VMs will be unavailable")
+}
+
+// TestPlanFirmwareFiles: the warning goes by the files the agent opens, not
+// by the directory; one missing file is enough, and a link to a file counts.
+func TestPlanFirmwareFiles(t *testing.T) {
+	root := stockHost(t)
+	dir := filepath.Join(root, "usr/local/share/edk2-bhyve")
+	want(t, compute(t, Options{Root: root, Mgmt: []string{"vtnet0"}}, facts()), OK, "edk2-bhyve", "")
+	if err := os.Remove(filepath.Join(dir, hostops.FirmwareVarsFile)); err != nil {
+		t.Fatal(err)
+	}
+	want(t, compute(t, Options{Root: root, Mgmt: []string{"vtnet0"}}, facts()), Warn, "edk2-bhyve", hostops.FirmwareVarsFile+" missing")
+	if err := os.Symlink(hostops.FirmwareCodeFile, filepath.Join(dir, hostops.FirmwareVarsFile)); err != nil {
+		t.Fatal(err)
+	}
+	want(t, compute(t, Options{Root: root, Mgmt: []string{"vtnet0"}}, facts()), OK, "edk2-bhyve", "")
+}
+
+// TestFirmwareFilesMatchAgent: setup checks the files the agent needs.
+func TestFirmwareFilesMatchAgent(t *testing.T) {
+	if len(firmwareFiles) != 2 || firmwareFiles[0] != hostops.FirmwareCodeFile || firmwareFiles[1] != hostops.FirmwareVarsFile {
+		t.Fatalf("firmwareFiles %v, agent needs %s and %s", firmwareFiles, hostops.FirmwareCodeFile, hostops.FirmwareVarsFile)
+	}
+	if firmwareDir != config.DefaultFirmwareDir {
+		t.Fatalf("firmwareDir %s, agent default %s", firmwareDir, config.DefaultFirmwareDir)
+	}
 }
 
 func TestPlanGuests(t *testing.T) {

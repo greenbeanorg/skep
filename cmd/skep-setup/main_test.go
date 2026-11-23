@@ -45,7 +45,11 @@ func stockRoot(t *testing.T) string {
 			t.Fatal(err)
 		}
 	}
-	os.MkdirAll(filepath.Join(root, "usr/local/share/edk2-bhyve"), 0o755)
+	fw := filepath.Join(root, "usr/local/share/edk2-bhyve")
+	os.MkdirAll(fw, 0o755)
+	for _, f := range []string{"BHYVE_UEFI.fd", "BHYVE_UEFI_VARS.fd"} {
+		os.WriteFile(filepath.Join(fw, f), []byte("fd"), 0o644)
+	}
 	return root
 }
 

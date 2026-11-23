@@ -95,6 +95,15 @@ Every program setup runs as root is named by its absolute path
 services or accounts (`-start`, `-admin`, `remove`'s service stops and
 `pw`, and `upgrade` as a whole) is refused.
 
+**Firmware.** `check` and `plan` print a **warning** when the bhyve UEFI
+firmware is missing (`BHYVE_UEFI.fd` or `BHYVE_UEFI_VARS.fd` in
+`/usr/local/share/edk2-bhyve`, the files the agent opens): it names the
+package, `edk2-bhyve`, and says VMs cannot be created without it. Setup does
+not install it and the skep package does not depend on it, because a host
+that only runs jails needs no firmware: `pkg install edk2-bhyve`. (Whether
+the package should depend on it is an open question; see the
+[backlog](../backlog.md).)
+
 ## What it refuses
 
 `apply` does nothing at all while any of these stands:
