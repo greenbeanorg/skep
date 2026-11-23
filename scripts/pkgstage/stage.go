@@ -227,9 +227,10 @@ type manifest struct {
 	Scripts      map[string]string `json:"scripts"`
 }
 
-// dep is one entry of the manifest's deps: pkg installs a missing one from
-// the configured repositories with "pkg install ./file.pkg", and refuses
-// "pkg add" of a file whose dependency it cannot find (see
+// dep is one entry of the manifest's deps. For a local package file, pkg
+// 2.9.2 installs a missing one from the configured repositories with
+// "pkg install ./file.pkg", while "pkg add ./file.pkg" refuses ("Missing
+// dependency") and changes nothing (langrishe, 2026-11-23;
 // docs/installation/packaging.md).
 type dep struct {
 	Origin  string `json:"origin"`

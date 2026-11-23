@@ -120,11 +120,11 @@ open question for Andy; see the [backlog](../backlog.md).)
 **Firmware.** `check` and `plan` print a **warning** when the bhyve UEFI
 firmware is missing (`BHYVE_UEFI.fd` or `BHYVE_UEFI_VARS.fd` in
 `/usr/local/share/edk2-bhyve`, the files the agent opens): it names the
-package, `edk2-bhyve`, and says VMs cannot be created without it. Setup does
-not install it and the skep package does not depend on it, because a host
-that only runs jails needs no firmware: `pkg install edk2-bhyve`. (Whether
-the package should depend on it is an open question; see the
-[backlog](../backlog.md).)
+package, `edk2-bhyve`, and says VMs cannot be created without it. The skep
+package depends on it, so a package install has it
+([packaging](packaging.md)); the warning is for a host installed by hand,
+or one where the firmware was removed afterwards. Setup never installs it:
+`pkg install edk2-bhyve`.
 
 ## What it refuses
 

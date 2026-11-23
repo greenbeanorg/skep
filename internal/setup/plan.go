@@ -1142,9 +1142,10 @@ func missingFirmware(root string) []string {
 func (b *builder) readOnlyChecks() {
 	if missing := missingFirmware(b.o.Root); len(missing) > 0 {
 		// A warning, not a manual step: setup does not install the
-		// package and the skep package does not depend on it, because a
-		// jails-only host needs no firmware. But without it no VM can be
-		// created, so the operator is told plainly.
+		// package. The skep package depends on it, so this is for a host
+		// installed by hand or one where the firmware was removed later;
+		// without it no VM can be created, so the operator is told
+		// plainly.
 		b.item(Item{Kind: Warn, Area: "packages", What: "edk2-bhyve",
 			Detail: "the bhyve UEFI firmware package edk2-bhyve is not installed (" + strings.Join(missing, ", ") +
 				" missing in " + firmwareDir + "): VMs cannot be created without it; jails do not need it. Setup does not install it",
