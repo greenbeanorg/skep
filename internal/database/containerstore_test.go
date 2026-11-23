@@ -117,6 +117,15 @@ func TestContainerStore(t *testing.T) {
 	if got.JID != nil || got.StateDetail != "removed outside Skep" || got.Hostname != "web2" || got.SSHAuthorizedKey != "" || got.Options.SysVIPC {
 		t.Fatalf("after update: %+v", got)
 	}
+	// A new start clears the detail of the previous stop or failed start:
+	// while it runs, the container shows starting with no stale reason.
+	if err := s.MarkStarting(ctx, a.ID, later); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = s.Get(ctx, a.ID)
+	if got.State != models.ContainerStarting || got.StateDetail != "" {
+		t.Fatalf("a new start kept the old detail: %+v", got)
+	}
 	// A template in use cannot be deleted.
 	if err := tpls.Delete(ctx, tpl.ID); err == nil {
 		t.Fatal("a template in use was deleted")

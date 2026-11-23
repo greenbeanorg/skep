@@ -386,7 +386,8 @@ func (s *ContainerStore) SetProvisioned(ctx context.Context, id string, at time.
 // MarkStarting records, before jail(8) runs, that the jail is about to
 // run code for the first time or again: started_once becomes 1 for good
 // and the desired state running (decision 13: from here on Skep never
-// writes into the tree).
+// writes into the tree). The detail of the previous stop or failed start
+// is cleared: it no longer describes the container while the start runs.
 //
 // It refuses, with container_address_in_use, when another jail recorded
 // starting or running holds one of this jail's static IPv4 addresses on
@@ -404,7 +405,7 @@ func (s *ContainerStore) MarkStarting(ctx context.Context, id string, at time.Ti
 		return err
 	}
 	res, err := tx.ExecContext(ctx,
-		`UPDATE containers SET started_once = 1, desired_state = 'running', observed_state = 'starting', observed_at = ?, updated_at = ? WHERE id = ?`,
+		`UPDATE containers SET started_once = 1, desired_state = 'running', observed_state = 'starting', observed_detail = NULL, observed_at = ?, updated_at = ? WHERE id = ?`,
 		formatTime(at), formatTime(at), id)
 	if err != nil {
 		return fmt.Errorf("database: mark container starting: %w", err)
