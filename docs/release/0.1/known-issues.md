@@ -37,6 +37,8 @@ the source is linked.*
   refuses and says to wait for tasks that cannot finish until the agent
   starts, and `-force` first waits its full task wait (default 60 s). Start
   the agent, then upgrade.
+- `skep-setup remove -revert-host` also lists lines an earlier install added,
+  because journals survive `pkg delete` (backlog).
 
 ## Jails
 
