@@ -19,7 +19,7 @@ concurrency:
 jobs:
   # Decides whether the change can affect anything the other jobs check.
   # A change that touches only documentation or recorded test results
-  # (the paths in scripts/ci-docs-only.sh) skips them. Any doubt (an
+  # (the paths in the base's scripts/ci-docs-only.sh) skips them. Any doubt (an
   # unknown base, a failure here) runs everything: the jobs below skip only
   # when this job says "false" explicitly.
   changes:
@@ -39,19 +39,27 @@ jobs:
           PR_HEAD: ${{ github.event.pull_request.head.sha }}
           PUSH_BEFORE: ${{ github.event.before }}
           PUSH_AFTER: ${{ github.sha }}
+        # The decision is made by the base's copy of the script, never the
+        # copy this change carries. No such file in the base means "code".
+        # --no-renames lists both names of a move: code moved under docs/
+        # must not look like a docs-only change.
         run: |
           case "$EVENT" in
-          pull_request) range="$PR_BASE...$PR_HEAD" ;;
-          push) range="$PUSH_BEFORE..$PUSH_AFTER" ;;
-          *) range="" ;;
+          pull_request) base="$PR_BASE"; range="$PR_BASE...$PR_HEAD" ;;
+          push) base="$PUSH_BEFORE"; range="$PUSH_BEFORE..$PUSH_AFTER" ;;
+          *) base=""; range="" ;;
           esac
-          if [ -n "$range" ] && files="$(git diff --name-only "$range")" &&
-             printf '%s\n' "$files" | ./scripts/ci-docs-only.sh; then
+          decider="$(mktemp)"
+          if [ -n "$range" ] &&
+             git show "$base:scripts/ci-docs-only.sh" > "$decider" 2>/dev/null &&
+             files="$(git diff --no-renames --name-only "$range")" &&
+             printf '%s\n' "$files" | sh "$decider"; then
             echo "only documentation or results changed; the checks are skipped"
             echo "code=false" >> "$GITHUB_OUTPUT"
           else
             echo "code=true" >> "$GITHUB_OUTPUT"
           fi
+          rm -f "$decider"
 
   go:
     name: Test, vet, build

@@ -10,7 +10,9 @@
 #   tests/....md                   test plans and runbooks
 #   tests/.../results/...          recorded results (logs, scripts kept as
 #                                  evidence; CI never runs them)
-# Anything else counts as code. Markdown elsewhere is code on purpose: for
+# Anything else counts as code, and so does any change under .github/ or to
+# this script, whatever its name ends in. CI runs the copy from the base of
+# the change, never the change's own. Markdown elsewhere is code on purpose: for
 # example scripts/notices/vendored/*/LICENSE.md is read by
 # "make notices-check".
 n=0
@@ -18,6 +20,7 @@ while IFS= read -r f; do
 	[ -n "$f" ] || continue
 	n=$((n + 1))
 	case "$f" in
+	.github/* | scripts/ci-docs-only.sh) exit 1 ;;
 	*.go) exit 1 ;; # Go anywhere is built by "go vet ./...", even under results/
 	docs/*) ;;
 	*/*.md) case "$f" in tests/*) ;; *) exit 1 ;; esac ;;

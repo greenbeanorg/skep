@@ -170,7 +170,9 @@ a message.
 CI (`.github/workflows/ci.yml`) skips its checks for a change that
 touches only documentation or recorded test results: `docs/`, Markdown at
 the repository root or under `tests/`, and anything under a `results/`
-directory in `tests/` except Go files (`scripts/ci-docs-only.sh` decides).
+directory in `tests/` except Go files. The base branch's copy of
+`scripts/ci-docs-only.sh` decides, and any change under `.github/` or to that
+script counts as code.
 The skipped jobs report as skipped, which a required status check treats
 as passed, so such a pull request is not blocked. Any other change, an
 unknown base, or a failure of that decision runs everything. A newer push
