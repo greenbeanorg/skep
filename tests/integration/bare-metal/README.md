@@ -6,15 +6,15 @@ commands and the pass criterion. Record every result in
 `tests/integration/bare-metal/results/<date>-<host>.md` with the logs, as the
 other integration suites do; a step not run stays pending.
 
-Sources of the list (2026-11-23): [host requirements](../../docs/installation/host-requirements.md)
-("Bare metal, AMD-V hosts"), the [VM guide](../../docs/administration/virtual-machines.md)
+Sources of the list (2026-11-23): [host requirements](../../../docs/installation/host-requirements.md)
+("Bare metal, AMD-V hosts"), the [VM guide](../../../docs/administration/virtual-machines.md)
 and [tests/integration/vm](../vm/README.md) ("not verifiable on the lab host": non-thin
 disk on real disks, SMT topology, `e1000`, `nvme`/`ahci-hd` beyond a smoke boot), the
-[storage guide](../../docs/administration/storage.md) ("real disks"),
-[architecture overview](../../docs/architecture/overview.md) (degraded pool, SMT core
+[storage guide](../../../docs/administration/storage.md) ("real disks"),
+[architecture overview](../../../docs/architecture/overview.md) (degraded pool, SMT core
 count, system console prompt, VT-x probing, nested-KVM workaround),
-[ADR 0011](../../docs/decisions/0011-guest-port-anti-spoofing.md) decision 9 and the
-[filtering guide](../../docs/administration/guest-port-filtering.md) (throughput on real
+[ADR 0011](../../../docs/decisions/0011-guest-port-anti-spoofing.md) decision 9 and the
+[filtering guide](../../../docs/administration/guest-port-filtering.md) (throughput on real
 hardware), and the zvol device-node miss rate
 ([results](../setup/results/zvol-device-node-20261122.md); only virtual disks so far).
 
@@ -33,7 +33,7 @@ the lab VMs.
 - A switch port for the guest uplink that carries VLAN 60 untagged (DHCP for guests)
   and one tagged test VLAN, plus a second machine on that network for step 10.
 - FreeBSD 15.1-RELEASE amd64 install media; the Skep package for the release being
-  checked, built as in [packaging](../../docs/installation/packaging.md).
+  checked, built as in [packaging](../../../docs/installation/packaging.md).
 
 Throughout: `A=-mgmt <mgmt-if> -pool tank`, `SK="skepctl"` logged in from the
 workstation with the key pin compared to `skep-api tls fingerprint` on the host
@@ -209,7 +209,7 @@ and runs (pending: "Bare metal, AMD-V hosts").
 
 Delete the test VMs, jails, templates and test users through the API; `zpool destroy
 tank` only if the machine is going back; `skep-setup remove` per
-[skep-setup](../../docs/installation/skep-setup.md) if Skep is removed.
+[skep-setup](../../../docs/installation/skep-setup.md) if Skep is removed.
 
 Pass: `zfs list -r tank/skep` shows only Skep's base datasets (or nothing after
 remove); no `skep-` jails or VMs (`jls`, `ls /dev/vmm`).
