@@ -176,6 +176,9 @@ or one where the firmware was removed afterwards. Setup never installs it:
   group or others: every command that reads or writes there (`check`,
   `plan`, `apply`, `rollback`, `upgrade`, `remove`) stops with exit 3 before
   using it.
+  As root on FreeBSD the same directories, and every parent up to `/`, must
+  also pass the agent's start-check rules, including ACLs: an ACL beyond the
+  mode bits is refused (exit 3) with its fix.
 
 Bridges are judged as they are **now** as well as by `rc.conf`: setup
 reads `ifconfig -g bridge` and each bridge's `member:` lines and `bridge
