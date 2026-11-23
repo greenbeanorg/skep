@@ -1,0 +1,12 @@
+dd 2550: ,stat=,command=
+           2550
+set none rc=0 node=gone
+2 s after none: dd ps=[,stat=,command=]
+set dev rc=0
+node=present dd ps=[,stat=,command=]
+dd exit status 143
+dd stderr:
+dmesg tail:
+hms0: 5 buttons and [XYW] coordinates ID=0
+lo0: link state changed to UP
+vtnet0: link state changed to UP

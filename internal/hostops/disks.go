@@ -100,6 +100,20 @@ func (d Disks) Create(ctx context.Context, spec VolumeSpec) (Dataset, error) {
 	return d.zfs.CreateVolume(ctx, spec)
 }
 
+// EnsureDevice makes sure what bhyve opens for a disk exists: the zvol's
+// device node in a ZFS pool (ZFS.EnsureVolumeDevice). A file in a
+// directory pool has nothing to ensure.
+func (d Disks) EnsureDevice(ctx context.Context, spec VolumeSpec, stopped StoppedCheck) (DeviceResult, error) {
+	kind, err := d.kind(spec.Pool)
+	if err != nil {
+		return DeviceResult{}, err
+	}
+	if kind == PoolKindDirectory {
+		return DeviceResult{}, nil
+	}
+	return d.zfs.EnsureVolumeDevice(ctx, spec, stopped)
+}
+
 // Resize grows a disk. It never shrinks one.
 func (d Disks) Resize(ctx context.Context, spec VolumeSpec) (Dataset, error) {
 	kind, err := d.kind(spec.Pool)

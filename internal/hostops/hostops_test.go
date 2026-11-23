@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -82,6 +83,10 @@ type fakeSystem struct {
 	// "pid signal".
 	procs map[int][]string
 	kills *[]string
+	// modes maps a path to what LstatMode returns; lstat, when set,
+	// answers instead.
+	modes map[string]fs.FileMode
+	lstat func(path string) (fs.FileMode, error)
 }
 
 func (f fakeSystem) SysctlUint64(name string) (uint64, error) {
@@ -98,6 +103,17 @@ func (f fakeSystem) SysctlExists(name string) (bool, error) {
 }
 
 func (f fakeSystem) Exists(path string) bool { return f.paths[path] }
+
+// LstatMode answers from modes; a path not in it does not exist.
+func (f fakeSystem) LstatMode(path string) (fs.FileMode, error) {
+	if f.lstat != nil {
+		return f.lstat(path)
+	}
+	if m, ok := f.modes[path]; ok {
+		return m, nil
+	}
+	return 0, &fs.PathError{Op: "lstat", Path: path, Err: fs.ErrNotExist}
+}
 
 func (f fakeSystem) Alive(pid int) bool { _, ok := f.procs[pid]; return ok }
 
@@ -129,7 +145,7 @@ func testConf(t *testing.T) Confinement {
 
 func testHost(t *testing.T, run *script, zfsLoaded bool) *host {
 	t.Helper()
-	sys := fakeSystem{oids: map[string]uint64{}, paths: map[string]bool{}, procs: map[int][]string{}, kills: &[]string{}}
+	sys := fakeSystem{oids: map[string]uint64{}, paths: map[string]bool{}, procs: map[int][]string{}, kills: &[]string{}, modes: map[string]fs.FileMode{}}
 	if zfsLoaded {
 		sys.oids[sysctlZFSLoaded] = 1
 	}

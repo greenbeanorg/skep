@@ -1,0 +1,27 @@
++ sudo timeout -f 300 pkg add -f /home/aba/skep-pkgs/z2/skep-0.1.0.pkg
+Installing skep-0.1.0...
+package skep is already installed, forced install
+Extracting skep-0.1.0: .......... done
+pkgadd-rc=0
++ echo 'pkgadd-rc=0'
++ sudo timeout -f 300 skep-setup upgrade -yes
+  installed: skep-agent, skep-api and skep-setup are 0.1.0+0ec6fec
+  service skep_api stop
+  skep-agent db backup: /var/db/skep/backup/0.1.0+64de929-20261123T000938Z/agent.db sha256 9050ba9de487d3f272e4214ab48d39ae4713a8873f39b42cb8a7c3c6094fc143
+  skep-api db backup: /var/db/skep/backup/0.1.0+64de929-20261123T000938Z/api.db sha256 d98e1afcb157e2da1259597d28076633d7dc29b1a045b745d0cea76d003f20b2
+  service skep_agent stop (from here on, Ctrl-C does not interrupt the upgrade)
+  skep_agent pid 6838 runs /usr/local/sbin/skep-agent at 0.1.0+0ec6fec
+  skep_api pid 6910 runs /usr/local/sbin/skep-api at 0.1.0+0ec6fec
+  agent socket: answers as 0.1.0+0ec6fec
+  health: degraded
+skep-setup: both services restarted at 0.1.0+0ec6fec, but health is degraded; see skep-setup check and the agent's log
+upgrade-rc=3
++ echo 'upgrade-rc=3'
++ sudo service skep_agent status
+skep_agent is running as pid 6838 (supervisor pid 6836).
++ sudo service skep_api status
+skep_api is running as pid 6910 (supervisor pid 6908).
++ /usr/local/sbin/skep-agent -version
+skep-agent 0.1.0 (commit 0ec6fec, built 2026-11-23T00:08:57Z, go1.27.4 freebsd/amd64)
++ /usr/local/sbin/skep-api -version
+skep-api 0.1.0 (commit 0ec6fec, built 2026-11-23T00:08:57Z, go1.27.4 freebsd/amd64)

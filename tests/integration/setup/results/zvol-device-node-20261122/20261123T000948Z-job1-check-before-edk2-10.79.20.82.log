@@ -1,0 +1,29 @@
+skep-setup check, root / (read-only; nothing was changed)
+  12 ok, 1 to add, 0 warnings, 1 conflicts, 3 for you, 0 refused
+  add      /boot/loader.conf                  kern.racct.enable="1"
+                                                -> append kern.racct.enable="1" to /boot/loader.conf
+                                                RACCT, which Skep's jail limits (RCTL) need; takes effect only after a reboot
+  manual   storage                            no pool named
+                                                VMs need a ZFS pool (--pool) or a directory pool (--dir-pool); jails need ZFS
+  manual   network                            no guest bridge
+                                                guests can have no NIC until a bridge is allow-listed (--bridge, or --create-bridge with --uplink)
+  conflict config                             /usr/local/etc/skep/agent.json
+                                                written by an earlier apply with other answers; setup writes it once and never rewrites it. Proposed content:
+                                                {
+                                                  "storage": {
+                                                    "pools": [],
+                                                    "directories": [],
+                                                    "dataset_root": "skep",
+                                                    "media_dir": "/var/db/skep/media"
+                                                  },
+                                                  "network": {
+                                                    "bridges": [],
+                                                    "management_interfaces": [
+                                                      "vtnet0"
+                                                    ]
+                                                  }
+                                                }
+  manual   packages                           edk2-bhyve
+                                                UEFI firmware for VMs is not installed; jails do not need it
+                                                $ pkg install edk2-bhyve
+rc=1

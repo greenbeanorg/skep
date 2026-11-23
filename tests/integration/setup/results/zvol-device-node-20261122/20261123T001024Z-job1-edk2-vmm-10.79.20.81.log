@@ -1,0 +1,57 @@
++ sudo env 'ASSUME_ALWAYS_YES=yes' timeout -f 600 pkg install -y edk2-bhyve
+Updating FreeBSD-ports repository catalogue...
+FreeBSD-ports repository is up to date.
+Updating FreeBSD-ports-kmods repository catalogue...
+FreeBSD-ports-kmods repository is up to date.
+All repositories are up to date.
+Updating database digests format: . done
+The following 1 package(s) will be affected (of 0 checked):
+
+New packages to be INSTALLED:
+	edk2-bhyve: g202508_3 [FreeBSD-ports]
+
+Number of packages to be installed: 1
+
+The process will require 7 MiB more space.
+1 MiB to be downloaded.
+[1/1] Fetching edk2-bhyve-g202508_3: .......... done
+Checking integrity... done (0 conflicting)
+[1/1] Installing edk2-bhyve-g202508_3...
+[1/1] Extracting edk2-bhyve-g202508_3: ......... done
+pkg-rc=0
++ echo 'pkg-rc=0'
++ pkg info edk2-bhyve
++ head -3
+edk2-bhyve-g202508_3
+Name           : edk2-bhyve
+Version        : g202508_3
++ ls /usr/local/share/uefi-firmware/
+BHYVE_UEFI.fd
+BHYVE_UEFI_CODE.fd
+BHYVE_UEFI_VARS.fd
++ kldstat -q -m vmm
++ sudo kldload vmm
++ kldstat -q -m nmdm
++ sudo kldload nmdm
++ kldstat -q -m if_epair
++ sudo kldload if_epair
++ kldstat -q -m netgraph
++ sudo kldload netgraph
++ kldstat -q -m ng_socket
++ sudo kldload ng_socket
++ kldstat -q -m ng_ether
++ sudo kldload ng_ether
++ kldstat -q -m ng_bpf
++ sudo kldload ng_bpf
++ kldstat
++ tail -8
+ 6    1 0xffffffff82e00000   3f2c78 zfs.ko
+ 7    1 0xffffffff83200000   340438 vmm.ko
+ 8    1 0xffffffff82c27000     21dc nmdm.ko
+ 9    1 0xffffffff82c2a000     539c if_epair.ko
+10    4 0xffffffff82c30000     abb8 netgraph.ko
+11    1 0xffffffff82c3b000     3918 ng_socket.ko
+12    1 0xffffffff82c3f000     31e0 ng_ether.ko
+13    1 0xffffffff82c43000     2208 ng_bpf.ko
++ sysctl hw.vmm.vmx.cap.virtual_interrupt_delivery
+hw.vmm.vmx.cap.virtual_interrupt_delivery: 0

@@ -25,6 +25,9 @@ type system interface {
 	// Exists reports whether a path exists, without following a final
 	// symbolic link.
 	Exists(path string) bool
+	// LstatMode returns the mode of a path without following a final
+	// symbolic link; a missing path is an error matching fs.ErrNotExist.
+	LstatMode(path string) (fs.FileMode, error)
 	// Alive reports whether a process exists.
 	Alive(pid int) bool
 	// ProcessArgs returns a process's argument list.
@@ -76,6 +79,9 @@ type host struct {
 	// rootFS is the host's / for reading pkg's repository files
 	// (PkgbaseAvailable); tests replace it.
 	rootFS fs.FS
+	// dev holds the waits of EnsureVolumeDevice (amendment z); tests
+	// shorten them.
+	dev deviceTimings
 }
 
 func newHost(conf Confinement, run Runner, sys system, log *slog.Logger) *host {
@@ -83,7 +89,7 @@ func newHost(conf Confinement, run Runner, sys system, log *slog.Logger) *host {
 		log = slog.Default()
 	}
 	return &host{conf: conf, run: run, sys: sys, log: log, ignoredMedia: map[string]bool{}, listDev: listJailDev, mounts: kernelMounts{},
-		rootFS: os.DirFS("/")}
+		rootFS: os.DirFS("/"), dev: defaultDeviceTimings()}
 }
 
 // NewFiles returns the Files implementation alone. It is plain file I/O
