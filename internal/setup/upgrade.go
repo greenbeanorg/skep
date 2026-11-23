@@ -129,8 +129,15 @@ type Upgrader struct {
 }
 
 // DefaultSocketWait is how long upgrade waits for the restarted agent to
-// answer on its socket.
-const DefaultSocketWait = 30 * time.Second
+// answer on its socket. The agent serves its socket only after its
+// start-up work, which includes completing jail stops an agent restart
+// interrupted (ADR 0010 amendment aa): up to about 190 s for one jail with
+// the default timeouts.
+const DefaultSocketWait = 200 * time.Second
+
+// socketNoticeAfter is when the wait for the agent's socket prints its one
+// line saying why the agent may be slow.
+const socketNoticeAfter = 30 * time.Second
 
 // DefaultTaskWait is how long upgrade waits for tasks after stopping
 // skep_api.
@@ -439,6 +446,10 @@ func (u *Upgrader) waitForAgent(ctx context.Context, want string) error {
 			return nil
 		}
 		last = err
+		if waited == socketNoticeAfter && u.SocketWait > socketNoticeAfter {
+			u.printf("  the agent has not answered on its socket after %s; it may be completing interrupted jail stops "+
+				"(jail_stop_completing in /var/log/daemon.log); waiting up to %s\n", socketNoticeAfter, u.SocketWait)
+		}
 		if waited >= u.SocketWait {
 			return fmt.Errorf("the agent did not answer on its socket within %s: %v", u.SocketWait, last)
 		}

@@ -1,6 +1,7 @@
 package setup
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -631,6 +632,56 @@ func TestUpgradeWaitsForTheAgentSocket(t *testing.T) {
 		err := u.Upgrade(context.Background())
 		if err == nil || !strings.Contains(err.Error(), "did not answer on its socket within 5s") {
 			t.Fatalf("err %v", err)
+		}
+	})
+	t.Run("slow agent: one notice after 30 s, answer within the default wait", func(t *testing.T) {
+		u, _ := newUpgrade(t)
+		var out bytes.Buffer
+		u.Out = &out
+		// The old build, then no answer for 160 polls (160 s of 1 s
+		// sleeps, an agent completing an interrupted jail stop), then the
+		// new build.
+		builds := []string{"0.1.0+dd7a8b6"}
+		for i := 0; i < 160; i++ {
+			builds = append(builds, "")
+		}
+		builds = append(builds, "0.1.1+abc1234")
+		n := 0
+		u.Agent = seqAgent{builds: builds, n: &n, health: "ok"}
+		if err := u.Upgrade(context.Background()); err != nil {
+			t.Fatalf("err %v; output:\n%s", err, out.String())
+		}
+		if c := strings.Count(out.String(), "it may be completing interrupted jail stops"); c != 1 {
+			t.Fatalf("notice printed %d times; output:\n%s", c, out.String())
+		}
+		if !strings.Contains(out.String(), "waiting up to 3m20s") || !strings.Contains(out.String(), "agent socket: answers as 0.1.1+abc1234") {
+			t.Fatalf("output:\n%s", out.String())
+		}
+	})
+	t.Run("no answer within the default wait", func(t *testing.T) {
+		u, _ := newUpgrade(t)
+		var out bytes.Buffer
+		u.Out = &out
+		n := 0
+		u.Agent = seqAgent{builds: []string{"0.1.0+dd7a8b6", ""}, n: &n, health: "ok"}
+		err := u.Upgrade(context.Background())
+		if err == nil || !strings.Contains(err.Error(), "did not answer on its socket within 3m20s") {
+			t.Fatalf("err %v", err)
+		}
+		if c := strings.Count(out.String(), "it may be completing interrupted jail stops"); c != 1 {
+			t.Fatalf("notice printed %d times; output:\n%s", c, out.String())
+		}
+	})
+	t.Run("short wait: no notice", func(t *testing.T) {
+		u, _ := newUpgrade(t)
+		var out bytes.Buffer
+		u.Out = &out
+		n := 0
+		u.Agent = seqAgent{builds: []string{"0.1.0+dd7a8b6", ""}, n: &n, health: "ok"}
+		u.SocketWait = 30 * time.Second
+		_ = u.Upgrade(context.Background())
+		if strings.Contains(out.String(), "it may be completing interrupted jail stops") {
+			t.Fatalf("notice with a 30 s wait; output:\n%s", out.String())
 		}
 	})
 }

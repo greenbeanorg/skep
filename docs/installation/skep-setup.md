@@ -246,8 +246,16 @@ it:
    the upgrade**: stopping half way would leave the host without an
    agent. The commands run in their own process group, so the terminal's
    signal does not reach them either; every wait is bounded;
-4. polls the agent's socket, up to 30 s, until it answers and reports the
-   new build in `Skep-Agent-Version`, then reports the agent's health.
+4. polls the agent's socket, up to 200 s, until it answers and reports the
+   new build in `Skep-Agent-Version`, then reports the agent's health. The
+   agent serves its socket only after its start-up work, which includes
+   completing any jail stop the restart interrupted (up to about 190 s per
+   jail with the default timeouts; ADR 0010 amendment aa). After 30 s
+   without an answer upgrade prints one line saying so (look for
+   `jail_stop_completing` in `/var/log/daemon.log`). If the agent has not
+   answered after 200 s, upgrade reports it with the backup directory and
+   exits 3; both services were restarted by then, so check the agent's log
+   and its health rather than running upgrade again.
 
 Every refusal or failure after `skep_api` was stopped (the second look
 at the tasks, the wait, a backup, the agent's stop, start or check)
