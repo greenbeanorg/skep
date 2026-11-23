@@ -29,6 +29,10 @@ built. Entries say when they may be picked up.
 | Default jail limits, or limits required per role | Not scheduled | [Jails](administration/jails.md#limits) |
 | An option to reset a jail's SSH host keys on clone | Not scheduled | [Jails](administration/jails.md) |
 | `skep-setup upgrade` exits 3 when the agent's stop fails, though the stop signal may have been delivered: review against the apply/remove rule (a failed stop is "may have changed", exit 4) | After 0.1 | Fable review of PR #67 (2026-11-23) |
+| The supervisor retries a refused agent start forever: consider a back-off or a limit, a reason in the API's health, and one log line per refusal. Observed on langrishe (2026-11-23, mode 0705 on `/usr/local/etc/skep`): `service skep_agent start` exits 1 and warns; a retry every 5 s (9 refusals in 41 s), which syslogd reduces to one line plus "last message repeated"; `skep_api` stays up with health 503 `unavailable` and no reason; `skep-setup check` output unchanged; the agent returned by itself within 5 s of the fix | After 0.1 | Job A, run of 2026-11-23 |
+| Live test of `skep-setup remove` failures (so far unit-tested only) | Before 1.0 | Andy's instruction, 2026-11-23 run |
+| Live test of a real failed `service` stop during `skep-setup` (so far unit-tested only) | Before 1.0 | Andy's instruction, 2026-11-23 run |
+| Live test of an administrator creation killed inside `skep-setup apply` (so far unit-tested only) | Before 1.0 | Andy's instruction, 2026-11-23 run |
 
 Not planned for now: FreeBSD problem reports for the daemon(8) joined
 records and the `rc.d/routing` "File exists" lines at jail start (Andy,
