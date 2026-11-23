@@ -113,3 +113,10 @@ anything seen on the filing run).
 - Not yet checked: a file-backed pool (the reproducer above uses one).
 - Hosts that need a guaranteed node can work around it today with the
   none→dev toggle while nothing has the volume open.
+
+### Configuration where it did not reproduce
+
+With the same probe and pacing on FreeBSD 15.1-RELEASE-p7, on a pool backed
+by a file on UFS, 0/100 creates and 0/100 clones were missing a node at 0, 1
+and 5 s. This was one run on one host. That host differs from the reproducing
+ones in more than the pool's backing, so no cause is claimed.

@@ -62,8 +62,10 @@ hard-code one password. Checked 2026-11-23:
 - **smith and langrishe: not in use.** Each has one account, `admin`, and its
   working password differs from the hard-coded one (compared locally, no
   value printed or logged).
-- **hearst: not in use (checked 2026-11-23).** The API refused the hard-coded
-  password for s7admin, s7oper and s7viewer, with one login attempt per user.
+- **hearst: 3 of its 12 API users checked (2026-11-23).** The API refused the
+  hard-coded password for all three (s7admin, s7oper and s7viewer), with one
+  login attempt per user. The other nine are lab test accounts, not checked,
+  that Andy will reset or remove.
 
 ## Identities that would become public
 
