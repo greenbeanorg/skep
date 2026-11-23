@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"io/fs"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -270,5 +271,32 @@ func TestRunServesInternalAPI(t *testing.T) {
 		if task.ID == first[typ].ID || task.Status != models.TaskSucceeded {
 			t.Errorf("second %s task = %+v", typ, task)
 		}
+	}
+}
+
+type observerFunc func(context.Context) error
+
+func (f observerFunc) ObserveAll(ctx context.Context) error { return f(ctx) }
+
+// TestObserveContainersShutdown: a shutdown during the observation is a
+// normal stop, with no warning; any other failure is logged and the start
+// goes on (ADR 0010 amendment aa, rule 10).
+func TestObserveContainersShutdown(t *testing.T) {
+	var logs bytes.Buffer
+	log := slog.New(slog.NewTextHandler(&logs, nil))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if !observeContainers(ctx, observerFunc(func(context.Context) error { cancel(); return context.Canceled }), log) {
+		t.Fatal("a cancelled observation did not report a shutdown")
+	}
+	if logs.Len() != 0 {
+		t.Fatalf("a shutdown logged: %s", logs.String())
+	}
+	if observeContainers(context.Background(), observerFunc(func(context.Context) error { return errors.New("boom") }), log) {
+		t.Fatal("an ordinary failure reported a shutdown")
+	}
+	if !strings.Contains(logs.String(), "could not observe the jails") {
+		t.Fatalf("log: %s", logs.String())
 	}
 }

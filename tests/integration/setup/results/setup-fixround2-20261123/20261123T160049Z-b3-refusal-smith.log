@@ -1,0 +1,14 @@
+before: 700 root:wheel
+now: 720
+[check -mgmt vtnet0] exit=3: skep-setup: refused: /var/db/skep/setup is writable by its group or others (0720); setup will not use Skep's data direct
+[plan -mgmt vtnet0] exit=3: skep-setup: refused: /var/db/skep/setup is writable by its group or others (0720); setup will not use Skep's data direct
+[apply -mgmt vtnet0] exit=3: skep-setup: refused: /var/db/skep/setup is writable by its group or others (0720); setup will not use Skep's data direct
+[rollback] exit=3: skep-setup: refused: /var/db/skep/setup is writable by its group or others (0720); setup will not use Skep's data direct
+[upgrade] exit=3: skep-setup: refused: /var/db/skep/setup is writable by its group or others (0720); setup will not use Skep's data direct
+[remove] exit=3: skep-setup: refused: /var/db/skep/setup is writable by its group or others (0720); setup will not use Skep's data direct
+[remove -plan] exit=3: skep-setup: refused: /var/db/skep/setup is writable by its group or others (0720); setup will not use Skep's data direct
+restored: 700 root:wheel (was 700 root:wheel)
+drwx------  3 root wheel 512 Nov 22 18:40 /var/db/skep/setup
+skep_agent is running as pid 1457 (supervisor pid 1455).
+skep_api is running as pid 1492 (supervisor pid 1490).
+  12 ok, 1 to add, 0 warnings, 1 conflicts, 3 for you, 0 refused

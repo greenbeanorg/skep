@@ -30,6 +30,9 @@ func runRemove(ctx context.Context, args []string, e env) error {
 			return err
 		}
 	}
+	if err := e.checkDataDir(o.Root); err != nil {
+		return err
+	}
 	f, err := e.prober.Probe(ctx)
 	if err != nil {
 		return err
@@ -61,7 +64,7 @@ func runRemove(ctx context.Context, args []string, e env) error {
 	a.Command = "remove"
 	j, err := a.Apply(ctx, p)
 	if err != nil {
-		return &exitError{code: exitRefused, msg: err.Error()}
+		return runFailure(err)
 	}
 	fmt.Fprintf(e.stdout, "done: journal %s. Now remove the files: pkg delete skep\n", setup.JournalDir(o.Root, j.ID))
 	return nil

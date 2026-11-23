@@ -115,8 +115,22 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 			overrides.DevMode = dev
 		}
 	})
-	cfg, err := config.Load(config.LoadOptions{Path: *configPath, Overrides: overrides})
+	// Before root reads the configuration, then before it opens the
+	// database or creates the socket (ADR 0004, amendment of 2026-11-23).
+	checkedConfig, checkActive, err := checkProgram(*configPath)
 	if err != nil {
+		return err
+	}
+	cfg, readConfig, err := config.LoadReportingPath(config.LoadOptions{Path: *configPath, Overrides: overrides})
+	if err != nil {
+		return err
+	}
+	if checkActive {
+		if err := checkConfigRead(checkedConfig, readConfig); err != nil {
+			return err
+		}
+	}
+	if err := checkState(cfg); err != nil {
 		return err
 	}
 
@@ -408,8 +422,10 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 
 	// A jail outlives the agent (it is persistent): look at every one
 	// before anything can ask about it.
-	if err := containerSvc.ObserveAll(ctx); err != nil {
-		log.Warn("could not observe the jails", "error", err)
+	if observeContainers(ctx, containerSvc, log) {
+		stopEngine(cfg, engine, log)
+		log.Info("stopped")
+		return nil
 	}
 
 	// Look at every VM before anything can ask about one: a restarted
@@ -457,15 +473,35 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 
 	// Stop the engine after the listener: running tasks are told to stop
 	// and are recorded as interrupted.
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout.Std())
-	defer cancel()
-	if err := engine.Shutdown(shutdownCtx); err != nil {
-		log.Warn("task engine did not stop cleanly; unfinished tasks will be marked interrupted at the next start", "error", err)
-	}
+	stopEngine(cfg, engine, log)
 	if serveErr == nil {
 		log.Info("stopped")
 	}
 	return serveErr
+}
+
+// observeContainers observes every jail at start and reports whether the
+// agent is shutting down, in which case the caller stops normally without
+// serving its socket (ADR 0010 amendment aa, rule 10). Any other failure
+// is logged and the start goes on.
+func observeContainers(ctx context.Context, c interface{ ObserveAll(context.Context) error }, log *slog.Logger) bool {
+	err := c.ObserveAll(ctx)
+	if ctx.Err() != nil {
+		return true
+	}
+	if err != nil {
+		log.Warn("could not observe the jails", "error", err)
+	}
+	return false
+}
+
+// stopEngine tells running tasks to stop, within the shutdown timeout.
+func stopEngine(cfg config.Config, engine *tasks.Engine, log *slog.Logger) {
+	ctx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout.Std())
+	defer cancel()
+	if err := engine.Shutdown(ctx); err != nil {
+		log.Warn("task engine did not stop cleanly; unfinished tasks will be marked interrupted at the next start", "error", err)
+	}
 }
 
 // confinement builds what Skep may touch on this host from the agent's

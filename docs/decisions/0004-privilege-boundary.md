@@ -380,3 +380,174 @@ Pending FreeBSD validation:
 - A socket under `/var/run` on a host where `/var/run` is really emptied
   at boot (tmpfs). The rc.d script recreates the directory at every start;
   that was validated by removing it, not by a tmpfs.
+
+## Amendment (2026-11-23, Accepted): the agent checks its binary and configuration at start
+
+Status: **Accepted**, 2026-11-23 (Andy). Branch `fix/agent-start-perms`.
+
+### Problem
+
+`skep-agent` runs as root and executes its own binary and reads
+`agent.json`, which allow-lists pools, directories, bridges and management
+interfaces (the confinement every privileged operation is checked against).
+Anyone who can replace the binary, or change `agent.json`, or rename any
+directory above either, controls what root runs or what the confinement
+allows. The package installs them root-owned (`0555`, `0600`, directories
+`0755`), and `skep-setup` checks only `/var/db/skep` and its parents; nothing
+stops an agent from starting on a host where a hand install left one of
+these writable by another user.
+
+### What is checked
+
+At start, before the socket is created and before any task runs, only when
+the process runs as root on FreeBSD (a Linux development agent, which runs
+as the developer from the source tree, does not check):
+
+1. **The binary**: the path the kernel reports for the running process
+   (`os.Executable`, which on FreeBSD reads `kern.proc.pathname`, so
+   symbolic links are already resolved).
+2. **The configuration file actually loaded**: `-config PATH`, or
+   `/usr/local/etc/skep/agent.json` when it exists. With no configuration
+   file there is nothing to check (the built-in defaults are in the binary).
+3. **Every parent directory of each, up to `/`.**
+
+Each of these must be **owned by UID 0** and **not writable by its group or
+by others** (`mode & 022 == 0`). There are no exceptions: not for the group
+`wheel` (its members are not root), and not for the sticky bit (a sticky
+world-writable directory above the binary still lets others create entries
+next to it).
+
+### Symbolic links
+
+For the configuration path, both chains are checked: the path as given, each
+component with `lstat` (so the directories that hold any link are covered:
+whoever can write there can point the link elsewhere), and the fully
+resolved path (`filepath.EvalSymlinks`) with its parents. A link's own owner
+and mode do not matter on FreeBSD (a link cannot be rewritten in place, only
+replaced, which needs write access to its directory). The binary's path is
+already resolved by the kernel; its parents are checked as resolved.
+
+### What the error says
+
+The agent logs one error and exits with status 1, naming the first path that
+fails, why, and the command that fixes it, for example:
+
+```
+skep-agent: refusing to start: /usr/local/etc/skep is writable by its group or others (mode 0775, owner root:wheel); a user other than root could change the configuration this root process reads. Fix: chmod go-w /usr/local/etc/skep
+skep-agent: refusing to start: /usr/local/sbin/skep-agent is owned by UID 1002 (skep), not root; that user could replace the program root runs. Fix: chown root:wheel /usr/local/sbin/skep-agent
+```
+
+Under `daemon(8)` (the rc.d script) the agent is restarted after
+`skep_agent_restart_delay` and refuses again, each time with the same line in
+`daemon.log`; `skep-setup check` should report the same paths (a follow-up,
+so the operator sees it before starting).
+
+### What a hand-installed host sees (hearst)
+
+hearst (skep UID 1002, installed by hand with `scripts/deploy-test.sh` in the
+package layout since 2026-11-15) has, by that script and the recorded
+layout: `/usr/local/sbin/skep-agent` `root:wheel 0555`, `/usr/local/sbin`
+made `root:wheel 0755`, `/usr/local/etc/skep/agent.json` `root:wheel 0600`,
+and stock `/usr/local`, `/usr`, `/` (`root:wheel 0755`). It would start
+normally. The skep account (UID 1002) owns nothing on these paths; its
+directory `/var/db/skep/api` is not checked by this amendment. **Pending
+verification:** hearst is powered off tonight; the prediction comes from
+the deploy script and the layout record, not from the host. The two lab VMs
+(package install) were read: smith has `root:wheel` and `0755`/`0555`/`0600`
+on every checked path.
+
+A host where someone ran the agent from a home directory (the pre-2026-11-15
+hearst layout under `/home/aba/skep-m6`, removed since) would be refused:
+`/home/aba` is owned by `aba`.
+
+### Questions and Andy's answers (2026-11-23)
+
+1. **ACLs.** On ZFS (`nfsv4acls`, langrishe's root) and on UFS mounted with
+   `acls`, an ACL entry can let another user write a file or directory whose
+   mode bits show `0755`. Mode bits alone miss that. Options: (a) ignore
+   ACLs and document it; (b) refuse a path with a non-trivial ACL, detected
+   by running `/bin/getfacl -q -n PATH` (fixed arguments, at start only) and
+   accepting only the entries that mirror the mode (`owner@`, `group@`,
+   `everyone@`, or `user::`, `group::`, `other::`); (c) the same through the
+   `__acl_get_file` system call in Go without cgo (more code, no exec).
+   Recommendation: (b), simplest to review; (c) later if exec at start is
+   unwanted.
+2. **Scope.** Also check the data directory (`/var/db/skep`, with the rule
+   `skep-setup` already applies) and the socket's directory
+   (`/var/run/skep`)? Recommendation: yes for both, in this same check.
+3. **Refuse or warn.** The job asked for a refusal; a refusal on an existing
+   host stops every running VM's management until fixed (guests keep
+   running). Recommendation: refuse, as asked, with `skep-setup check`
+   reporting it first.
+4. **No override.** Recommendation: no flag to skip the check (it would be
+   a silent weakening).
+
+**Answers.**
+
+1. **(b).** Refuse a path with a non-trivial ACL, found with `/bin/getfacl`
+   and fixed arguments. If getfacl fails or its output is not understood,
+   refuse.
+2. **Yes**, also `/var/db/skep` and `/var/run/skep` (not `/var/db/skep/api`).
+3. **Refuse.**
+4. **No override.**
+
+### As built
+
+- `internal/startcheck` holds the rules behind a small `FS` interface (a fake
+  in unit tests, the host in `host_freebsd.go`). `cmd/skep-agent` calls it
+  only as root on FreeBSD.
+- **Two calls, both earlier than this amendment required.** The binary and
+  the configuration file are checked before root parses the file. The data
+  directory and the socket's directory are checked right after, before the
+  database is opened and before the socket exists. These are the directories
+  the loaded configuration names, by default `/var/db/skep` and
+  `/var/run/skep`; either may not exist yet, and its existing parents are
+  still checked.
+- **A trivial ACL** is exactly three entries, one per class, with no write
+  for the group or others. POSIX.1e: `user::`, `group::`, `other::`. NFSv4:
+  `owner@`, `group@`, `everyone@`, type `allow`, no inheritance flags, and
+  for `group@` and `everyone@` none of write, append, delete, delete child,
+  write attributes, write extended attributes, write ACL, or write owner.
+  Anything else well-formed is an extended ACL; anything else is not
+  understood. Both are refused.
+- **Also refused:** a path with a `..` component (it cannot be checked
+  component by component) and a dangling symbolic link.
+- **Symbolic links** are walked one component at a time, as the kernel
+  resolves them. At a link the target is read (a relative target resolves
+  against the link's directory) and walked the same way, so the directory
+  holding every link in a chain is checked. At most 16 links per path: a
+  17th, or a loop, is a refusal.
+- **One resolver.** `config.ResolvePath` decides which file is read, for both
+  the loader and the check. The loader reports the path it read, and the
+  agent refuses to start if that differs from the path checked.
+- **The database's directory** is checked too when it is not the data
+  directory (by default `/var/db/skep/agent`). It may not exist yet.
+- **ZFS modes that need deny entries are refused.** A mode that gives a
+  class fewer rights than a broader class, for example `0705` (the group has
+  less than others), is represented on ZFS with `deny` entries, which are not
+  a trivial ACL here. Such a path is refused even though its mode has no
+  group or other write bit (seen on langrishe, 2026-11-23). The refusal says
+  the mode needs deny entries and gives the fix: a mode without that gap,
+  such as `0755` or `0700`, not `setfacl -b`. An ACL with deny entries and
+  anything a mode does not produce (a named user, an inheritance flag, a
+  write grant to the group or everyone) keeps the advice to review it and
+  remove it with `setfacl -b`.
+- The error names the owner by UID (`owner UID 0`), not by name.
+- `skep-setup check` does not report these paths yet: it needs the host
+  check, the configuration's path resolution and a plan item, which is more
+  than a few lines. See the [backlog](../backlog.md).
+
+### Validation (2026-11-23, lab VMs, FreeBSD 15.1)
+
+- The check passes on smith (UFS, POSIX output) and langrishe (ZFS root,
+  NFSv4 output) as installed, for the binary, `agent.json`, `/var/db/skep`,
+  `/var/run/skep`, and all their parents.
+- Scratch copies of the binary and `agent.json` under `/root`, with the data
+  directory and socket also pointed there. On smith, `chmod g+w` on the
+  scratch directory: the agent exited 1 naming that directory. On langrishe,
+  an added NFSv4 entry granting `write_data` to UID 65534, with the mode still
+  `0755`: the agent exited 1 naming the ACL. Neither created a data directory
+  or a socket, and the real files and running agents did not change.
+- **Pending:** hearst was powered off, so the prediction above for it is not
+  verified. A refusal for a POSIX.1e extended ACL (UFS mounted with `acls`)
+  and a getfacl failure are unit-tested only.

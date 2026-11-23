@@ -36,6 +36,13 @@ const (
 	exitPending = 1 // check: there is work for apply, or something for the operator
 	exitUsage   = 2
 	exitRefused = 3 // a refusal: nothing was (or would be) done
+	// exitIncomplete: incomplete: changes were made and the run failed or
+	// its result could not be verified. For upgrade: the agent was stopped
+	// and did not come back as the new build (its start or its check
+	// failed), skep_api did not come up after the agent's restart, the
+	// agent's socket did not answer within the wait, or health was not ok.
+	// For apply, rollback and remove: a failure after changing something.
+	exitIncomplete = 4
 )
 
 // env is what the program takes from its surroundings. Tests replace it.
@@ -57,6 +64,17 @@ type env struct {
 	inode func(string) (uint64, error)
 	// umask sets the process umask (syscall.Umask); nil leaves it.
 	umask func(int) int
+	// dataDir checks Skep's data directory; nil means setup.CheckDataDir.
+	dataDir func(root string) error
+}
+
+// checkDataDir is the check every command makes before its first read or
+// write under /var/db/skep.
+func (e env) checkDataDir(root string) error {
+	if e.dataDir != nil {
+		return e.dataDir(root)
+	}
+	return setup.CheckDataDir(root)
 }
 
 // setUmask gives every command that changes the host umask 022, so what
@@ -174,6 +192,11 @@ func run(ctx context.Context, args []string, e env) int {
 		}
 		return ee.code
 	}
+	var refusal *setup.DataDirRefusal
+	if errors.As(err, &refusal) {
+		fmt.Fprintln(e.stderr, "skep-setup: refused:", refusal)
+		return exitRefused
+	}
 	if errors.Is(err, flag.ErrHelp) {
 		return exitOK
 	}
@@ -276,6 +299,9 @@ func computePlan(ctx context.Context, name string, args []string, e env, extra f
 		if err := gate(o); err != nil {
 			return o, setup.Plan{}, err
 		}
+	}
+	if err := e.checkDataDir(o.Root); err != nil {
+		return o, setup.Plan{}, err
 	}
 	o.Admins = e.adminChecker(o.Root)
 	f, err := e.prober.Probe(ctx)

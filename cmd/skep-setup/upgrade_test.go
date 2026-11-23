@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -67,5 +69,32 @@ func TestUpgradeKeepFlag(t *testing.T) {
 		if res := runWith(t, e, "upgrade", "-root", t.TempDir(), "-yes", "-keep", k); res.code != exitUsage || !strings.Contains(res.stderr, "at least one backup") || len(r.calls) != 0 {
 			t.Fatalf("-keep %s: %+v %v", k, res, r.calls)
 		}
+	}
+}
+
+// upgradeExit: 4 for an upgrade that made changes and could not verify the
+// result (including the agent not coming back as the new build), 3 for a refusal and any other failure, nothing for success.
+func TestUpgradeExitCodes(t *testing.T) {
+	if upgradeExit(nil) != nil {
+		t.Fatal("success is not an exit error")
+	}
+	for _, c := range []struct {
+		err  error
+		code int
+	}{
+		{&setup.UpgradeRefusal{Reason: "busy"}, exitRefused},
+		{errors.New("stop skep_agent: boom"), exitRefused},
+		{&setup.UpgradeIncomplete{Problem: "p", Check: "c"}, exitIncomplete},
+		{fmt.Errorf("wrapped: %w", &setup.UpgradeIncomplete{Problem: "p", Check: "c"}), exitIncomplete},
+		{&setup.UpgradeIncomplete{Problem: "skep_agent was stopped and did not come back as the new build: start skep_agent: exit status 1",
+			Check: "c", Again: "a"}, exitIncomplete},
+	} {
+		var ee *exitError
+		if !errors.As(upgradeExit(c.err), &ee) || ee.code != c.code || ee.msg != c.err.Error() {
+			t.Fatalf("%v: got %+v, want code %d", c.err, ee, c.code)
+		}
+	}
+	if exitIncomplete != 4 || exitRefused != 3 {
+		t.Fatal("the exit codes are documented as 3 and 4")
 	}
 }

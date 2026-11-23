@@ -191,6 +191,9 @@ func printTask(w io.Writer, d models.TaskDetail) error {
 	fmt.Fprintf(t, "Finished:\t%s\n", fmtTimePtr(d.FinishedAt))
 	if d.Error != nil {
 		fmt.Fprintf(t, "Error:\t%s: %s\n", clean(d.Error.Code), clean(d.Error.Message))
+		for _, kv := range detailLines(d.Error.Details) {
+			fmt.Fprintf(t, "  %s:\t%s\n", kv[0], kv[1])
+		}
 	}
 	if err := t.Flush(); err != nil {
 		return err
@@ -204,6 +207,21 @@ func printTask(w io.Writer, d models.TaskDetail) error {
 		return t.Flush()
 	}
 	return nil
+}
+
+// detailLines returns a task error's details as sorted (key, value)
+// pairs, cleaned for the terminal.
+func detailLines(d map[string]any) [][2]string {
+	keys := make([]string, 0, len(d))
+	for k := range d {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	out := make([][2]string, 0, len(keys))
+	for _, k := range keys {
+		out = append(out, [2]string{clean(k), clean(fmt.Sprint(d[k]))})
+	}
+	return out
 }
 
 // fmtDetails shows audit details as sorted key=value pairs.

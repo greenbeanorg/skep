@@ -1,0 +1,37 @@
++ P=/home/aba/skep-pkgs/j2/pkg/out/skep-0.1.0.pkg
++ jls -q name
++ ls /dev/vmm
++ pkg query '%n %v' edk2-bhyve skep
+edk2-bhyve g202508_3
+skep 0.1.0
++ sudo timeout -f 120 pkg delete -y edk2-bhyve
+Updating database digests format: . done
+Checking integrity... done (0 conflicting)
+Deinstallation has been requested for the following 1 packages (of 0 packages in the universe):
+
+Installed packages to be REMOVED:
+	edk2-bhyve: g202508_3
+
+Number of packages to be removed: 1
+
+The operation will free 7 MiB.
+[1/1] Deinstalling edk2-bhyve-g202508_3...
+[1/1] Deleting files for edk2-bhyve-g202508_3: ......... done
+del-rc=0
++ echo 'del-rc=0'
++ ls /usr/local/share/edk2-bhyve
+ls: /usr/local/share/edk2-bhyve: No such file or directory
++ sudo timeout -f 300 pkg add -f /home/aba/skep-pkgs/j2/pkg/out/skep-0.1.0.pkg
+Installing skep-0.1.0...
+package skep is already installed, forced install
+pkg: Missing dependency 'edk2-bhyve'
+
+Failed to install the following 1 package(s): /home/aba/skep-pkgs/j2/pkg/out/skep-0.1.0.pkg
+add-rc=1
++ echo 'add-rc=1'
++ pkg query '%n %v' edk2-bhyve skep
+skep 0.1.0
++ ls -l /usr/local/sbin/skep-setup
+-r-xr-xr-x  1 root wheel 11399338 Nov 22 19:32 /usr/local/sbin/skep-setup
++ /usr/local/sbin/skep-setup -version
+skep-setup 0.1.0 (commit 8fb036f, built 2026-11-23T00:32:22Z, go1.27.4 freebsd/amd64)

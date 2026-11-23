@@ -193,7 +193,7 @@ func LoadAPI(opts APILoadOptions) (API, error) {
 			path = DefaultAPIConfigPath
 		}
 	}
-	if err := loadFile(path, explicit, &cfg); err != nil {
+	if _, err := loadFile(path, explicit, &cfg); err != nil {
 		return API{}, err
 	}
 

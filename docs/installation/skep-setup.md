@@ -30,9 +30,15 @@ skep-setup upgrade               after "pkg upgrade skep"
 skep-setup remove    [-plan]     before "pkg delete skep"
 ```
 
-Run it as root: it reads `agent.json` (`0600`). Exit status: `0` nothing
-to do, `1` (`check`) something for `apply` or for you, `2` usage, `3`
-refused.
+Run it as root: it reads `agent.json` (`0600`).
+
+| Exit status | Meaning |
+|---|---|
+| `0` | done, or nothing to do |
+| `1` | `check`: something for `apply` or for you; any command: not confirmed |
+| `2` | usage |
+| `3` | refused: nothing was (or would be) done. `upgrade` also exits 3 for its failures before the agent was restarted (a backup, or the agent's stop), after starting `skep_api` again; its message says what was left |
+| `4` | **incomplete**: changes were made and the run failed or its result could not be verified. The message starts `incomplete:`. `upgrade`: the agent was stopped and did not come back as the new build (its start or its check failed), `skep_api` did not come up after the agent's restart, the agent did not answer on its socket within the wait, or its health was not `ok` (see [Upgrades](#upgrades)). `apply`: an action failed after earlier ones changed something, or the failed action may itself have changed something (a failed service stop always counts), or the administrator's creation failed after other changes or was killed or timed out. `rollback`: it failed after restoring or removing some files. `remove`: as `apply`. See [Failures part way](#failures-part-way) |
 
 ## The answers
 
@@ -46,7 +52,7 @@ refused.
 | `-listen ADDR:PORT` | The API listen address (default: the management address, port 8443). `0.0.0.0` or `::` only with `-listen-all` |
 | `-no-racct` | Do not add `kern.racct.enable="1"` (jail limits other than `disk_quota` are then refused) |
 | `-start` | Start both services at the end of `apply` |
-| `-admin NAME` | Create the first administrator (asks for the password, twice, without echo). Needs `-start`, or `/var/db/skep/api` to exist already (the API has run once); otherwise the plan refuses, because `skep-api admin create` run as root first would create the API's data directory owned by root ([ADR 0012 amendment](../decisions/0012-installer.md#amendment-2026-11-22-build-decisions-confirmed), build decision 8). Setup runs `skep-api admin create` **as the `skep` user** (UID and primary GID from `/etc/passwd`, never root), and only once `skep_api` has written `/var/run/skep/api.pid` and created `api.db` (it waits up to 30 s). If it fails, every other change stays made, the journal is finished with the error, and setup prints the same `apply` command to retry: it then plans only the administrator. Whether the administrator exists is asked of `skep-api` itself: with no `api.db` the create is planned; with one, `check`, `plan` and `apply` run `skep-api admin exists --username NAME` as the `skep` user with the fixed environment (read-only; it never creates or migrates `api.db`). Exit 0 is `ok`, 1 plans the create, anything else refuses with skep-api's error. Asking needs root; as another user, or with `-root` other than `/`, the plan refuses `-admin` while `api.db` exists |
+| `-admin NAME` | Create the first administrator (asks for the password, twice, without echo). Needs `-start`, or `/var/db/skep/api` to exist already (the API has run once); otherwise the plan refuses, because `skep-api admin create` run as root first would create the API's data directory owned by root ([ADR 0012 amendment](../decisions/0012-installer.md#amendment-2026-11-22-build-decisions-confirmed), build decision 8). Setup runs `skep-api admin create` **as the `skep` user** (UID and primary GID from `/etc/passwd`, never root), and only once `skep_api` has written `/var/run/skep/api.pid` and created `api.db` (it waits up to 30 s). If it fails, every other change stays made, the journal is finished with the error, and setup prints the same `apply` command to retry: it then plans only the administrator. Whether the administrator exists is asked of `skep-api` itself: with no `api.db` the create is planned; with one, `check`, `plan` and `apply` run `skep-api admin exists --username NAME` as the `skep` user with the fixed environment (read-only; it never creates or migrates `api.db`). Exit 0 is `ok`, 1 plans the create, anything else refuses with skep-api's error. Asking needs root; as another user, or with `-root` other than `/`, the plan refuses `-admin` while `api.db` exists. A NAME that exists already is left as it is: `ok` when it is an enabled `admin`, a **warning** when it is disabled or has another role (setup never changes an existing user). |
 
 ## What apply changes
 
@@ -87,13 +93,56 @@ JSON is **refused**.
 Every program setup runs as root is named by its absolute path
 (`/usr/sbin/service`, `/usr/sbin/sysrc`, `/usr/sbin/pw`, `/usr/bin/fstat`,
 `/sbin/zfs`, `/sbin/zpool`, `/sbin/ifconfig`, `/usr/sbin/jls`,
-`/sbin/sysctl`, `/bin/freebsd-version`) and gets a fixed environment
+`/sbin/sysctl`, `/sbin/kldstat`, `/bin/freebsd-version`) and gets a fixed environment
 (`PATH=/sbin:/bin:/usr/sbin:/usr/bin:/usr/local/sbin:/usr/local/bin`,
 `HOME=/`; `TERM` is kept only for the interactive `admin create`).
 `apply`, `rollback`, `upgrade` and `remove` set umask `022` first. With
 `-root` other than `/` (tests), anything that acts on this host's
 services or accounts (`-start`, `-admin`, `remove`'s service stops and
 `pw`, and `upgrade` as a whole) is refused.
+
+**Kernel modules.** The `loader.conf` and `kld_list` lines take effect at
+the next boot; setup never loads a module itself. `check`, `plan` and the
+last lines of `apply` therefore compare the guest modules the boot
+configuration loads (`vmm`, `nmdm`, and `if_epair netgraph ng_socket
+ng_ether ng_bpf` from `kld_list`, including the ones this plan adds) with
+what the kernel has now (`kldstat -q -m NAME`; a module compiled into the
+kernel counts as loaded). Each one configured but not loaded is listed in
+one **warning**, with what does not work without it. A reboot is always the
+complete fix. `kldload` loads modules only: loader tunables added since boot
+(`kern.racct.enable` when setup added it) still need the reboot. The warning
+also prints a `kldload` command for the modules that are safe to load now, for
+example
+
+```
+  warn     kernel modules                     configured but not loaded: vmm nmdm
+                                                ...
+                                                $ shutdown -r now
+                                                $ kldload -n vmm nmdm
+```
+
+`vmm` reads its `hw.vmm.*` tunables from the kernel environment when it
+loads, and `kldload` does not read `loader.conf`. Setup therefore compares
+each `hw.vmm.*` line of `loader.conf`, `loader.conf.local` and `loader.conf.d`
+with `/bin/kenv -q NAME`. If one differs, is absent, or cannot be read, `vmm`
+is left out of the printed command and the warning says that loader tunables
+for vmm set since the last boot are not applied by kldload, so reboot.
+
+The warning does not change any exit code. Until the modules are loaded
+the agent's health can read `degraded`, and `upgrade` then exits 4
+(incomplete) with the same list in its message. `apply` does not load
+them, since apply never changes the running kernel: setup reports them
+and tells you to reboot (or load the ones it prints yourself; Andy's
+decision, 2026-11-23).
+
+**Firmware.** `check` and `plan` print a **warning** when the bhyve UEFI
+firmware is missing (`BHYVE_UEFI.fd` or `BHYVE_UEFI_VARS.fd` in
+`/usr/local/share/edk2-bhyve`, the files the agent opens): it names the
+package, `edk2-bhyve`, and says VMs cannot be created without it. The skep
+package depends on it, so a package install has it
+([packaging](packaging.md)); the warning is for a host installed by hand,
+or one where the firmware was removed afterwards. Setup never installs it:
+`pkg install edk2-bhyve`.
 
 ## What it refuses
 
@@ -105,11 +154,13 @@ services or accounts (`-start`, `-admin`, `remove`'s service stops and
 - a management interface that does not exist, has no `ifconfig_` line,
   or has one with neither an address nor DHCP (**DHCP is accepted with a
   warning**: the listen address is the current lease's);
-- a bridge to allow-list that has a management interface as a member, or
-  does not exist;
+- a bridge to allow-list that has a management interface as a member
+  (now, by `ifconfig`, or in `rc.conf`), does not exist, or exists but is
+  not a bridge;
 - a new bridge whose uplink is a management interface, does not exist,
   has an address (now or in `rc.conf`), has other settings or aliases, or
-  is in another bridge; or a new bridge name that exists already;
+  is in another bridge (now, by `ifconfig`, or in `rc.conf`); or a new
+  bridge name that exists already;
 - only one of the `skep` user and group, a `skep` user with a login shell
   or a home, no `skep` account at all (the package creates it), or UID or
   GID 409 held by another name;
@@ -118,7 +169,53 @@ services or accounts (`-start`, `-admin`, `remove`'s service stops and
   symbolic link, not a directory, not owned by root, or writable by its
   group or others;
 - `0.0.0.0` without `-listen-all`; no address to listen on;
-- an earlier run that did not finish (roll it back first).
+- an earlier run that did not finish (roll it back first);
+- a `/var/db/skep` or `/var/db/skep/setup` that is a symbolic link or not a
+  directory (either may be missing), or any of `/var/db/skep/setup`,
+  `/var/db/skep`, `/var/db`, `/var` not owned by root or writable by its
+  group or others: every command that reads or writes there (`check`,
+  `plan`, `apply`, `rollback`, `upgrade`, `remove`) stops with exit 3 before
+  using it.
+
+Bridges are judged as they are **now** as well as by `rc.conf`: setup
+reads `ifconfig -g bridge` and each bridge's `member:` lines and `bridge
+flags` (`VLANFILTER`). An allow-listed bridge that exists only at run time
+(no `ifconfig_` line in `rc.conf`) is a warning, because it is gone after a
+reboot; so is `vlanfilter` that is on now but not in `rc.conf`. When the
+members now and in `rc.conf` differ, the plan shows both. If `ifconfig -g
+bridge` itself fails, `check` and `plan` stop with the error rather than
+assume there is no bridge (on FreeBSD 15.1 it exits 0 with no output when
+there is none), as they do when one bridge cannot be read.
+
+For an allow-listed bridge without `vlanfilter`, setup first looks for
+Skep guest ports among its live members (`epair*`, `tap*`). If there are
+any, it prints no live steps and no `sysrc` step: stop the Skep guests on
+this bridge first, then run `plan` again. Setup never sets a PVID on a
+guest port; the agent sets each one when the guest starts. Otherwise the
+steps are:
+
+- **`vlanfilter` in `rc.conf` but off now**: an item of its own saying so.
+  It takes effect at the next boot, or run the printed live steps now;
+  there is no `sysrc` step, because the line already has it.
+- **a bridge that exists now**: the live steps (each member's PVID with
+  `ifuntagged MEMBER 1`, then `defuntagged 1`, then `vlanfilter`, then
+  `ifconfig MEMBER up`, because adding a member does not bring it up), run
+  from the console, then the `sysrc` lines that keep it across reboots.
+- **a bridge that exists only at run time**: also
+  `sysrc cloned_interfaces+="BRIDGE"`, unless `cloned_interfaces` already
+  names it; without it the bridge is not created at boot.
+- **a bridge in `rc.conf` not created yet**: only the `sysrc` line.
+
+The `sysrc ifconfig_BRIDGE=` line names only real uplinks: for a bridge in
+`rc.conf`, its `rc.conf` members (the existing line, with `ifuntagged`,
+`defuntagged` and `vlanfilter` added where missing); for a run-time
+bridge, its live members. An uplink with no `ifconfig_` line also gets
+`sysrc ifconfig_UPLINK="up"`; an existing line is never replaced, and if it
+does not bring the uplink up the item says to add `up` by hand. Every
+interface name put into a printed command must be letters,
+digits, `.` and `_`, and every word of a reprinted `rc.conf` line letters,
+digits and `. _ : / -`; otherwise setup prints no steps for that bridge and
+says which name stopped it.
 
 A file that is not plain `name=value` lines (shell code, a substitution,
 a sourced file), or a variable set in `rc.conf.local` or `rc.conf.d`,
@@ -153,12 +250,40 @@ refuses until that run is rolled back (a failed `-admin` is the
 exception, above).
 
 A journal directory without a readable `journal.json` (a run that
-stopped before its first save, or a damaged file) does not make every
+stopped before its first save, a damaged file, or one whose format or ID
+this skep-setup does not understand, such as a newer version's or a
+directory copied under another name) does not make every
 command fail: it shows as an unfinished run with no recorded changes,
 which the plans refuse on until `skep-setup rollback ID` clears it.
 Rollback then undoes nothing (setup cannot tell what that run changed),
 keeps a damaged file as `journal.json.unreadable`, and names the run's
 `files/` directory.
+
+## Failures part way
+
+When `apply`, `rollback` or `remove` fails, the exit status says whether it
+had changed anything. A failure before any change stays exit 3. After a
+change it is exit 4, and the message lists what was changed, what may have
+changed (the failed action, when setup cannot show it left things as they
+were), what was not changed, and what to do next:
+
+| Failure | Running the same command again |
+|---|---|
+| `apply`: an action failed | Not yet. The plan refuses until `skep-setup rollback ID` undoes the run. Rollback puts the files back; it does not stop services or delete users |
+| `apply`: only the administrator's creation failed | Safe. The journal is complete and the command plans only the administrator |
+| `rollback`: failed part way | Safe. Files already put back are left as they are. It can fail the same way until the cause is fixed |
+| `remove`: an action failed | Not yet. The plan refuses until `skep-setup rollback ID` clears the run. Rollback puts back the `rc.conf` and `loader.conf` lines; it does not start services, restore deleted data, or create the account again |
+
+An `apply` or `remove` that failed with exit 3 also leaves an unfinished
+journal, so it too needs `skep-setup rollback ID` before the next run; that
+rollback has nothing to undo. An `apply` whose only action is the
+administrator's creation changes nothing when the command exits with an
+error: exit 3, and it can be run again. If that command was killed or timed
+out, setup cannot tell whether the administrator was created: exit 4, listed
+under "May have changed", and running the same command again is still safe.
+
+A failed service stop is always "May have changed", even if the service
+still runs, because the stop signal may have been delivered.
 
 ## Upgrades
 
@@ -200,8 +325,33 @@ it:
    the upgrade**: stopping half way would leave the host without an
    agent. The commands run in their own process group, so the terminal's
    signal does not reach them either; every wait is bounded;
-4. polls the agent's socket, up to 30 s, until it answers and reports the
-   new build in `Skep-Agent-Version`, then reports the agent's health.
+4. polls the agent's socket, up to 200 s, until it answers and reports the
+   new build in `Skep-Agent-Version`, then reports the agent's health. The
+   agent serves its socket only after its start-up work, which includes
+   completing any jail stop the restart interrupted (up to about 190 s per
+   jail with the default timeouts; ADR 0010 amendment aa). After 30 s
+   without an answer upgrade prints one line saying so (look for
+   `jail_stop_completing` in `/var/log/daemon.log`).
+
+**Exit 4, incomplete.** Exit 4 means changes were made and the result
+could not be verified. Upgrade exits 4 when the agent was stopped and did
+not come back as the new build (its start or its check failed; upgrade
+starts `skep_api` again first), when `skep_api` did not come up after the
+agent's restart, when the agent did not answer on its socket within 200 s,
+or when its health (or reading it) was not `ok`. The agent failing to
+stop stays exit 3. The message starts with
+`incomplete:`, names the backup directory, and says what to check: the
+API's or the agent's log (`/var/log/daemon.log`; `jail_stop_completing`
+means the agent is still completing interrupted jail stops and will
+answer when they end), `service skep_agent status`, `skep-setup check`,
+and, for a degraded health, the kernel modules not loaded yet. For an API
+that did not come up, start it with `service skep_api start`. Except when
+the agent did not come back (below), running
+`skep-setup upgrade` again is safe, since both programs already run the new
+build; it backs up and restarts both services again, but does not fix the
+cause, and while the agent is still completing interrupted jail stops a
+second restart only delays them (each stop is completed at the agent's
+next start).
 
 Every refusal or failure after `skep_api` was stopped (the second look
 at the tasks, the wait, a backup, the agent's stop, start or check)
@@ -213,8 +363,8 @@ agent_version_mismatch` to everything that needs the agent, and its
 health is `unavailable`. The tasks keep running on the agent; run
 `skep-setup upgrade` again once they have finished.
 
-If the **agent** did not come back as the new build, upgrade starts the
-API and says so; running `skep-setup upgrade` again repeats the same
+If the **agent** did not come back as the new build (exit 4, or exit 3
+when its stop failed), upgrade starts the API and says so; running `skep-setup upgrade` again repeats the same
 start, so it helps only once the cause (in `/var/log/daemon.log`) is
 fixed. If only the final `skep_api` start fails, the agent is upgraded:
 start the API by hand (`service skep_api start`); upgrade need not run

@@ -54,15 +54,19 @@ func runApply(ctx context.Context, args []string, e env) error {
 	j, err := e.applier(o.Root).Apply(ctx, p)
 	var adminErr *setup.AdminCreateError
 	if errors.As(err, &adminErr) {
-		return &exitError{code: exitRefused, msg: fmt.Sprintf("%v. Create the administrator by running the same command again; it plans only what is left:\n  skep-setup apply %s",
-			err, strings.Join(args, " "))}
+		retry := "skep-setup apply " + strings.Join(args, " ")
+		var inc *setup.Incomplete
+		if errors.As(err, &inc) {
+			return &exitError{code: exitIncomplete, msg: fmt.Sprintf("%v:\n  %s", err, retry)}
+		}
+		return &exitError{code: exitRefused, msg: fmt.Sprintf("%v. Nothing was changed. Create the administrator by running the same command again:\n  %s", err, retry)}
 	}
 	if err != nil {
 		if errors.Is(err, setup.ErrNothingToDo) {
 			fmt.Fprintln(e.stdout, err)
 			return nil
 		}
-		return &exitError{code: exitRefused, msg: err.Error()}
+		return runFailure(err)
 	}
 	fmt.Fprintf(e.stdout, "done: %d changes, journal %s (undo with: skep-setup rollback %s)\n",
 		len(j.Entries), setup.JournalDir(o.Root, j.ID), j.ID)
@@ -74,7 +78,27 @@ func runApply(ctx context.Context, args []string, e env) error {
 	if n := count(p.Items, setup.Manual); n > 0 {
 		fmt.Fprintf(e.stdout, "%d item(s) are left to you; see \"manual\" above.\n", n)
 	}
+	reportModules(ctx, o.Root, e)
 	return nil
+}
+
+// reportModules prints, after apply, the guest modules the boot
+// configuration now loads but the kernel does not have yet. Setup never
+// loads them; the warning names the reboot and what kldload may load.
+func reportModules(ctx context.Context, root string, e env) {
+	f, err := e.prober.Probe(ctx)
+	if err != nil {
+		fmt.Fprintf(e.stdout, "kernel modules: whether they are loaded is unknown (%v); see skep-setup check\n", err)
+		return
+	}
+	it, ok, err := setup.HostModulesItem(root, f)
+	if err != nil {
+		fmt.Fprintf(e.stdout, "kernel modules: the boot configuration could not be read again (%v); see skep-setup check\n", err)
+		return
+	}
+	if ok && it.Kind != setup.OK {
+		printItems(e.stdout, []setup.Item{it}, false)
+	}
 }
 
 func runRollback(_ context.Context, args []string, e env) error {
@@ -90,6 +114,9 @@ func runRollback(_ context.Context, args []string, e env) error {
 		return fmt.Errorf("usage: skep-setup rollback [-yes] [JOURNAL-ID]")
 	}
 	if err := requireRoot(*root, e); err != nil {
+		return err
+	}
+	if err := e.checkDataDir(*root); err != nil {
 		return err
 	}
 	id := flags.Arg(0)
@@ -112,8 +139,19 @@ func runRollback(_ context.Context, args []string, e env) error {
 		fmt.Fprintln(e.stdout, "  kept    ", f)
 	}
 	if err != nil {
-		return &exitError{code: exitRefused, msg: err.Error()}
+		return runFailure(setup.RollbackError(r, err))
 	}
 	fmt.Fprintf(e.stdout, "rolled back %s\n", r.ID)
 	return nil
+}
+
+// runFailure maps a failed apply, rollback or remove to its exit: 4 when
+// it had changed something, 3 when it had not.
+func runFailure(err error) error {
+	var inc *setup.Incomplete
+	var rb *setup.RollbackIncomplete
+	if errors.As(err, &inc) || errors.As(err, &rb) {
+		return &exitError{code: exitIncomplete, msg: err.Error()}
+	}
+	return &exitError{code: exitRefused, msg: err.Error()}
 }
