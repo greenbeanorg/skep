@@ -40,3 +40,7 @@ node_modules/
 .vscode/
 *.swp
 .DS_Store
+
+# Python bytecode from test drivers
+__pycache__/
+*.pyc
