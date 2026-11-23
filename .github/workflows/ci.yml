@@ -4,17 +4,70 @@ on:
   push:
     branches: [main]
   pull_request:
+  # A full run on demand, whatever the change touches.
+  workflow_dispatch:
 
 permissions:
   contents: read
 
+# A newer push to the same pull request cancels the run it replaces. Runs
+# on main are never cancelled: every merged commit keeps its own result.
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # Decides whether the change can affect anything the other jobs check.
+  # A change that touches only documentation or recorded test results
+  # (the paths in the base's scripts/ci-docs-only.sh) skips them. Any doubt (an
+  # unknown base, a failure here) runs everything: the jobs below skip only
+  # when this job says "false" explicitly.
+  changes:
+    name: Code or docs only
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.decide.outputs.code }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - id: decide
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+          PUSH_AFTER: ${{ github.sha }}
+        # The decision is made by the base's copy of the script, never the
+        # copy this change carries. No such file in the base means "code".
+        # --no-renames lists both names of a move: code moved under docs/
+        # must not look like a docs-only change.
+        run: |
+          case "$EVENT" in
+          pull_request) base="$PR_BASE"; range="$PR_BASE...$PR_HEAD" ;;
+          push) base="$PUSH_BEFORE"; range="$PUSH_BEFORE..$PUSH_AFTER" ;;
+          *) base=""; range="" ;;
+          esac
+          decider="$(mktemp)"
+          if [ -n "$range" ] &&
+             git show "$base:scripts/ci-docs-only.sh" > "$decider" 2>/dev/null &&
+             files="$(git diff --no-renames --name-only "$range")" &&
+             printf '%s\n' "$files" | sh "$decider"; then
+            echo "only documentation or results changed; the checks are skipped"
+            echo "code=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "code=true" >> "$GITHUB_OUTPUT"
+          fi
+          rm -f "$decider"
+
   go:
     name: Test, vet, build
+    needs: changes
+    # A skipped job counts as passed for a required status check, so a
+    # docs-only pull request is never blocked by it. "!cancelled()" runs the
+    # job even when "changes" failed (its output is then empty, not "false").
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -96,6 +149,8 @@ jobs:
 
   web:
     name: Web interface
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -133,6 +188,8 @@ jobs:
   # interface and not the placeholder page.
   release:
     name: Release build with the web interface
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

@@ -167,6 +167,18 @@ and refuses the push if `make lint` fails on any of them. Install
 that the hook checks what CI checks; without it that part is skipped with
 a message.
 
+CI (`.github/workflows/ci.yml`) skips its checks for a change that
+touches only documentation or recorded test results: `docs/`, Markdown at
+the repository root or under `tests/`, and anything under a `results/`
+directory in `tests/` except Go files. The base branch's copy of
+`scripts/ci-docs-only.sh` decides, and any change under `.github/` or to that
+script counts as code.
+The skipped jobs report as skipped, which a required status check treats
+as passed, so such a pull request is not blocked. Any other change, an
+unknown base, or a failure of that decision runs everything. A newer push
+to a pull request cancels the run it replaces; runs on `main` are never
+cancelled. `workflow_dispatch` starts a full run by hand.
+
 The unit tests replay fixtures captured from a real FreeBSD 15.1 host, so the
 FreeBSD discovery logic is tested on Linux. That tests the parsing and
 decision logic. It does not prove runtime behaviour on FreeBSD; see below.
