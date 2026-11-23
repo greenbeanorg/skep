@@ -1,0 +1,16 @@
+head c9ecac9 label j3 host 10.79.20.82
+checksum compare (format may differ):
+2251d7220c75229d128d8ecef38187c76432f8ea6092d2f85de659713c176079  /usr/local/share/licenses/skep/THIRD_PARTY_NOTICES
+3db94ce1c4e44455e6010235327c276064453aec48a1dd01217bb0bbe87ddaea  /usr/local/etc/rc.d/skep_api
+4cc963fba93c6dc8babc3e1670cb9a534b90d6635a6f3a2dc5ce6da64f54d564  /usr/local/sbin/skep-setup
+4cc963fba93c6dc8babc3e1670cb9a534b90d6635a6f3a2dc5ce6da64f54d564 stage/usr/local/sbin/skep-setup
+85d32ab1cddaace018c94cb3bd837f66535c1daf786db719fd3d0db0b60fd860 stage/usr/local/bin/skepctl
+943b29e5d7d0560978440bc8916800665fec57f75e8ab5723cc2425866891300 stage/usr/local/sbin/skep-api
+total 14541
+-rw-r--r--  1 aba aba 16172402 Nov 22 21:30 skep-0.1.0.pkg
+SHA256 (out/skep-0.1.0.pkg) = 7a7c0c2eedea0786b28fc6ffd87720dda6b12ca39ffed8987827973e668b8e2f
+skep-0.1.0
+Name           : skep
+Version        : 0.1.0
+skep-0.1.0:
+skep-setup 0.1.0 (commit c9ecac9, built 2026-11-23T02:30:34Z, go1.27.4 freebsd/amd64)

@@ -1,0 +1,8 @@
+{"step": "vid", "value": "0"}
+{"step": "create", "vm": "a306ca7c-80cf-4693-adfe-d130488f3915", "status": "succeeded"}
+{"step": "props", "local": ["volsize\t67108864", "volmode\tdev", "skep:vm_id\ta306ca7c-80cf-4693-adfe-d130488f3915", "skep:disk_id\t30e53a97-f846-411c-8b08-78aba330c36f"], "volsize": "67108864"}
+{"step": "induce-missing", "tries": 1, "missing": true, "volmode": "dev", "props_after": ["volsize\t67108864", "volmode\tdev", "skep:disk_id\t30e53a97-f846-411c-8b08-78aba330c36f", "skep:vm_id\ta306ca7c-80cf-4693-adfe-d130488f3915"]}
+{"step": "start-repair", "status": "succeeded", "error": null, "events": ["task is pending", "task is running", "starting the runner", "task is succeeded"]}
+{"step": "after-start", "node": "crw-r-----  1 root operator 0x7b Nov 22 21:32 /dev/zvol/zroot/skep/vm/a306ca7c-80cf-4693-adfe-d130488f3915/disk0", "bhyve": "23566 bhyve: skep-a306ca7c-80cf-4693-adfe-d130488f3915", "log": "ngrishe skep-agent[22905]: {\"time\":\"2026-11-22T21:32:59.115664707-05:00\",\"level\":\"INFO\",\"msg\":\"hostops: zvol device node repaired\",\"dataset\":\"zroot/skep/vm/a306ca7c-80cf-4693-adfe-d130488f3915/disk0\",\"rounds\":1,\"duration\":66039977} {\"time\":\"2026-11-22T21:32:59.115695953-05:00\",\"level\":\"INFO\",\"msg\":\"bhyve: repaired a disk's device node before the start\",\"vm_id\":\"a306ca7c-80cf-4693-adfe-d130488f3915\",\"slot\":0,\"device\":\"/dev/zvol/zroot/skep/vm/a306ca7c-80cf-4693-adfe-d130488f3915/disk0\",\"rounds\":1}"}
+{"step": "force_stop", "status": "succeeded"}
+{"step": "delete", "status": "succeeded", "left": "none", "vmm": "ls: /dev/vmm: No such file or directory"}
