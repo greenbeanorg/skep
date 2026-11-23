@@ -1,8 +1,11 @@
 package containers
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"log/slog"
 	"strings"
 	"testing"
 	"time"
@@ -236,5 +239,80 @@ func TestRunningAgainstDesiredStoppedDefaultDetail(t *testing.T) {
 	f.succeed(f.svc.Action(ctx, c.ID, models.ContainerAction{Action: "start"}, f.sub))
 	if got, _ := f.svc.Container(ctx, c.ID); got.State != models.ContainerRunning || got.StateDetail != "" {
 		t.Fatalf("normal run: %s %q", got.State, got.StateDetail)
+	}
+}
+
+// TestObserveAllCompletionCancelledStaysStopping: the agent shuts down
+// (its context is cancelled) while the completion's jail -r runs; nothing
+// is recorded unknown, the container stays stopping, and the next start
+// completes the stop (Part 2 of the #57 fix round).
+func TestObserveAllCompletionCancelledStaysStopping(t *testing.T) {
+	f := newFixture(t)
+	c := f.create(models.ContainerCreate{Name: "shutdown", TemplateID: f.minimal})
+	f.succeed(f.svc.Action(context.Background(), c.ID, models.ContainerAction{Action: "start"}, f.sub))
+	f.interruptStop(c.ID, true)
+	var logs bytes.Buffer
+	f.svc.log = slog.New(slog.NewJSONHandler(&logs, nil))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	f.fake.Set(func(fk *hostfake.Fake) {
+		fk.OnStop = cancel
+		fk.FailStop = context.Canceled
+	})
+	_ = f.svc.ObserveAll(ctx)
+	st := database.NewContainerStore(f.db)
+	rec, err := st.Get(context.Background(), c.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.State != models.ContainerStopping || rec.StateDetail != "" || rec.DesiredState != models.ContainerStopped {
+		t.Fatalf("after a cancelled completion: %s %q desired %s", rec.State, rec.StateDetail, rec.DesiredState)
+	}
+	if !strings.Contains(logs.String(), `"event":"jail_stop_completion_cancelled"`) ||
+		strings.Contains(logs.String(), `"event":"jail_stop_interrupted"`) {
+		t.Fatalf("log: %s", logs.String())
+	}
+	// The next agent start completes it.
+	f.fake.Set(func(fk *hostfake.Fake) { fk.OnStop, fk.FailStop = nil, nil })
+	if err := f.svc.ObserveAll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := f.svc.Container(context.Background(), c.ID); got.State != models.ContainerStopped ||
+		!strings.Contains(got.StateDetail, "completed at agent start") {
+		t.Fatalf("after the next start: %s %q", got.State, got.StateDetail)
+	}
+}
+
+// TestCompleteStopLogsBeforeWaiting: jail_stop_completing is logged at
+// WARN before StopJail, with the longest wait in seconds (Part 3).
+func TestCompleteStopLogsBeforeWaiting(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	c := f.create(models.ContainerCreate{Name: "logged", TemplateID: f.minimal})
+	f.succeed(f.svc.Action(ctx, c.ID, models.ContainerAction{Action: "start"}, f.sub))
+	f.interruptStop(c.ID, true)
+	var logs bytes.Buffer
+	f.svc.log = slog.New(slog.NewJSONHandler(&logs, nil))
+	var atStop string
+	f.fake.Set(func(fk *hostfake.Fake) { fk.OnStop = func() { atStop = logs.String() } })
+	if err := f.svc.ObserveAll(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var entry struct {
+		Level       string `json:"level"`
+		Event       string `json:"event"`
+		ContainerID string `json:"container_id"`
+		MaxWait     int    `json:"max_wait_seconds"`
+	}
+	for _, line := range strings.Split(atStop, "\n") {
+		if strings.Contains(line, `"jail_stop_completing"`) {
+			if err := json.Unmarshal([]byte(line), &entry); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	want := int(f.svc.spec(c, 0).StopMaxWait() / time.Second)
+	if entry.Level != "WARN" || entry.ContainerID != c.ID || entry.MaxWait != want || want <= 0 {
+		t.Fatalf("logged before StopJail: %+v (want max_wait_seconds %d); log: %s", entry, want, atStop)
 	}
 }

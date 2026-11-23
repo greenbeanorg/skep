@@ -293,8 +293,14 @@ destroyed, `/etc/rc.shutdown` perhaps not finished) has its stop completed
 at the next agent start, with `/etc/rc.shutdown` run again as a stop runs
 it; it ends `stopped` with no epairs, and `state_detail` says the stop was
 completed at agent start. This can delay the agent's start by up to the
-jail's start timeout plus its stop timeout (about 160 s with the defaults)
-per such jail. If the completion fails, the agent records the jail
+jail's start timeout plus its stop timeout plus 60 s (`jail -r` is killed
+after the two timeouts plus 30 s, and a failed `jail -r` is followed by
+`jail -R`, bounded by 30 s): about 190 s with the defaults, per such jail.
+Before each one the agent logs `jail_stop_completing` (WARN) with the
+container ID and that bound in `max_wait_seconds`, so a slow start can be
+explained from the log while it happens. If the agent is stopped during a
+completion, nothing is recorded: the jail stays `stopping` and the next
+agent start completes it (`jail_stop_completion_cancelled` in the log). If the completion fails, the agent records the jail
 `unknown` with the reason. What a read then shows depends on the host:
 while the jail still runs (the usual case: `jail -r` and then `jail -R`
 failed), `GET /api/v1/containers/{id}` and the list show `state: running`,

@@ -371,30 +371,52 @@ func (s *Service) ObserveAll(ctx context.Context) error {
 // agent restart, after StopJail destroyed the epairs and perhaps before
 // jail -r finished. It runs StopJail again with the default stop timeout
 // (exec.stop, as a stop does; a jail already gone only has its epairs
-// destroyed) and records the container stopped with no epairs. On a
-// failure the container is recorded unknown, as a failed stop task
-// records it, and the failure logged. It reports whether the stop was
-// completed.
+// destroyed) and records the container stopped with no epairs. It
+// reports whether the stop was completed.
+//
+// StopJail destroys only the epair host ends whose description, read from
+// the host at that moment, is skep:<container-id>:<slot>; it never uses
+// the host_interface names recorded on the container, which completeStop
+// only clears.
+//
+// On a failure the container is recorded unknown, as a failed stop task
+// records it, and the failure logged. When ctx was cancelled (the agent
+// is shutting down) and StopJail failed, nothing is recorded: the
+// container stays stopping and the next agent start tries again.
 func (s *Service) completeStop(ctx context.Context, c models.Container) bool {
-	if err := s.jails.StopJail(ctx, s.spec(c, 0)); err != nil {
+	spec := s.spec(c, 0)
+	s.log.Warn("containers: completing a stop an agent restart interrupted; the agent's socket waits for it",
+		"event", "jail_stop_completing", "container_id", c.ID,
+		"max_wait_seconds", int(spec.StopMaxWait()/time.Second))
+	err := s.jails.StopJail(ctx, spec)
+	if err != nil && ctx.Err() != nil {
+		s.log.Warn("containers: the agent is shutting down during a stop completion; the container stays stopping and the next agent start completes it",
+			"event", "jail_stop_completion_cancelled", "container_id", c.ID, "error", err)
+		return false
+	}
+	// Recorded on its own context, as a stop task records: what the host
+	// did must be recorded, even while the agent shuts down.
+	rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+	defer cancel()
+	if err != nil {
 		s.log.Error("containers: could not complete a stop an agent restart interrupted", "event", "jail_stop_interrupted",
 			"container_id", c.ID, "error", err)
 		detail := "a stop interrupted by an agent restart could not be completed at agent start: " + err.Error() + "; stop it again"
-		if serr := s.store.SaveObserved(ctx, c.ID, models.ContainerUnknown, nil, detail, s.now().UTC()); serr != nil {
+		if serr := s.store.SaveObserved(rctx, c.ID, models.ContainerUnknown, nil, detail, s.now().UTC()); serr != nil {
 			s.log.Warn("containers: could not record the observed state", "container_id", c.ID, "error", serr)
 		}
 		return false
 	}
 	s.log.Warn("containers: completed a stop an agent restart interrupted", "event", "jail_stop_completed",
 		"container_id", c.ID)
-	if err := s.store.SaveEpairs(ctx, c.ID, nil); err != nil {
+	if err := s.store.SaveEpairs(rctx, c.ID, nil); err != nil {
 		s.log.Warn("containers: could not clear the observed epairs", "container_id", c.ID, "error", err)
 	}
 	detail := "a stop interrupted by an agent restart was completed at agent start"
-	if err := s.store.SaveObserved(ctx, c.ID, models.ContainerStopped, nil, detail, s.now().UTC()); err != nil {
+	if err := s.store.SaveObserved(rctx, c.ID, models.ContainerStopped, nil, detail, s.now().UTC()); err != nil {
 		s.log.Warn("containers: could not record the observed state", "container_id", c.ID, "error", err)
 	}
-	s.sweepLeftoverDevfs(ctx, c)
+	s.sweepLeftoverDevfs(rctx, c)
 	return true
 }
 
