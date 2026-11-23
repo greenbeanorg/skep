@@ -1,6 +1,10 @@
 package pkgrepo
 
 import (
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
 	"testing"
 	"testing/fstest"
 )
@@ -54,5 +58,39 @@ func TestBase(t *testing.T) {
 				t.Fatalf("Base = %v, %q; want %v, %q", got, where, c.want, c.where)
 			}
 		})
+	}
+}
+
+// TestEnableBase runs the printed command, as written but with its
+// /usr/local moved under a temporary root, on a host that has only the
+// stock /etc/pkg/FreeBSD.conf and no /usr/local/etc/pkg (a host installed
+// from the distribution sets, like smith): afterwards Base says enabled.
+// Run twice, it stays enabled.
+func TestEnableBase(t *testing.T) {
+	if !strings.HasPrefix(EnableBase, "mkdir -p /usr/local/etc/pkg/repos && ") {
+		t.Fatalf("EnableBase %q does not create the directory first", EnableBase)
+	}
+	sh, err := exec.LookPath("sh")
+	if err != nil {
+		t.Skip("no sh")
+	}
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "etc/pkg"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "etc/pkg/FreeBSD.conf"), []byte(stock), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if on, _ := Base(os.DirFS(root)); on {
+		t.Fatal("enabled before")
+	}
+	cmd := strings.ReplaceAll(EnableBase, "/usr/local/", root+"/usr/local/")
+	for i := 0; i < 2; i++ {
+		if out, err := exec.Command(sh, "-c", cmd).CombinedOutput(); err != nil {
+			t.Fatalf("run %d: %v: %s", i, err, out)
+		}
+		if on, where := Base(os.DirFS(root)); !on || where != "/usr/local/etc/pkg/repos/FreeBSD.conf" {
+			t.Fatalf("run %d: enabled %v by %q", i, on, where)
+		}
 	}
 }

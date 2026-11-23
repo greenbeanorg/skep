@@ -3,6 +3,7 @@ package setup
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/netip"
 	"os/exec"
 	"sort"
@@ -175,4 +176,30 @@ func lines(out string) []string {
 	}
 	sort.Strings(l)
 	return l
+}
+
+// commandOutput runs a read-only command and returns its standard output
+// (output, or a fake in the tests).
+type commandOutput func(ctx context.Context, name string, args ...string) (string, error)
+
+// readBridges reads the bridges as they are now: "ifconfig -g bridge",
+// then "ifconfig BRIDGE" for each. Any error fails it, the group listing
+// included: on FreeBSD 15.1 "ifconfig -g bridge" exits 0 with no output
+// when there is no bridge (smith, 2026-11-23), so an error is not "no
+// bridges", and setup must not judge bridges it could not read as absent
+// or empty.
+func readBridges(ctx context.Context, run commandOutput) (map[string]Bridge, error) {
+	out, err := run(ctx, cmdIfconfig, "-g", "bridge")
+	if err != nil {
+		return nil, fmt.Errorf("ifconfig -g bridge: %w", err)
+	}
+	bridges := map[string]Bridge{}
+	for _, n := range strings.Fields(out) {
+		bo, err := run(ctx, cmdIfconfig, n)
+		if err != nil {
+			return nil, fmt.Errorf("ifconfig %s: %w", n, err)
+		}
+		bridges[n] = parseIfconfigBridge(bo)
+	}
+	return bridges, nil
 }

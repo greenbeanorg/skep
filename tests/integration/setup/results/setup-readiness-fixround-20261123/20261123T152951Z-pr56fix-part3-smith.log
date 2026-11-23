@@ -1,0 +1,96 @@
+before: vtnet1 flags: vtnet1: flags=1008802<BROADCAST,SIMPLEX,MULTICAST,LOWER_UP> metric 0 mtu 1500
+before: ifconfig -l: vtnet0 vtnet1 lo0
+before: rc.conf sha256 b8c48f274581f6bd306ab2c37094a07919b69a77d4f9eaf384b7f180b3646e39
+created bridge9 (members vtnet1 epair0a), vlanfilter off:
+	bridge flags=0<>
+	member: epair0a flags=143<LEARNING,DISCOVER,AUTOEDGE,AUTOPTP>
+	member: vtnet1 flags=143<LEARNING,DISCOVER,AUTOEDGE,AUTOPTP>
+ifconfig -g bridge: [bridge9]
+
+=== (b)+(c) run-time bridge, real / (rc.conf has no bridge9, no cloned_interfaces)
+  ok       network                            bridge9
+                                                exists (members [epair0a vtnet1]); setup allow-lists it and changes nothing on it
+  warn     network                            bridge9
+                                                exists only at run time: rc.conf has no ifconfig_bridge9 line, so after a reboot it is gone (or comes back without its members) and guests on it lose their network
+  manual   network                            bridge9 vlanfilter
+                                                not set; changing an existing bridge can cut off its members, so setup prints the steps (each member's PVID first, then defuntagged, then vlanfilter); run them from the console. Without it the agent reports bridge_vlan_unfiltered. The rc.conf line leaves out [epair0a]: guest ports the agent creates when a guest starts
+                                                $ ifconfig bridge9 ifuntagged epair0a 1
+                                                $ ifconfig bridge9 ifuntagged vtnet1 1
+                                                $ ifconfig bridge9 defuntagged 1
+                                                $ ifconfig bridge9 vlanfilter
+                                                $ sysrc cloned_interfaces+="bridge9"
+                                                $ sysrc ifconfig_bridge9="addm vtnet1 ifuntagged vtnet1 1 defuntagged 1 vlanfilter up"
+                                                      "bridge9"
+                                                    ],
+                                                    "management_interfaces": [
+                                                      "vtnet0"
+                                                    ]
+                                                  }
+                                                }
+
+=== (b) run-time bridge already in cloned_interfaces (copied root)
+  ok       network                            bridge9
+                                                exists (members [epair0a vtnet1]); setup allow-lists it and changes nothing on it
+  warn     network                            bridge9
+                                                exists only at run time: rc.conf has no ifconfig_bridge9 line, so after a reboot it is gone (or comes back without its members) and guests on it lose their network
+  manual   network                            bridge9 vlanfilter
+                                                not set; changing an existing bridge can cut off its members, so setup prints the steps (each member's PVID first, then defuntagged, then vlanfilter); run them from the console. Without it the agent reports bridge_vlan_unfiltered. The rc.conf line leaves out [epair0a]: guest ports the agent creates when a guest starts
+                                                $ ifconfig bridge9 ifuntagged epair0a 1
+                                                $ ifconfig bridge9 ifuntagged vtnet1 1
+                                                $ ifconfig bridge9 defuntagged 1
+                                                $ ifconfig bridge9 vlanfilter
+                                                $ sysrc ifconfig_bridge9="addm vtnet1 ifuntagged vtnet1 1 defuntagged 1 vlanfilter up"
+                                                      "bridge9"
+                                                    ],
+                                                    "management_interfaces": [
+                                                      "vtnet0"
+                                                    ]
+                                                  }
+                                                }
+
+=== (c) bridge in rc.conf with addm vtnet1 only; epair0a is a live member (copied root)
+  ok       network                            bridge9
+                                                exists (members now [epair0a vtnet1], in rc.conf [vtnet1]); setup allow-lists it and changes nothing on it
+  manual   network                            bridge9 vlanfilter
+                                                not set; changing an existing bridge can cut off its members, so setup prints the steps (each member's PVID first, then defuntagged, then vlanfilter); run them from the console. Without it the agent reports bridge_vlan_unfiltered
+                                                $ ifconfig bridge9 ifuntagged epair0a 1
+                                                $ ifconfig bridge9 ifuntagged vtnet1 1
+                                                $ ifconfig bridge9 defuntagged 1
+                                                $ ifconfig bridge9 vlanfilter
+                                                $ sysrc ifconfig_bridge9="addm vtnet1 ifuntagged vtnet1 1 defuntagged 1 vlanfilter up"
+                                                      "bridge9"
+                                                    ],
+                                                    "management_interfaces": [
+                                                      "vtnet0"
+                                                    ]
+                                                  }
+                                                }
+
+=== (a) vlanfilter in rc.conf, off now (copied root)
+  ok       network                            bridge9
+                                                exists (members now [epair0a vtnet1], in rc.conf [vtnet1]); setup allow-lists it and changes nothing on it
+  manual   network                            bridge9 vlanfilter
+                                                in ifconfig_bridge9 in rc.conf but off now: it takes effect at the next boot, or run these steps from the console to turn it on now (each member's PVID first, then defuntagged, then vlanfilter). rc.conf needs no change. Until then the agent reports bridge_vlan_unfiltered
+                                                $ ifconfig bridge9 ifuntagged epair0a 1
+                                                $ ifconfig bridge9 ifuntagged vtnet1 1
+                                                $ ifconfig bridge9 defuntagged 1
+                                                $ ifconfig bridge9 vlanfilter
+                                                      "bridge9"
+                                                    ],
+                                                    "management_interfaces": [
+                                                      "vtnet0"
+                                                    ]
+                                                  }
+                                                }
+
+--- copied rc.conf additions:
+11a12,14
+> cloned_interfaces="bridge9"
+> ifconfig_bridge9="addm vtnet1 up"
+> ifconfig_bridge9="addm vtnet1 ifuntagged vtnet1 1 defuntagged 1 vlanfilter up"
+destroyed epair0a
+destroyed bridge9
+after: vtnet1 flags: vtnet1: flags=1008802<BROADCAST,SIMPLEX,MULTICAST,LOWER_UP> metric 0 mtu 1500
+after: ifconfig -l: vtnet0 vtnet1 lo0
+after: rc.conf sha256 b8c48f274581f6bd306ab2c37094a07919b69a77d4f9eaf384b7f180b3646e39
+after: ifconfig -g bridge: []

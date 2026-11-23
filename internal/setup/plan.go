@@ -782,29 +782,8 @@ func (b *builder) bridges() {
 			}
 			continue
 		}
-		steps := []string{}
-		for _, x := range m {
-			steps = append(steps, fmt.Sprintf("ifconfig %s ifuntagged %s 1", br, x))
-		}
-		steps = append(steps, "ifconfig "+br+" defuntagged 1", "ifconfig "+br+" vlanfilter")
-		var persist []string
-		for _, x := range m {
-			persist = append(persist, "ifuntagged "+x+" 1")
-		}
-		base := line
-		if !inRC {
-			// A run-time bridge: the line must add its members too.
-			var addm []string
-			for _, x := range m {
-				addm = append(addm, "addm "+x)
-			}
-			base = strings.Join(addm, " ")
-		}
-		steps = append(steps, fmt.Sprintf(`sysrc ifconfig_%s="%s"`, br,
-			strings.TrimSpace(strings.Replace(base, " up", "", 1)+" "+strings.Join(persist, " ")+" defuntagged 1 vlanfilter up")))
-		b.item(Item{Kind: Manual, Area: "network", What: br + " vlanfilter",
-			Detail: "not set; changing an existing bridge can cut off its members, so setup prints the steps (each member's PVID first, then defuntagged, then vlanfilter); run them from the console. Without it the agent reports bridge_vlan_unfiltered",
-			Steps:  steps})
+		_, exists := b.f.Interfaces[br]
+		b.item(vlanfilterSteps(br, line, inRC, rcFilter, rcMembers, m, isLive || exists, isLive, b.rc))
 	}
 	if b.o.CreateBridge != "" {
 		b.newBridge()
@@ -1154,7 +1133,7 @@ func (b *builder) readOnlyChecks() {
 	if !baseRepoEnabled(b.o.Root) {
 		b.item(Item{Kind: Manual, Area: "packages", What: "FreeBSD-base repository",
 			Detail: "disabled; the pkgbase jail template source needs it (or use the dist source)",
-			Steps:  []string{`printf 'FreeBSD-base: { enabled: yes }\n' >> /usr/local/etc/pkg/repos/FreeBSD.conf`}})
+			Steps:  []string{pkgrepo.EnableBase}})
 	} else {
 		b.ok("packages", "FreeBSD-base repository", "enabled")
 	}
@@ -1183,10 +1162,11 @@ func vmxReady(dmesg string) bool {
 	return false
 }
 
-// baseRepoEnabled reads the pkg repository files (/etc/pkg, then
-// /usr/local/etc/pkg/repos, which wins).
-// baseRepoEnabled reports whether pkg's repository files under root enable
-// FreeBSD-base, by the same rules the agent uses (package pkgrepo).
+// baseRepoEnabled reports whether pkg's repository files under root
+// (/etc/pkg, then /usr/local/etc/pkg/repos, which wins) enable FreeBSD-base,
+// by the same rules the agent uses (package pkgrepo). root is never empty:
+// -root defaults to "/" and ValidateOptions refuses "", which matters
+// because os.DirFS("") fails every read and would always say disabled.
 func baseRepoEnabled(root string) bool {
 	enabled, _ := pkgrepo.Base(os.DirFS(root))
 	return enabled
