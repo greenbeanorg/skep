@@ -109,7 +109,7 @@ func ModulesItem(configured []string, f Facts) (Item, bool) {
 	}
 	detail := "configured to load at boot, not loaded now; until they are, these do not work:\n" +
 		strings.Join(uses, "\n") + "\n" +
-		"and the agent's health can read degraded (skep-setup upgrade then exits 3).\n" +
+		"and the agent's health can read degraded (skep-setup upgrade then exits 4, incomplete).\n" +
 		"Setup never loads modules. Either reboot, or load them now:"
 	return Item{Kind: Warn, Area: "kernel modules", What: "configured but not loaded: " + strings.Join(missing, " "),
 		Detail: detail, Steps: []string{"shutdown -r now", KldloadCommand(missing)}}, true
