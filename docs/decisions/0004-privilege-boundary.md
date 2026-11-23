@@ -380,3 +380,111 @@ Pending FreeBSD validation:
 - A socket under `/var/run` on a host where `/var/run` is really emptied
   at boot (tmpfs). The rc.d script recreates the directory at every start;
   that was validated by removing it, not by a tmpfs.
+
+## Amendment (2026-11-23, Proposed): the agent checks its binary and configuration at start
+
+Status: **Proposed**. Written unattended (Andy away); nothing is built until
+the open questions below are answered. Branch `fix/agent-start-perms`.
+
+### Problem
+
+`skep-agent` runs as root and executes its own binary and reads
+`agent.json`, which allow-lists pools, directories, bridges and management
+interfaces (the confinement every privileged operation is checked against).
+Anyone who can replace the binary, or change `agent.json`, or rename any
+directory above either, controls what root runs or what the confinement
+allows. The package installs them root-owned (`0555`, `0600`, directories
+`0755`), and `skep-setup` checks only `/var/db/skep` and its parents; nothing
+stops an agent from starting on a host where a hand install left one of
+these writable by another user.
+
+### What is checked
+
+At start, before the socket is created and before any task runs, only when
+the process runs as root on FreeBSD (a Linux development agent, which runs
+as the developer from the source tree, does not check):
+
+1. **The binary**: the path the kernel reports for the running process
+   (`os.Executable`, which on FreeBSD reads `kern.proc.pathname`, so
+   symbolic links are already resolved).
+2. **The configuration file actually loaded**: `-config PATH`, or
+   `/usr/local/etc/skep/agent.json` when it exists. With no configuration
+   file there is nothing to check (the built-in defaults are in the binary).
+3. **Every parent directory of each, up to `/`.**
+
+Each of these must be **owned by UID 0** and **not writable by its group or
+by others** (`mode & 022 == 0`). There are no exceptions: not for the group
+`wheel` (its members are not root), and not for the sticky bit (a sticky
+world-writable directory above the binary still lets others create entries
+next to it).
+
+### Symbolic links
+
+For the configuration path, both chains are checked: the path as given, each
+component with `lstat` (so the directories that hold any link are covered:
+whoever can write there can point the link elsewhere), and the fully
+resolved path (`filepath.EvalSymlinks`) with its parents. A link's own owner
+and mode do not matter on FreeBSD (a link cannot be rewritten in place, only
+replaced, which needs write access to its directory). The binary's path is
+already resolved by the kernel; its parents are checked as resolved.
+
+### What the error says
+
+The agent logs one error and exits with status 1, naming the first path that
+fails, why, and the command that fixes it, for example:
+
+```
+skep-agent: refusing to start: /usr/local/etc/skep is writable by its group or others (mode 0775, owner root:wheel); a user other than root could change the configuration this root process reads. Fix: chmod go-w /usr/local/etc/skep
+skep-agent: refusing to start: /usr/local/sbin/skep-agent is owned by UID 1002 (skep), not root; that user could replace the program root runs. Fix: chown root:wheel /usr/local/sbin/skep-agent
+```
+
+Under `daemon(8)` (the rc.d script) the agent is restarted after
+`skep_agent_restart_delay` and refuses again, each time with the same line in
+`daemon.log`; `skep-setup check` should report the same paths (a follow-up,
+so the operator sees it before starting).
+
+### What a hand-installed host sees (hearst)
+
+hearst (skep UID 1002, installed by hand with `scripts/deploy-test.sh` in the
+package layout since 2026-11-15) has, by that script and the recorded
+layout: `/usr/local/sbin/skep-agent` `root:wheel 0555`, `/usr/local/sbin`
+made `root:wheel 0755`, `/usr/local/etc/skep/agent.json` `root:wheel 0600`,
+and stock `/usr/local`, `/usr`, `/` (`root:wheel 0755`). It would start
+normally. The skep account (UID 1002) owns nothing on these paths; its
+directory `/var/db/skep/api` is not checked by this amendment. **Pending
+verification:** hearst is powered off tonight; the prediction comes from
+the deploy script and the layout record, not from the host. The two lab VMs
+(package install) were read: smith has `root:wheel` and `0755`/`0555`/`0600`
+on every checked path.
+
+A host where someone ran the agent from a home directory (the pre-2026-11-15
+hearst layout under `/home/aba/skep-m6`, removed since) would be refused:
+`/home/aba` is owned by `aba`.
+
+### Open questions (for Andy)
+
+1. **ACLs.** On ZFS (`nfsv4acls`, langrishe's root) and on UFS mounted with
+   `acls`, an ACL entry can let another user write a file or directory whose
+   mode bits show `0755`. Mode bits alone miss that. Options: (a) ignore
+   ACLs and document it; (b) refuse a path with a non-trivial ACL, detected
+   by running `/bin/getfacl -q -n PATH` (fixed arguments, at start only) and
+   accepting only the entries that mirror the mode (`owner@`, `group@`,
+   `everyone@`, or `user::`, `group::`, `other::`); (c) the same through the
+   `__acl_get_file` system call in Go without cgo (more code, no exec).
+   Recommendation: (b), simplest to review; (c) later if exec at start is
+   unwanted.
+2. **Scope.** Also check the data directory (`/var/db/skep`, with the rule
+   `skep-setup` already applies) and the socket's directory
+   (`/var/run/skep`)? Recommendation: yes for both, in this same check.
+3. **Refuse or warn.** The job asked for a refusal; a refusal on an existing
+   host stops every running VM's management until fixed (guests keep
+   running). Recommendation: refuse, as asked, with `skep-setup check`
+   reporting it first.
+4. **No override.** Recommendation: no flag to skip the check (it would be
+   a silent weakening).
+
+Nothing else is open. The build (a `startcheck` package with a fake stat for
+unit tests, the call in `cmd/skep-agent` before the socket, and a test on a
+lab VM with a scratch copy: a copy of the binary and of `agent.json` in a
+scratch directory made `root:wheel`, then `chmod g+w` on the scratch
+directory, never on the real files) waits for the answers.
