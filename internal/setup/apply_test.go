@@ -903,3 +903,62 @@ func TestHostRunnerEnvironment(t *testing.T) {
 		t.Fatalf("dir %q %v", dir, err)
 	}
 }
+
+// answerAdmins is an AdminChecker with a fixed answer from skep-api.
+type answerAdmins struct{ detail string }
+
+func (a answerAdmins) AdminExists(context.Context, string, string) (bool, string, error) {
+	return true, a.detail, nil
+}
+
+// TestPlanAdminDisabledOrNotAdmin: -admin NAME where NAME exists but is
+// disabled or not an administrator is a warning, never ok, and never a
+// change (backlog, Andy 2026-11-22).
+func TestPlanAdminDisabledOrNotAdmin(t *testing.T) {
+	root := stockHost(t)
+	e := newApplyEnv(t, root)
+	apiStarts(root, e.runner)
+	o := newBridgeOpts(root)
+	o.Start, o.Admin = true, "andy"
+	if _, err := e.applier().Apply(context.Background(), compute(t, o, facts())); err != nil {
+		t.Fatal(err)
+	}
+	running := facts()
+	running.Running = map[string]bool{"skep_agent": true, "skep_api": true}
+	cases := []struct{ detail, kind, want string }{
+		{`user "andy" exists (role admin)`, "ok", "exists (skep-api admin exists"},
+		{`user "andy" exists (role admin, disabled)`, "warn", "is disabled"},
+		{`user "andy" exists (role operator)`, "warn", "has the role operator, not admin"},
+		{`user "andy" exists (role auditor, disabled)`, "warn", "has the role auditor, not admin and is disabled"},
+		{`something else`, "warn", "could not be read"},
+	}
+	for _, c := range cases {
+		o.Admins = answerAdmins{c.detail}
+		p := compute(t, o, running)
+		want(t, p, Kind(c.kind), "first administrator andy", c.want)
+		for _, a := range p.Actions() {
+			if a.Type == ActAdminCreate {
+				t.Fatalf("%s: plans an admin create", c.detail)
+			}
+		}
+	}
+}
+
+func TestParseAdminExists(t *testing.T) {
+	for in, want := range map[string]struct {
+		role     string
+		disabled bool
+		ok       bool
+	}{
+		`user "a" exists (role admin)`:              {"admin", false, true},
+		`user "a b" exists (role viewer, disabled)`: {"viewer", true, true},
+		"user \"a\" exists (role admin)\n":          {"admin", false, true},
+		`there is no user "a"`:                      {"", false, false},
+		`user "a" exists`:                           {"", false, false},
+	} {
+		r, d, ok := parseAdminExists(in)
+		if r != want.role || d != want.disabled || ok != want.ok {
+			t.Errorf("%q: %q %v %v", in, r, d, ok)
+		}
+	}
+}
