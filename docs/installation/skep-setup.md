@@ -30,9 +30,15 @@ skep-setup upgrade               after "pkg upgrade skep"
 skep-setup remove    [-plan]     before "pkg delete skep"
 ```
 
-Run it as root: it reads `agent.json` (`0600`). Exit status: `0` nothing
-to do, `1` (`check`) something for `apply` or for you, `2` usage, `3`
-refused.
+Run it as root: it reads `agent.json` (`0600`).
+
+| Exit status | Meaning |
+|---|---|
+| `0` | done, or nothing to do |
+| `1` | `check`: something for `apply` or for you; any command: not confirmed |
+| `2` | usage |
+| `3` | refused: nothing was (or would be) done. `upgrade` also exits 3 for its other failures (a backup, or the agent's stop, start or check), after starting `skep_api` again; its message says what was left |
+| `4` | `upgrade` only: **incomplete**. The services were restarted, but could not be verified: `skep_api` did not come up after the agent's restart, the agent did not answer on its socket within the wait, or its health was not `ok` (see [Upgrades](#upgrades)) |
 
 ## The answers
 
@@ -113,8 +119,8 @@ fix it: reboot, or load them now with the printed command, for example
 ```
 
 The warning does not change any exit code. Until the modules are loaded
-the agent's health can read `degraded`, and `upgrade` then exits 3 with the
-same list in its message. (Whether `apply` should load them itself is an
+the agent's health can read `degraded`, and `upgrade` then exits 4
+(incomplete) with the same list in its message. (Whether `apply` should load them itself is an
 open question for Andy; see the [backlog](../backlog.md).)
 
 **Firmware.** `check` and `plan` print a **warning** when the bhyve UEFI
@@ -252,10 +258,23 @@ it:
    completing any jail stop the restart interrupted (up to about 190 s per
    jail with the default timeouts; ADR 0010 amendment aa). After 30 s
    without an answer upgrade prints one line saying so (look for
-   `jail_stop_completing` in `/var/log/daemon.log`). If the agent has not
-   answered after 200 s, upgrade reports it with the backup directory and
-   exits 3; both services were restarted by then, so check the agent's log
-   and its health rather than running upgrade again.
+   `jail_stop_completing` in `/var/log/daemon.log`).
+
+**Exit 4, incomplete.** Upgrade exits 4 when the services were restarted
+but could not be verified: `skep_api` did not come up after the agent's
+restart, the agent did not answer on its socket within 200 s, or its
+health (or reading it) was not `ok`. The message starts with
+`incomplete:`, names the backup directory, and says what to check: the
+API's or the agent's log (`/var/log/daemon.log`; `jail_stop_completing`
+means the agent is still completing interrupted jail stops and will
+answer when they end), `service skep_agent status`, `skep-setup check`,
+and, for a degraded health, the kernel modules not loaded yet. For an API
+that did not come up, start it with `service skep_api start`. Running
+`skep-setup upgrade` again is safe, since both programs already run the new
+build; it backs up and restarts both services again, but does not fix the
+cause, and while the agent is still completing interrupted jail stops a
+second restart only delays them (each stop is completed at the agent's
+next start).
 
 Every refusal or failure after `skep_api` was stopped (the second look
 at the tasks, the wait, a backup, the agent's stop, start or check)

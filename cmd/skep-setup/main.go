@@ -36,6 +36,10 @@ const (
 	exitPending = 1 // check: there is work for apply, or something for the operator
 	exitUsage   = 2
 	exitRefused = 3 // a refusal: nothing was (or would be) done
+	// exitIncomplete: upgrade restarted the services but could not verify
+	// them (skep_api did not come up, the agent's socket did not answer
+	// within the wait, or health was not ok).
+	exitIncomplete = 4
 )
 
 // env is what the program takes from its surroundings. Tests replace it.

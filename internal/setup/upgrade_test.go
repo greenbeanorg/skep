@@ -452,9 +452,81 @@ func TestUpgradeUnhealthyNamesModulesNotLoaded(t *testing.T) {
 	f.Modules = loaded("if_epair")
 	u.Prober = fakeProber{f}
 	err := u.Upgrade(context.Background())
-	if err == nil || !strings.Contains(err.Error(), "health is degraded; configured but not loaded: vmm netgraph (reboot, or: kldload -n vmm netgraph); see skep-setup check") {
+	if err == nil || !strings.Contains(err.Error(), "health is degraded") ||
+		!strings.Contains(err.Error(), "Check: configured but not loaded: vmm netgraph (reboot, or: kldload -n vmm netgraph); skep-setup check") {
 		t.Fatalf("err %v", err)
 	}
+	var inc *UpgradeIncomplete
+	if !errors.As(err, &inc) {
+		t.Fatalf("not incomplete: %T %v", err, err)
+	}
+}
+
+// The three cases in which the services were restarted but could not be
+// verified are UpgradeIncomplete (skep-setup exits 4), say what to check,
+// and say that running upgrade again is safe.
+func TestUpgradeIncomplete(t *testing.T) {
+	check := func(t *testing.T, err error, want ...string) {
+		t.Helper()
+		var inc *UpgradeIncomplete
+		if !errors.As(err, &inc) {
+			t.Fatalf("not incomplete: %T %v", err, err)
+		}
+		msg := err.Error()
+		want = append(want, "incomplete: ", "Check: ", "Running skep-setup upgrade again is safe")
+		for _, w := range want {
+			if !strings.Contains(msg, w) {
+				t.Fatalf("missing %q in: %s", w, msg)
+			}
+		}
+		var ref *UpgradeRefusal
+		if errors.As(err, &ref) {
+			t.Fatal("also a refusal")
+		}
+	}
+	t.Run("socket does not answer", func(t *testing.T) {
+		u, _ := newUpgrade(t)
+		n := 0
+		u.Agent = seqAgent{builds: []string{"0.1.0+dd7a8b6", ""}, n: &n, health: "ok"}
+		check(t, u.Upgrade(context.Background()), "did not answer on its socket within 3m20s", "jail_stop_completing")
+	})
+	t.Run("health not ok", func(t *testing.T) {
+		u, _ := newUpgrade(t)
+		n := 0
+		u.Agent = seqAgent{builds: []string{"0.1.0+dd7a8b6", "0.1.1+abc1234"}, n: &n, health: "degraded"}
+		check(t, u.Upgrade(context.Background()), "health is degraded", "skep-setup check")
+	})
+	t.Run("health unknown", func(t *testing.T) {
+		u, _ := newUpgrade(t)
+		n := 0
+		u.Agent = healthErrAgent{seqAgent{builds: []string{"0.1.0+dd7a8b6", "0.1.1+abc1234"}, n: &n}}
+		check(t, u.Upgrade(context.Background()), "health is unknown")
+	})
+	t.Run("API does not start after the agent restart", func(t *testing.T) {
+		u, h := newUpgrade(t)
+		h.fail["service skep_api start"] = errors.New("exit status 1")
+		check(t, u.Upgrade(context.Background()), "skep_agent runs 0.1.1+abc1234, but skep_api did not come up",
+			"service skep_api start; upgrade need not run again")
+	})
+}
+
+// The agent not coming back as the new build is not one of the three
+// incomplete cases: it stays an ordinary failure (exit 3), with the
+// existing stateAgentFailed message.
+func TestUpgradeAgentStartFailureIsNotIncomplete(t *testing.T) {
+	u, h := newUpgrade(t)
+	h.fail["service skep_agent start"] = errors.New("exit status 1")
+	err := u.Upgrade(context.Background())
+	var inc *UpgradeIncomplete
+	if err == nil || errors.As(err, &inc) || !strings.Contains(err.Error(), "did not come back as the new build") {
+		t.Fatalf("err %T %v", err, err)
+	}
+}
+
+type healthErrAgent struct{ seqAgent }
+
+func (healthErrAgent) Health(context.Context) (string, error) {
+	return "", errors.New("connection reset")
 }
 
 func TestUpgradeUnknownOldBuild(t *testing.T) {

@@ -161,6 +161,21 @@ func (r *UpgradeRefusal) Error() string {
 	return "refused: " + r.Reason + "; nothing was changed"
 }
 
+// UpgradeIncomplete is an upgrade that restarted skep_agent as the new
+// build but could not verify the result: skep_api did not come up, the
+// agent did not answer on its socket within the wait, or its health was
+// not ok. skep-setup exits 4 for it.
+type UpgradeIncomplete struct {
+	// Problem says what could not be verified; Check says what to look at.
+	Problem, Check string
+}
+
+func (e *UpgradeIncomplete) Error() string {
+	return "incomplete: " + e.Problem + ". Check: " + e.Check + ". Running skep-setup upgrade again is safe " +
+		"(the services already run the new build; it backs up and restarts both again) but does not fix the cause, " +
+		"and while the agent is still completing interrupted jail stops a second restart only delays them"
+}
+
 // What a failure leaves, for restoreAPI's message.
 const (
 	// stateAgentUntouched: before skep_agent was stopped. The API is the
@@ -406,8 +421,9 @@ func (u *Upgrader) Upgrade(ctx context.Context) error {
 		return u.restoreAPI(nctx, want, err, "backups in "+dir+"; "+stateAgentFailed)
 	}
 	apiDown := func(err error) error {
-		return fmt.Errorf("skep_agent runs %s, but skep_api did not come up: %w; see the API's log (/var/log/daemon.log) "+
-			"and start it with service skep_api start; upgrade need not run again (backups in %s)", want, err, dir)
+		return &UpgradeIncomplete{
+			Problem: fmt.Sprintf("skep_agent runs %s, but skep_api did not come up: %v (backups in %s)", want, err, dir),
+			Check:   "the API's log (/var/log/daemon.log), then start it with service skep_api start; upgrade need not run again"}
 	}
 	if _, err := u.Runner.Run(nctx, Cmd{Name: cmdService, Args: []string{"skep_api", "start"}}); err != nil {
 		return apiDown(err)
@@ -417,15 +433,22 @@ func (u *Upgrader) Upgrade(ctx context.Context) error {
 	}
 	// 6. The agent answers on its socket as the new build, then health.
 	if err := u.waitForAgent(nctx, want); err != nil {
-		return fmt.Errorf("both services restarted, but %w (backups in %s)", err, dir)
+		return &UpgradeIncomplete{
+			Problem: fmt.Sprintf("both services restarted, but %v (backups in %s)", err, dir),
+			Check: "the agent's log (/var/log/daemon.log): jail_stop_completing means it is completing interrupted jail " +
+				"stops and will answer when they end; then service skep_agent status and skep-setup check"}
 	}
 	status, err := u.Agent.Health(nctx)
 	if err != nil {
-		return fmt.Errorf("both services restarted, but the agent's health is unknown: %w", err)
+		return &UpgradeIncomplete{
+			Problem: fmt.Sprintf("both services restarted at %s, but the agent's health is unknown: %v (backups in %s)", want, err, dir),
+			Check:   "the agent's log (/var/log/daemon.log) and skep-setup check"}
 	}
 	u.printf("  health: %s\n", status)
 	if status != "ok" {
-		return fmt.Errorf("both services restarted at %s, but health is %s; %ssee skep-setup check and the agent's log", want, status, u.modulesHint(nctx))
+		return &UpgradeIncomplete{
+			Problem: fmt.Sprintf("both services restarted at %s, but health is %s (backups in %s)", want, status, dir),
+			Check:   u.modulesHint(nctx) + "skep-setup check and the agent's log (/var/log/daemon.log)"}
 	}
 	u.printf("upgraded to %s; backups in %s\n", want, dir)
 	return nil
