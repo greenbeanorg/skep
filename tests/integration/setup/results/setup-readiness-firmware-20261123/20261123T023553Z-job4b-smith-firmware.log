@@ -1,0 +1,75 @@
++ jls -q name
++ ls /dev/vmm
++ pkg query '%n %v' edk2-bhyve
+edk2-bhyve g202508_3
++ sudo timeout -f 120 pkg delete -y edk2-bhyve
+Updating database digests format: . done
+Checking integrity... done (0 conflicting)
+Deinstallation has been requested for the following 1 packages (of 0 packages in the universe):
+
+Installed packages to be REMOVED:
+	edk2-bhyve: g202508_3
+
+Number of packages to be removed: 1
+
+The operation will free 7 MiB.
+[1/1] Deinstalling edk2-bhyve-g202508_3...
+[1/1] Deleting files for edk2-bhyve-g202508_3: ......... done
+del-rc=0
++ echo 'del-rc=0'
++ ls /usr/local/share/edk2-bhyve
+ls: /usr/local/share/edk2-bhyve: No such file or directory
++ sudo skep-setup check -mgmt vtnet0 -pool tank
+check-rc=1
++ echo 'check-rc=1'
++ grep -A4 edk2-bhyve /tmp/c4b
+  warn     packages                           edk2-bhyve
+                                                the bhyve UEFI firmware package edk2-bhyve is not installed (BHYVE_UEFI.fd, BHYVE_UEFI_VARS.fd missing in /usr/local/share/edk2-bhyve): VMs cannot be created without it; jails do not need it. Setup does not install it
+                                                $ pkg install edk2-bhyve
+  manual   packages                           FreeBSD-base repository
+                                                disabled; the pkgbase jail template source needs it (or use the dist source)
+                                                $ printf 'FreeBSD-base: { enabled: yes }\n' >> /usr/local/etc/pkg/repos/FreeBSD.conf
++ grep -E 'ok, .* refused' /tmp/c4b
+  14 ok, 1 to add, 1 warnings, 0 conflicts, 2 for you, 0 refused
++ sudo skep-setup plan -mgmt vtnet0 -pool tank
+plan-rc=0
++ echo 'plan-rc=0'
++ grep -A4 'warn .*edk2-bhyve' /tmp/p4b
+  warn     packages                           edk2-bhyve
+                                                the bhyve UEFI firmware package edk2-bhyve is not installed (BHYVE_UEFI.fd, BHYVE_UEFI_VARS.fd missing in /usr/local/share/edk2-bhyve): VMs cannot be created without it; jails do not need it. Setup does not install it
+                                                $ pkg install edk2-bhyve
+  manual   packages                           FreeBSD-base repository
+                                                disabled; the pkgbase jail template source needs it (or use the dist source)
++ sudo timeout -f 300 pkg install -y edk2-bhyve
+Updating FreeBSD-ports repository catalogue...
+FreeBSD-ports repository is up to date.
+Updating FreeBSD-ports-kmods repository catalogue...
+FreeBSD-ports-kmods repository is up to date.
+All repositories are up to date.
+Checking integrity... done (0 conflicting)
+The following 1 package(s) will be affected (of 0 checked):
+
+New packages to be INSTALLED:
+	edk2-bhyve: g202508_3 [FreeBSD-ports]
+
+Number of packages to be installed: 1
+
+The process will require 7 MiB more space.
+[1/1] Installing edk2-bhyve-g202508_3...
+[1/1] Extracting edk2-bhyve-g202508_3: ......... done
+inst-rc=0
++ echo 'inst-rc=0'
++ pkg query '%n %v' edk2-bhyve
+edk2-bhyve g202508_3
++ ls /usr/local/share/edk2-bhyve
+BHYVE_UEFI.fd
+BHYVE_UEFI_CODE.fd
+BHYVE_UEFI_VARS.fd
++ sudo skep-setup check -mgmt vtnet0 -pool tank
+check2-rc=1
++ echo 'check2-rc=1'
++ grep -c 'warn .*edk2-bhyve' /tmp/c4b
+0
++ grep -E 'ok, .* refused' /tmp/c4b
+  15 ok, 1 to add, 0 warnings, 0 conflicts, 2 for you, 0 refused
++ rm -f /tmp/c4b /tmp/p4b
