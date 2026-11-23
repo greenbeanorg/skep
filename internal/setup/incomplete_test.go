@@ -389,3 +389,86 @@ func TestSaveFailedNothingChanged(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// A journal that cannot be created stops the run before any action, and
+// the message says so.
+func TestJournalCreationFailureSaysNothingChanged(t *testing.T) {
+	e, _, _ := appliedHost(t)
+	e.clock = e.clock.Add(60e9)
+	p := computeRemove(t, RemoveOptions{Root: e.root}, facts(), e.runner)
+	before := len(e.runner.calls)
+	jr := filepath.Join(e.root, journalRoot)
+	if err := os.Chmod(jr, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(jr, 0o700) })
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores the directory mode")
+	}
+	_, err := e.remover().Apply(context.Background(), p)
+	wantNotIncomplete(t, err)
+	if !strings.Contains(err.Error(), "could not create the journal") || !strings.Contains(err.Error(), "nothing was changed") {
+		t.Fatalf("message: %v", err)
+	}
+	if len(e.runner.calls) != before {
+		t.Fatalf("commands ran: %v", e.runner.calls[before:])
+	}
+}
+
+// A run cancelled before its first action names that point, not a failure
+// of the action that never ran.
+func TestCancelledBeforeActionDoesNotBlameIt(t *testing.T) {
+	e, _, _ := appliedHost(t)
+	e.clock = e.clock.Add(60e9)
+	p := computeRemove(t, RemoveOptions{Root: e.root, RevertHost: true}, facts(), e.runner)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := e.remover().Apply(ctx, p)
+	wantNotIncomplete(t, err)
+	msg := err.Error()
+	if !strings.Contains(msg, "before") || !strings.Contains(msg, "did not run") || strings.Contains(msg, " failed:") {
+		t.Fatalf("message: %v", err)
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("cause lost: %v", err)
+	}
+}
+
+// killRunner fails "service NAME stop" the way a killed command does.
+type killRunner struct {
+	*fakeRunner
+	err error
+}
+
+func (k killRunner) Run(ctx context.Context, c Cmd) (string, error) {
+	if len(c.Args) == 2 && c.Args[1] == "stop" {
+		return "", k.err
+	}
+	return k.fakeRunner.Run(ctx, c)
+}
+
+func TestKilledStopSaysItMayHaveTakenEffect(t *testing.T) {
+	killedErr := exec.Command("/bin/sh", "-c", "kill -9 $$").Run()
+	f := newFakeRunner()
+	f.running["skep_api"] = true
+	_, err := stopIfRunning(context.Background(), killRunner{f, killedErr}, "skep_api", func(string, ...any) {})
+	if err == nil || !strings.Contains(err.Error(), "was killed and may have taken effect") {
+		t.Fatalf("message: %v", err)
+	}
+	clean := exec.Command("/bin/sh", "-c", "exit 3").Run()
+	_, err = stopIfRunning(context.Background(), killRunner{f, clean}, "skep_api", func(string, ...any) {})
+	if err == nil || strings.Contains(err.Error(), "killed") {
+		t.Fatalf("a clean failure described as killed: %v", err)
+	}
+}
+
+func TestHostRunnerDropsAnEmptyStderrTail(t *testing.T) {
+	_, err := HostRunner{}.Run(context.Background(), Cmd{Name: "/bin/sh", Args: []string{"-c", "kill -9 $$"}})
+	if err == nil || strings.HasSuffix(err.Error(), ": ") || !strings.HasSuffix(err.Error(), "signal: killed") {
+		t.Fatalf("message: %q", err)
+	}
+	_, err = HostRunner{}.Run(context.Background(), Cmd{Name: "/bin/sh", Args: []string{"-c", "echo why >&2; exit 3"}})
+	if err == nil || !strings.HasSuffix(err.Error(), ": why") {
+		t.Fatalf("stderr lost: %q", err)
+	}
+}
