@@ -2555,7 +2555,7 @@ completed:
    detached from the agent's, as a stop task records.
 8. **Log before the wait.** Before `StopJail` the agent logs
    `jail_stop_completing` (WARN) with `container_id` and
-   `max_wait_seconds`, the longest the call can take (rule 9's bound).
+   `max_wait_seconds`, the longest the call can take (the bound under Cost).
 9. **Epairs are destroyed by ownership, never by recorded name.**
    `StopJail` destroys only the epair host ends (`epair<N>a`) whose
    description, read from the host at that moment, is
