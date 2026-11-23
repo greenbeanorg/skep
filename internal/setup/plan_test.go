@@ -348,6 +348,79 @@ func TestPlanExistingBridgeRefusals(t *testing.T) {
 	})
 }
 
+// TestPlanLiveBridges: a bridge is judged as it is now (ifconfig), not only
+// by rc.conf (found on smith, 2026-11-22: a new bridge was planned on an
+// uplink that was a live member of another bridge, and a hand-made bridge
+// passed the management check as "members []").
+func TestPlanLiveBridges(t *testing.T) {
+	live := func(br Bridge) Facts {
+		f := facts()
+		f.Interfaces["bridge9"] = nil
+		f.Bridges = map[string]Bridge{"bridge9": br}
+		return f
+	}
+	t.Run("new bridge on a live member", func(t *testing.T) {
+		p := compute(t, Options{Root: stockHost(t), Mgmt: []string{"vtnet0"}, CreateBridge: "bridge1", Uplink: "vtnet1"},
+			live(Bridge{Members: []string{"vtnet1"}}))
+		want(t, p, Refuse, "bridge1", "vtnet1 is a member of bridge9 now")
+		if !p.Refused() {
+			t.Fatal("the plan is not refused")
+		}
+	})
+	t.Run("hand-made bridge with management member", func(t *testing.T) {
+		p := compute(t, Options{Root: stockHost(t), Mgmt: []string{"vtnet0"}, Bridges: []string{"bridge9"}},
+			live(Bridge{Members: []string{"vtnet1", "vtnet0"}, VLANFilter: true}))
+		want(t, p, Refuse, "bridge9", "management interface vtnet0 as a member (now)")
+	})
+	t.Run("rc.conf member counts too", func(t *testing.T) {
+		root := stockHost(t)
+		appendFile(t, filepath.Join(root, "etc/rc.conf"), "cloned_interfaces=\"bridge9\"\nifconfig_bridge9=\"addm vtnet0 up\"\n")
+		p := compute(t, Options{Root: root, Mgmt: []string{"vtnet0"}, Bridges: []string{"bridge9"}}, live(Bridge{Members: []string{"vtnet1"}}))
+		want(t, p, Refuse, "bridge9", "management interface vtnet0 as a member (in rc.conf)")
+	})
+	t.Run("hand-made bridge, vlanfilter on now", func(t *testing.T) {
+		p := compute(t, Options{Root: stockHost(t), Mgmt: []string{"vtnet0"}, Bridges: []string{"bridge9"}},
+			live(Bridge{Members: []string{"vtnet1"}, VLANFilter: true}))
+		want(t, p, OK, "bridge9", "members [vtnet1]")
+		want(t, p, OK, "bridge9 vlanfilter", "on")
+		want(t, p, Warn, "bridge9", "exists only at run time")
+	})
+	t.Run("hand-made bridge, vlanfilter off now", func(t *testing.T) {
+		p := compute(t, Options{Root: stockHost(t), Mgmt: []string{"vtnet0"}, Bridges: []string{"bridge9"}},
+			live(Bridge{Members: []string{"vtnet1"}}))
+		it := want(t, p, Manual, "bridge9 vlanfilter", "not set")
+		if !slices.Contains(it.Steps, "ifconfig bridge9 ifuntagged vtnet1 1") ||
+			!slices.Contains(it.Steps, `sysrc ifconfig_bridge9="addm vtnet1 ifuntagged vtnet1 1 defuntagged 1 vlanfilter up"`) {
+			t.Fatalf("steps %q", it.Steps)
+		}
+	})
+	t.Run("vlanfilter on now, not in rc.conf", func(t *testing.T) {
+		root := stockHost(t)
+		appendFile(t, filepath.Join(root, "etc/rc.conf"), "cloned_interfaces=\"bridge9\"\nifconfig_bridge9=\"addm vtnet1 up\"\n")
+		p := compute(t, Options{Root: root, Mgmt: []string{"vtnet0"}, Bridges: []string{"bridge9"}}, live(Bridge{Members: []string{"vtnet1"}, VLANFilter: true}))
+		want(t, p, OK, "bridge9 vlanfilter", "on")
+		want(t, p, Warn, "bridge9 vlanfilter", "off after a reboot")
+	})
+	t.Run("vlanfilter in rc.conf, off now", func(t *testing.T) {
+		root := stockHost(t)
+		appendFile(t, filepath.Join(root, "etc/rc.conf"), "cloned_interfaces=\"bridge9\"\nifconfig_bridge9=\"addm vtnet1 ifuntagged vtnet1 1 defuntagged 1 vlanfilter up\"\n")
+		p := compute(t, Options{Root: root, Mgmt: []string{"vtnet0"}, Bridges: []string{"bridge9"}}, live(Bridge{Members: []string{"vtnet1"}}))
+		want(t, p, Manual, "bridge9 vlanfilter", "not set")
+	})
+	t.Run("members differ", func(t *testing.T) {
+		root := stockHost(t)
+		appendFile(t, filepath.Join(root, "etc/rc.conf"), "cloned_interfaces=\"bridge9\"\nifconfig_bridge9=\"addm vtnet2 vlanfilter up\"\n")
+		p := compute(t, Options{Root: root, Mgmt: []string{"vtnet0"}, Bridges: []string{"bridge9"}}, live(Bridge{Members: []string{"vtnet1"}, VLANFilter: true}))
+		want(t, p, OK, "bridge9", "members now [vtnet1], in rc.conf [vtnet2]")
+	})
+	t.Run("not a bridge", func(t *testing.T) {
+		f := live(Bridge{})
+		delete(f.Bridges, "bridge9")
+		p := compute(t, Options{Root: stockHost(t), Mgmt: []string{"vtnet0"}, Bridges: []string{"bridge9"}}, f)
+		want(t, p, Refuse, "bridge9", "not a bridge")
+	})
+}
+
 func TestPlanNewBridgeRefusals(t *testing.T) {
 	cases := []struct {
 		name, rc, uplink, detail string

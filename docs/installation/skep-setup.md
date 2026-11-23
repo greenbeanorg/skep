@@ -114,11 +114,13 @@ the package should depend on it is an open question; see the
 - a management interface that does not exist, has no `ifconfig_` line,
   or has one with neither an address nor DHCP (**DHCP is accepted with a
   warning**: the listen address is the current lease's);
-- a bridge to allow-list that has a management interface as a member, or
-  does not exist;
+- a bridge to allow-list that has a management interface as a member
+  (now, by `ifconfig`, or in `rc.conf`), does not exist, or exists but is
+  not a bridge;
 - a new bridge whose uplink is a management interface, does not exist,
   has an address (now or in `rc.conf`), has other settings or aliases, or
-  is in another bridge; or a new bridge name that exists already;
+  is in another bridge (now, by `ifconfig`, or in `rc.conf`); or a new
+  bridge name that exists already;
 - only one of the `skep` user and group, a `skep` user with a login shell
   or a home, no `skep` account at all (the package creates it), or UID or
   GID 409 held by another name;
@@ -128,6 +130,13 @@ the package should depend on it is an open question; see the
   group or others;
 - `0.0.0.0` without `-listen-all`; no address to listen on;
 - an earlier run that did not finish (roll it back first).
+
+Bridges are judged as they are **now** as well as by `rc.conf`: setup
+reads `ifconfig -g bridge` and each bridge's `member:` lines and `bridge
+flags` (`VLANFILTER`). An allow-listed bridge that exists only at run time
+(no `ifconfig_` line in `rc.conf`) is a warning, because it is gone after a
+reboot; so is `vlanfilter` that is on now but not in `rc.conf`. When the
+members now and in `rc.conf` differ, the plan shows both.
 
 A file that is not plain `name=value` lines (shell code, a substitution,
 a sourced file), or a variable set in `rc.conf.local` or `rc.conf.d`,

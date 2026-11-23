@@ -32,6 +32,35 @@ type Facts struct {
 	// Running holds the Skep services whose "service NAME status"
 	// succeeded (skep_agent, skep_api).
 	Running map[string]bool
+	// Bridges are the bridges that exist now (ifconfig -g bridge), as
+	// ifconfig shows them: rc.conf says what a bridge is at the next
+	// boot, this what it is now.
+	Bridges map[string]Bridge
+}
+
+// Bridge is the run-time state of one bridge.
+type Bridge struct {
+	// Members are the member interfaces ("member:" lines).
+	Members []string
+	// VLANFilter is whether the bridge flags include VLANFILTER.
+	VLANFilter bool
+}
+
+// BridgeOf returns the live bridge that has iface as a member, if any.
+func (f Facts) BridgeOf(iface string) (string, bool) {
+	names := make([]string, 0, len(f.Bridges))
+	for n := range f.Bridges {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	for _, n := range names {
+		for _, m := range f.Bridges[n].Members {
+			if m == iface {
+				return n, true
+			}
+		}
+	}
+	return "", false
 }
 
 // SkepGuests returns the running Skep jails and VMs.
@@ -99,6 +128,30 @@ func parseIfconfigInet(out string) []netip.Prefix {
 		}
 	}
 	return addrs
+}
+
+// parseIfconfigBridge reads "ifconfig BRIDGE" on FreeBSD 15.1:
+//
+//	bridge flags=1<VLANFILTER>
+//	member: vtnet1 flags=143<LEARNING,DISCOVER,AUTOEDGE,AUTOPTP>
+func parseIfconfigBridge(out string) Bridge {
+	var b Bridge
+	for _, line := range strings.Split(out, "\n") {
+		f := strings.Fields(line)
+		switch {
+		case len(f) >= 2 && f[0] == "member:":
+			b.Members = append(b.Members, f[1])
+		case len(f) >= 2 && f[0] == "bridge" && strings.HasPrefix(f[1], "flags="):
+			if i := strings.IndexByte(f[1], '<'); i >= 0 {
+				for _, fl := range strings.Split(strings.Trim(f[1][i:], "<>"), ",") {
+					if fl == "VLANFILTER" {
+						b.VLANFilter = true
+					}
+				}
+			}
+		}
+	}
+	return b
 }
 
 // parseZpoolList reads "zpool list -H -o name,health".

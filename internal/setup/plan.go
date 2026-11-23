@@ -676,6 +676,13 @@ func members(line string) []string {
 	return out
 }
 
+// sorted returns a sorted copy.
+func sorted(s []string) []string {
+	c := slices.Clone(s)
+	slices.Sort(c)
+	return c
+}
+
 func (b *builder) bridgeDefined(name string) bool {
 	_, line := b.rc.Get("ifconfig_" + name)
 	cloned, _ := b.rc.Get("cloned_interfaces")
@@ -693,15 +700,54 @@ func (b *builder) bridges() {
 			b.refuse("network", br, "does not exist; to have setup create it, use --create-bridge "+br+" --uplink IF")
 			continue
 		}
-		line, _ := b.rc.Get("ifconfig_" + br)
-		m := members(line)
-		if bad := slices.IndexFunc(m, func(x string) bool { return slices.Contains(b.o.Mgmt, x) }); bad >= 0 {
-			b.refuse("network", br, fmt.Sprintf("has the management interface %s as a member; Skep never puts guests next to management", m[bad]))
+		line, inRC := b.rc.Get("ifconfig_" + br)
+		rcMembers := members(line)
+		rcFilter := slices.Contains(strings.Fields(line), "vlanfilter")
+		live, isLive := b.f.Bridges[br]
+		// The members now and at the next boot both count: a management
+		// interface in either is refused.
+		m := rcMembers
+		if isLive {
+			m = live.Members
+		}
+		all := slices.Clone(m)
+		for _, x := range rcMembers {
+			if !slices.Contains(all, x) {
+				all = append(all, x)
+			}
+		}
+		if bad := slices.IndexFunc(all, func(x string) bool { return slices.Contains(b.o.Mgmt, x) }); bad >= 0 {
+			where := "in rc.conf"
+			if isLive && slices.Contains(live.Members, all[bad]) {
+				where = "now"
+			}
+			b.refuse("network", br, fmt.Sprintf("has the management interface %s as a member (%s); Skep never puts guests next to management", all[bad], where))
 			continue
 		}
-		b.ok("network", br, fmt.Sprintf("exists (members %v); setup allow-lists it and changes nothing on it", m))
-		if slices.Contains(strings.Fields(line), "vlanfilter") {
+		if _, exists := b.f.Interfaces[br]; exists && !isLive && b.f.Bridges != nil {
+			b.refuse("network", br, "exists but is not a bridge (not in ifconfig -g bridge)")
+			continue
+		}
+		switch {
+		case isLive && inRC && !slices.Equal(sorted(live.Members), sorted(rcMembers)):
+			b.ok("network", br, fmt.Sprintf("exists (members now %v, in rc.conf %v); setup allow-lists it and changes nothing on it", live.Members, rcMembers))
+		case isLive:
+			b.ok("network", br, fmt.Sprintf("exists (members %v); setup allow-lists it and changes nothing on it", live.Members))
+		default:
+			b.ok("network", br, fmt.Sprintf("in rc.conf (members %v), not created yet; setup allow-lists it and changes nothing on it", rcMembers))
+		}
+		if isLive && !inRC {
+			b.warn("network", br, "exists only at run time: rc.conf has no ifconfig_"+br+" line, so after a reboot it is gone (or comes back without its members) and guests on it lose their network")
+		}
+		filterNow := rcFilter
+		if isLive {
+			filterNow = live.VLANFilter
+		}
+		if filterNow {
 			b.ok("network", br+" vlanfilter", "on")
+			if isLive && inRC && !rcFilter {
+				b.warn("network", br+" vlanfilter", "on now, but not in ifconfig_"+br+" in rc.conf: it is off after a reboot, and the agent then reports bridge_vlan_unfiltered")
+			}
 			continue
 		}
 		steps := []string{}
@@ -713,8 +759,17 @@ func (b *builder) bridges() {
 		for _, x := range m {
 			persist = append(persist, "ifuntagged "+x+" 1")
 		}
+		base := line
+		if !inRC {
+			// A run-time bridge: the line must add its members too.
+			var addm []string
+			for _, x := range m {
+				addm = append(addm, "addm "+x)
+			}
+			base = strings.Join(addm, " ")
+		}
 		steps = append(steps, fmt.Sprintf(`sysrc ifconfig_%s="%s"`, br,
-			strings.TrimSpace(strings.Replace(line, " up", "", 1)+" "+strings.Join(persist, " ")+" defuntagged 1 vlanfilter up")))
+			strings.TrimSpace(strings.Replace(base, " up", "", 1)+" "+strings.Join(persist, " ")+" defuntagged 1 vlanfilter up")))
 		b.item(Item{Kind: Manual, Area: "network", What: br + " vlanfilter",
 			Detail: "not set; changing an existing bridge can cut off its members, so setup prints the steps (each member's PVID first, then defuntagged, then vlanfilter); run them from the console. Without it the agent reports bridge_vlan_unfiltered",
 			Steps:  steps})
@@ -760,6 +815,10 @@ func (b *builder) newBridge() {
 			b.refuse("network", br, fmt.Sprintf("the uplink %s already has settings (%q); setup will not merge them", up, line))
 			return
 		}
+	}
+	if other, ok := b.f.BridgeOf(up); ok {
+		b.refuse("network", br, fmt.Sprintf("the uplink %s is a member of %s now (ifconfig %s); it is in use", up, other, other))
+		return
 	}
 	for _, v := range []ShVars{b.rc.Main} {
 		for k, val := range v.Vals {

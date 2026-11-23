@@ -9,7 +9,6 @@ built. Entries say when they may be picked up.
 |---|---|---|
 | Skep logs to syslog itself (a `slog` handler sending one record per message to `/var/run/log`), instead of daemon(8)'s `-S` pipe, so records are never joined on one `daemon.log` line | After 0.1 | [daemon-log-joined-records.md](../tests/integration/rcd/daemon-log-joined-records.md), option B (Andy, 2026-11-22) |
 | Agent drain mode for `skep-setup upgrade`: the agent stops accepting new tasks and finishes or refuses the queued ones, instead of setup stopping `skep_api`, so a late refusal no longer leaves the new API answering `503 agent_version_mismatch` next to the old agent | After 0.1 | Lab-VM validation of PR #52 (2026-11-22); Andy accepted the 503-after-late-refusal behaviour for 0.1 |
-| `skep-setup`'s prober reads the live bridge members and `vlanfilter` state (`ifconfig BRIDGE`), not only `rc.conf`, so a bridge changed at run time is judged as it is | After 0.1 | PR #52 fix round (Fable review, 2026-11-22) |
 | The agent and the API back up their database before any schema migration, not only `skep-setup upgrade` | After 0.1 | PR #52 fix round (2026-11-22) |
 | The agent finishes a half-stopped jail at start (a jail left between stop steps by a crash or an upgrade restart) | After 0.1 | PR #52 fix round (2026-11-22) |
 | `skep-setup` and the agent agree on whether the FreeBSD-base (pkgbase) repository is usable: setup reads the repo files, the agent probes differently | After 0.1 | PR #52 fix round (2026-11-22) |
