@@ -688,11 +688,11 @@ helper that builds details, 2026-11-23):
 | `container_mac_in_use` | container_id, slot, mac_address, bridge, held_by_kind, held_by_id, held_by_name | **seen_on** (built from ifconfig output, up to a port name in the address table) |
 | `container_mac_invalid` | field, slot, mac_address | |
 | `container_not_provisioned`, `container_not_running`, `container_not_stopped`, `container_remove_failed`, `container_started` | container_id | |
-| `container_quarantined` | container_id, state_detail | |
+| `container_quarantined` | container_id | **state_detail** (the stored detail of the jail's state, which can hold a failed command's text) |
 | `container_ssh_unavailable` | template_id, template_name | |
 | `container_start_failed` | container_id, extra_devices | |
 | `devfs_ruleset_conflict` | ruleset | |
-| `disk_device_missing` | dataset, reason, volmode, command, rounds | **error** (text of a failed `zfs` command) |
+| `disk_device_missing` | dataset, reason, volmode (only `default`, `geom`, `dev` or `none`; any other value is dropped), command, rounds | **error** (text of a failed `zfs` command) |
 | `disk_has_snapshots` | snapshots, foreign_snapshots | |
 | `insufficient_memory` | running_bytes, required_bytes, guest_memory_bytes | |
 | `insufficient_space` | pool, available_bytes, pool_size_bytes, required_bytes | |
@@ -727,6 +727,14 @@ No key holds a password, a passphrase or an encryption key. `storage_locked`
 shows `keystatus` (`available`/`unavailable`), never a key location. The
 flagged keys stay in the agent's operation audit log, which the API does not serve (it is read on the host, as root).
 The `held_by_*` names are already in those errors' messages.
+
+This table covers `details` only. An error's `message` is separate and was
+already public before `details` existed: the `container_mac_in_use` message
+includes the text `seen_on` holds, the `disk_device_missing` message for
+`volmode_not_dev` includes the dataset's volmode as read (control characters
+replaced, 64 characters at most), and a `container_quarantined` message can
+include a failed removal's text. `state_detail` also stays on the container
+resource itself (`container:read`), as it did before.
 
 ## Installer (Milestone 10)
 

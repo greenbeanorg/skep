@@ -1,0 +1,3 @@
+{"create": "s4-disabled", "role": "admin", "http": 201, "id": "8efee10c-27e2-4201-9872-4f40fbcace8d"}
+{"disable": "s4-disabled", "http": 200, "disabled": true}
+{"create": "s4-viewer", "role": "viewer", "http": 201, "id": "2c15956c-9188-4cdc-9ea1-9ac40ad5128d"}

@@ -1,6 +1,10 @@
 package tasks
 
-import "github.com/greenbeanorg/skep/pkg/models"
+import (
+	"slices"
+
+	"github.com/greenbeanorg/skep/pkg/models"
+)
 
 // ErrorDetailKeys lists, for each error code, the keys of a failure's
 // details that the API shows with the task's error. A failed task's
@@ -26,6 +30,12 @@ import "github.com/greenbeanorg/skep/pkg/models"
 //   - seen_on (container_mac_in_use): built from ifconfig's output, up to
 //     the port name in the bridge's address table, so it is command output
 //     and not a fixed value
+//   - state_detail (container_quarantined): the stored detail of the
+//     jail's state, which can hold the text of a failed command
+//
+// A listed key can also be limited to fixed values (errorDetailValues):
+// volmode (disk_device_missing) is read from the dataset, so only the
+// values ZFS defines are shown and anything else is dropped.
 //
 // The other keys are identifiers, names, sizes, states and fixed commands
 // that the error's message already states or that a caller who can read
@@ -43,7 +53,7 @@ var ErrorDetailKeys = map[string][]string{
 	models.CodeContainerNotProvisioned:        {"container_id"},
 	models.CodeContainerNotRunning:            {"container_id"},
 	models.CodeContainerNotStopped:            {"container_id"},
-	models.CodeContainerQuarantined:           {"container_id", "state_detail"},
+	models.CodeContainerQuarantined:           {"container_id"},
 	models.CodeContainerRemoveFailed:          {"container_id"},
 	models.CodeContainerSSHUnavailable:        {"template_id", "template_name"},
 	models.CodeContainerStartFailed:           {"container_id", "extra_devices"},
@@ -82,17 +92,31 @@ var ErrorDetailKeys = map[string][]string{
 	models.CodeTemplateHostChanged:            {},
 }
 
+// errorDetailValues limits a listed key to fixed values, by error code and
+// key. A value that is not one of them, or is not a string, is dropped.
+var errorDetailValues = map[string]map[string][]string{
+	models.CodeDiskDeviceMissing: {"volmode": {"default", "geom", "dev", "none"}},
+}
+
 // PublicErrorDetails returns the keys of details that ErrorDetailKeys
-// lists for code, or nil when none is left.
+// lists for code, without a value errorDetailValues does not allow, or nil
+// when none is left.
 func PublicErrorDetails(code string, details map[string]any) map[string]any {
 	var out map[string]any
 	for _, k := range ErrorDetailKeys[code] {
-		if v, ok := details[k]; ok {
-			if out == nil {
-				out = map[string]any{}
-			}
-			out[k] = v
+		v, ok := details[k]
+		if !ok {
+			continue
 		}
+		if allowed, limited := errorDetailValues[code][k]; limited {
+			if str, isStr := v.(string); !isStr || !slices.Contains(allowed, str) {
+				continue
+			}
+		}
+		if out == nil {
+			out = map[string]any{}
+		}
+		out[k] = v
 	}
 	return out
 }

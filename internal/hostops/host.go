@@ -4,6 +4,7 @@ import (
 	"errors"
 	"io/fs"
 	"log/slog"
+	"os"
 	"sync"
 	"syscall"
 	"time"
@@ -75,6 +76,9 @@ type host struct {
 	// fsid (amendment l); tests replace it.
 	mounts mountTable
 
+	// rootFS is the host's / for reading pkg's repository files
+	// (PkgbaseAvailable); tests replace it.
+	rootFS fs.FS
 	// dev holds the waits of EnsureVolumeDevice (amendment z); tests
 	// shorten them.
 	dev deviceTimings
@@ -85,7 +89,7 @@ func newHost(conf Confinement, run Runner, sys system, log *slog.Logger) *host {
 		log = slog.Default()
 	}
 	return &host{conf: conf, run: run, sys: sys, log: log, ignoredMedia: map[string]bool{}, listDev: listJailDev, mounts: kernelMounts{},
-		dev: defaultDeviceTimings()}
+		rootFS: os.DirFS("/"), dev: defaultDeviceTimings()}
 }
 
 // NewFiles returns the Files implementation alone. It is plain file I/O

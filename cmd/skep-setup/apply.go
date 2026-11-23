@@ -92,6 +92,9 @@ func runRollback(_ context.Context, args []string, e env) error {
 	if err := requireRoot(*root, e); err != nil {
 		return err
 	}
+	if err := e.checkDataDir(*root); err != nil {
+		return err
+	}
 	id := flags.Arg(0)
 	target, err := setup.RollbackTarget(*root, id)
 	if err != nil {
