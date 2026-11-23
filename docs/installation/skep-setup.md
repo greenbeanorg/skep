@@ -38,7 +38,7 @@ Run it as root: it reads `agent.json` (`0600`).
 | `1` | `check`: something for `apply` or for you; any command: not confirmed |
 | `2` | usage |
 | `3` | refused: nothing was (or would be) done. `upgrade` also exits 3 for its failures before the agent was restarted (a backup, or the agent's stop), after starting `skep_api` again; its message says what was left |
-| `4` | **incomplete**: changes were made and the result could not be verified. Today only `upgrade`: the agent was stopped and did not come back as the new build (its start or its check failed), `skep_api` did not come up after the agent's restart, the agent did not answer on its socket within the wait, or its health was not `ok` (see [Upgrades](#upgrades)). `apply`, `rollback` and `remove` still exit 3 when they fail part way ([backlog](../backlog.md)) |
+| `4` | **incomplete**: changes were made and the run failed or its result could not be verified. The message starts `incomplete:`. `upgrade`: the agent was stopped and did not come back as the new build (its start or its check failed), `skep_api` did not come up after the agent's restart, the agent did not answer on its socket within the wait, or its health was not `ok` (see [Upgrades](#upgrades)). `apply`: an action failed after earlier ones changed something, or the failed action may itself have changed something (a failed service stop always counts), or the administrator's creation failed after other changes or was killed or timed out. `rollback`: it failed after restoring or removing some files. `remove`: as `apply`. See [Failures part way](#failures-part-way) |
 
 ## The answers
 
@@ -258,6 +258,32 @@ which the plans refuse on until `skep-setup rollback ID` clears it.
 Rollback then undoes nothing (setup cannot tell what that run changed),
 keeps a damaged file as `journal.json.unreadable`, and names the run's
 `files/` directory.
+
+## Failures part way
+
+When `apply`, `rollback` or `remove` fails, the exit status says whether it
+had changed anything. A failure before any change stays exit 3. After a
+change it is exit 4, and the message lists what was changed, what may have
+changed (the failed action, when setup cannot show it left things as they
+were), what was not changed, and what to do next:
+
+| Failure | Running the same command again |
+|---|---|
+| `apply`: an action failed | Not yet. The plan refuses until `skep-setup rollback ID` undoes the run. Rollback puts the files back; it does not stop services or delete users |
+| `apply`: only the administrator's creation failed | Safe. The journal is complete and the command plans only the administrator |
+| `rollback`: failed part way | Safe. Files already put back are left as they are. It can fail the same way until the cause is fixed |
+| `remove`: an action failed | Not yet. The plan refuses until `skep-setup rollback ID` clears the run. Rollback puts back the `rc.conf` and `loader.conf` lines; it does not start services, restore deleted data, or create the account again |
+
+An `apply` or `remove` that failed with exit 3 also leaves an unfinished
+journal, so it too needs `skep-setup rollback ID` before the next run; that
+rollback has nothing to undo. An `apply` whose only action is the
+administrator's creation changes nothing when the command exits with an
+error: exit 3, and it can be run again. If that command was killed or timed
+out, setup cannot tell whether the administrator was created: exit 4, listed
+under "May have changed", and running the same command again is still safe.
+
+A failed service stop is always "May have changed", even if the service
+still runs, because the stop signal may have been delivered.
 
 ## Upgrades
 
