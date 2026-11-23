@@ -161,19 +161,31 @@ func (r *UpgradeRefusal) Error() string {
 	return "refused: " + r.Reason + "; nothing was changed"
 }
 
-// UpgradeIncomplete is an upgrade that restarted skep_agent as the new
-// build but could not verify the result: skep_api did not come up, the
-// agent did not answer on its socket within the wait, or its health was
-// not ok. skep-setup exits 4 for it.
+// UpgradeIncomplete is an upgrade that made changes and could not verify
+// the result: skep_agent was stopped and did not come back as the new
+// build (its start or its check failed), skep_api did not come up after
+// the agent's restart, the agent did not answer on its socket within the
+// wait, or its health was not ok. skep-setup exits 4 for it.
 type UpgradeIncomplete struct {
 	// Problem says what could not be verified; Check says what to look at.
 	Problem, Check string
+	// Again, when set, replaces the default advice on running upgrade
+	// again (which assumes both services already run the new build).
+	Again string
 }
 
+// againSafe is the advice for the cases in which both services already
+// run the new build.
+const againSafe = "Running skep-setup upgrade again is safe " +
+	"(the services already run the new build; it backs up and restarts both again) but does not fix the cause, " +
+	"and while the agent is still completing interrupted jail stops a second restart only delays them"
+
 func (e *UpgradeIncomplete) Error() string {
-	return "incomplete: " + e.Problem + ". Check: " + e.Check + ". Running skep-setup upgrade again is safe " +
-		"(the services already run the new build; it backs up and restarts both again) but does not fix the cause, " +
-		"and while the agent is still completing interrupted jail stops a second restart only delays them"
+	again := e.Again
+	if again == "" {
+		again = againSafe
+	}
+	return "incomplete: " + e.Problem + ". Check: " + e.Check + ". " + again
 }
 
 // What a failure leaves, for restoreAPI's message.
@@ -187,12 +199,16 @@ const (
 	// again would fail the same way until the cause is found.
 	stateAPIStopFailed = "skep_agent was not restarted; find out why skep_api could not be stopped " +
 		"(service skep_api status, and the API's log in /var/log/daemon.log), then run skep-setup upgrade again"
-	// stateAgentFailed: skep_agent was stopped and did not come back as
-	// the new build. Upgrade again repeats the same start, so it is no
-	// remedy by itself.
+	// stateAgentFailed: "service skep_agent stop" failed. Upgrade again
+	// repeats the same stop and start, so it is no remedy by itself.
 	stateAgentFailed = "skep_agent did not come back as the new build, so the API cannot serve agent requests. " +
 		"See the agent's log (/var/log/daemon.log): running skep-setup upgrade again repeats the same start " +
 		"and helps only once the cause is fixed (it starts a stopped agent)"
+	// againAgentFailed: skep_agent was stopped and its start or check
+	// failed, so it is not the new build. Upgrade again repeats the same
+	// start, so it is no remedy by itself.
+	againAgentFailed = "Until skep_agent runs the new build the API cannot serve agent requests; " +
+		"running skep-setup upgrade again repeats the same start and helps only once the cause is fixed (it starts a stopped agent)"
 )
 
 func (u *Upgrader) printf(format string, args ...any) {
@@ -414,11 +430,20 @@ func (u *Upgrader) Upgrade(ctx context.Context) error {
 	if err := stopService(nctx, u.Runner, "skep_agent", u.printf); err != nil {
 		return u.restoreAPI(nctx, want, fmt.Errorf("stop skep_agent: %w", err), "backups in "+dir+"; "+stateAgentFailed)
 	}
+	// The agent was stopped: from here on a failure has changed the host
+	// and is incomplete (exit 4), not a refusal.
+	agentDown := func(err error) error {
+		restored := u.restoreAPI(nctx, want, err, "backups in "+dir)
+		return &UpgradeIncomplete{
+			Problem: "skep_agent was stopped and did not come back as the new build: " + restored.Error(),
+			Check:   "the agent's log (/var/log/daemon.log), service skep_agent status and skep-setup check",
+			Again:   againAgentFailed}
+	}
 	if _, err := u.Runner.Run(nctx, Cmd{Name: cmdService, Args: []string{"skep_agent", "start"}}); err != nil {
-		return u.restoreAPI(nctx, want, fmt.Errorf("start skep_agent: %w", err), "backups in "+dir+"; "+stateAgentFailed)
+		return agentDown(fmt.Errorf("start skep_agent: %w", err))
 	}
 	if err := u.verify(nctx, "skep_agent", agentBin, agentPID, want); err != nil {
-		return u.restoreAPI(nctx, want, err, "backups in "+dir+"; "+stateAgentFailed)
+		return agentDown(err)
 	}
 	apiDown := func(err error) error {
 		return &UpgradeIncomplete{

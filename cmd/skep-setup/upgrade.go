@@ -51,9 +51,9 @@ func runUpgrade(ctx context.Context, args []string, e env) error {
 	return upgradeExit(u.Upgrade(ctx))
 }
 
-// upgradeExit maps upgrade's outcome to an exit: 4 when the services were
-// restarted but could not be verified, 3 for a refusal and for every other
-// failure.
+// upgradeExit maps upgrade's outcome to an exit: 4 (incomplete) when
+// changes were made and the result could not be verified, 3 for a refusal
+// and for every other failure.
 func upgradeExit(err error) error {
 	if err == nil {
 		return nil

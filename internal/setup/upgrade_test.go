@@ -414,7 +414,7 @@ func TestUpgradeVerifiesTheRunningFile(t *testing.T) {
 	h.textInode["skep_agent"] = "99" // still the old, replaced file
 	err := u.Upgrade(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "runs inode 99, not the installed") ||
-		!strings.Contains(err.Error(), "skep_agent did not come back as the new build") {
+		!strings.Contains(err.Error(), "skep_agent was stopped and did not come back as the new build") {
 		t.Fatalf("err %v", err)
 	}
 	// Every failure after the API stop starts it again, once.
@@ -462,7 +462,7 @@ func TestUpgradeUnhealthyNamesModulesNotLoaded(t *testing.T) {
 	}
 }
 
-// The three cases in which the services were restarted but could not be
+// The cases in which the services were restarted but could not be
 // verified are UpgradeIncomplete (skep-setup exits 4), say what to check,
 // and say that running upgrade again is safe.
 func TestUpgradeIncomplete(t *testing.T) {
@@ -510,17 +510,69 @@ func TestUpgradeIncomplete(t *testing.T) {
 	})
 }
 
-// The agent not coming back as the new build is not one of the three
-// incomplete cases: it stays an ordinary failure (exit 3), with the
-// existing stateAgentFailed message.
-func TestUpgradeAgentStartFailureIsNotIncomplete(t *testing.T) {
-	u, h := newUpgrade(t)
-	h.fail["service skep_agent start"] = errors.New("exit status 1")
-	err := u.Upgrade(context.Background())
-	var inc *UpgradeIncomplete
-	if err == nil || errors.As(err, &inc) || !strings.Contains(err.Error(), "did not come back as the new build") {
-		t.Fatalf("err %T %v", err, err)
+// The agent stopped and not coming back as the new build, because its
+// start or its check failed, is incomplete (skep-setup exits 4): upgrade
+// changed the host and could not verify the result. It still starts
+// skep_api again, and its advice does not promise that running upgrade
+// again fixes it. The agent failing to stop is not incomplete (exit 3).
+func TestUpgradeAgentNotBackIsIncomplete(t *testing.T) {
+	incomplete := func(t *testing.T, err error, want ...string) {
+		t.Helper()
+		var inc *UpgradeIncomplete
+		if !errors.As(err, &inc) {
+			t.Fatalf("not incomplete: %T %v", err, err)
+		}
+		msg := err.Error()
+		want = append(want, "incomplete: skep_agent was stopped and did not come back as the new build: ",
+			"skep_api was started again; backups in /", "Check: the agent's log (/var/log/daemon.log)",
+			"helps only once the cause is fixed")
+		for _, w := range want {
+			if !strings.Contains(msg, w) {
+				t.Fatalf("missing %q in: %s", w, msg)
+			}
+		}
+		if strings.Contains(msg, "Running skep-setup upgrade again is safe") {
+			t.Fatalf("promises a safe rerun: %s", msg)
+		}
+		var ref *UpgradeRefusal
+		if errors.As(err, &ref) {
+			t.Fatal("also a refusal")
+		}
 	}
+	t.Run("start fails", func(t *testing.T) {
+		u, h := newUpgrade(t)
+		h.fail["service skep_agent start"] = errors.New("exit status 1")
+		incomplete(t, u.Upgrade(context.Background()), "start skep_agent: exit status 1")
+		apiRestarted(t, h)
+	})
+	t.Run("check fails", func(t *testing.T) {
+		u, h := newUpgrade(t)
+		h.textInode["skep_agent"] = "99" // still the old, replaced file
+		incomplete(t, u.Upgrade(context.Background()), "runs inode 99, not the installed")
+		apiRestarted(t, h)
+	})
+	t.Run("API cannot be started again either", func(t *testing.T) {
+		u, h := newUpgrade(t)
+		h.fail["service skep_agent start"] = errors.New("exit status 1")
+		h.fail["service skep_api start"] = errors.New("exit status 1")
+		err := u.Upgrade(context.Background())
+		var inc *UpgradeIncomplete
+		if !errors.As(err, &inc) || !strings.Contains(err.Error(), "skep_api could not be started again") ||
+			!strings.Contains(err.Error(), "service skep_api start") {
+			t.Fatalf("err %T %v", err, err)
+		}
+	})
+	t.Run("stop fails: not incomplete", func(t *testing.T) {
+		u, h := newUpgrade(t)
+		h.fail["service skep_agent stop"] = errors.New("exit status 1")
+		err := u.Upgrade(context.Background())
+		var inc *UpgradeIncomplete
+		if err == nil || errors.As(err, &inc) || !strings.Contains(err.Error(), "stop skep_agent: ") ||
+			!strings.Contains(err.Error(), "skep_agent did not come back as the new build") {
+			t.Fatalf("err %T %v", err, err)
+		}
+		apiRestarted(t, h)
+	})
 }
 
 type healthErrAgent struct{ seqAgent }

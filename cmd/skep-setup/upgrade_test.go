@@ -72,8 +72,8 @@ func TestUpgradeKeepFlag(t *testing.T) {
 	}
 }
 
-// upgradeExit: 4 for an upgrade that restarted the services but could not
-// verify them, 3 for a refusal and any other failure, nothing for success.
+// upgradeExit: 4 for an upgrade that made changes and could not verify the
+// result (including the agent not coming back as the new build), 3 for a refusal and any other failure, nothing for success.
 func TestUpgradeExitCodes(t *testing.T) {
 	if upgradeExit(nil) != nil {
 		t.Fatal("success is not an exit error")
@@ -86,6 +86,8 @@ func TestUpgradeExitCodes(t *testing.T) {
 		{errors.New("stop skep_agent: boom"), exitRefused},
 		{&setup.UpgradeIncomplete{Problem: "p", Check: "c"}, exitIncomplete},
 		{fmt.Errorf("wrapped: %w", &setup.UpgradeIncomplete{Problem: "p", Check: "c"}), exitIncomplete},
+		{&setup.UpgradeIncomplete{Problem: "skep_agent was stopped and did not come back as the new build: start skep_agent: exit status 1",
+			Check: "c", Again: "a"}, exitIncomplete},
 	} {
 		var ee *exitError
 		if !errors.As(upgradeExit(c.err), &ee) || ee.code != c.code || ee.msg != c.err.Error() {
