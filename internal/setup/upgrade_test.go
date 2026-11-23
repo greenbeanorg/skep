@@ -514,7 +514,8 @@ func TestUpgradeIncomplete(t *testing.T) {
 // start or its check failed, is incomplete (skep-setup exits 4): upgrade
 // changed the host and could not verify the result. It still starts
 // skep_api again, and its advice does not promise that running upgrade
-// again fixes it. The agent failing to stop is not incomplete (exit 3).
+// again fixes it. The agent failing to stop is incomplete too: the stop
+// may have taken effect.
 func TestUpgradeAgentNotBackIsIncomplete(t *testing.T) {
 	incomplete := func(t *testing.T, err error, want ...string) {
 		t.Helper()
@@ -562,16 +563,31 @@ func TestUpgradeAgentNotBackIsIncomplete(t *testing.T) {
 			t.Fatalf("err %T %v", err, err)
 		}
 	})
-	t.Run("stop fails: not incomplete", func(t *testing.T) {
+	t.Run("stop fails: may have changed, incomplete", func(t *testing.T) {
 		u, h := newUpgrade(t)
 		h.fail["service skep_agent stop"] = errors.New("exit status 1")
 		err := u.Upgrade(context.Background())
 		var inc *UpgradeIncomplete
-		if err == nil || errors.As(err, &inc) || !strings.Contains(err.Error(), "stop skep_agent: ") ||
-			!strings.Contains(err.Error(), "skep_agent did not come back as the new build") {
+		if !errors.As(err, &inc) || !strings.HasPrefix(err.Error(), "incomplete: ") ||
+			!strings.Contains(err.Error(), "stop skep_agent: ") || !strings.Contains(err.Error(), "may have taken effect") ||
+			!strings.Contains(err.Error(), "backups in ") {
 			t.Fatalf("err %T %v", err, err)
 		}
+		var ref *UpgradeRefusal
+		if errors.As(err, &ref) {
+			t.Fatal("also a refusal")
+		}
 		apiRestarted(t, h)
+	})
+	t.Run("stop fails and the API does not come back", func(t *testing.T) {
+		u, h := newUpgrade(t)
+		h.fail["service skep_agent stop"] = errors.New("exit status 1")
+		h.fail["service skep_api start"] = errors.New("exit status 1")
+		err := u.Upgrade(context.Background())
+		var inc *UpgradeIncomplete
+		if !errors.As(err, &inc) || !strings.Contains(err.Error(), "skep_api could not be started again") {
+			t.Fatalf("err %T %v", err, err)
+		}
 	})
 }
 
