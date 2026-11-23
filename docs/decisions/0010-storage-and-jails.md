@@ -2535,15 +2535,20 @@ completed:
 6. **What a read shows after a failure.** Whenever a jail is observed
    running while its desired state is `stopped` and its recorded state is
    not `starting` or `stopping`, the state shown is the observed one
-   (`running`, with its `jid`) and the recorded `state_detail` is kept;
-   with none recorded, the detail is "the jail is running although it
-   should be stopped; stop it again". This covers a failed completion
-   (rule 3: the jail usually still runs, since `jail -r` and `jail -R`
-   both failed) and equally a failed stop task, which records `unknown`
-   with "the last stop failed: …" and whose detail the first read used to
-   drop the same way (unit test `TestFailedStopTaskDetailOnRead` fails on
-   the build before this rule). A failed completion whose jail is gone
-   reads `stopped` with no detail. A successful stop clears the detail
+   (`running`, with its `jid`). The recorded `state_detail` is kept when the
+   recorded state is `unknown` or `running`: a failed completion (rule 3:
+   the jail usually still runs, since `jail -r` and `jail -R` both failed)
+   or a failed stop task records `unknown` with its reason, the first read
+   records `running` and keeps it, and every later read keeps it too. A
+   failed stop task's "the last stop failed: …" used to be dropped by the
+   first read the same way (unit test `TestFailedStopTaskDetailOnRead`
+   fails on the build before this rule). When the recorded state is
+   `stopped` (the jail was started outside Skep), or no detail is recorded,
+   the detail is "the jail is running although it should be stopped; stop
+   it again" (`TestStartedOutsideSkepAfterCompletedStop`). Andy's
+   follow-up answer, 2026-11-23: unknown or running keeps the detail,
+   stopped shows the generic sentence. A failed completion whose jail is
+   gone reads `stopped` with no detail. A successful stop clears the detail
    (the store writes NULL for an empty detail).
 7. **Agent shutdown during a completion.** If the agent's context is
    cancelled (SIGTERM, `service skep_agent stop`) and `StopJail` returns

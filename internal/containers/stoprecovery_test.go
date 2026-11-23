@@ -215,6 +215,40 @@ func TestFailedStopTaskDetailOnRead(t *testing.T) {
 	if got.State != models.ContainerRunning || !strings.HasPrefix(got.StateDetail, "the last stop failed: ") {
 		t.Fatalf("after a failed stop: %s %q", got.State, got.StateDetail)
 	}
+	// The first read recorded it running; the second keeps the reason.
+	if again, _ := f.svc.Container(ctx, c.ID); again.State != models.ContainerRunning ||
+		!strings.HasPrefix(again.StateDetail, "the last stop failed: ") {
+		t.Fatalf("second read: %s %q", again.State, again.StateDetail)
+	}
+}
+
+// TestStartedOutsideSkepAfterCompletedStop: a jail recorded stopped with a
+// detail (a stop completed at agent start) and then started outside Skep
+// is shown running with the generic sentence, not its stopped-time
+// detail, on every read.
+func TestStartedOutsideSkepAfterCompletedStop(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	c := f.create(models.ContainerCreate{Name: "outside2", TemplateID: f.minimal})
+	f.succeed(f.svc.Action(ctx, c.ID, models.ContainerAction{Action: "start"}, f.sub))
+	f.interruptStop(c.ID, true)
+	if err := f.svc.ObserveAll(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := f.svc.Container(ctx, c.ID); got.State != models.ContainerStopped ||
+		!strings.Contains(got.StateDetail, "completed at agent start") {
+		t.Fatalf("setup: %s %q", got.State, got.StateDetail)
+	}
+	f.fake.SetRunningJailForTest(c.ID)
+	for i := 0; i < 2; i++ {
+		got, err := f.svc.Container(ctx, c.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.State != models.ContainerRunning || got.StateDetail != runningAgainstStopped {
+			t.Fatalf("read %d: %s %q", i, got.State, got.StateDetail)
+		}
+	}
 }
 
 // TestRunningAgainstDesiredStoppedDefaultDetail: a jail running with

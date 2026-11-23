@@ -225,6 +225,10 @@ func (s *Service) Container(ctx context.Context, id string) (models.Container, e
 	return withInterfaces(s.observe(ctx, c, running, false)), nil
 }
 
+// runningAgainstStopped is the detail of a jail observed running while its
+// desired state is stopped, when no failure detail says why.
+const runningAgainstStopped = "the jail is running although it should be stopped; stop it again"
+
 // observe compares a container's recorded state with the running jails and
 // records a change. A container in the middle of a start or stop is left
 // to its task, unless force is set (at agent start, when no task runs).
@@ -256,16 +260,19 @@ func (s *Service) observe(ctx context.Context, c models.Container, running map[s
 	if state == models.ContainerStopped && c.State == models.ContainerStopped && c.StateDetail != "" {
 		detail = c.StateDetail
 	}
-	// A jail that runs although a stop asked for it to be stopped (a
-	// failed stop task, a stop completion at agent start that failed, a
-	// jail started outside Skep) keeps the detail recorded with that
-	// failure, which says why; the state shown is the observed one. A
-	// container in the middle of its own start or stop is not judged here.
+	// A jail that runs although its desired state is stopped. After a
+	// failed stop task or a failed stop completion at agent start the
+	// recorded state is unknown (and running from the first read on): the
+	// detail recorded with the failure says why, and is kept on every read.
+	// A jail recorded stopped and now running was started outside Skep;
+	// any detail it has is from when it stopped, so the generic sentence is
+	// shown. The state shown is the observed one. A container in the
+	// middle of its own start or stop is not judged here.
 	if state == models.ContainerRunning && c.DesiredState == models.ContainerStopped &&
 		c.State != models.ContainerStarting && c.State != models.ContainerStopping {
-		detail = c.StateDetail
-		if detail == "" {
-			detail = "the jail is running although it should be stopped; stop it again"
+		detail = runningAgainstStopped
+		if (c.State == models.ContainerUnknown || c.State == models.ContainerRunning) && c.StateDetail != "" {
+			detail = c.StateDetail
 		}
 	}
 	if state != models.ContainerRunning {

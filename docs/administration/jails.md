@@ -309,14 +309,16 @@ stop it again. If the jail is gone, they show `stopped` with no detail.
 (ADR 0010 amendment aa, Proposed.)
 
 **A jail running although it should be stopped.** Whenever a jail runs
-while its desired state is `stopped` (a stop task failed, a stop
-completion at agent start failed, or the jail was started outside Skep),
-reads show the observed state, `running`, and keep the detail recorded
-with the failure: a failed stop task's "the last stop failed: …", or the
-completion's reason above. With no such detail, `state_detail` is "the
-jail is running although it should be stopped; stop it again". A
-successful stop clears the detail. A jail in the middle of its own start
-or stop is not judged this way.
+while its desired state is `stopped`, reads show the observed state,
+`running`. After a failed stop task or a failed stop completion at agent
+start, `state_detail` keeps the reason recorded with the failure (a failed
+stop task's "the last stop failed: …", or the completion's reason above) on
+every read, the first and all later ones. A jail that Skep had recorded
+`stopped` and that was then started outside Skep shows "the jail is running
+although it should be stopped; stop it again", not the detail it had while
+stopped; so does a failure that recorded no reason. A successful stop clears
+the detail. A jail in the middle of its own start or stop is not judged
+this way.
 
 ## Limits
 
