@@ -623,4 +623,6 @@ stopped.
 
 `max_locked_memory_bytes` is the total `limits.locked_memory` of all
 running jails (see [Limits](#limits)); 0 means a quarter of physical
-memory, and a negative value is refused at load.
+memory, and a negative value is refused at load. `GET /api/v1/system` reports the value in effect as
+`containers.max_locked_memory_bytes`. It is the limit, not the memory wired
+now.

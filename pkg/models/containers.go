@@ -259,6 +259,11 @@ type ContainerCapabilities struct {
 	RCTL bool `json:"rctl"`
 	// MaxCPUPercent is 100 per CPU of the host.
 	MaxCPUPercent int `json:"max_cpu_percent"`
+	// MaxLockedMemoryBytes is the host's total of locked_memory over all
+	// running jails (containers.max_locked_memory_bytes, by default a
+	// quarter of physical memory). It is the limit, not what is wired now.
+	// 0 means no jail may have locked_memory.
+	MaxLockedMemoryBytes int64 `json:"max_locked_memory_bytes"`
 }
 
 // Container is one jail.

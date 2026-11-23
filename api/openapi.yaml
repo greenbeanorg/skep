@@ -2923,6 +2923,11 @@ components:
         max_cpu_percent:
           type: integer
           description: 100 per CPU of the host, the bound of `cpu_percent`.
+        max_locked_memory_bytes:
+          type: integer
+          format: int64
+          readOnly: true
+          description: The host's total of `locked_memory` over all running jails (`containers.max_locked_memory_bytes`, by default a quarter of physical memory). It is the limit, not the memory wired now. 0 means no jail may have `locked_memory`.
     ContainerIPv4:
       type: object
       additionalProperties: false

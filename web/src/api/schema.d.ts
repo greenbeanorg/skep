@@ -1655,6 +1655,11 @@ export interface components {
             rctl: boolean;
             /** @description 100 per CPU of the host, the bound of `cpu_percent`. */
             max_cpu_percent: number;
+            /**
+             * Format: int64
+             * @description The host's total of `locked_memory` over all running jails (`containers.max_locked_memory_bytes`, by default a quarter of physical memory). It is the limit, not the memory wired now. 0 means no jail may have `locked_memory`.
+             */
+            readonly max_locked_memory_bytes?: number;
         };
         ContainerIPv4: {
             /** @enum {string} */
