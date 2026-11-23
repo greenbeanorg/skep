@@ -150,3 +150,91 @@ func TestObserveAllInterruptedStopFailure(t *testing.T) {
 		t.Fatalf("after a later stop: %s", got.State)
 	}
 }
+
+// TestObserveAllFailedCompletionDetailOnRead: the completion fails and the
+// jail still runs; a read observes it running and keeps the recorded
+// detail, which says why (Part 1 of the #57 fix round).
+func TestObserveAllFailedCompletionDetailOnRead(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	c := f.create(models.ContainerCreate{Name: "stuck", TemplateID: f.minimal})
+	f.succeed(f.svc.Action(ctx, c.ID, models.ContainerAction{Action: "start"}, f.sub))
+	f.interruptStop(c.ID, true)
+	f.fake.Set(func(fk *hostfake.Fake) { fk.FailStop = errors.New("jail -r failed (simulated)") })
+	if err := f.svc.ObserveAll(ctx); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		got, err := f.svc.Container(ctx, c.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.State != models.ContainerRunning || got.DesiredState != models.ContainerStopped || got.JID == nil ||
+			!strings.Contains(got.StateDetail, "could not be completed at agent start") {
+			t.Fatalf("read %d: %s / %s %q", i, got.State, got.DesiredState, got.StateDetail)
+		}
+	}
+	list, err := f.svc.Containers(ctx, models.ContainerListOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list.Items) != 1 || !strings.Contains(list.Items[0].StateDetail, "could not be completed at agent start") {
+		t.Fatalf("list: %+v", list.Items)
+	}
+	// A successful stop clears it.
+	f.fake.Set(func(fk *hostfake.Fake) { fk.FailStop = nil })
+	f.succeed(f.svc.Action(ctx, c.ID, models.ContainerAction{Action: "stop"}, f.sub))
+	if got, _ := f.svc.Container(ctx, c.ID); got.State != models.ContainerStopped || got.StateDetail != "" {
+		t.Fatalf("after a stop: %s %q", got.State, got.StateDetail)
+	}
+}
+
+// TestFailedStopTaskDetailOnRead: a stop task that fails leaves the jail
+// running, recorded unknown with "the last stop failed: ..."; reads keep
+// that detail while the jail runs.
+func TestFailedStopTaskDetailOnRead(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	c := f.create(models.ContainerCreate{Name: "nostop", TemplateID: f.minimal})
+	f.succeed(f.svc.Action(ctx, c.ID, models.ContainerAction{Action: "start"}, f.sub))
+	f.fake.Set(func(fk *hostfake.Fake) { fk.FailStop = errors.New("jail -R failed (simulated)") })
+	task, err := f.svc.Action(ctx, c.ID, models.ContainerAction{Action: "stop"}, f.sub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if done := f.wait(task.ID); done.Status != models.TaskFailed {
+		t.Fatalf("stop task: %s", done.Status)
+	}
+	got, err := f.svc.Container(ctx, c.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.State != models.ContainerRunning || !strings.HasPrefix(got.StateDetail, "the last stop failed: ") {
+		t.Fatalf("after a failed stop: %s %q", got.State, got.StateDetail)
+	}
+}
+
+// TestRunningAgainstDesiredStoppedDefaultDetail: a jail running with
+// desired stopped and no recorded detail (started outside Skep) is shown
+// running with a detail saying it should be stopped.
+func TestRunningAgainstDesiredStoppedDefaultDetail(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	c := f.create(models.ContainerCreate{Name: "outside", TemplateID: f.minimal})
+	f.succeed(f.svc.Action(ctx, c.ID, models.ContainerAction{Action: "start"}, f.sub))
+	f.succeed(f.svc.Action(ctx, c.ID, models.ContainerAction{Action: "stop"}, f.sub))
+	f.fake.SetRunningJailForTest(c.ID)
+	got, err := f.svc.Container(ctx, c.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.State != models.ContainerRunning || got.StateDetail != "the jail is running although it should be stopped; stop it again" {
+		t.Fatalf("got %s %q", got.State, got.StateDetail)
+	}
+	// A running jail whose desired state is running has no detail.
+	f.succeed(f.svc.Action(ctx, c.ID, models.ContainerAction{Action: "stop"}, f.sub))
+	f.succeed(f.svc.Action(ctx, c.ID, models.ContainerAction{Action: "start"}, f.sub))
+	if got, _ := f.svc.Container(ctx, c.ID); got.State != models.ContainerRunning || got.StateDetail != "" {
+		t.Fatalf("normal run: %s %q", got.State, got.StateDetail)
+	}
+}

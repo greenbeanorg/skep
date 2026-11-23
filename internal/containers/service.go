@@ -256,6 +256,18 @@ func (s *Service) observe(ctx context.Context, c models.Container, running map[s
 	if state == models.ContainerStopped && c.State == models.ContainerStopped && c.StateDetail != "" {
 		detail = c.StateDetail
 	}
+	// A jail that runs although a stop asked for it to be stopped (a
+	// failed stop task, a stop completion at agent start that failed, a
+	// jail started outside Skep) keeps the detail recorded with that
+	// failure, which says why; the state shown is the observed one. A
+	// container in the middle of its own start or stop is not judged here.
+	if state == models.ContainerRunning && c.DesiredState == models.ContainerStopped &&
+		c.State != models.ContainerStarting && c.State != models.ContainerStopping {
+		detail = c.StateDetail
+		if detail == "" {
+			detail = "the jail is running although it should be stopped; stop it again"
+		}
+	}
 	if state != models.ContainerRunning {
 		c = s.clearEpairs(ctx, c)
 	}

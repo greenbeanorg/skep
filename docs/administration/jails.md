@@ -294,8 +294,23 @@ at the next agent start, with `/etc/rc.shutdown` run again as a stop runs
 it; it ends `stopped` with no epairs, and `state_detail` says the stop was
 completed at agent start. This can delay the agent's start by up to the
 jail's start timeout plus its stop timeout (about 160 s with the defaults)
-per such jail. If the completion fails, the jail is shown `unknown` with
-the reason; stop it again. (ADR 0010 amendment aa, Proposed.)
+per such jail. If the completion fails, the agent records the jail
+`unknown` with the reason. What a read then shows depends on the host:
+while the jail still runs (the usual case: `jail -r` and then `jail -R`
+failed), `GET /api/v1/containers/{id}` and the list show `state: running`,
+`desired_state: stopped`, its `jid`, and that reason in `state_detail`;
+stop it again. If the jail is gone, they show `stopped` with no detail.
+(ADR 0010 amendment aa, Proposed.)
+
+**A jail running although it should be stopped.** Whenever a jail runs
+while its desired state is `stopped` (a stop task failed, a stop
+completion at agent start failed, or the jail was started outside Skep),
+reads show the observed state, `running`, and keep the detail recorded
+with the failure: a failed stop task's "the last stop failed: …", or the
+completion's reason above. With no such detail, `state_detail` is "the
+jail is running although it should be stopped; stop it again". A
+successful stop clears the detail. A jail in the middle of its own start
+or stop is not judged this way.
 
 ## Limits
 
