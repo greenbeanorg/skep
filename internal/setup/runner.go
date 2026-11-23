@@ -22,6 +22,7 @@ const (
 	cmdIfconfig       = "/sbin/ifconfig"
 	cmdJls            = "/usr/sbin/jls"
 	cmdSysctl         = "/sbin/sysctl"
+	cmdKldstat        = "/sbin/kldstat"
 	cmdFreeBSDVersion = "/bin/freebsd-version"
 )
 

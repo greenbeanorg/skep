@@ -36,6 +36,10 @@ type Facts struct {
 	// ifconfig shows them: rc.conf says what a bridge is at the next
 	// boot, this what it is now.
 	Bridges map[string]Bridge
+	// Modules holds, for each module in GuestModules, whether the kernel
+	// has it now ("kldstat -q -m NAME"; compiled in counts as loaded).
+	// Nil when it could not be read.
+	Modules map[string]bool
 }
 
 // Bridge is the run-time state of one bridge.

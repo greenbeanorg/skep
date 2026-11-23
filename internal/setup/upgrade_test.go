@@ -439,6 +439,23 @@ func TestUpgradeUnhealthyAfterRestart(t *testing.T) {
 	}
 }
 
+// A degraded health right after the first apply is usually the modules
+// that load only at the next boot: the error names them and both fixes.
+func TestUpgradeUnhealthyNamesModulesNotLoaded(t *testing.T) {
+	u, _ := newUpgrade(t)
+	n := 0
+	u.Agent = seqAgent{builds: []string{"0.1.0+dd7a8b6", "0.1.1+abc1234"}, n: &n, health: "degraded"}
+	appendFile(t, hostPath(u.Root, "/boot/loader.conf"), "vmm_load=\"YES\"\n")
+	appendFile(t, hostPath(u.Root, "/etc/rc.conf"), "kld_list=\"if_epair netgraph\"\n")
+	f := facts()
+	f.Modules = loaded("if_epair")
+	u.Prober = fakeProber{f}
+	err := u.Upgrade(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "health is degraded; configured but not loaded: vmm netgraph (reboot, or: kldload -n vmm netgraph); see skep-setup check") {
+		t.Fatalf("err %v", err)
+	}
+}
+
 func TestUpgradeUnknownOldBuild(t *testing.T) {
 	u, h := newUpgrade(t)
 	n := 0

@@ -418,7 +418,7 @@ func (u *Upgrader) Upgrade(ctx context.Context) error {
 	}
 	u.printf("  health: %s\n", status)
 	if status != "ok" {
-		return fmt.Errorf("both services restarted at %s, but health is %s; see skep-setup check and the agent's log", want, status)
+		return fmt.Errorf("both services restarted at %s, but health is %s; %ssee skep-setup check and the agent's log", want, status, u.modulesHint(nctx))
 	}
 	u.printf("upgraded to %s; backups in %s\n", want, dir)
 	return nil
@@ -588,4 +588,24 @@ func defaultDataDirs(root string) error {
 			v, d, config.DefaultDataDir, manualUpgradeDoc)
 	}
 	return nil
+}
+
+// modulesHint names the guest modules that are configured but not
+// loaded, a common reason for a degraded health right after the first
+// apply, or "" when there are none or it cannot be told.
+func (u *Upgrader) modulesHint(ctx context.Context) string {
+	conf, err := HostModules(u.Root)
+	if err != nil {
+		return ""
+	}
+	f, err := u.Prober.Probe(ctx)
+	if err != nil {
+		return ""
+	}
+	missing, known := NotLoaded(conf, f)
+	if !known || len(missing) == 0 {
+		return ""
+	}
+	return "configured but not loaded: " + strings.Join(missing, " ") +
+		" (reboot, or: " + KldloadCommand(missing) + "); "
 }

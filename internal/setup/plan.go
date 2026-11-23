@@ -330,6 +330,7 @@ func Compute(ctx context.Context, o Options, f Facts) (Plan, error) {
 	b.editability()
 	b.loaderLines()
 	b.kldList()
+	b.liveModules()
 	b.storage()
 	b.management()
 	b.bridges()
@@ -559,9 +560,9 @@ func (b *builder) setVar(file string, conf RCConf, editable bool, name, want, de
 
 func (b *builder) loaderLines() {
 	b.setVar(loaderConfPath, b.loader, b.loaderOK, "vmm_load", "YES",
-		"bhyve; takes effect at the next boot (setup never reboots or runs kldload; now: kldload vmm)")
+		"bhyve; takes effect at the next boot (setup never reboots or runs kldload; see \"kernel modules\")")
 	b.setVar(loaderConfPath, b.loader, b.loaderOK, "nmdm_load", "YES",
-		"VM serial consoles; takes effect at the next boot (now: kldload nmdm)")
+		"VM serial consoles; takes effect at the next boot (see \"kernel modules\")")
 	if b.o.NoRACCT {
 		if v, _ := b.loader.Get("kern.racct.enable"); v != "1" {
 			b.warn(loaderConfPath, "kern.racct.enable", "left off (--no-racct): jail limits other than disk_quota are refused without RACCT")

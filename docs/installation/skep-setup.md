@@ -87,13 +87,35 @@ JSON is **refused**.
 Every program setup runs as root is named by its absolute path
 (`/usr/sbin/service`, `/usr/sbin/sysrc`, `/usr/sbin/pw`, `/usr/bin/fstat`,
 `/sbin/zfs`, `/sbin/zpool`, `/sbin/ifconfig`, `/usr/sbin/jls`,
-`/sbin/sysctl`, `/bin/freebsd-version`) and gets a fixed environment
+`/sbin/sysctl`, `/sbin/kldstat`, `/bin/freebsd-version`) and gets a fixed environment
 (`PATH=/sbin:/bin:/usr/sbin:/usr/bin:/usr/local/sbin:/usr/local/bin`,
 `HOME=/`; `TERM` is kept only for the interactive `admin create`).
 `apply`, `rollback`, `upgrade` and `remove` set umask `022` first. With
 `-root` other than `/` (tests), anything that acts on this host's
 services or accounts (`-start`, `-admin`, `remove`'s service stops and
 `pw`, and `upgrade` as a whole) is refused.
+
+**Kernel modules.** The `loader.conf` and `kld_list` lines take effect at
+the next boot; setup never loads a module itself. `check`, `plan` and the
+last lines of `apply` therefore compare the guest modules the boot
+configuration loads (`vmm`, `nmdm`, and `if_epair netgraph ng_socket
+ng_ether ng_bpf` from `kld_list`, including the ones this plan adds) with
+what the kernel has now (`kldstat -q -m NAME`; a module compiled into the
+kernel counts as loaded). Each one configured but not loaded is listed in
+one **warning**, with what does not work without it and the two ways to
+fix it: reboot, or load them now with the printed command, for example
+
+```
+  warn     kernel modules                     configured but not loaded: vmm nmdm
+                                                ...
+                                                $ shutdown -r now
+                                                $ kldload -n vmm nmdm
+```
+
+The warning does not change any exit code. Until the modules are loaded
+the agent's health can read `degraded`, and `upgrade` then exits 3 with the
+same list in its message. (Whether `apply` should load them itself is an
+open question for Andy; see the [backlog](../backlog.md).)
 
 **Firmware.** `check` and `plan` print a **warning** when the bhyve UEFI
 firmware is missing (`BHYVE_UEFI.fd` or `BHYVE_UEFI_VARS.fd` in
