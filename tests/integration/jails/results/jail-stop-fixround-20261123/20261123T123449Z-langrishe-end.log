@@ -1,0 +1,22 @@
+z1
+z2
+ls: /tmp/p57db*: No such file or directory
+   JID  IP Address      Hostname                      Path
+vtnet0 vtnet1 lo0
+skep_agent is running as pid 60689 (supervisor pid 60687).
+skep_api is running as pid 56399 (supervisor pid 56397).
+Node ID:          4ae4a218-b2b0-477d-b8c5-f378cd84229b
+Hostname:         langrishe.greenbean.org
+Platform:         freebsd (production host)
+OS:               FreeBSD 15.1-RELEASE-p7 (amd64)
+Skep:             0.1.0 (commit eae2ab3)
+Agent started:    2026-11-23 12:34:34Z (up 15s)
+bhyve:            available: vmm kernel module is loaded and /usr/sbin/bhyve is present
+QEMU:             unavailable: no QEMU binaries found in /sbin, /bin, /usr/sbin, /usr/bin, /usr/local/sbin, /usr/local/bin
+ZFS:              available: zfs kernel module is loaded; 1 pool(s) imported
+TLS certificate:  self-signed, valid until 2027-12-24 23:40:48Z
+TLS public key:   sha256:dafb11e935defc9af5b6987b07421512d60d0200c0ca5ce45b1f3b3187efaf23
+/health 200 {'status': 'ok', 'version': '0.1.0', 'uptime_seconds': 20, 'checks': {'access_audit_archive': {'status': 'ok', 'critical': False}, 'agent': {'status': 'ok', 'critical': True}, 'audit_archive': {'statu
+/system/health 404 {'error': {'code': 'not_found', 'message': 'no such endpoint: /api/v1/system/health', 'request_id': '17c70ce6a02835c50d94a9f8'}}
+containers 200 0
+templates 200 {'items': []}

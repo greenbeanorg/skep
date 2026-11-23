@@ -1,0 +1,36 @@
+== 10.79.20.81
+Installing skep-0.1.0...
+package skep is already installed, forced install
+Extracting skep-0.1.0: .......... done
+  installed: skep-agent, skep-api and skep-setup are 0.1.0+2c3040c
+  service skep_api stop
+  skep-agent db backup: /var/db/skep/backup/0.1.0+571f7b2-20261123T152807Z/agent.db sha256 7cbcda7600187f22fa628d019073e2e4ce73fd4b87b84967c5ce4aed9e7b5a0d
+  skep-agent db backup: removed the old backup /var/db/skep/backup/0.1.0+64de929-20261123T000938Z
+  skep-api db backup: /var/db/skep/backup/0.1.0+571f7b2-20261123T152807Z/api.db sha256 45c2e99085cd6316928dbf5ca27fd05504ce3200a36c4ddb227d266c3f883d26
+  service skep_agent stop (from here on, Ctrl-C does not interrupt the upgrade)
+  skep_agent pid 62936 runs /usr/local/sbin/skep-agent at 0.1.0+2c3040c
+  skep_api pid 63008 runs /usr/local/sbin/skep-api at 0.1.0+2c3040c
+  agent socket: answers as 0.1.0+2c3040c
+  health: ok
+upgraded to 0.1.0+2c3040c; backups in /var/db/skep/backup/0.1.0+571f7b2-20261123T152807Z
+upgrade rc=0
+skep_agent is running as pid 62936 (supervisor pid 62934).
+skep_api is running as pid 63008 (supervisor pid 63006).
+== 10.79.20.82
+Installing skep-0.1.0...
+package skep is already installed, forced install
+Extracting skep-0.1.0: .......... done
+  installed: skep-agent, skep-api and skep-setup are 0.1.0+2c3040c
+  service skep_api stop
+  skep-agent db backup: /var/db/skep/backup/0.1.0+eae2ab3-20261123T152810Z/agent.db sha256 e32b7d7aab2d87f662cb5abae436bcafaf0bde08bef721072e274bc1773ba317
+  skep-agent db backup: removed the old backup /var/db/skep/backup/0.1.0+b959cc8-20261123T023059Z
+  skep-api db backup: /var/db/skep/backup/0.1.0+eae2ab3-20261123T152810Z/api.db sha256 f6a16253eb83c7023ccef8007271fd68b93ebb83f95940cd0a86057beb0a25c6
+  service skep_agent stop (from here on, Ctrl-C does not interrupt the upgrade)
+  skep_agent pid 70371 runs /usr/local/sbin/skep-agent at 0.1.0+2c3040c
+  skep_api pid 70444 runs /usr/local/sbin/skep-api at 0.1.0+2c3040c
+  agent socket: answers as 0.1.0+2c3040c
+  health: ok
+upgraded to 0.1.0+2c3040c; backups in /var/db/skep/backup/0.1.0+eae2ab3-20261123T152810Z
+upgrade rc=0
+skep_agent is running as pid 70371 (supervisor pid 70370).
+skep_api is running as pid 70444 (supervisor pid 70442).

@@ -1,0 +1,44 @@
+before: rc.conf b8c48f274581f6bd306ab2c37094a07919b69a77d4f9eaf384b7f180b3646e39, ifconfig -l: vtnet0 vtnet1 lo0
+before: vtnet1: flags=1008802<BROADCAST,SIMPLEX,MULTICAST,LOWER_UP> metric 0 mtu 1500
+
+=== B1: bridge9 with live guest port epair0a
+  manual   network                            bridge9 vlanfilter
+                                                not set; setup prints no steps while Skep guest ports are members ("epair0a"): stop the Skep guests on this bridge first, then run plan again. The agent sets each guest port when the guest starts. Without it the agent reports bridge_vlan_unfiltered
+B1: no steps printed
+destroyed epair0a
+
+=== B2: plan with the uplink only
+  manual   network                            bridge9 vlanfilter
+                                                not set; changing an existing bridge can cut off its members, so setup prints the steps (each member's PVID first, then defuntagged, then vlanfilter); run them from the console. Without it the agent reports bridge_vlan_unfiltered
+                                                $ ifconfig bridge9 ifuntagged vtnet1 1
+                                                $ ifconfig bridge9 defuntagged 1
+                                                $ ifconfig bridge9 vlanfilter
+                                                $ sysrc cloned_interfaces+="bridge9"
+                                                $ sysrc ifconfig_bridge9="addm vtnet1 ifuntagged vtnet1 1 defuntagged 1 vlanfilter up"
+
+=== B2: executing the printed steps
+$ ifconfig bridge9 ifuntagged vtnet1 1
+  rc=0
+$ ifconfig bridge9 defuntagged 1
+  rc=0
+$ ifconfig bridge9 vlanfilter
+  rc=0
+$ sysrc cloned_interfaces+="bridge9"
+cloned_interfaces:  -> bridge9
+  rc=0
+$ sysrc ifconfig_bridge9="addm vtnet1 ifuntagged vtnet1 1 defuntagged 1 vlanfilter up"
+ifconfig_bridge9:  -> addm vtnet1 ifuntagged vtnet1 1 defuntagged 1 vlanfilter up
+  rc=0
+
+=== B2: live state
+bridge9: flags=1008843<UP,BROADCAST,RUNNING,SIMPLEX,MULTICAST,LOWER_UP> metric 0 mtu 1500
+	bridge flags=1<VLANFILTER> defuntagged=1
+	member: vtnet1 flags=143<LEARNING,DISCOVER,AUTOEDGE,AUTOPTP>
+	        port 2 priority 128 path cost 2000 vlan protocol 802.1q untagged 1
+cloned_interfaces="bridge9"
+ifconfig_bridge9="addm vtnet1 ifuntagged vtnet1 1 defuntagged 1 vlanfilter up"
+
+=== B2: plan after the steps
+  ok       network                            bridge9
+  ok       network                            bridge9 vlanfilter
+                                                      "bridge9"

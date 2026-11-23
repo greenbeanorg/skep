@@ -2484,3 +2484,176 @@ and accepted the amendment).
    `restore_failed`, `no_stopped_check`), and, where an administrator acts,
    `command`. A failed `volmode=none` after which `volmode=dev` was set
    back is `repair_failed`, with the `zfs` error in `error`.
+
+## Amendment aa (Accepted): the agent finishes a half-stopped jail at start
+
+- Status: **Accepted**, 2026-11-23 (Andy). Written before the build, as
+  asked. Andy's answers to the four questions are recorded below (2026-11-23,
+  with the Fable review's fix round, rules 6–9); rule 10 was added with the
+  review's approval. (Amendment z is on PR #55.)
+
+**The problem.** A jail stop is: record desired `stopped` and observed
+`stopping`; `hostops.StopJail`, which destroys the jail's epairs first and
+then runs `jail -r` (exec.stop `/etc/rc.shutdown`, then SIGTERM, then
+SIGKILL after the stop timeout); then record the epairs gone and the jail
+`stopped`. An agent restart in the middle (a crash, an upgrade's restart,
+an operator's `service skep_agent restart`) interrupts the task (ADR 0005:
+it is marked `interrupted` and never resumed) and can leave the jail
+running with its epairs already destroyed. At the next start
+`ObserveAll` observes the jail running and records `running`, with desired
+`stopped` and the recorded `host_interface` of each NIC naming an epair
+that no longer exists. The jail runs with no network until someone stops
+it again; the record says otherwise. (Backlog item from the PR #52 fix
+round, 2026-11-22.)
+
+**The rule.** At agent start, in `ObserveAll`, before the socket is served
+and while no task runs, a container recorded `stopping` has its stop
+completed:
+
+1. `hostops.StopJail` with the default stop timeout: if the jail exists,
+   `jail -r` with exec.stop, as a stop task does; then every epair of the
+   container is destroyed (also when the jail is already gone, so epairs a
+   finished `jail -r` left are not orphaned).
+2. Success: the recorded epairs are cleared, the container is recorded
+   `stopped` with the detail "a stop interrupted by an agent restart was
+   completed at agent start", a leftover devfs on its root is swept
+   (amendment l), and the agent logs `jail_stop_completed` (WARN).
+3. Failure: logged at ERROR (`jail_stop_interrupted`); the container is
+   recorded `unknown` with the detail "a stop interrupted by an agent
+   restart could not be completed at agent start: …; stop it again", as a
+   failed stop task records it. The epairs record is left as it is (a
+   failed stop task does the same); the next stop destroys any epairs and
+   clears it.
+4. Desired state is not changed: a stop set it to `stopped` before
+   anything else. A restart interrupted in its stop half ends stopped; its
+   start half is not resumed (ADR 0005: interrupted work is resubmitted,
+   never resumed).
+5. A container recorded `starting` is still the half-started sweep's
+   (amendment i); a `failed` (quarantined) one is still the quarantine
+   sweep's (amendment n). Neither changes.
+6. **What a read shows after a failure.** Whenever a jail is observed
+   running while its desired state is `stopped` and its recorded state is
+   not `starting` or `stopping`, the state shown is the observed one
+   (`running`, with its `jid`). The recorded `state_detail` is kept when the
+   recorded state is `unknown` or `running`: a failed completion (rule 3:
+   the jail usually still runs, since `jail -r` and `jail -R` both failed)
+   or a failed stop task records `unknown` with its reason, the first read
+   records `running` and keeps it, and every later read keeps it too. A
+   failed stop task's "the last stop failed: …" used to be dropped by the
+   first read the same way (unit test `TestFailedStopTaskDetailOnRead`
+   fails on the build before this rule). When the recorded state is
+   `stopped` (the jail was started outside Skep), or no detail is recorded,
+   the detail is "the jail is running although it should be stopped; stop
+   it again" (`TestStartedOutsideSkepAfterCompletedStop`). Andy's
+   follow-up answer, 2026-11-23: unknown or running keeps the detail,
+   stopped shows the generic sentence. A failed completion whose jail is
+   gone reads `stopped` with no detail. A successful stop clears the detail
+   (the store writes NULL for an empty detail).
+7. **Agent shutdown during a completion.** If the agent's context is
+   cancelled (SIGTERM, `service skep_agent stop`) and `StopJail` returns
+   an error, nothing is recorded: the container stays `stopping`, the
+   agent logs `jail_stop_completion_cancelled` (WARN), and the next agent
+   start completes the stop. `jail -r` is killed with the context
+   (hostops does not force a cancelled removal), so the jail may still
+   run. An outcome `StopJail` did return is recorded on a context
+   detached from the agent's, as a stop task records.
+8. **Log before the wait.** Before `StopJail` the agent logs
+   `jail_stop_completing` (WARN) with `container_id` and
+   `max_wait_seconds`, the longest the call can take (the bound under Cost).
+9. **Epairs are destroyed by ownership, never by recorded name.**
+   `StopJail` destroys only the epair host ends (`epair<N>a`) whose
+   description, read from the host at that moment, is
+   `skep:<container-id>:<slot>` (`DestroyJailInterfaces`); `JailSpec`
+   carries no recorded interface name. The `host_interface` names recorded
+   on the container are only cleared. An interface named as recorded but
+   now described as another owner's, or not described, is left (unit test
+   `TestStopJailOfGoneJailChecksOwnership`). A normal stop task is
+   unchanged. Andy's answer, 2026-11-23: the description check stays the
+   only ownership check; no interface index is recorded.
+10. **Agent shutdown between containers.** At the top of each iteration
+    `ObserveAll` checks its context. If it is cancelled, it logs
+    `observe_cancelled` (WARN) once, with `not_observed`, the number of
+    containers not reached, and returns the context's error. Those
+    containers are not passed to `StopJail` and nothing is recorded about
+    them: one recorded `stopping` stays so, and the next agent start
+    completes its stop. The agent's start then stops the task engine and
+    exits as a normal stop, without the later checks and without serving
+    its socket (unit tests `TestObserveAllStopsWhenCancelled`,
+    `TestObserveContainersShutdown`).
+
+**Why exec.stop, and not a removal without it.** The half-started sweep
+removes the jail without `/etc/rc.shutdown` because the `/dev` guard may not
+have run (amendment i). A half-stopped jail finished its start, ran
+observed `running`, and its operator asked for a stop with
+`/etc/rc.shutdown`; part of it may have run. Running it again is what a
+second stop request does, and lets the jail's services shut down in order.
+Removing it without exec.stop (alternative B) would be faster and run none
+of the jail's code at agent start, but would cut off an orderly shutdown
+the operator asked for.
+
+**Cost.** The agent's start waits for each half-stopped jail's stop, one
+after another. `exec.stop` is bounded by `exec.timeout` (the start timeout,
+120 s), then `stop.timeout` (10 s), and `jail -r` as a whole by those plus
+30 s of slack; a `jail -r` that fails or times out is followed by `jail -R`,
+bounded by another 30 s (amendment u): **up to about 190 s per jail**
+(`JailSpec.StopMaxWait`; the first draft said 160 s, leaving out `jail
+-R`), not the 10 s stop timeout alone (measured: a jail whose `/etc/rc.shutdown.local` sleeps 30 s delayed
+the agent's start by 30 s). Running VMs and jails are not affected; only
+the agent's socket comes up later.
+
+**Questions for Andy, and his answers (2026-11-23).**
+
+1. exec.stop at agent start (this amendment), or removal without it
+   (alternative B)? — **exec.stop.**
+2. The default stop timeout, not the timeout the interrupted task asked
+   for (which is in its payload): acceptable? — **The default timeout is
+   accepted.**
+3. Should the completion also write an entry to the agent's audit log
+   (today the start-up sweeps only log), and if so with which actor? —
+   **No audit entry in this change.** A backlog row "start-up sweeps write
+   audit entries, actor system" covers all three start-up sweeps (the
+   half-started sweep, the quarantine sweep, and this completion).
+4. The start can wait up to about 160 s (in fact about 190 s, see Cost)
+   per half-stopped jail. Acceptable, or should the completion run after
+   the socket is served (the jail would show `stopping` meanwhile)? —
+   **The completion stays before the socket is served, for 0.1.**
+   (The wait of `skep-setup upgrade` for the socket becomes 200 s in
+   PR #61.)
+
+**Validation (langrishe, 2026-11-23 UTC, unattended).** A pkgbase template
+built through the API (41 s), a jail with a DHCP NIC on a test bridge
+`bridge1` on vtnet1 (vlanfilter on; lease 10.79.60.137 inside the jail),
+`/etc/rc.shutdown.local` in the jail set to `sleep 30` so the stop could be
+caught. The test (`j3kill.py`) submits `container.stop`, waits until the
+epair is gone while `jail -r` still runs and the jail is still in `jls`
+(0.1–0.2 s), then `kill -9`s the agent and that `jail -r`; daemon(8)
+restarts the agent.
+
+| | Build without the fix (6a93dd2) | With the fix (8fb036f) |
+|---|---|---|
+| After the restart: state / desired / JID | `running` / `stopped` / 2 | **`stopped` / `stopped` / null** |
+| `host_interface` recorded | `epair0a` (no such interface) | **none** |
+| Jail in `jls` | still there | **gone** |
+| Epairs on the host | none | none |
+| `state_detail` | none | "a stop interrupted by an agent restart was completed at agent start" |
+| Agent log | `task interrupted by agent restart` | that, then `jail_stop_completed` (WARN) 30 s later |
+
+The interrupted task stayed `interrupted` (ADR 0005). The jail, the
+template, and the bridge were removed afterwards, `agent.json` restored
+(sha256 checked). Logs:
+[jail-stop-recovery-20261123/](../../tests/integration/jails/results/jail-stop-recovery-20261123/).
+The failure path (completion fails → `unknown` with a detail) is covered by
+unit tests only.
+
+**Validation of rules 6–9 (langrishe, 2026-11-23 UTC, unattended, build
+eae2ab3).** The success case repeated (`jail_stop_completing` with
+`max_wait_seconds: 190`, then `jail_stop_completed`; `stopped`, no epairs).
+The agent stopped with `service skep_agent stop` during a completion:
+`jail_stop_completion_cancelled`, the jail still present, `agent.db` showing
+the container `stopping`, and the next start completed it. The induced
+failure (`chflags schg` on the jail's `jail.conf`): GET and the list showed
+`running`, desired `stopped`, the `jid`, and the completion's reason in
+`state_detail`; a stop task with the flag still set failed and GET then
+showed "the last stop failed: …"; after the flag was cleared a stop
+succeeded and cleared the detail. Record:
+[jail-stop-fixround-20261123.md](../../tests/integration/jails/results/jail-stop-fixround-20261123.md).

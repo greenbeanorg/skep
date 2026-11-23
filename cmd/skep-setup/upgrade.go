@@ -38,6 +38,9 @@ func runUpgrade(ctx context.Context, args []string, e env) error {
 	if *root != "/" && e.realRunner() {
 		return &exitError{code: exitUsage, msg: "-root " + *root + ": upgrade stops and starts this host's services; it runs only on / (tests use a fake runner)"}
 	}
+	if err := e.checkDataDir(*root); err != nil {
+		return err
+	}
 	if !*yes && !e.confirm("Stop skep_api, wait for unfinished tasks, back up both databases and restart skep_agent and skep_api? Running guests are not touched.") {
 		return &exitError{code: exitPending, msg: "not confirmed: nothing was changed"}
 	}

@@ -76,5 +76,10 @@ if __name__ == "__main__":
     out = {"http": st, "body": b}
     if "--wait" in sys.argv and st == 202:
         t = wait(tok, task_id(b))
-        out["task"] = {k: t.get(k) for k in ("id", "type", "status", "error_code", "error_message", "resource_id")}
+        out["task"] = {k: t.get(k) for k in ("id", "type", "status", "resource_id")}
+        # The API's Task carries a failure as error: {code, message}; there
+        # are no error_code or error_message fields (they printed null).
+        err = t.get("error") or {}
+        out["task"]["error_code"] = err.get("code")
+        out["task"]["error_message"] = err.get("message")
     print(json.dumps(out, indent=1, default=str))

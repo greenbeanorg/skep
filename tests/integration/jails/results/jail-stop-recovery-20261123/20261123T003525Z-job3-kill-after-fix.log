@@ -1,0 +1,26 @@
+start succeeded None
+	inet 10.79.60.137 netmask 0xffffff00 broadcast 10.79.60.255
+rc.shutdown.local: sleep 30
+before stop: {"state": "running", "desired_state": "running", "jid": 3, "state_detail": null} host_interface= ['epair0a']
+stop submitted 202 0d9386ce-9d93-43c5-8461-7e5ad8f38d0c
+after 0.2s: epairs gone, jail -r pid 14767, jail still in jls
+kill -9 agent 14027 and jail -r 14767
+jls:
+skep-5ba2883c-6259-45d5-a6b2-ab531a8eff0e
+epairs:
+end
+
+agent back: 14835 /usr/local/sbin/skep-agent -data-dir /var/db/skep
+after restart: {"state": "stopped", "desired_state": "stopped", "jid": null, "state_detail": "a stop interrupted by an agent restart was completed at agent start"} host_interface= [None]
+jls:
+epairs:
+bridge1:
+	member: vtnet1 flags=143<LEARNING,DISCOVER,AUTOEDGE,AUTOPTP>
+log:
+Nov 22 19:35:31 langrishe skep-agent[14025]: {"time":"2026-11-22T19:35:31.946428782-05:00","level":"INFO","msg":"task accepted","task_id":"0d9386ce-9d93-43c5-8461-7e5ad8f38d0c","type":"container.stop","actor_id":"9f3f544d-959d-44df-8e5f-ee4fdd30b6ca","resource_type":"container","resource_id":"5ba2883c-6259-45d5-a6b2-ab531a8eff0e
+Nov 22 19:35:31 langrishe skep-api[14099]: {"time":"2026-11-22T19:35:31.946848538-05:00","level":"INFO","msg":"http request","method":"POST","path":"/api/v1/containers/5ba2883c-6259-45d5-a6b2-ab531a8eff0e/actions","status":202,"bytes":388,"duration":3847260,"remote":"10.79.20.80:35856","request_id":"82e8b2c1480ee3cd94167da6"}
+Nov 22 19:35:31 langrishe skep-agent[14025]: {"time":"2026-11-22T19:35:31.992088933-05:00","level":"INFO","msg":"hostops: destroyed the jail's epairs before removing it","event":"jail_interfaces_destroyed","container_id":"5ba2883c-6259-45d5-a6b2-ab531a8eff0e","interfaces":["epair0a"]}
+Nov 22 19:35:37 langrishe skep-agent[14025]: {"time":"2026-11-22T19:35:37.43301593-05:00","level":"WARN","msg":"task interrupted by agent restart","task_id":"0d9386ce-9d93-43c5-8461-7e5ad8f38d0c","type":"container.stop","resource_type":"container","resource_id":"5ba2883c-6259-45d5-a6b2-ab531a8eff0e"}
+Nov 22 19:36:07 langrishe skep-agent[14025]: {"time":"2026-11-22T19:36:07.694962668-05:00","level":"WARN","msg":"containers: completed a stop an agent restart interrupted","event":"jail_stop_completed","container_id":"5ba2883c-6259-45d5-a6b2-ab531a8eff0e"}
+Nov 22 19:36:11 langrishe skep-api[14099]: {"time":"2026-11-22T19:36:11.731077887-05:00","level":"INFO","msg":"http request","method":"GET","path":"/api/v1/containers/5ba2883c-6259-45d5-a6b2-ab531a8eff0e","status":200,"bytes":709,"duration":9788192,"remote":"10.79.20.80:46426","request_id":"92f3e605a41a9afca5950ab8"}
+

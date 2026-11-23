@@ -28,6 +28,23 @@ func serviceConfigFile(root, rcVar, dataVar string) (file, dataDir string, err e
 	return file, dataDir, nil
 }
 
+// apiServiceArgs are the -data-dir and -config the skep_api rc.d script
+// passes to skep-api (skep_api_data_dir, default /var/db/skep, and
+// skep_api_config when set), so that "skep-api admin exists" and "admin
+// create" open the database the running service uses, not skep-api's
+// defaults. They are host paths, as the rc.d script has them.
+func apiServiceArgs(root string) ([]string, error) {
+	file, dataDir, err := serviceConfigFile(root, "skep_api_config", "skep_api_data_dir")
+	if err != nil {
+		return nil, err
+	}
+	args := []string{"-data-dir", dataDir}
+	if file != "" {
+		args = append(args, "-config", file)
+	}
+	return args, nil
+}
+
 // AgentDBPath returns the host path (under root) of the agent's database
 // as the running agent has it: agent.json (or skep_agent_config) loaded
 // the way the agent loads it, with the rc.d script's -data-dir.

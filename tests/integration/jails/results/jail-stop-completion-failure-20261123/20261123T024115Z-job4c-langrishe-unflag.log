@@ -1,0 +1,8 @@
+total 18
+-rw-------  1 root skep uarch      900 Nov 22 21:40 console.log
+-rw-------  1 root skep schg,uarch 945 Nov 22 21:40 jail.conf
+rc=0
+total 18
+-rw-------  1 root skep uarch 900 Nov 22 21:40 console.log
+-rw-------  1 root skep uarch 945 Nov 22 21:40 jail.conf
+find-done

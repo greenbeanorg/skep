@@ -1,0 +1,16 @@
+head eae2ab3 label p57fix host 10.79.20.82
+checksum compare (format may differ):
+2251d7220c75229d128d8ecef38187c76432f8ea6092d2f85de659713c176079  /usr/local/share/licenses/skep/THIRD_PARTY_NOTICES
+262b1d631a728360627cc96ba4ac4c12cb1ebac7d458711da1b4e4317fd8e4fa  /usr/local/sbin/skep-api
+3db94ce1c4e44455e6010235327c276064453aec48a1dd01217bb0bbe87ddaea  /usr/local/etc/rc.d/skep_api
+262b1d631a728360627cc96ba4ac4c12cb1ebac7d458711da1b4e4317fd8e4fa stage/usr/local/sbin/skep-api
+787c00449243c7c2c02b585e7eb5ddd08a22c8cb7b1f27a6747506172e832420 stage/usr/local/sbin/skep-setup
+9212a34e51c9bbbe423c344c30acc490ec6f62384a712779252b92ddb4e24780 stage/usr/local/sbin/skep-agent
+total 11901
+-rw-r--r--  1 aba aba 16176003 Nov 23 07:23 skep-0.1.0.pkg
+SHA256 (out/skep-0.1.0.pkg) = a312a7e13bc56a314a9c96bbe97e810432c071b1c98bee6594c9fa84755bcd6a
+skep-0.1.0
+Name           : skep
+Version        : 0.1.0
+skep-0.1.0:
+skep-setup 0.1.0 (commit eae2ab3, built 2026-11-23T12:23:10Z, go1.27.4 freebsd/amd64)
