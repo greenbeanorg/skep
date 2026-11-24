@@ -1251,15 +1251,17 @@ export interface paths {
          *     `skep1`, ... as in every jail, so the copied `rc.conf` configures
          *     them.
          *
-         *     **Static addresses** (amendment k): every NIC of the source with
-         *     a static address needs new addressing in `nics`, or the clone
-         *     would hold the source's address (`clone_addressing_required`,
-         *     422, naming the slots). New addressing or nameservers are written
-         *     into the clone's `rc.conf` and `resolv.conf`, which Skep does only
-         *     for a tree that has never run code: a clone inherits its source's
-         *     `started_once`, and for a source that has started the change is
-         *     `container_started`. So a jail with a static address can be
-         *     cloned only while it has never started.
+         *     **Static addresses** (amendment k): a jail with a static address
+         *     can be cloned only while it has never started. Once it has, every
+         *     clone request is `container_started` (409), with or without new
+         *     addressing. Before that, every NIC of the source with a static
+         *     address needs new addressing in `nics`, or the clone would hold
+         *     the source's address (`clone_addressing_required`, 422, naming the
+         *     slots). New addressing or nameservers are written into the clone's
+         *     `rc.conf` and `resolv.conf`, which Skep does only for a tree that
+         *     has never run code: a clone inherits its source's `started_once`,
+         *     and for a source that has started such a change is
+         *     `container_started`.
          *
          *     **A clone is the same guest.** Skep does not change what is inside
          *     the tree: the clone's `/etc/ssh` host keys and `/etc/hostid` are
