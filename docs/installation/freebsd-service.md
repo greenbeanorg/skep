@@ -304,6 +304,16 @@ skep-api audit verify                    # as root (it switches to skep) or as s
 skep-api audit export
 ```
 
+`audit verify` and `audit export` (without `--unsealed`) refuse a missing database, and one that
+the service has not yet migrated to the segment index; they create and
+migrate nothing, and write no entries. They open the database read-write,
+however, so SQLite may still touch its files: with the service stopped it
+creates `-wal` and `-shm` and removes them again when the command exits,
+after writing into the database any changes an unclean stop left in
+`-wal`. A database in rollback-journal mode, which neither service leaves
+behind, is switched to WAL. With the service running, the files are not
+changed.
+
 `audit export --unsealed` reads only while the agent runs, and refuses
 while it is stopped: SQLite creates the database's `-wal` and `-shm` files
 even for a read-only open, and would leave them behind on a database no
