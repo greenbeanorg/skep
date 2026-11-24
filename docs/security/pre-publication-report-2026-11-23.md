@@ -131,3 +131,69 @@ pull request commits use the noreply address as author and committer.
 Co-author trailers name only `noreply@anthropic.com`. The 54 older merges
 still carry the mailbox address (unchanged; a history rewrite remains
 Andy's decision).
+
+## Second refresh — 2026-11-24 (release preparation)
+
+Rerun before publishing the repository, written unattended with the same
+method as the two scans above; no value is reproduced. Logs on merrick:
+`/home/aba/skep-test-logs/20261124T144112Z-release-prep-job2-scan/` and
+`/home/aba/skep-test-logs/20261124T143845Z-release-prep-job2-actions/`.
+
+**Scope.** `main` at `7206264` (after PR #104): the 13 commits after
+`a46d8ed`, and also the whole of `main` (105 commits). The original commits
+of pull requests #92 to #104 (`refs/pull/*/head`, 13 refs, fetched for the
+scan and removed again): 40 commits not on `main` before `a46d8ed`, 9 of
+them merges. The titles, bodies and comments of the same 13 pull requests.
+**For the first time, the GitHub Actions logs**: every run the token lists.
+The repository has no issues, so there are no issue bodies to scan.
+
+**Secret scan.** gitleaks v8.21.2, default rules, `--redact`:
+
+| Scope | Commits | Findings |
+|---|---|---|
+| `main`, `a46d8ed..7206264` | 13 | none |
+| `main`, whole history | 105 | 4, all the known false positives above: `internal/config/api.go` line 268 (83ade69d53) and `tests/integration/jails/results/step10-hearst-run4.txt` lines 296, 352 and 363 (3c04b40b70) |
+| PR commits #92–#104 | 31 diffed by gitleaks, plus 9 merges | none |
+
+gitleaks does not diff merge commits. Eight of the nine show no
+combined diff of their own, and the ninth (84f4723640, PR #94's branch),
+which resolves conflicts in four files, was scanned separately: no
+findings and no pattern hits.
+
+**Second sweep** (private keys, bearer tokens, JSON session tokens, AWS and
+GitHub tokens, `$argon2id$` hashes, `password = "…"` assignments, SSH public
+keys, ordinary mailbox addresses) over the lines the 41 commits add, i.e.
+`main` after `a46d8ed` plus the PR commits:
+only `docs/security/pre-publication-report-2026-11-23.md` (b9e0f50065,
+cc1aa8a10a), line 26 of that commit's addition, which is this report's own
+pattern description. Nothing needs removing.
+
+**Pull request text.** 13 pull requests (#92–#104: titles and bodies), 22
+conversation comments, 0 review comments, 0 reviews; gitleaks and the
+same patterns: **no findings**.
+
+**Actions logs.** The token lists runs (352) and downloads their log
+archives; nothing was refused except one run's archive, run 43097835292
+(2026-11-11), which answers 404. 153 archives are empty: runs that never got
+a runner, such as those after the Actions minutes ran out. A job log of such a
+run answers 404 (`BlobNotFound`). Check-run annotations answer 403
+("Resource not accessible by personal access token"), as before. The 198
+non-empty archives (1006 log files) were scanned:
+
+- gitleaks: 104 `generic-api-key` hits, one in the "Release build with the
+  web interface" job log of each run that got that far. All are the same
+  kind: `web-e2e: trusting skep-api's key sha256:…`, printed by
+  `scripts/web-e2e.sh` line 48. That is the SHA-256 pin of the **public**
+  key of a throwaway API started on the CI runner for the browser tests:
+  **false positive**.
+- The pattern sweep found nothing. No lab address (10.79.20.x), no lab
+  account name and no mailbox address appear in the logs.
+
+One Actions artifact exists; it was not downloaded.
+
+**Identities on `main`.** Two author addresses: the project account's
+ordinary mailbox address on 54 commits (the older squash merges; Andy
+accepts it as public, 2026-11-24) and its GitHub noreply address on 51.
+Committers: `noreply@github.com` (101) and the project noreply address (4).
+Co-author trailers name `noreply@anthropic.com` and the project noreply
+address only. No other personal address appears.
