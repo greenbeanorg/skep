@@ -482,12 +482,13 @@ func (s *Service) sweepLeftoverDevfs(ctx context.Context, c models.Container) {
 		s.log.Warn("containers: could not check the jail's root for a leftover devfs", "event", "orphaned_devfs_check_failed",
 			"container_id", c.ID, "error", err)
 	}
-	// Only what was unmounted is an action: a check that found nothing
-	// runs for every stopped jail at every start.
-	if len(removed) > 0 {
+	// Only a devfs that was found is an action: a check that found nothing,
+	// or failed before finding anything, writes no entry.
+	notRemoved := errors.Is(err, hostops.ErrLeftoverDevfsNotRemoved)
+	if len(removed) > 0 || notRemoved {
 		outcome, reason := audit.Success, ""
-		if err != nil {
-			outcome, reason = audit.Failure, "some of the leftover devfs mounts were not removed; see the agent's log"
+		if notRemoved {
+			outcome, reason = audit.Failure, "a leftover devfs mount could not be removed; see the agent's log"
 		}
 		s.auditSweep(ctx, c.ID, actionSweepDevfs, outcome, reason)
 	}

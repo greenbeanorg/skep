@@ -126,6 +126,34 @@ func TestSweepAuditDevfsOnlyWhenSomethingWasRemoved(t *testing.T) {
 	m.one(t, actionSweepDevfs, c.ID, audit.Success)
 }
 
+// A devfs that was found and could not be unmounted is a failure entry
+// with a fixed reason, although nothing was removed.
+func TestSweepAuditDevfsUnmountFailed(t *testing.T) {
+	f, m := auditedFixture(t)
+	ctx := context.Background()
+	c := f.create(models.ContainerCreate{Name: "d", TemplateID: f.minimal})
+	f.fake.LeaveDevfs(c.ID)
+	f.fake.StickDevfs(c.ID)
+	if err := f.svc.ObserveAll(ctx); err != nil {
+		t.Fatal(err)
+	}
+	e := m.one(t, actionSweepDevfs, c.ID, audit.Failure)
+	if e.Details["reason"] != "a leftover devfs mount could not be removed; see the agent's log" {
+		t.Fatalf("details %+v", e.Details)
+	}
+}
+
+// A check that failed before finding a devfs writes no entry.
+func TestSweepAuditDevfsCheckFailedWritesNone(t *testing.T) {
+	f, m := auditedFixture(t)
+	c := f.create(models.ContainerCreate{Name: "d", TemplateID: f.minimal})
+	c.Pool = "no-such-pool"
+	f.svc.sweepLeftoverDevfs(context.Background(), c)
+	if len(m.entries) != 0 {
+		t.Fatalf("a failed check wrote %+v", m.entries)
+	}
+}
+
 // The entry is written even when the agent is shutting down.
 func TestSweepAuditSurvivesACancelledContext(t *testing.T) {
 	f, m := auditedFixture(t)

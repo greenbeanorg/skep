@@ -76,6 +76,9 @@ func recordRevocations(ctx context.Context, w AuditWriter, log *slog.Logger, act
 
 // Create adds a user.
 func (u *Users) Create(ctx context.Context, actor Actor, in NewUser) (User, error) {
+	if in.Username == ReservedUsername {
+		return User{}, models.Invalid("the username \"system\" is reserved for the agent's own audit entries")
+	}
 	if err := ValidateUsername(in.Username); err != nil {
 		return User{}, err
 	}
