@@ -22,6 +22,8 @@ Nothing below mentions Skep. It is not needed to reproduce.
 | Hardware | KVM guest on Proxmox VE (CPU type `host`), 4 vCPUs; pools on virtio-scsi disks (`da1`, and `zroot` on `da0p4`) |
 | `vfs.zfs.vol.mode` | default (`vfs.zfs.vol.mode: 1`, geom) |
 
+**Before filing:** Andy must confirm the vCPU count in the Hardware row. It says 4, but smith and langrishe both reported 2 (`hw.ncpu`) on 2026-11-23.
+
 ### Describe the problem
 
 A zvol created with `volmode=dev` should get a character device at

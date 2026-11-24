@@ -11,7 +11,9 @@ the source is linked.*
   unvalidated ([runbook](../../../tests/integration/bare-metal/README.md)).
 - **Nested under KVM**, a guest's first start can stop the whole host unless
   `hw.vmm.vmx.cap.virtual_interrupt_delivery=0` is set before `vmm` loads.
-  Skep does not detect it ([VM guide](../../administration/virtual-machines.md)).
+  The agent logs a warning at start and reports a degraded `nested_interrupts`
+  health check when it sees this, but does not prevent it
+  ([VM guide](../../administration/virtual-machines.md)).
 - No clustering, HA, backup, network management, graphical consoles or
   metric history.
 
