@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"strings"
 	"testing"
@@ -75,5 +76,24 @@ func TestEscapedShowsNoControlBytes(t *testing.T) {
 func TestWaitForRejectsAnEmptyPattern(t *testing.T) {
 	if _, err := waitFor(context.Background(), feed("x"), nil); err == nil {
 		t.Fatal("empty pattern accepted")
+	}
+}
+
+func TestExitCodes(t *testing.T) {
+	for _, c := range []struct {
+		err  error
+		want int
+	}{
+		{nil, 0},
+		{timeoutError{"late"}, 3},
+		{fmt.Errorf("wrapped: %w", timeoutError{"late"}), 3},
+		{errors.New("console closed"), 1},
+	} {
+		if got := exitCode(c.err); got != c.want {
+			t.Errorf("exitCode(%v) = %d, want %d", c.err, got, c.want)
+		}
+	}
+	if exitTimeout == 2 {
+		t.Error("the timeout shares exit 2 with the flag package's usage error")
 	}
 }

@@ -14,9 +14,15 @@
 // With -wait-for PATTERN -timeout D it is not interactive: it reads
 // nothing from stdin, sends nothing to the guest, and waits for the
 // literal PATTERN in the console text. It exits 0 when the pattern
-// appears, 2 on the timeout and 1 on any other failure (the console
-// closed, for example); on 2 and 1 it prints the end of the console text,
-// escaped. The text is untrusted guest output: it is only matched.
+// appears, 3 on the timeout and 1 on any other failure (the console
+// closed, for example); on 3 and 1 it prints the end of the console text,
+// escaped. Exit 2 stays the flag package's usage error. The text is
+// untrusted guest output: it is only matched.
+//
+// On attach the server first replays the console text it has buffered, so
+// a match can come from an earlier boot of the same VM. Wait for a pattern
+// that only this run can print (a marker written by this boot, for
+// example), not a generic "login:" prompt.
 package main
 
 import (
@@ -37,18 +43,35 @@ import (
 
 func main() {
 	err := run()
-	var t timeoutError
-	switch {
-	case errors.As(err, &t):
+	switch code := exitCode(err); code {
+	case 0:
+	case exitTimeout:
 		fmt.Fprintln(os.Stderr, "consolectl:", err)
-		os.Exit(2)
-	case err != nil:
+		os.Exit(code)
+	default:
 		fmt.Fprintln(os.Stderr, "\r\nconsolectl:", err)
-		os.Exit(1)
+		os.Exit(code)
 	}
 }
 
-// timeoutError is a -wait-for timeout: exit code 2.
+// exitTimeout is the exit code of a -wait-for timeout. It is not 2,
+// which the flag package uses for a usage error.
+const exitTimeout = 3
+
+// exitCode maps run's error to the exit code: 0, exitTimeout, or 1.
+func exitCode(err error) int {
+	var t timeoutError
+	switch {
+	case err == nil:
+		return 0
+	case errors.As(err, &t):
+		return exitTimeout
+	default:
+		return 1
+	}
+}
+
+// timeoutError is a -wait-for timeout: exit code exitTimeout.
 type timeoutError struct{ msg string }
 
 func (e timeoutError) Error() string { return e.msg }
@@ -81,7 +104,7 @@ func run() error {
 	vm := flag.String("vm", "", "VM ID")
 	requestID := flag.String("request-id", "", "X-Request-ID of the attachment, to find it in both audit logs")
 	pattern := flag.String("wait-for", "", "not interactive: wait for this literal text in the console, then exit 0")
-	timeout := flag.Duration("timeout", 0, "with -wait-for: give up after this long and exit 2")
+	timeout := flag.Duration("timeout", 0, "with -wait-for: give up after this long and exit 3")
 	flag.Parse()
 	if *server == "" || *pin == "" || *tokenFile == "" || *vm == "" {
 		return errors.New("-server, -pin, -token-file, and -vm are required")
