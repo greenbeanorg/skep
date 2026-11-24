@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -19,7 +20,8 @@ func TestNewValidation(t *testing.T) {
 }
 
 func TestAgentDownIsUnavailable(t *testing.T) {
-	c, err := New(Options{SocketPath: filepath.Join(t.TempDir(), "absent.sock"), ConnectTimeout: time.Second})
+	sock := filepath.Join(t.TempDir(), "absent.sock")
+	c, err := New(Options{SocketPath: sock, ConnectTimeout: time.Second})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -33,6 +35,15 @@ func TestAgentDownIsUnavailable(t *testing.T) {
 	h := c.Health(ctx)
 	if h.Status != models.HealthUnavailable || h.Checks["agent"].Status != models.HealthUnavailable || !h.Checks["agent"].Critical {
 		t.Errorf("health = %+v", h)
+	}
+	// The reason is the fixed text: it names the log, never the socket's
+	// path or the dial error.
+	reason := h.Checks["agent"].Error
+	if reason != AgentNotAnsweringReason || !strings.Contains(reason, "socket") || !strings.Contains(reason, "/var/log/daemon.log") {
+		t.Errorf("reason = %q", reason)
+	}
+	if strings.Contains(reason, sock) || strings.Contains(reason, "dial") {
+		t.Errorf("reason leaks the cause: %q", reason)
 	}
 }
 

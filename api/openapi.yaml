@@ -126,6 +126,13 @@ paths:
         where each check says whether it is critical. The same document is
         in the system document's `health` field.
 
+        When the agent's socket does not answer, the `agent` check's
+        `error` is a fixed text: the agent is down, still starting, or
+        refusing to start; see `/var/log/daemon.log`, where a refused start
+        is logged. It never
+        carries the agent's own error text or the paths it refused on, and
+        a caller without a session still gets the status alone.
+
         This is the only health endpoint. `/health` and `/healthz` at the
         root of the HTTPS port, outside `/api/v1`, answer `404` with the
         standard error body naming this path, so that a check pointed at
