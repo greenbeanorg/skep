@@ -14,7 +14,8 @@ trust on first use that pins the SHA-256 of the server's public key
 TLS client (see [below](#operator-supplied-certificates)). There is no
 flag that skips both.
 
-Validated on FreeBSD 15.1-RELEASE: as an ordinary user with the API on
+Validated on FreeBSD 15.1-RELEASE in a lab VM nested under KVM
+(`hearst`), not on bare metal: as an ordinary user with the API on
 loopback, and against the `skep_api` rc.d service from another host; see
 [tests/integration/skepctl](../../tests/integration/skepctl/README.md).
 

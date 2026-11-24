@@ -10,8 +10,8 @@ did not create.
 
 **Status (2026-11-22):** built and tested on Linux against fixture roots
 (copies of a stock UFS install, a stock ZFS install, and `hearst`'s
-files), and validated on the two lab VMs ADR 0012 asks for, FreeBSD
-15.1-RELEASE-p7: `smith` (UFS root, distribution sets) and `langrishe`
+files), and validated on the two lab VMs ADR 0012 asks for, both nested
+under KVM (not bare metal), FreeBSD 15.1-RELEASE-p7: `smith` (UFS root, distribution sets) and `langrishe`
 (ZFS root, pkgbase). `check`, `plan`, `apply` (with `-start` and
 `-admin`), a second `apply`, `rollback` of an apply and of a remove,
 `upgrade` (both refusals and the success path) and `remove` (default and

@@ -13,7 +13,9 @@ langrishe, 2026-11-22;
 Everything in sections 3 and 4 behaved as written **except the
 pre-deinstall refusal, which pkg does not enforce** (section 2); the
 script now says so and only warns (ADR 0012, fix-round amendment). The
-reworded scripts are pending FreeBSD validation.
+reworded warning ran on langrishe on 2026-11-22
+([record](../../tests/integration/setup/results/lab-vm-recheck-20261122.md),
+L2). All of these are lab VMs nested under KVM, not bare metal.
 
 **Dependency on the firmware.** The package depends on `edk2-bhyve`, the
 bhyve UEFI firmware the agent opens to start a VM. How pkg resolves it for
