@@ -1,0 +1,22 @@
+## corosync3: 3.1.10 BSD3CLAUSE www=https://corosync.github.io/corosync/
+   deps: kronosnet libqb nspr nss 
+## pacemaker2: 2.1.11 GPLv2 www=https://www.clusterlabs.org/pacemaker/
+   deps: bash corosync3 getopt gettext-runtime glib gmp gnutls libffi libidn2 libltdl libqb libtasn1 libunistring libuuid libxml2 libxslt nettle p11-kit pcre python312 resource-agents 
+## kronosnet: 1.26_2 GPLv2 www=https://kronosnet.org/
+   deps: gcc14 liblz4 libqb libxml2 lzo2 nspr nss zstd 
+## fence-agents: 4.12.1_1  www=https://github.com/ClusterLabs/fence-agents
+   deps: libxml2 py312-pexpect py312-pycurl py312-requests python312 
+## rqlite: 10.3.6_3 MIT www=https://rqlite.io
+   deps: 
+## coreos-etcd36: 3.6.14_3 APACHE20 www=https://etcd.io/
+   deps: 
+## consul: 2.0.4_3 MPL20 www=https://www.consul.io/
+   deps: 
+## corosync-qdevice: 
+## corosync-qnetd: 
+## qdevice: 
+## qnetd: 
+DBUS=off
+DOCS=on
+SNMP=off
+Unknown query format key: '%F'

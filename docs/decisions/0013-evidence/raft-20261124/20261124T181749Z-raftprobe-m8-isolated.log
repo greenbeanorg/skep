@@ -1,0 +1,30 @@
+(a) all isolated, run 1
+  smith [Candidate 62 - 6041] write: False node is not the leader stale: True 'x' last_contact 2026-11-24T13:17:50.140710328-05:00 linear: False node is not the leader
+  langrishe [Candidate 62 - 6041] write: False node is not the leader stale: True 'x' last_contact 2026-11-24T13:17:50.167394528-05:00 linear: False node is not the leader
+  star [Candidate 62 - 6041] write: False node is not the leader stale: True 'x' last_contact 2026-11-24T18:17:50.118083319Z linear: False node is not the leader
+  after 15 s: smith[Candidate 62 - 6041] langrishe[Candidate 62 - 6041] star[Candidate 62 - 6041]
+  healed: smith[Leader 63 smith 6042] langrishe[Follower 63 smith 6042] star[Follower 63 smith 6042]
+(b) two nodes down, run 1
+  star [Candidate 63 - 6042] write: False node is not the leader stale: True 'x' last_contact 2026-11-24T18:18:09.118454303Z linear: False node is not the leader
+  after 15 s: star[Candidate 63 - 6042]
+  restarted: smith[Follower 64 star 6043] langrishe[Follower 64 star 6043] star[Leader 64 star 6043]
+(a) all isolated, run 2
+  smith [Candidate 64 - 6043] write: False node is not the leader stale: True 'x' last_contact 2026-11-24T13:18:31.284469405-05:00 linear: False node is not the leader
+  langrishe [Candidate 64 - 6043] write: False node is not the leader stale: True 'x' last_contact 2026-11-24T13:18:31.304393582-05:00 linear: False node is not the leader
+  star [Candidate 64 - 6043] write: False node is not the leader stale: True 'x' last_contact 2026-11-24T18:18:31.254953517Z linear: False node is not the leader
+  after 15 s: smith[Candidate 64 - 6043] langrishe[Candidate 64 - 6043] star[Candidate 64 - 6043]
+  healed: smith[Follower 65 star 6044] langrishe[Follower 65 star 6044] star[Leader 65 star 6044]
+(b) two nodes down, run 2
+  star [Candidate 65 - 6044] write: False node is not the leader stale: True 'x' last_contact 2026-11-24T18:18:50.959769046Z linear: False node is not the leader
+  after 15 s: star[Candidate 65 - 6044]
+  restarted: smith[Follower 66 star 6045] langrishe[Follower 66 star 6045] star[Leader 66 star 6045]
+(a) all isolated, run 3
+  smith [Candidate 66 - 6045] write: False node is not the leader stale: True 'x' last_contact 2026-11-24T13:19:12.421097602-05:00 linear: False node is not the leader
+  langrishe [Candidate 66 - 6045] write: False node is not the leader stale: True 'x' last_contact 2026-11-24T13:19:12.400478352-05:00 linear: False node is not the leader
+  star [Candidate 66 - 6045] write: False node is not the leader stale: True 'x' last_contact 2026-11-24T18:19:12.371579612Z linear: False node is not the leader
+  after 15 s: smith[Candidate 66 - 6045] langrishe[Candidate 66 - 6045] star[Candidate 66 - 6045]
+  healed: smith[Follower 67 langrishe 6046] langrishe[Leader 67 langrishe 6046] star[Follower 67 langrishe 6046]
+(b) two nodes down, run 3
+  star [Candidate 67 - 6046] write: False node is not the leader stale: True 'x' last_contact 2026-11-24T18:19:31.476688992Z linear: False node is not the leader
+  after 15 s: star[Candidate 67 - 6046]
+  restarted: smith[Leader 68 smith 6047] langrishe[Follower 68 smith 6047] star[Follower 68 smith 6047]

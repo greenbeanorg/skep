@@ -1,0 +1,45 @@
+run 1 leader=star stopped follower=langrishe
+  bench 2000: True 0 11166
+  leader snapshot: True None ms 26 log before [1, 8084] after [7985, 8084]
+  leader: Leader term 69 applied 8084 log_first 7985 last 8084 snap 8084 keys 8016 3dbdb4cfd2126d6a
+  follower caught up (digest equal) after 9026 ms from start command (includes ssh and process start)
+  follower: Follower term 69 applied 8084 log_first 5985 last 8084 snap 8084 keys 8016 3dbdb4cfd2126d6a
+  follower log: 2026-11-24T13:23:10.583-0500 [INFO]  raft-langrishe: snapshot network transfer progress: read-bytes=150463 percent-complete="100.00%"
+2026-11-24T13:23:10.589-0500 [INFO]  raft-langrishe: copied to local snapshot: bytes=150463
+2026-11-24T13:23:10.591-0500 [INFO]  raft-langrishe: snapshot restore progress: id=69-8084-1795544590578 last-index=8084 last-term=69 size-in-bytes=150463 read-bytes=150463 percent-complete="100.00%"
+2026-11-24T13:23:10.597-0500 [INFO]  raft-langrishe: Installed remote snapshot
+  restart leader star from its own snapshot:
+  star: Follower term 70 applied 8085 log_first 7985 last 8085 snap 8084 keys 8016 3dbdb4cfd2126d6a
+  end smith: Leader term 70 applied 8085 log_first 1 last 8085 snap 0 keys 8016 3dbdb4cfd2126d6a
+  end langrishe: Follower term 70 applied 8085 log_first 5985 last 8085 snap 8084 keys 8016 3dbdb4cfd2126d6a
+  end star: Follower term 70 applied 8085 log_first 7985 last 8085 snap 8084 keys 8016 3dbdb4cfd2126d6a
+run 2 leader=smith stopped follower=star
+  bench 2000: True 0 8853
+  leader snapshot: True None ms 10 log before [1, 10085] after [9986, 10085]
+  leader: Leader term 70 applied 10085 log_first 9986 last 10085 snap 10085 keys 10016 a63fca93ddbc0d5b
+  follower caught up (digest equal) after 1185 ms from start command (includes ssh and process start)
+  follower: Follower term 70 applied 10085 log_first 7986 last 10085 snap 10085 keys 10016 a63fca93ddbc0d5b
+  follower log: 2026-11-24T18:23:29.874Z [INFO]  raft-star: snapshot network transfer progress: read-bytes=193353 percent-complete="100.00%"
+2026-11-24T18:23:29.884Z [INFO]  raft-star: copied to local snapshot: bytes=193353
+2026-11-24T18:23:29.905Z [INFO]  raft-star: snapshot restore progress: id=70-10085-1795544609867 last-index=10085 last-term=70 size-in-bytes=193353 read-bytes=193353 percent-complete="100.00%"
+2026-11-24T18:23:29.912Z [INFO]  raft-star: Installed remote snapshot
+  restart leader smith from its own snapshot:
+  smith: Follower term 71 applied 10086 log_first 9986 last 10086 snap 10085 keys 10016 a63fca93ddbc0d5b
+  end smith: Follower term 71 applied 10086 log_first 9986 last 10086 snap 10085 keys 10016 a63fca93ddbc0d5b
+  end langrishe: Follower term 71 applied 10086 log_first 5985 last 10086 snap 8084 keys 10016 a63fca93ddbc0d5b
+  end star: Leader term 71 applied 10086 log_first 7986 last 10086 snap 10085 keys 10016 a63fca93ddbc0d5b
+run 3 leader=star stopped follower=langrishe
+  bench 2000: True 0 11947
+  leader snapshot: True None ms 22 log before [7986, 12086] after [11987, 12086]
+  leader: Leader term 71 applied 12086 log_first 11987 last 12086 snap 12086 keys 12016 5c139ba9ca9e020b
+  follower caught up (digest equal) after 8317 ms from start command (includes ssh and process start)
+  follower: Follower term 71 applied 12086 log_first 9987 last 12086 snap 12086 keys 12016 5c139ba9ca9e020b
+  follower log: 2026-11-24T13:24:00.501-0500 [INFO]  raft-langrishe: snapshot network transfer progress: read-bytes=236243 percent-complete="100.00%"
+2026-11-24T13:24:00.507-0500 [INFO]  raft-langrishe: copied to local snapshot: bytes=236243
+2026-11-24T13:24:00.511-0500 [INFO]  raft-langrishe: snapshot restore progress: id=71-12086-1795544640494 last-index=12086 last-term=71 size-in-bytes=236243 read-bytes=236243 percent-complete="100.00%
+2026-11-24T13:24:00.516-0500 [INFO]  raft-langrishe: Installed remote snapshot
+  restart leader star from its own snapshot:
+  star: Follower term 72 applied 12087 log_first 11987 last 12087 snap 12086 keys 12016 5c139ba9ca9e020b
+  end smith: Follower term 72 applied 12087 log_first 9986 last 12087 snap 10085 keys 12016 5c139ba9ca9e020b
+  end langrishe: Leader term 72 applied 12087 log_first 9987 last 12087 snap 12086 keys 12016 5c139ba9ca9e020b
+  end star: Follower term 72 applied 12087 log_first 11987 last 12087 snap 12086 keys 12016 5c139ba9ca9e020b

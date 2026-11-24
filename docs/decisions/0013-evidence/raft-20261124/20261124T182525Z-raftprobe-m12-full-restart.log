@@ -1,0 +1,60 @@
+== SIGTERM run 1, before:
+  smith Follower term 72 applied 12099 5d143a5023e83b5f
+  langrishe Leader term 72 applied 12099 5d143a5023e83b5f
+  star Follower term 72 applied 12099 5d143a5023e83b5f
+smith:  langrishe:  star:  
+  {"go_sent":true,"leader":"langrishe","leader_seen_ms":1432.275,"scenario":"leader","term":73,"write_ok_ms":1443.241,"writer":"langrishe"}
+  after:
+  smith Follower term 73 applied 12101 5d143a5023e83b5f
+  langrishe Leader term 73 applied 12101 5d143a5023e83b5f
+  star Follower term 73 applied 12101 5d143a5023e83b5f
+== SIGTERM run 2, before:
+  smith Follower term 73 applied 12101 5d143a5023e83b5f
+  langrishe Leader term 73 applied 12101 5d143a5023e83b5f
+  star Follower term 73 applied 12101 5d143a5023e83b5f
+smith:  langrishe:  star:  
+  {"go_sent":true,"leader":"langrishe","leader_seen_ms":1458.549,"scenario":"leader","term":74,"write_ok_ms":1469.086,"writer":"langrishe"}
+  after:
+  smith Follower term 74 applied 12103 5d143a5023e83b5f
+  langrishe Leader term 74 applied 12103 5d143a5023e83b5f
+  star Follower term 74 applied 12103 5d143a5023e83b5f
+== SIGTERM run 3, before:
+  smith Follower term 74 applied 12103 5d143a5023e83b5f
+  langrishe Leader term 74 applied 12103 5d143a5023e83b5f
+  star Follower term 74 applied 12103 5d143a5023e83b5f
+smith:  langrishe:  star:  
+  {"go_sent":true,"leader":"star","leader_seen_ms":1706.061,"scenario":"leader","term":75,"write_ok_ms":1714.095,"writer":"star"}
+  after:
+  smith Follower term 75 applied 12105 5d143a5023e83b5f
+  langrishe Follower term 75 applied 12105 5d143a5023e83b5f
+  star Leader term 75 applied 12105 5d143a5023e83b5f
+== SIGKILL run 1, before:
+  smith Follower term 75 applied 12105 5d143a5023e83b5f
+  langrishe Follower term 75 applied 12105 5d143a5023e83b5f
+  star Leader term 75 applied 12105 5d143a5023e83b5f
+smith:  langrishe:  star:  
+  {"go_sent":true,"leader":"smith","leader_seen_ms":1635.553,"scenario":"leader","term":76,"write_ok_ms":1644.164,"writer":"smith"}
+  after:
+  smith Leader term 76 applied 12107 5d143a5023e83b5f
+  langrishe Follower term 76 applied 12107 5d143a5023e83b5f
+  star Follower term 76 applied 12107 5d143a5023e83b5f
+== SIGKILL run 2, before:
+  smith Leader term 76 applied 12107 5d143a5023e83b5f
+  langrishe Follower term 76 applied 12107 5d143a5023e83b5f
+  star Follower term 76 applied 12107 5d143a5023e83b5f
+smith:  langrishe:  star:  
+  {"go_sent":true,"leader":"star","leader_seen_ms":1209.011,"scenario":"leader","term":77,"write_ok_ms":1216.742,"writer":"star"}
+  after:
+  smith Follower term 77 applied 12109 5d143a5023e83b5f
+  langrishe Follower term 77 applied 12109 5d143a5023e83b5f
+  star Leader term 77 applied 12109 5d143a5023e83b5f
+== SIGKILL run 3, before:
+  smith Follower term 77 applied 12109 5d143a5023e83b5f
+  langrishe Follower term 77 applied 12109 5d143a5023e83b5f
+  star Leader term 77 applied 12109 5d143a5023e83b5f
+smith:  langrishe:  star:  
+  {"go_sent":true,"leader":"langrishe","leader_seen_ms":1091.509,"scenario":"leader","term":78,"write_ok_ms":1102.928,"writer":"langrishe"}
+  after:
+  smith Follower term 78 applied 12111 5d143a5023e83b5f
+  langrishe Leader term 78 applied 12111 5d143a5023e83b5f
+  star Follower term 78 applied 12111 5d143a5023e83b5f

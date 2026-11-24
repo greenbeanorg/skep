@@ -807,8 +807,13 @@ is why the scripts now only warn.
   the media directory and does not verify checksums.
 - **Root helper.** Whether to split a minimal root helper out of the agent
   is revisited before 1.0.
-- **Signed per-request tokens** replace the API-asserted identity before
-  any agent accepts requests from another node.
+- **Signed per-request envelopes** before any request is forwarded
+  between nodes (Milestone 8, step 8e). A request that originates on
+  another node reaches an agent only through that agent's own
+  `skep-api`, which verifies the originating API's signed, short-lived
+  envelope, the user and their role; the agent records the envelope and
+  the originating node in its audit and does not verify it itself
+  (ADR 0004, amendment of 2026-11-24; ADR 0013 B8).
 - **Per-entry hash chaining** of the audit logs, which would make
   tampering inside the live table detectable too, and **signed segments**,
   which wait for node keys (ADR 0007, decision 5).
