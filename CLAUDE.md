@@ -84,7 +84,7 @@ GET    /api/v1/metrics
 - No plaintext secrets.
 
 ### Clustering and HA
-- Cluster technology is **not decided**. Native Go Raft and Corosync are both under evaluation. Don't build a production cluster until that evaluation is done; keep `internal/cluster/` behind an interface.
+- Cluster technology is decided in [ADR 0013](docs/decisions/0013-clustering.md): Raft compiled into Skep, in an unprivileged `skep-cluster` service. Keep `internal/cluster/` behind an interface.
 - The initial HA target is three nodes.
 - Never treat an unreachable node as dead. Fencing, quorum, ownership, and split-brain prevention are mandatory. Never auto-restart a VM elsewhere without fencing and ownership validation.
 

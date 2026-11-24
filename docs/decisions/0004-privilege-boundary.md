@@ -656,10 +656,11 @@ the node key belongs to `skep-cluster` (answer 6).
 ### What does not change
 
 - "Nothing else talks to the agent socket" (Decision, Processes): the
-  `skep-cluster` **service** never connects to it (ADR 0013 A3). The
-  `skep-cluster join` **command**, run by root, does, as `skep-setup`
-  already does: it takes a drain and reads the guest list as peer UID 0
-  (ADR 0013 B3, B7).
+  `skep-cluster` **service** never connects to it (ADR 0013 A3). Two
+  `skep-cluster` **commands**, run by root, do, as `skep-setup` already
+  does, as peer UID 0: `init` reads the node ID (ADR 0013 B1), and
+  `join` takes a drain and reads the guest list (ADR 0013 B3, B7).
+  (Wording from ADR 0013 amendment 1, which named `init` here.)
 - The threat model, the typed operations and host confinement in
   `agent.json` (never replicated).
 - The separation of the databases, with two changes of content. `api.db`
