@@ -42,6 +42,10 @@ is the most code, in the most sensitive place.
   after its wait either way, but the timing needs a test.
 - `rc.d` status parsing must stay correct when run without root, which is
   already unreliable (see the service docs).
+- An agent that waits before exiting on a refusal is a live process, so
+  `service skep_agent start`, `service skep_agent status` and `skep-setup
+  upgrade`'s pid check may read a refused agent as running. B must not be
+  built until that is solved.
 
 ## Questions for Andy
 
