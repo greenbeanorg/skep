@@ -243,6 +243,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		Engine:   engine,
 		Host:     host,
 		Packages: cfg.Storage.TemplatePackages,
+		Audit:    database.NewAuditLog(db),
 		Logger:   log,
 	})
 	if err != nil {
@@ -276,6 +277,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		StartTimeout:    time.Duration(cfg.Containers.StartTimeoutSeconds) * time.Second,
 		MaxLockedMemory: cfg.Containers.MaxLockedMemoryBytes,
 		PhysicalMemory:  physMem,
+		Audit:           database.NewAuditLog(db),
 		Logger:          log,
 	})
 	if err != nil {

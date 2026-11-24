@@ -348,6 +348,12 @@ implemented:
   `skep-api` cannot open: a compromised API can add false entries to its
   own log but cannot remove the agent's record of what it asked for. The
   request ID is the same in both logs.
+- The agent's start-up sweeps write one audit entry per action, with the
+  actor `system`: `container.sweep.stop_completed`,
+  `container.sweep.half_started_removed`,
+  `container.sweep.quarantine_removed`, `container.sweep.devfs_removed` and
+  `template.sweep.build_jail_removed`. A failure's entry carries a fixed
+  reason; the cause is in the agent's log.
 - Each process owns one database the other cannot open:
   `/var/db/skep/agent` is `root`, `0700`; `/var/db/skep/api` is `skep`,
   `0700`.
