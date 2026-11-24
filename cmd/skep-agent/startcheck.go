@@ -4,7 +4,6 @@ import (
 	"errors"
 	"io/fs"
 	"os"
-	"path/filepath"
 
 	"github.com/greenbeanorg/skep/internal/config"
 	"github.com/greenbeanorg/skep/internal/startcheck"
@@ -23,11 +22,7 @@ func configToCheck(configFlag string, lookup func(string) (string, bool), exists
 // programTargets are the running binary and the configuration file the
 // agent is about to read (ADR 0004, amendment of 2026-11-23).
 func programTargets(exe, configFlag string, lookup func(string) (string, bool), exists func(string) bool) []startcheck.Target {
-	out := []startcheck.Target{{Path: exe, What: "the agent's binary"}}
-	if path := configToCheck(configFlag, lookup, exists); path != "" {
-		out = append(out, startcheck.Target{Path: path, What: "the agent's configuration"})
-	}
-	return out
+	return startcheck.ProgramTargets(exe, configToCheck(configFlag, lookup, exists))
 }
 
 // checkConfigRead refuses when the file Load read is not the one checked,
@@ -49,11 +44,7 @@ func checkConfigRead(checked, read string) error {
 // when it is another one, and the socket's directory. Any may not exist
 // yet; the parents that do are checked.
 func stateTargets(cfg config.Config) []startcheck.Target {
-	out := []startcheck.Target{{Path: cfg.DataDir, What: "the agent's data directory", Optional: true}}
-	if dir := filepath.Dir(cfg.Database.Path); dir != filepath.Clean(cfg.DataDir) {
-		out = append(out, startcheck.Target{Path: dir, What: "the agent's database directory", Optional: true})
-	}
-	return append(out, startcheck.Target{Path: filepath.Dir(cfg.Socket.Path), What: "the agent socket's directory", Optional: true})
+	return startcheck.StateTargets(cfg.DataDir, cfg.Database.Path, cfg.Socket.Path)
 }
 
 // checkProgram runs before the configuration is read. It returns the

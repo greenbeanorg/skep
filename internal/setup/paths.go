@@ -45,18 +45,28 @@ func apiServiceArgs(root string) ([]string, error) {
 	return args, nil
 }
 
-// AgentDBPath returns the host path (under root) of the agent's database
-// as the running agent has it: agent.json (or skep_agent_config) loaded
-// the way the agent loads it, with the rc.d script's -data-dir.
-func AgentDBPath(root string) (string, error) {
+// agentLoadOptions loads agent.json (or skep_agent_config) the way the
+// agent does under its rc.d script, with that script's -data-dir.
+func agentLoadOptions(root string) (config.LoadOptions, error) {
 	file, dataDir, err := serviceConfigFile(root, "skep_agent_config", "skep_agent_data_dir")
 	if err != nil {
-		return "", err
+		return config.LoadOptions{}, err
 	}
 	opts := config.LoadOptions{DefaultPath: hostPath(root, config.DefaultConfigPath), LookupEnv: noEnv,
 		Overrides: config.Overrides{DataDir: dataDir}}
 	if file != "" {
 		opts.Path = hostPath(root, file)
+	}
+	return opts, nil
+}
+
+// AgentDBPath returns the host path (under root) of the agent's database
+// as the running agent has it: agent.json (or skep_agent_config) loaded
+// the way the agent loads it, with the rc.d script's -data-dir.
+func AgentDBPath(root string) (string, error) {
+	opts, err := agentLoadOptions(root)
+	if err != nil {
+		return "", err
 	}
 	c, err := config.Load(opts)
 	if err != nil {
@@ -96,14 +106,9 @@ func exists(path string) bool {
 // way the agent loads it. Without a configuration file the agent uses the
 // defaults: no pools.
 func AgentStorage(root string) (pools []string, datasetRoot string, err error) {
-	file, dataDir, err := serviceConfigFile(root, "skep_agent_config", "skep_agent_data_dir")
+	opts, err := agentLoadOptions(root)
 	if err != nil {
 		return nil, "", err
-	}
-	opts := config.LoadOptions{DefaultPath: hostPath(root, config.DefaultConfigPath), LookupEnv: noEnv,
-		Overrides: config.Overrides{DataDir: dataDir}}
-	if file != "" {
-		opts.Path = hostPath(root, file)
 	}
 	c, err := config.Load(opts)
 	if err != nil {

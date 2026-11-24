@@ -32,6 +32,14 @@ skep-setup remove    [-plan]     before "pkg delete skep"
 
 Run it as root: it reads `agent.json` (`0600`).
 
+`check`, as root on the real root, also reports whether `skep_agent` is
+running and runs the agent's own start check on the paths the rc.d script
+would use: the binary, the configuration, the data, database and socket
+directories, each with its parents up to `/`, including ACLs. It lists the
+paths. A refusal is a `manual` item (exit 1) with the first refused path
+and its fix. Extra arguments in `skep_agent_args` are not read; `check`
+says so when the variable is set.
+
 | Exit status | Meaning |
 |---|---|
 | `0` | done, or nothing to do |
