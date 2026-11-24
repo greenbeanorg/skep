@@ -623,4 +623,10 @@ stopped.
 
 `max_locked_memory_bytes` is the total `limits.locked_memory` of all
 running jails (see [Limits](#limits)); 0 means a quarter of physical
-memory, and a negative value is refused at load.
+memory, and a negative value is refused at load. `GET /api/v1/system` reports the value in effect as
+`containers.max_locked_memory_bytes`. It is the limit, not the memory wired
+now. A reported 0 differs from a configured 0, which selects the default: it
+means none was configured and physical memory could not be read. A non-zero
+`locked_memory`, and so `options.mlock`, is then refused at create, update,
+and start. A jail without `locked_memory` is unaffected, and a jail already
+running keeps its rule.
