@@ -10,18 +10,10 @@ import (
 
 	"github.com/greenbeanorg/skep/internal/cluster/clusterconf"
 	"github.com/greenbeanorg/skep/internal/cluster/joincode"
-	"github.com/greenbeanorg/skep/internal/cluster/joinstate"
-	"github.com/greenbeanorg/skep/internal/cluster/membership"
 	"github.com/greenbeanorg/skep/internal/cluster/nodekey"
-	"github.com/greenbeanorg/skep/internal/cluster/raftnet"
 	"github.com/greenbeanorg/skep/internal/cluster/service"
 	"github.com/greenbeanorg/skep/internal/cluster/store"
-	"github.com/greenbeanorg/skep/internal/ids"
 )
-
-// oneNodeState is what a join moves aside: the store, the snapshots and
-// the applied-membership file (ADR 0013 B1 step 3.4, amendment 1).
-var oneNodeState = []string{store.DBFile, "snapshots", membership.FileName}
 
 // runStageCmd is the hidden command a root-run command starts as the
 // service account. It refuses to run as root. It prints one JSON line.
@@ -90,73 +82,27 @@ func stageRead(configPath, dataDir string) stageResult {
 	return stageResult{Outcome: "ok", Servers: n, Pin: key.Pin()}
 }
 
-// stageJoin moves the one-node state aside and makes the join call (ADR
-// 0013 B1, join command steps 1, 4, 5 and 7).
+// stageJoin runs service.StageJoin and reports its outcome.
 func stageJoin(ctx context.Context, e env, configPath, dataDir, line string) stageResult {
 	adm, err := joincode.ParseAdmission(line)
 	if err != nil {
 		return fail(err.Error())
 	}
-	cfg, key, n, alone, err := readAlone(configPath, dataDir)
+	cfg, err := clusterconf.Load(configPath)
 	if err != nil {
 		return fail(err.Error())
 	}
-	if adm.For.NodeID != cfg.NodeID || adm.For.Pin != key.Pin() {
-		return stageResult{Outcome: "not_alone", Pin: key.Pin(),
-			Message: fmt.Sprintf("the admission is for the key %s, this host's key is %s", adm.For.Pin, key.Pin())}
-	}
-	if !alone {
-		return stageResult{Outcome: "not_alone", Servers: n, Pin: key.Pin(),
-			Message: fmt.Sprintf("the Raft configuration has %d servers; only a node that is alone can join", n)}
-	}
-	opID, err := ids.NewUUID()
+	key, err := nodekey.Load(dataDir)
 	if err != nil {
 		return fail(err.Error())
 	}
-	standalone, err := joinstate.MoveAside(dataDir, oneNodeState, time.Now().UTC().Format("20060102T150405Z"))
-	if err != nil {
-		if standalone != "" {
-			if perr := joinstate.PutBack(dataDir, standalone, oneNodeState); perr != nil {
-				return fail(fmt.Sprintf("moving the one-node state aside failed (%v) and putting it back failed too (%v); it is in %s", err, perr, standalone))
-			}
-		}
-		return fail("moving the one-node state aside failed: " + err.Error())
-	}
-	js := joinstate.State{Phase: joinstate.PhaseCalling, OpID: opID, Admission: adm, Standalone: standalone}
-	if err := joinstate.Write(dataDir, js); err != nil {
-		if perr := joinstate.PutBack(dataDir, standalone, oneNodeState); perr != nil {
-			return fail(fmt.Sprintf("writing join.json failed (%v) and putting the one-node state back failed (%v); it is in %s", err, perr, standalone))
-		}
-		return fail("writing join.json failed: " + err.Error())
-	}
-	caller := raftnet.Caller{NodeID: cfg.NodeID, Certificate: key.Certificate}
-	out := service.JoinCall(ctx, caller, js.Peers(cfg.NodeID), opID, 3, 2*time.Second, nil)
-	res := stageResult{Outcome: out.Result, Message: out.Message, Pin: key.Pin(), Standalone: standalone, Attempts: out.Attempts}
-	switch out.Result {
-	case service.JoinAccepted:
-		js.Phase, js.Answer = joinstate.PhaseAccepted, out.Answer.Members
+	out := service.StageJoin(ctx, dataDir, cfg, key, adm, time.Now(), 2*time.Second)
+	res := stageResult{Outcome: out.Outcome, Message: out.Message, Pin: key.Pin(), Standalone: out.Standalone, Attempts: out.Attempts}
+	if out.Answer != nil {
 		res.ClusterID = out.Answer.ClusterID
 		for _, m := range out.Answer.Members {
 			res.Members = append(res.Members, m.Name)
 		}
-	case service.JoinUnknown:
-		js.Phase = joinstate.PhaseUnknown
-	default:
-		// Join step 1 is known not to be applied: every handshake
-		// failed and nothing was sent, or the leader refused.
-		if err := joinstate.PutBack(dataDir, standalone, oneNodeState); err != nil {
-			js.Phase = joinstate.PhaseUnknown
-			_ = joinstate.Write(dataDir, js)
-			return fail(fmt.Sprintf("the join failed before step 1 (%s), but putting the one-node state back failed: %v; it is in %s", out.Message, err, standalone))
-		}
-		if err := joinstate.Remove(dataDir); err != nil {
-			return fail("the one-node state is back, but join.json could not be removed: " + err.Error())
-		}
-		res.Standalone = ""
-		return res
-	}
-	if err := joinstate.Write(dataDir, js); err != nil {
-		res.Message += "; recording the outcome failed: " + err.Error()
 	}
 	return res
 }

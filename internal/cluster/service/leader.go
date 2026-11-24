@@ -24,6 +24,9 @@ type StatusAnswer struct {
 // expiry of due pending entries and finish the joins of members in state
 // "joining".
 func (s *Service) leaderStep(ctx context.Context) {
+	if s.isFrozen() {
+		return
+	}
 	st := s.getStore()
 	isLeader := st.IsLeader()
 	now := s.now()
@@ -106,6 +109,7 @@ func (s *Service) continueJoin(ctx context.Context, view clusterstate.View, serv
 		}
 		s.log.Info("cluster membership: non-voter added", "event", "non-voter added", "node_id", m.ID, "name", m.Name,
 			"actor", clusterstate.ActorSystem, "op_id", m.JoinOp, "origin", s.cfg.NodeID)
+		s.joinStepDone(2, m.ID)
 	case !sv.Voter:
 		// Step 3: caught up, and every member has applied step 1.
 		waits := s.promotionWaits(ctx, view, m)
@@ -119,6 +123,9 @@ func (s *Service) continueJoin(ctx context.Context, view clusterstate.View, serv
 		}
 		s.log.Info("cluster membership: promoted", "event", "promoted", "node_id", m.ID, "name", m.Name,
 			"actor", clusterstate.ActorSystem, "op_id", m.JoinOp, "origin", s.cfg.NodeID)
+		if s.joinStepDone(3, m.ID) {
+			return
+		}
 		fallthrough
 	default:
 		// Step 4.
@@ -130,7 +137,9 @@ func (s *Service) continueJoin(ctx context.Context, view clusterstate.View, serv
 		}
 		if err != nil {
 			s.log.Warn("leader: join step 4 failed; retrying", "node_id", m.ID, "error", err)
+			return
 		}
+		s.joinStepDone(4, m.ID)
 	}
 }
 

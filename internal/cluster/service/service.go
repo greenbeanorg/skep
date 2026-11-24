@@ -108,6 +108,31 @@ type Service struct {
 	// waits names, per joining member, the members its promotion waits
 	// for, as this node last saw it.
 	waits map[string][]string
+	// afterJoinStep is a test hook, called when this node, as leader,
+	// has completed join step n for a member. Returning true freezes
+	// the node's leader work, so that a test can stop it right there.
+	afterJoinStep func(step int, nodeID string) bool
+	frozen        bool
+}
+
+// joinStepDone runs the test hook and reports whether the node is frozen.
+func (s *Service) joinStepDone(step int, nodeID string) bool {
+	s.mu.Lock()
+	hook := s.afterJoinStep
+	s.mu.Unlock()
+	if hook == nil || !hook(step, nodeID) {
+		return false
+	}
+	s.mu.Lock()
+	s.frozen = true
+	s.mu.Unlock()
+	return true
+}
+
+func (s *Service) isFrozen() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.frozen
 }
 
 // New returns the service. SetStore and Run complete it.

@@ -136,6 +136,9 @@ func (s *Service) joinAnswer() JoinAnswer {
 // B1). A repeat with the same operation ID, or from a key that already has
 // its member entry, is answered as accepted without writing anything.
 func (s *Service) handleJoin(from raftnet.Peer, req JoinRequest) (any, error) {
+	if s.isFrozen() {
+		return nil, &raftnet.PeerError{Code: raftnet.CodeUnavailable, Message: "this node is stopping"}
+	}
 	if hint, ok := s.notLeader(); ok {
 		return nil, hint
 	}
@@ -159,7 +162,7 @@ func (s *Service) handleJoin(from raftnet.Peer, req JoinRequest) (any, error) {
 	case now >= pending.ExpiresAt:
 		return nil, &raftnet.PeerError{Code: raftnet.CodeRefused, Message: "the pending entry of this node has expired"}
 	}
-	e, err := clusterstate.NewEntry(clusterstate.TypeMemberJoin, req.OpID, clusterstate.ActorSystem, s.cfg.NodeID,
+	e, err := clusterstate.NewEntry(clusterstate.TypeMemberJoin, req.OpID, "node:"+from.NodeID, s.cfg.NodeID,
 		clusterstate.MemberJoin{NodeID: from.NodeID, Pin: from.Pin, At: now})
 	if err != nil {
 		return nil, &raftnet.PeerError{Code: raftnet.CodeInvalidRequest, Message: err.Error()}
@@ -176,7 +179,9 @@ func (s *Service) handleJoin(from raftnet.Peer, req JoinRequest) (any, error) {
 	case err != nil:
 		return nil, &raftnet.PeerError{Code: raftnet.CodeOutcomeUnknown, Message: err.Error()}
 	}
-	_ = res
+	if !res.Duplicate {
+		s.joinStepDone(1, from.NodeID)
+	}
 	return s.joinAnswer(), nil
 }
 
