@@ -299,6 +299,7 @@ Check and read the archive on the host, whether or not the services run:
 ```sh
 skep-agent audit verify                  # as root
 skep-agent audit export --month 2026-10  # archived entries, one JSON object per line
+skep-agent audit export --unsealed       # as root, agent running: entries not yet sealed, read-only
 skep-api audit verify                    # as root (it switches to skep) or as skep
 skep-api audit export
 ```
