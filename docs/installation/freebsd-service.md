@@ -333,6 +333,9 @@ runs both before every restart ([skep-setup](skep-setup.md#upgrades)).
 
 ## Monitoring health
 
+`/health` and `/healthz` at the root of the port are not health checks:
+they answer `404` with a JSON error naming `/api/v1/health`.
+
 `GET /api/v1/health` needs no session. Without one it answers only the
 status:
 
