@@ -32,7 +32,12 @@ the whole wait.
 **B, drain over the socket.** It removes the cause of the 503 window rather
 than narrowing it: the API is not restarted until the agent is the new
 build, so the old pair keeps working on every refusal path. Its state ends
-with the agent process, so a crashed upgrade cannot leave a host stuck.
+with the agent process, but that alone does not keep a crashed upgrade from
+leaving a host stuck: if `skep-setup` dies after the drain, the old agent
+keeps running and refusing tasks. The drain therefore carries an expiry
+that setup renews while it works, so an abandoned drain ends by itself
+(see the risks). It is to be designed together with ADR 0013, since a
+cluster needs a node drain too, not built before it.
 
 Keep today's API stop as a fallback when the running agent predates the
 drain operation (the first upgrade onto a build that has it).
@@ -49,6 +54,17 @@ drain operation (the first upgrade onto a build that has it).
   account must not be able to drain the agent.
 - A second upgrade started while one runs: the drain must report who holds
   it, or refuse.
+- **A drain abandoned by a crashed setup (review, 2026-11-24).** If
+  `skep-setup` dies after draining (killed, the session lost, the host's
+  shell closed), the old agent keeps running and refuses every task until
+  it is restarted or undrained by hand. Memory-only state does not help,
+  because nothing restarts the agent. The drain needs an expiry (for
+  example a lease of a minute) that setup renews while it waits and backs
+  up; an expired drain ends by itself and is logged.
+- **A cluster needs a node drain too.** Moving work off a node before
+  maintenance is the same idea at the cluster level, and the two must not
+  become separate mechanisms with different rules. Design this together
+  with ADR 0013, not before it.
 
 ## Questions for Andy
 
