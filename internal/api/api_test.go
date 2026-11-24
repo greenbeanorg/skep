@@ -275,7 +275,7 @@ func TestHealthPathsAreNotTheInterface(t *testing.T) {
 		h.ServeHTTP(rec, httptest.NewRequest(method, path, nil))
 		return rec
 	}
-	for _, path := range []string{"/health", "/healthz"} {
+	for _, path := range []string{"/health", "/healthz", "/health/", "/healthz/"} {
 		rec := get(http.MethodGet, path)
 		body := rec.Body.String()
 		wantError(t, rec, http.StatusNotFound, httpkit.CodeNotFound)
@@ -286,7 +286,7 @@ func TestHealthPathsAreNotTheInterface(t *testing.T) {
 			t.Errorf("HEAD %s: %d, %d bytes", path, rec.Code, rec.Body.Len())
 		}
 	}
-	for _, path := range []string{"/", "/vms", "/health/x", "/healthy"} {
+	for _, path := range []string{"/", "/vms", "/health/x", "/healthz/x", "/healthy"} {
 		if rec := get(http.MethodGet, path); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "ui") {
 			t.Errorf("%s: %d %s", path, rec.Code, rec.Body)
 		}

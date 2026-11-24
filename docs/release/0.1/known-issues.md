@@ -37,8 +37,8 @@ the source is linked.*
 - **`skep-setup upgrade` with the agent not running.** Upgrade counts
   unfinished tasks from the agent's database. If some are recorded, it
   refuses and says to wait for tasks that cannot finish until the agent
-  starts, and `-force` first waits its full task wait (default 60 s). Start
-  the agent, then upgrade.
+  starts, and `-force` first waits its full task wait (`-wait`, default
+  60 s). Start the agent, then upgrade.
 - `skep-setup remove -revert-host` also lists lines an earlier install added,
   because journals survive `pkg delete` (backlog).
 
@@ -97,11 +97,12 @@ the source is linked.*
   its health answers 503 `unavailable`. With a session, the `agent` check says
   the socket is not answering and points at `daemon.log`, which holds the
   cause. After the fix the agent came back by itself within 5 s.
-- **`skep-setup check` without the host's answers** (for example no
-  `-mgmt`) prints the agent's state and start check, then exits 2 with the
-  usage error, so a refusal is visible but not in the exit code. With them,
-  its exit code 1 also covers other items for the operator, so read the
-  printed "agent start check" line.
+- **`skep-setup check` without `-mgmt`** prints the agent's state and
+  start check, then exits 2 with the usage error, so a refusal is visible
+  but not in the exit code. Other missing or invalid answers still exit 2
+  before the agent is reported. With `-mgmt`, its exit code 1 also covers
+  other items for the operator, so read the printed "agent start check"
+  line.
 - **Recent agent audit entries are read on the host, and only while the
   agent runs.** Entries not yet sealed, such as the start-up sweep's, are
   read with `skep-agent audit export --unsealed` as root while the agent

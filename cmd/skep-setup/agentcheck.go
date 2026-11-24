@@ -30,7 +30,7 @@ func (e env) agentStartFS(root string) (startcheck.FS, string) {
 }
 
 // reportAgentWithoutPlan prints the agent's state and start check when
-// check has no plan because the host's answers are missing: neither needs
+// check has no plan because -mgmt is missing: neither needs
 // them. The caller still returns the usage error, so the exit code is
 // unchanged.
 func reportAgentWithoutPlan(ctx context.Context, root string, e env) {
