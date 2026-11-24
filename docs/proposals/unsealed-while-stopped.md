@@ -40,6 +40,15 @@ the copy without it would silently omit the newest entries, and copying the
 `-wal` too gives SQLite a recovery to do on the copy, which is safe but
 needs its own test. That case can follow later if it is wanted.
 
+**Review (2026-11-24): include the unclean-stop case when B is built.** A
+crash is the main case where the log is wanted, so refusing a database
+with a `-wal` would leave B unused when it matters most. When a `-wal` is
+present, copy it together with `agent.db` (and check both before and after,
+as above) into the private directory, and let SQLite recover on the copy;
+the original and its `-wal` are never opened. The recovery on the copy
+needs its own test: a database stopped uncleanly, with entries only in the
+`-wal`, must export them.
+
 ## Risks of B
 
 - The copy holds audit data. It must be created with `0600` in a `0700`
@@ -55,7 +64,8 @@ needs its own test. That case can follow later if it is wanted.
 
 ## Questions for Andy
 
-1. Accept B, with A's refusal kept for a database that has a `-wal`?
+1. Accept B, including the unclean-stop case (the `-wal` copied with the
+   database) as the review asks?
 2. Is a short-lived root-only copy of the audit log in `$TMPDIR` acceptable,
    or should the copy go under `/var/db/skep` (a directory the agent owns,
    which then needs its own cleanup rule)?
