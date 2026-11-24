@@ -39,10 +39,6 @@ the source is linked.*
   refuses and says to wait for tasks that cannot finish until the agent
   starts, and `-force` first waits its full task wait (default 60 s). Start
   the agent, then upgrade.
-- **`skep-setup upgrade` exits 3 when the agent's stop fails**, although the
-  stop signal may have been delivered. Treat that exit 3 as "the agent may
-  have stopped": check `service skep_agent status`
-  ([skep-setup](../../installation/skep-setup.md)).
 - `skep-setup remove -revert-host` also lists lines an earlier install added,
   because journals survive `pkg delete` (backlog).
 
