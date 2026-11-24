@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/greenbeanorg/skep/internal/audit"
 	"github.com/greenbeanorg/skep/internal/database"
 	"github.com/greenbeanorg/skep/internal/hostops"
 	"github.com/greenbeanorg/skep/internal/hostops/hostfake"
@@ -225,9 +227,15 @@ func TestSweepBuildJails(t *testing.T) {
 	f := newFakeHost()
 	f.calls = nil
 	var logs strings.Builder
-	s := &Service{host: sweepHost{fakeHost: f, ids: []string{tpl}}, log: slog.New(slog.NewTextHandler(&logs, nil))}
+	var entries recordAudit
+	s := &Service{host: sweepHost{fakeHost: f, ids: []string{tpl}}, log: slog.New(slog.NewTextHandler(&logs, nil)), audit: &entries}
 	if err := s.SweepBuildJails(context.Background()); err != nil {
 		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].ActorName != audit.System || entries[0].ActorID != audit.System ||
+		entries[0].Action != "template.sweep.build_jail_removed" || entries[0].ResourceID != tpl ||
+		entries[0].Outcome != audit.Success || entries[0].Phase != audit.Finished {
+		t.Fatalf("audit = %+v", entries)
 	}
 	if strings.Join(f.calls, ",") != "RemoveBuildJail" {
 		t.Fatalf("calls = %v", f.calls)
@@ -243,6 +251,9 @@ func TestSweepBuildJails(t *testing.T) {
 	if !strings.Contains(logs.String(), "event=build_jail_sweep found=1 removed=0 failed=1") {
 		t.Fatalf("log:\n%s", logs.String())
 	}
+	if len(entries) != 2 || entries[1].Outcome != audit.Failure || strings.Contains(fmt.Sprint(entries[1].Details), "still there") {
+		t.Fatalf("audit of the failure = %+v", entries)
+	}
 	// Nothing to sweep: no removal, and the sweep still says it ran.
 	logs.Reset()
 	f.calls = nil
@@ -253,6 +264,17 @@ func TestSweepBuildJails(t *testing.T) {
 	if !strings.Contains(logs.String(), "event=build_jail_sweep found=0 removed=0 failed=0") {
 		t.Fatalf("log:\n%s", logs.String())
 	}
+}
+
+// recordAudit keeps the entries written to it.
+type recordAudit []audit.Entry
+
+func (r *recordAudit) Write(_ context.Context, e audit.Entry) error {
+	if err := e.Validate(); err != nil {
+		return err
+	}
+	*r = append(*r, e)
+	return nil
 }
 
 type sweepHost struct {

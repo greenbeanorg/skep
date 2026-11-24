@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/greenbeanorg/skep/internal/agentclient"
 	"github.com/greenbeanorg/skep/internal/auth"
 	"github.com/greenbeanorg/skep/internal/database"
 	"github.com/greenbeanorg/skep/internal/httpkit"
@@ -104,6 +105,28 @@ func TestHealthShowsOnlyTheStatusWithoutASession(t *testing.T) {
 	full := decode[models.Health](t, rec)
 	if rec.Code != http.StatusServiceUnavailable || full.Version != "9.9.9" || full.Checks["database"].Error == "" {
 		t.Errorf("authenticated health = %d %+v", rec.Code, full)
+	}
+}
+
+// TestHealthHidesTheAgentReasonWithoutASession: when the agent is not
+// answering, a caller without a session gets the status alone and a caller
+// with one gets the fixed reason.
+func TestHealthHidesTheAgentReasonWithoutASession(t *testing.T) {
+	e := shared(t)
+	b := newBackend()
+	b.health = models.Health{Status: models.HealthUnavailable, Checks: map[string]models.HealthCheck{
+		"agent": {Status: models.HealthUnavailable, Critical: true, Error: agentclient.AgentNotAnsweringReason},
+	}}
+	h := e.handler(b, nil)
+
+	rec := e.serve(h, request{method: http.MethodGet, path: "/api/v1/health"})
+	if rec.Code != http.StatusServiceUnavailable || strings.TrimSpace(rec.Body.String()) != `{"status":"unavailable"}` {
+		t.Errorf("without a session: %d %s, want exactly the status", rec.Code, rec.Body)
+	}
+	rec = e.serve(h, request{method: http.MethodGet, path: "/api/v1/health", role: auth.RoleViewer})
+	full := decode[models.Health](t, rec)
+	if rec.Code != http.StatusServiceUnavailable || full.Checks["agent"].Error != agentclient.AgentNotAnsweringReason {
+		t.Errorf("with a session: %d %+v", rec.Code, full)
 	}
 }
 
