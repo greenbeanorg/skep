@@ -15,7 +15,9 @@ import (
 // runAudit runs "skep-agent audit verify" and "skep-agent audit export":
 // local commands on the agent's own audit archive. They open agent.db
 // directly, so they need to run as root, and they work whether or not the
-// agent is running. They change nothing.
+// agent is running. They open the database read-write but write no
+// entries, create no database and migrate nothing; see internal/auditcmd
+// for what SQLite itself may do to the files.
 func runAudit(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	usage := auditcmd.Usage("skep-agent")
 	if len(args) == 0 {

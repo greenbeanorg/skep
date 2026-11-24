@@ -303,6 +303,16 @@ skep-api audit verify                    # as root (it switches to skep) or as s
 skep-api audit export
 ```
 
+`audit verify` and `audit export` refuse a missing database, and one that
+the service has not yet migrated to the segment index; they create and
+migrate nothing, and write no entries. They open the database read-write,
+however, so SQLite may still touch its files: with the service stopped it
+creates `-wal` and `-shm` and removes them again when the command exits,
+after writing into the database any changes an unclean stop left in
+`-wal`. A database in rollback-journal mode, which neither service leaves
+behind, is switched to WAL. With the service running, the files are not
+changed.
+
 `audit verify` prints one line per segment and the hash at the head of the
 chain, and exits non-zero at the first break. Use `--allow-missing` if you
 moved segments away on purpose.

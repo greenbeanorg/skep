@@ -1,8 +1,15 @@
 // Package auditcmd implements the "audit verify" and "audit export" host
 // commands of skep-agent and skep-api (docs/decisions/0007-retention.md,
 // decisions 3, 5, and 6). Each binary runs them on its own database and
-// archive; the commands work whether or not the service is running, and
-// they change nothing.
+// archive; the commands work whether or not the service is running.
+//
+// They refuse a missing database and one older than the segment index,
+// and they write no entries. They do open the database read-write, through
+// database.Open, so SQLite may still touch the files: with no service
+// running it creates -wal and -shm and removes them again on close,
+// checkpointing first any frames an unclean stop left in -wal; and it
+// switches a database in rollback-journal mode to WAL. Neither service
+// leaves a database in rollback-journal mode.
 package auditcmd
 
 import (
