@@ -270,7 +270,7 @@ func TestTLS12AndNoCertificateRefused(t *testing.T) {
 	r := newRig(t)
 	for _, conf := range []*tls.Config{
 		{InsecureSkipVerify: true, MaxVersion: tls.VersionTLS12, Certificates: []tls.Certificate{*r.keys[idMember].Certificate()}}, // test client
-		{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13}, // test client without a certificate
+		{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13},                                                                   // test client without a certificate
 	} {
 		c, err := tls.Dial("tcp", r.addr, conf)
 		if err == nil {

@@ -100,7 +100,8 @@ func (t *Transport) handleRaftRPC(conn net.Conn, br *budgetReader, r *bufio.Read
 		hdr = req.RPCHeader
 		leaderAddr := req.Addr
 		if len(leaderAddr) == 0 {
-			leaderAddr = req.Leader //nolint:staticcheck // mirrors upstream
+			//lint:ignore SA1019 mirrors upstream's fallback
+			leaderAddr = req.Leader
 		}
 		// Check if this is a heartbeat (upstream's rule, unchanged).
 		if req.Term != 0 && leaderAddr != nil &&
@@ -108,7 +109,8 @@ func (t *Transport) handleRaftRPC(conn net.Conn, br *budgetReader, r *bufio.Read
 			len(req.Entries) == 0 && req.LeaderCommitIndex == 0 {
 			isHeartbeat = true
 		}
-		if len(req.Leader) != 0 && string(req.Leader) != string(req.Addr) { //nolint:staticcheck // deprecated field must agree
+		//lint:ignore SA1019 the deprecated field must agree with the header
+		if len(req.Leader) != 0 && string(req.Leader) != string(req.Addr) {
 			return errors.New("the deprecated leader field does not match the header")
 		}
 	case rpcRequestVote:
@@ -118,7 +120,8 @@ func (t *Transport) handleRaftRPC(conn net.Conn, br *budgetReader, r *bufio.Read
 		}
 		rpc.Command = &req
 		hdr = req.RPCHeader
-		if len(req.Candidate) != 0 && string(req.Candidate) != string(req.Addr) { //nolint:staticcheck // deprecated field must agree
+		//lint:ignore SA1019 the deprecated field must agree with the header
+		if len(req.Candidate) != 0 && string(req.Candidate) != string(req.Addr) {
 			return errors.New("the deprecated candidate field does not match the header")
 		}
 	case rpcRequestPreVote:
@@ -136,8 +139,9 @@ func (t *Transport) handleRaftRPC(conn net.Conn, br *budgetReader, r *bufio.Read
 		if req.Size < 0 || req.Size > maxSnapshotSize {
 			return fmt.Errorf("snapshot of %d bytes is over the limit of %d", req.Size, maxSnapshotSize)
 		}
-		if len(req.Leader) != 0 && string(req.Leader) != string(req.Addr) { //nolint:staticcheck // deprecated field must agree
-			return errors.New("the deprecated leader field does not match the header")
+		// The older leader field, if set, must agree with the header.
+		if len(req.Leader) != 0 && string(req.Leader) != string(req.Addr) {
+			return errors.New("the leader field does not match the header")
 		}
 		rpc.Command = &req
 		// The snapshot data follows the request on the connection.

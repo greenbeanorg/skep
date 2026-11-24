@@ -227,9 +227,13 @@ func TestInvalidValuesAreRefused(t *testing.T) {
 		entry func(t *testing.T) []byte
 	}
 	cases := []tc{
-		{"pending: bad node ID", func(t *testing.T) []byte { return pendingEntry(t, "x", "NOT-A-UUID", "star", "10.0.0.3:8444", pinC, 1000) }},
+		{"pending: bad node ID", func(t *testing.T) []byte {
+			return pendingEntry(t, "x", "NOT-A-UUID", "star", "10.0.0.3:8444", pinC, 1000)
+		}},
 		{"pending: bad name", func(t *testing.T) []byte { return pendingEntry(t, "x", nodeC, "-star", "10.0.0.3:8444", pinC, 1000) }},
-		{"pending: bad pin", func(t *testing.T) []byte { return pendingEntry(t, "x", nodeC, "star", "10.0.0.3:8444", "sha256:AB", 1000) }},
+		{"pending: bad pin", func(t *testing.T) []byte {
+			return pendingEntry(t, "x", nodeC, "star", "10.0.0.3:8444", "sha256:AB", 1000)
+		}},
 		{"pending: no address", func(t *testing.T) []byte { return pendingEntry(t, "x", nodeC, "star", "", pinC, 1000) }},
 		{"pending: address without port", func(t *testing.T) []byte { return pendingEntry(t, "x", nodeC, "star", "10.0.0.3", pinC, 1000) }},
 		{"pending: unspecified address", func(t *testing.T) []byte { return pendingEntry(t, "x", nodeC, "star", "0.0.0.0:8444", pinC, 1000) }},
@@ -241,7 +245,9 @@ func TestInvalidValuesAreRefused(t *testing.T) {
 		{"pending: duplicate member address", func(t *testing.T) []byte { return pendingEntry(t, "x", nodeC, "star", "10.0.0.1:8444", pinC, 1000) }},
 		{"pending: duplicate member pin", func(t *testing.T) []byte { return pendingEntry(t, "x", nodeC, "star", "10.0.0.3:8444", pinA, 1000) }},
 		{"pending: duplicate pending ID", func(t *testing.T) []byte { return pendingEntry(t, "x", nodeB, "star", "10.0.0.3:8444", pinC, 1000) }},
-		{"pending: duplicate pending name", func(t *testing.T) []byte { return pendingEntry(t, "x", nodeC, "langrishe", "10.0.0.3:8444", pinC, 1000) }},
+		{"pending: duplicate pending name", func(t *testing.T) []byte {
+			return pendingEntry(t, "x", nodeC, "langrishe", "10.0.0.3:8444", pinC, 1000)
+		}},
 		{"pending: duplicate pending address", func(t *testing.T) []byte { return pendingEntry(t, "x", nodeC, "star", "10.0.0.2:8444", pinC, 1000) }},
 		{"pending: duplicate pending pin", func(t *testing.T) []byte { return pendingEntry(t, "x", nodeC, "star", "10.0.0.3:8444", pinB, 1000) }},
 		{"withdraw: no such pending", func(t *testing.T) []byte {
