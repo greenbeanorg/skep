@@ -31,6 +31,18 @@ export interface paths {
          *     where each check says whether it is critical. The same document is
          *     in the system document's `health` field.
          *
+         *     When the agent's socket does not answer, the `agent` check's
+         *     `error` is a fixed text: the agent is down, still starting, or
+         *     refusing to start; see `/var/log/daemon.log`, where a refused start
+         *     is logged. It never
+         *     carries the agent's own error text or the paths it refused on, and
+         *     a caller without a session still gets the status alone.
+         *
+         *     This is the only health endpoint. `/health` and `/healthz` at the
+         *     root of the HTTPS port, outside `/api/v1`, answer `404` with the
+         *     standard error body naming this path, so that a check pointed at
+         *     them cannot pass on the web interface's `200`.
+         *
          *     Two checks concern the audit archives: `audit_archive` (the
          *     agent's operation audit log) and `access_audit_archive`
          *     (skep-api's access audit log). Each is `degraded` when the
@@ -1244,15 +1256,17 @@ export interface paths {
          *     `skep1`, ... as in every jail, so the copied `rc.conf` configures
          *     them.
          *
-         *     **Static addresses** (amendment k): every NIC of the source with
-         *     a static address needs new addressing in `nics`, or the clone
-         *     would hold the source's address (`clone_addressing_required`,
-         *     422, naming the slots). New addressing or nameservers are written
-         *     into the clone's `rc.conf` and `resolv.conf`, which Skep does only
-         *     for a tree that has never run code: a clone inherits its source's
-         *     `started_once`, and for a source that has started the change is
-         *     `container_started`. So a jail with a static address can be
-         *     cloned only while it has never started.
+         *     **Static addresses** (amendment k): a jail with a static address
+         *     can be cloned only while it has never started. Once it has, every
+         *     clone request is `container_started` (409), with or without new
+         *     addressing. Before that, every NIC of the source with a static
+         *     address needs new addressing in `nics`, or the clone would hold
+         *     the source's address (`clone_addressing_required`, 422, naming the
+         *     slots). New addressing or nameservers are written into the clone's
+         *     `rc.conf` and `resolv.conf`, which Skep does only for a tree that
+         *     has never run code: a clone inherits its source's `started_once`,
+         *     and for a source that has started such a change is
+         *     `container_started`.
          *
          *     **A clone is the same guest.** Skep does not change what is inside
          *     the tree: the clone's `/etc/ssh` host keys and `/etc/hostid` are
@@ -1660,6 +1674,11 @@ export interface components {
             rctl: boolean;
             /** @description 100 per CPU of the host, the bound of `cpu_percent`. */
             max_cpu_percent: number;
+            /**
+             * Format: int64
+             * @description The host's total of `locked_memory` over all running jails (`containers.max_locked_memory_bytes`, by default a quarter of physical memory). It is the limit, not the memory wired now. A reported 0 means none was configured and physical memory could not be read. A non-zero `locked_memory`, and so `options.mlock`, is refused at create, update, and start. A jail without `locked_memory` is unaffected, and a jail already running keeps its rule.
+             */
+            readonly max_locked_memory_bytes?: number;
         };
         ContainerIPv4: {
             /** @enum {string} */
