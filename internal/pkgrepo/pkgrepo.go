@@ -10,6 +10,10 @@
 // whose first definition does not set "enabled" is enabled (pkg's
 // default); a later one that does not set it leaves it as it was. It
 // does not follow a REPOS_DIR set in pkg.conf or the environment.
+//
+// It reads the UCL forms pkg's files use: NAME: { ... }, NAME = { ... }
+// and NAME { ... }, and #, /* */ and // comments (a // only at the start
+// of a line or after white space, so a URL's "https://" is not one).
 package pkgrepo
 
 import (
@@ -34,12 +38,12 @@ const BaseName = "FreeBSD-base"
 const EnableBase = `mkdir -p /usr/local/etc/pkg/repos && printf 'FreeBSD-base: { enabled: yes }\n' >> /usr/local/etc/pkg/repos/FreeBSD.conf`
 
 var (
-	// blockRE finds a repository block: NAME: { ... } (UCL, as pkg's
-	// files are written; the name may be quoted). Nested braces do not
+	// blockRE finds a repository block: NAME: { ... }, NAME = { ... } or
+	// NAME { ... } (UCL; the name may be quoted). Nested braces do not
 	// occur in repository blocks.
-	blockRE   = regexp.MustCompile(`(?s)"?([A-Za-z0-9_.-]+)"?\s*:\s*\{([^{}]*)\}`)
-	enabledRE = regexp.MustCompile(`(?i)\benabled\s*[:=]\s*"?(yes|true|on|no|false|off)"?`)
-	commentRE = regexp.MustCompile(`(?m)#.*$`)
+	blockRE   = regexp.MustCompile(`(?s)"?([A-Za-z0-9_.-]+)"?\s*[:=]?\s*\{([^{}]*)\}`)
+	enabledRE = regexp.MustCompile(`(?i)\benabled\s*[:=]?\s*"?(yes|true|on|no|false|off)"?`)
+	commentRE = regexp.MustCompile(`/\*(?s:.*?)\*/|#[^\n]*|(?m:^|[ \t])//[^\n]*`)
 	// varRE is a ${VAR} expansion in a url; its braces are not blocks.
 	varRE = regexp.MustCompile(`\$\{[A-Za-z0-9_]*\}`)
 )
