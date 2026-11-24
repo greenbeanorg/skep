@@ -6,11 +6,11 @@
   direction. Part B is the design as proposed and then revised by his
   answers and the final review. Part C holds the answers and the final
   review; no question is open.
-- **Amendment 1 (2026-11-24)** is at the end of this document and is
-  worked into B1, B3, B4 and B13, each changed passage marked "Amended
-  (amendment 1)". It is **Proposed, not yet Accepted**: Andy accepted
-  its four points, and checking the first against `hashicorp/raft`
-  v1.8.0 left **one open question**, stated there.
+- **Amendment 1 (2026-11-24)** is **Accepted** (Andy, 2026-11-24). It is
+  at the end of this document and is worked into B1, B2, B3, B4, B6 and
+  B13, each changed passage marked "Amended (amendment 1)". Its open
+  question (what "has applied" means after a restart) was answered with
+  option a: the durable applied-membership file.
 - Date: 2026-11-23 (evaluation draft), 2026-11-24 (rewritten as the design)
 - Depends on: [ADR 0004](0004-privilege-boundary.md) (privilege boundary),
   [ADR 0005](0005-agent-task-engine.md) (task engine),
@@ -284,8 +284,10 @@ Each item was proposed for review. Andy's answers and the final review
         (answer 10) is **moved aside, not deleted**
         (`/var/db/skep/cluster/standalone.<UTC time>/`, still owned by
         the `skep-cluster` account); the users and roles in it are also
-        written to a root-only file (B3). The service starts with an
-        empty log and the admission's pins.
+        written to a root-only file (B3). **Amended (amendment 1):** the
+        applied-membership file moves aside with it. The service starts
+        with an empty log, no applied-membership file and the
+        admission's pins.
      5. The service calls the join operation on a member, **sending the
         guest list**; a member that is not the leader answers with the
         leader's address, from the admission's list. The leader checks
@@ -337,7 +339,7 @@ Each item was proposed for review. Andy's answers and the final review
   |---|---|---|
   | 1 | **One Skep entry** that consumes the pending entry and creates the member entry in state `joining`, with the node's guests (B3). Applying it checks again that the pending entry exists and the names are free; if not it changes nothing and the join is refused | The joiner repeats the call with the same operation ID (B11): a no-op if it was applied. The new leader finds a `joining` member that is not in the Raft configuration and continues at step 2 |
   | 2 | `AddNonvoter` (Raft configuration). The leader now replicates to the joiner; this is the first replicated data it receives | The new leader finds a `joining` non-voter and continues at step 3 |
-  | 3 | **Amended (amendment 1).** Catch-up and the promotion rule: the leader asks the non-voter for its applied index over Skep's own status RPC until it is within one snapshot threshold of the commit index (`hashicorp/raft` has no automatic promotion), **and** asks every member in the Skep membership (`joining` and `removing` ones included) the same way until each has applied the step 1 entry that created this member entry. Only then `AddVoter`. Until then the node is a working non-voter, and health on every member names the member being waited for | The new leader repeats both checks and the `AddVoter`; on a server that already votes it changes nothing |
+  | 3 | **Amended (amendment 1).** Catch-up and the promotion rule: the leader asks the non-voter for its applied index (the state machine's own, never the library's `AppliedIndex`; below, "Per-RPC identity") over Skep's own status RPC until it is within one snapshot threshold of the commit index (`hashicorp/raft` has no automatic promotion), **and** asks every member in the Skep membership (`joining` and `removing` ones included) the same way until each has applied the step 1 entry that created this member entry. Only then `AddVoter`. Until then the node is a working non-voter, and health on every member names the member being waited for | The new leader repeats both checks and the `AddVoter`; on a server that already votes it changes nothing |
   | 4 | A Skep entry that sets the member's state to `member` | The new leader finds a `joining` voter and proposes it |
 
   **Amended (amendment 1):** a new leader continues a join **only for a
@@ -355,9 +357,10 @@ Each item was proposed for review. Andy's answers and the final review
   after step 3, and step 3 waits until every member has applied the
   entry that carries its pins. **The consequence: with a member down, a
   join cannot finish** (the node stays a working non-voter) **until
-  that member returns or is removed.** The rule depends on what "has
-  applied" means after a restart, which is the open question of
-  amendment 1.
+  that member returns or is removed.** "Has applied" is durable across
+  a restart: it is the applied-membership file (amendment 1, "Applied
+  membership on disk"), and the applied index the leader asks for is
+  the state machine's own (below, "Per-RPC identity").
 
   *Removal:*
 
@@ -380,7 +383,14 @@ Each item was proposed for review. Andy's answers and the final review
   member that has not yet applied the pending entry refuses the joiner
   like any unknown key; the joiner tries the next member in its
   admission. **When a node applies a removal, a withdrawal or a pending
-  entry's expiry, it closes that key's open connections.**
+  entry's expiry, it closes that key's open connections.** **Amended
+  (amendment 1):** "the membership the node has applied" is, after a
+  restart, the applied-membership file until the state machine has
+  caught up with it (below, "Per-RPC identity"). The file holds no
+  pending entries, so **after a restart a pending key is refused until
+  the node has caught up**; the joiner tries the next member in its
+  admission, as for a member that has not yet applied the pending
+  entry.
 - **What a stolen request or admission gives an attacker:** nothing on its
   own. Both contain only public data. Using either needs the private key
   behind the pin, which never leaves the host that made it. The real risk
@@ -427,6 +437,45 @@ Each item was proposed for review. Andy's answers and the final review
   A **joining node** has neither record yet: it accepts the pins in its
   admission until it has applied a membership that lists it, and the
   normal rule from then on.
+
+  **Amended (amendment 1): the applied membership is durable.** The
+  library does not store the commit index; at start a node restores
+  its state machine from its latest snapshot and applies the entries
+  after it only when a leader tells it the commit index (checked in
+  v1.8.0, `api.go` `NewRaft`). So "the membership the receiver has
+  applied" is kept on disk:
+  - **The file:** `/var/db/skep/cluster/membership.json`, written by
+    the service as the `skep-cluster` account, mode `0600`,
+    atomically: a temporary file in the same directory, `fsync`,
+    `rename`, `fsync` of the directory. Content: the cluster ID, the
+    membership epoch (B4), the log index it reflects, and every member
+    entry (ID, address, both pins, state). **Pending entries are not in
+    it.**
+  - **When:** whenever an applied entry changes the membership, the
+    file is written **before** that index is reported as applied on the
+    status RPC and **before** the listener uses the new membership. A
+    write that fails stops the state machine at that entry (it is not
+    reported as applied) and is a health error.
+  - **At start** the node accepts keys by the file until its state
+    machine's applied index has reached the file's index, and by the
+    state machine from then on. The service never writes the file back
+    to a lower (epoch, index); the only root commands that lower or
+    remove it are a restore (B6) and `leave --wipe`, both with the
+    service stopped.
+  - **"Applied index"** on the status RPC, for catch-up and for the
+    promotion rule (join step 3) and key rotation, is the **state
+    machine's own** index, not the library's `AppliedIndex` (which can
+    run ahead of the state machine).
+  - **Who else writes it:** `recover` (B4) writes the file for the new
+    membership; a restore (B6) replaces it with the one from the
+    restored store; `leave --wipe` deletes it; `join` moves it aside
+    with the one-node state (`standalone.<UTC time>/`), and putting the
+    one-node state back (a failed join before the point of no return,
+    or `join --abandon`) brings it back with that state.
+  - This also closes the case of **a full stop of a young cluster**:
+    before, a node that restarted before its first snapshot had applied
+    no membership and accepted no peer; now it accepts the members in
+    its file.
 
   `hashicorp/raft`'s `NetworkTransport` does not
   expose the connection to the RPC consumer, so Skep serves inbound RPCs
@@ -493,9 +542,11 @@ recorded here before (a member that was down while a node joined
 refuses that node when it leads) is replaced by the promotion rule of
 join step 3: no member meets a leader it does not know. What it costs
 instead: **with a member down, a join or a key rotation cannot finish
-until that member returns or is removed.** One part of the rule is an
-open question (amendment 1): what a member "has applied" after it
-restarts.
+until that member returns or is removed.** What a member "has applied"
+after it restarts is the applied-membership file (amendment 1).
+**Amended (amendment 1): a member that was down during a removal still
+pins the removed node** until it has caught up (B2 states the risk and
+the operator's rule; Skep 0.2 does not prevent it).
 
 **Tests:** repeat every identity test of the prototype (other key, valid
 key of another node, non-member, header claiming another node, impostor
@@ -536,7 +587,22 @@ offset of 6 s and 16 s gives the warning and the error (unit tests with a
 fake clock; changing a lab VM's clock is not pre-approved). **Amended
 (amendment 1):** the test "a member kept down across a join, with the
 new node as leader" is replaced by the promotion tests above: the new
-node cannot lead while that member is down.
+node cannot lead while that member is down. **Amended (amendment 1),
+the applied-membership file:** a member restarted after reporting the
+joiner's member entry as applied, before its next snapshot, accepts the
+joiner by its file, and the joiner as leader brings it up to date; a
+full stop of a three-node cluster before its first snapshot, then a
+start, elects a leader; the file is `0600`, owned by `skep-cluster`,
+holds no pending entry, and is written before the status RPC reports
+the index (a fault injected between the write and the report leaves
+the file ahead, never behind); a pending key is refused after a restart
+until the node has caught up; the file never goes back to a lower
+(epoch, index) across restarts; the status RPC reports the state
+machine's index, not the library's; `recover` rewrites it, a restore
+replaces it, `leave --wipe` deletes it, a join moves it aside and a
+failed join brings it back. **Removal while a member is down (B2):**
+health on every member names the members that have not yet applied a
+removal, and stops naming each one once it has.
 
 ### B2. What one compromised node can do to the others (proposed; answered in Part C)
 
@@ -605,9 +671,26 @@ security overview must say they are not, for Skep-managed resources and
 the data inside them, and that a compromised node means every password
 should be changed.
 
+**Amended (amendment 1), a risk Skep 0.2 does not prevent: a removed
+node and a member that was down.** A member that was down while another
+node was removed still pins that node until it has caught up (its
+applied membership, the file of B1, still lists it). A removed node that
+is hostile can reach that member first, give it a forged log at a higher
+term, and that member could then win an election among the real
+members. Preventing this would need membership entries signed by a
+quorum of members (a form of hardening option b, below; backlog). **The
+rule for operators:** after removing a node because it is compromised,
+**wipe every member that was down at that time** (`leave --wipe`) before
+it returns, and join it again. To make that possible, **health on every
+member names the members that have not yet applied a removal** (learned
+over the status RPC, B1), until each has.
+
 **Tests:** from one node's `skep-cluster`, an entry that widens another
 node's confinement has no effect (the agent ignores it); a compromised
-member removed by the majority is refused at once.
+member removed by the majority is refused at once; **amended
+(amendment 1):** with one member stopped, a node removed: health on
+every running member names the stopped member as not having applied the
+removal, and stops naming it once it has returned and caught up.
 
 ### B3. Joining a host that already has guests and users (proposed; answered in Part C)
 
@@ -733,6 +816,9 @@ shrinking after a timeout.
   runs the removal with `--forget-guests` (B13), which writes step 0
   with the guests named; from there any leader finishes it. A leader
   still never forgets guests that no administrator named;
+- **Amended (amendment 1):** it writes the applied-membership file
+  (B1) for the new membership and the raised epoch, as the
+  `skep-cluster` account, before the service starts again;
 - **it leaves no root-owned file** in `/var/db/skep/cluster`: the part
   that opens the store runs as the `skep-cluster` account (B6);
 - (c) is rejected: unreachable is not dead.
@@ -747,7 +833,8 @@ commits; restart a dropped node: refused (old epoch); wipe and rejoin it;
 **amended (amendment 1):** after the recovery a dropped node without
 guests is set to `removing` and removed by the leader itself; one with
 guests stays, reported in health, until it is removed with
-`--forget-guests`.
+`--forget-guests`; the survivor's applied-membership file names the new
+membership and epoch, owned by `skep-cluster`.
 
 ### B5. Mixed versions during a rolling upgrade (proposed; answered in Part C)
 
@@ -858,6 +945,11 @@ refused with `node_version_mismatch` and nothing reaches N.
   A cluster restore is: stop every node, restore the copy on one, `recover`
   it alone (B4), wipe and rejoin the others. This is documented and
   audited like `recover`.
+- **Amended (amendment 1):** a restore **replaces** the
+  applied-membership file (B1) with one written from the restored
+  store's membership, as the `skep-cluster` account, while the service
+  is stopped; it is the one case where the file may go back to a lower
+  index. The `recover` that follows writes it again.
 - Each node's agent database stays the authority for its guests and
   tasks, so a restored cluster store that lists a guest the agent does not
   have (or misses one it has) is reconciled from the agents, never the
@@ -872,7 +964,9 @@ reconciled into the inventory; a backup with the service running, asked
 for as `skep`, refused; the backup contains no private key; after
 `recover`, `db backup` and `audit verify` as root, no file under
 `/var/db/skep/cluster` is owned by root; a restore on a host with a new
-key works with a one-node `recover` and is refused without.
+key works with a one-node `recover` and is refused without; **amended
+(amendment 1):** after a restore the applied-membership file matches
+the restored store's membership.
 
 ### B7. Drain (proposed; answered in Part C)
 
@@ -1227,9 +1321,9 @@ green, and the lab test listed, on smith (UFS), langrishe (ZFS) and star
 | Step | Builds | Lab test |
 |---|---|---|
 | 8a | `skep-cluster` skeleton: the `skep-cluster` account (fixed UID/GID, proposed by the run with ADR 0012's method and recorded in the PR), rc.d service, `/var/db/skep/cluster`, `cluster.json` (`root:skep-cluster`, `0640`); node key; node ID read from the agent by the root-run `init`; `init` without `-address` (every host a one-node cluster, Part C answer 10, with **no network listener**); `skep-cluster listen -address` opening port 8444 (B1); the Raft store with the library version pinned; type-and-version labels on every Skep entry (B5); a Unix socket with peer-credential check (`skep` and root, each operation naming which; the `skep-cluster` commands root runs use it); health | smith: init, restart, health; the socket refuses other UIDs; after `init` nothing listens on 8444; after `listen -address` it does, on that address only; `skep_agent`/`skep_api` untouched |
-| 8b | Join and trust (B1): `join-request`, `admit` (pending entries, expiry by log entry, withdrawal), `join` with the cluster confirmation, the one-node state moved aside and put back, the two records and their crash points, the listener's member-or-pending rule, the inbound handler with per-RPC identity and the upstream-comparison checklist, non-voter then automatic promotion once caught up, remove, `leave --wipe`, removal of a node that owns guests (B13), clock-offset health (B1), cluster audit (B10) | Three nodes; every identity test from the prototype; pending key limited to join; wrong and expired admissions; removal refused within one apply; removal with guests refused without `--forget-guests` |
+| 8b | Join and trust (B1): `join-request`, `admit` (pending entries, expiry by log entry, withdrawal), `join` with the cluster confirmation, the one-node state moved aside and put back, the two records and their crash points, the listener's member-or-pending rule, the inbound handler with per-RPC identity and the upstream-comparison checklist, non-voter then automatic promotion once caught up and applied by every member, the applied-membership file and the state machine's applied index on the status RPC (amendment 1), remove with its `removing` step, `leave --wipe`, removal of a node that owns guests (B13), clock-offset health (B1), cluster audit (B10) | Three nodes; every identity test from the prototype; pending key limited to join; wrong and expired admissions; removal refused within one apply; removal with guests refused without `--forget-guests` |
 | 8c | Replicated identity: users and roles in the store, the API's read copy, credential epochs, degraded login without quorum or without `skep-cluster` (B9); `skep-api admin` through the cluster; the 0.1 migration of users and roles by `skep-setup upgrade` (B3) | Login on any node; password change revokes sessions on all; a cut-off node's login rules |
-| 8d | Guest inventory and owner (A7): the owner's API publishes its guests; cluster-wide names; the agent's root-only, expiring drain operation with the reason `join` (B7, moved here from 8f because the join needs it); join with guests, the atomic name check and user replacement (B3); the agent's read of a task by idempotency key; automatic reconciliation by the owner (B8) | langrishe joins with guests; names unique; guests keep running; a failed create leaves no entry |
+| 8d | Guest inventory and owner (A7): the owner's API publishes its guests; cluster-wide names; the agent's root-only, expiring drain operation with the reason `join` (B7, moved here from 8f because the join needs it); join with guests, the atomic name check and user replacement (B3); the agent's read of a task by idempotency key; automatic reconciliation by the owner (B8); a new guest entry owned by a `removing` member refused (amendment 1) | langrishe joins with guests; names unique; guests keep running; a failed create leaves no entry |
 | 8e | Forwarding (B8): the node-to-node listener on port 8445 with the pinned node-to-node keys, signed envelope verified in the receiving API and recorded in the agent's audit, re-authorization, `node_unreachable`, `node_clock_skew`, the versioned forwarding protocol and `node_version_mismatch` (B5); one view in the interface | A VM on langrishe managed from smith's interface; replay refused; the user-facing listener requests no client certificate and serves no forwarding path |
 | 8f | Drain (B7): the agent's refusal rule with both scopes, the upgrade drain (the root-only operation exists since 8d, here with the reason `upgrade` and the full refusal scopes), maintenance mode persisted in `agent.db`; `skep-setup upgrade` backs up the cluster store (root, `0600`) and drains | Upgrade a lab VM with a running task; kill setup mid-drain, drain expires; stops accepted in maintenance, refused in an upgrade drain |
 | 8g | Recovery (B4), the feature-level operation (B5), backup and restore (B6), and the partition suite with pf | Recovery of one survivor; old-epoch node refused; full restore; the prototype's partition cases with real cuts |
@@ -1285,6 +1379,11 @@ is no migration in 0.2 (A6), so its guests cannot move.
   administrator does not run the removal again, and health has nothing
   to report for it. A leader still never forgets guests that no
   administrator named (B4).
+- **Amended (amendment 1): no new guests on a node being removed.**
+  From step 0 on, the state machine refuses a new guest entry owned by a
+  member in state `removing`, so the guest entries step 0 checked or
+  named are all the node owns until it is gone. Built in step 8d, with
+  the guest inventory.
 - If that host later joins again, B3's name check applies: a name taken
   meanwhile by another guest refuses the join.
 - `--forget-guests` needs quorum, like every membership change; on a
@@ -1310,7 +1409,8 @@ in the cluster after the removal still gives a degraded login on
 langrishe, and none after the wipe; **amended (amendment 1):** the
 leader stopped after step 0 and after `RemoveServer` of a removal with
 `--forget-guests`: the new leader removes the node and exactly the
-guest entries step 0 named, with no second command.
+guest entries step 0 named, with no second command; a new guest entry
+owned by a `removing` member is refused (step 8d).
 
 ## Part C — Answers (Andy, 2026-11-24)
 
@@ -1452,16 +1552,18 @@ FreeBSD base facilities noted for Milestone 9 **[base]**: `/dev/fido` and
 `watchdogd(8)` exist on langrishe (whether a Proxmox VM's watchdog resets
 the machine is untested); CARP is in base.
 
-## Amendment 1 (2026-11-24, Proposed: one open question)
+## Amendment 1 (2026-11-24, Accepted)
 
-From the review of the accepted text. Andy accepted the four points
-below on 2026-11-24. They are worked into B1, B3, B4 and B13 and their
-test lists, each changed passage marked "Amended (amendment 1)". The
-amendment is **not Accepted yet**, because checking point 1 against
-`hashicorp/raft` v1.8.0 found a condition the point does not state
-([open question](#open-question-what-has-applied-means-after-a-restart)).
-Points 2 to 4 were written as stated. Everything here is built in step
-8b; step 8a (one node, no join, no removal) does not depend on it.
+From the review of the accepted text. **Accepted by Andy on
+2026-11-24.** Points 1 to 4 were accepted first; checking point 1
+against `hashicorp/raft` v1.8.0 found a condition it did not state,
+which Andy answered with point 5 (option a, the applied membership on
+disk). Point 6 and the additions to points 2 and 4 came with the
+acceptance. They are worked into B1, B2, B3, B4, B6 and B13 and their
+test lists, each changed passage marked "Amended (amendment 1)".
+Everything here is built in step 8b (the guest-entry refusal of point
+2 in step 8d); step 8a (one node, no join, no removal) does not depend
+on it.
 
 ### 1. No member ever meets a leader it does not know
 
@@ -1499,14 +1601,17 @@ on a non-voter promotes it (`configuration.go` `nextConfiguration`).
 - A new leader continues a join only for a member in state `joining`,
   never for one in `removing`. (Before, an interrupted removal of a
   joining member would have been added again.)
+- From step 0 on, the state machine **refuses a new guest entry owned by
+  a member in state `removing`** (B13; built in step 8d, with the guest
+  inventory).
 
 Checked in v1.8.0: `RemoveServer` for a server that is already absent
 leaves the configuration unchanged (`nextConfiguration`), so a new
 leader may repeat step 1.
 
 Two places where the accepted text had to be carried over to the new
-steps, written the way the point implies, for Andy to confirm with the
-amendment:
+steps, written the way the point implies and confirmed with the
+amendment's acceptance:
 
 - **A leader that is itself `removing`** hands leadership over first,
   as the accepted text already said for a leader asked to remove itself.
@@ -1542,14 +1647,18 @@ return.
   the agent socket as peer UID 0; the service never.
 - CLAUDE.md: the statement that the cluster technology is not decided is
   replaced by a pointer to this ADR (Raft in an unprivileged
-  `skep-cluster` service).
+  `skep-cluster` service), and the Milestone 8 line no longer says to
+  finish the Raft vs Corosync evaluation first.
 
-### Open question: what "has applied" means after a restart
+### 5. Applied membership on disk (the open question, answered: option a)
 
-Point 1 as written does not hold across a restart of a member, and the
-run that wrote this amendment was told not to choose a fix on its own.
+Checking point 1 against `hashicorp/raft` v1.8.0 found that it did not
+hold across a restart, and the amendment was left Proposed with one
+open question. **Andy answered it on 2026-11-24 with option a.** The
+decision is worked into B1 ("What the listener accepts", "Per-RPC
+identity", join step 3 and the join command's step 4), B4 and B6.
 
-**What the library does** (v1.8.0):
+**Why it was needed** (v1.8.0):
 
 - The commit index is not stored. At start (`api.go` `NewRaft`) a node
   restores its state machine from its latest snapshot and reads the log
@@ -1564,32 +1673,64 @@ run that wrote this amendment was told not to choose a fix on its own.
   written with the *next* log append, so it can be behind the index a
   member has already reported.
 
-**What follows:**
+So, without a durable record: (1) member M reports that it has applied
+the entry with joiner J's pins, J is promoted, M restarts before its
+next snapshot, its applied membership is the snapshot's without J, and
+if J leads, M refuses the only node that can tell it the commit index;
+(2) a node that restarts before its first snapshot has applied **no**
+membership and accepts no peer, so after a full stop of a young cluster
+no node would accept another.
 
-1. Member M reports that it has applied the entry with joiner J's pins.
-   J is promoted. M restarts before its next snapshot: its applied
-   membership is the snapshot's, without J. If J leads, M refuses J, the
-   only node that can tell it the commit index. This is the risk point 1
-   was meant to remove, now after any restart instead of only after
-   downtime across a join.
-2. Wider than point 1, and already true of the accepted B1 ("against the
-   membership the receiver has applied at that moment"): a node that
-   restarts before its first snapshot has applied **no** membership and
-   accepts no peer. After a full stop of a young cluster no node would
-   accept another. The prototype did not meet this: its peers' keys came
-   from a file, not from the replicated membership.
+**The decision:**
+
+- **The file.** The service writes the applied membership to
+  `/var/db/skep/cluster/membership.json`, as the `skep-cluster`
+  account, mode `0600`, atomically: a temporary file in the same
+  directory, `fsync`, `rename`, `fsync` of the directory. Content: the
+  cluster ID, the membership epoch (B4), the log index it reflects, and
+  every member entry (ID, address, both pins, state). **Pending entries
+  are not in it:** after a restart a pending key is refused until the
+  node has caught up.
+- **When.** Whenever an applied entry changes the membership, **before**
+  that index is reported as applied on the status RPC and **before** the
+  listener uses the new membership.
+- **At start** the node accepts keys by the file until its state machine
+  has reached the file's index, then by the state machine. The file
+  never goes back to a lower (epoch, index).
+- **"Applied index"** on the status RPC, for catch-up and for the
+  promotion rule, is the **state machine's own** index, not the
+  library's `AppliedIndex`.
+- **Root commands:** `recover` writes the file for the new membership; a
+  restore replaces it with the restored store's; `leave --wipe` deletes
+  it; a join moves it aside with the one-node state (and putting that
+  state back brings it back). Read together with the previous bullet: a
+  restore and `leave --wipe` are the only ways the file goes back or
+  goes away, both root-run with the service stopped; the service itself
+  never lowers it.
+- **It also closes consequence 2 above**, a full stop of a young
+  cluster: each node accepts the members in its file.
+- **What it costs:** a second copy of the pins on disk (public data, in
+  the same directory and with the same owner as the log).
+
+Options considered and not chosen: (b) a Raft snapshot after every
+membership entry before reporting it (a snapshot of the whole store per
+change on every member, slower joins); (c) reading membership entries
+from the log at start, committed or not (could accept a pin from an
+entry the cluster later discards); (d) keeping the risk for restarts
+(point 1's headline would not be true, and consequence 2 would stay).
 
 Step 8a is not affected: a one-node cluster elects itself at start and
-applies its whole log before it serves.
+applies its whole log before it serves. The file is built in step 8b.
 
-**Options:**
+### 6. A removed node and a member that was down (risk, not prevented)
 
-| Option | How | For | Against |
-|---|---|---|---|
-| a. **Store the applied membership** | `skep-cluster` writes the membership (IDs, addresses, pins, states) with the index it reflects to a file in its own directory, synced, **before** it reports that index as applied; it reads the file at start and uses it until the state machine has passed that index | Small; "has applied" becomes a durable fact, which is what point 1 needs; also closes consequence 2 | A second copy of the pins on disk (public data, same directory and owner as the log); `recover` (B4) and restore (B6) must rewrite or delete it |
-| b. Snapshot before reporting | A member takes a Raft snapshot (`Raft.Snapshot`) after applying a membership entry and reports the index only then | Uses the library's own durability; no new file | A snapshot of the whole store per membership change on every member; slower joins; the snapshot store keeps few snapshots |
-| c. Read pins from the log at start | At start, read membership entries after the snapshot from the log, committed or not | No new file | Trusts entries that may never commit: a pin could be accepted from an entry the cluster later discards |
-| d. Keep the old risk for restarts | Point 1 without a durability rule | Nothing to build | Point 1's headline is not true; consequence 2 stays and must be solved in 8b anyway |
-
-**Recommendation: a.** It needs Andy's answer because it adds a stored
-copy of the trust data and touches `recover` and restore.
+Added with the acceptance (Andy, 2026-11-24) and worked into B1's risks
+and B2: a member that was down while another node was removed still
+pins that node until it has caught up. A removed node that is hostile
+can reach it first, give it a forged log at a higher term, and that
+member could then win an election among the real members. Skep 0.2 does
+not prevent this; it would need membership entries signed by a quorum
+(B2's hardening option b; backlog row). The rule for operators: after
+removing a node because it is compromised, wipe every member that was
+down at that time before it returns. Health on every member names the
+members that have not yet applied a removal.
