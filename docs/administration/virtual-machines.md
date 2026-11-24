@@ -210,8 +210,15 @@ little in a nested lab and is not needed on bare metal. **Status on
 `hearst`: applied and verified** (both caps 0, also after a reboot; a
 plain bhyve boot and then a full FreeBSD installation through Skep ran
 without trouble); see
-[tests/integration/vm](../../tests/integration/vm/README.md). Skep does
-not detect this condition yet (a follow-up).
+[tests/integration/vm](../../tests/integration/vm/README.md). At
+start, the agent logs one warning on a host under a hypervisor with this
+setting not 0, and adds a `degraded` `nested_interrupts` health check. It
+never refuses a VM and never changes the setting.
+
+The agent evaluates this condition once, when it starts. If `vmm` is loaded
+after the agent started, there is no warning and no check until the agent
+restarts, so a missing warning does not prove the host is safe. Read the
+setting itself with `sysctl hw.vmm.vmx.cap.virtual_interrupt_delivery`.
 
 ## Creating and installing a VM
 

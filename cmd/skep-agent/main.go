@@ -37,6 +37,7 @@ import (
 	"github.com/greenbeanorg/skep/internal/internalapi"
 	"github.com/greenbeanorg/skep/internal/logging"
 	"github.com/greenbeanorg/skep/internal/monitoring"
+	"github.com/greenbeanorg/skep/internal/nestedcheck"
 	"github.com/greenbeanorg/skep/internal/orphans"
 	"github.com/greenbeanorg/skep/internal/portcheck"
 	"github.com/greenbeanorg/skep/internal/retention"
@@ -242,6 +243,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		Engine:   engine,
 		Host:     host,
 		Packages: cfg.Storage.TemplatePackages,
+		Audit:    database.NewAuditLog(db),
 		Logger:   log,
 	})
 	if err != nil {
@@ -275,6 +277,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		StartTimeout:    time.Duration(cfg.Containers.StartTimeoutSeconds) * time.Second,
 		MaxLockedMemory: cfg.Containers.MaxLockedMemoryBytes,
 		PhysicalMemory:  physMem,
+		Audit:           database.NewAuditLog(db),
 		Logger:          log,
 	})
 	if err != nil {
@@ -341,6 +344,11 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	}
 	checks[models.CheckPortFilters] = portChecker.Probe
 	checks[models.CheckBridgeVLANUnfiltered] = portChecker.VLANProbe
+	// Warn only: never a refusal, and the host is not changed.
+	if problem := nestedcheck.HostProblem(); problem != "" {
+		log.Warn("nested virtualization: "+problem, "sysctl", nestedcheck.VIDSysctl)
+		checks[models.CheckNestedInterrupts] = func(context.Context) string { return nestedcheck.HostProblem() }
+	}
 	svc, err := agent.NewService(agent.Options{
 		Bhyve:      vms.Capabilities,
 		Containers: containerSvc.Capabilities,

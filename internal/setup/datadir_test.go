@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/greenbeanorg/skep/internal/startcheck"
 )
 
 // mkSetup makes /var/db/skep/setup with exactly mode perm.
@@ -110,5 +112,58 @@ func TestCheckDataDir(t *testing.T) {
 	}
 	if err := CheckDataDir(t.TempDir()); err != nil {
 		t.Fatalf("a test root is not checked: %v", err)
+	}
+}
+
+// aclFS is a host of clean root-owned directories, with one path's ACL or
+// owner replaced.
+type aclFS struct {
+	path, acl string
+	uid       uint32
+}
+
+func (f aclFS) Lstat(p string) (startcheck.Info, error) {
+	st := startcheck.Info{Perm: 0o755}
+	if p == f.path {
+		st.UID = f.uid
+	}
+	return st, nil
+}
+func (aclFS) Readlink(string) (string, error) { return "", fs.ErrInvalid }
+func (f aclFS) ACL(p string) (string, error) {
+	if p == f.path && f.acl != "" {
+		return f.acl, nil
+	}
+	return "user::rwx\ngroup::r-x\nother::r-x\n", nil
+}
+
+func TestDataDirRulesMatchTheStartCheck(t *testing.T) {
+	if err := checkDataDirRules(aclFS{}); err != nil {
+		t.Fatalf("a clean layout: %v", err)
+	}
+	cases := []struct {
+		name, want string
+		fsys       aclFS
+	}{
+		{"POSIX ACL on the data directory", "/var/db/skep has an ACL beyond its mode bits",
+			aclFS{path: "/var/db/skep", acl: "user::rwx\nuser:1001:rwx\ngroup::r-x\nmask::rwx\nother::r-x\n"}},
+		{"NFSv4 ACL on a parent", "/var/db has an ACL beyond its mode bits",
+			aclFS{path: "/var/db", acl: "user:1001:rwxpDdaARWcCos:-------:allow\nowner@:rwxpDdaARWcCos:-------:allow\ngroup@:r-x---a-R-c--s:-------:allow\neveryone@:r-x---a-R-c--s:-------:allow\n"}},
+		{"ACL on setup", "/var/db/skep/setup has an ACL beyond its mode bits",
+			aclFS{path: "/var/db/skep/setup", acl: "user::rwx\nuser:1001:rwx\ngroup::---\nmask::rwx\nother::---\n"}},
+		{"unknown ACL output", "does not understand", aclFS{path: "/var", acl: "garbage\n"}},
+		{"owner of /", "/ is owned by UID 409", aclFS{path: "/", uid: 409}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			err := checkDataDirRules(c.fsys)
+			if err == nil || !strings.Contains(err.Error(), c.want) || !strings.Contains(err.Error(), "setup will not use") {
+				t.Fatalf("err %v, want %q", err, c.want)
+			}
+			var r *DataDirRefusal
+			if !errors.As(asRefusal(err), &r) {
+				t.Fatalf("%T is not a refusal (exit 3)", err)
+			}
+		})
 	}
 }
