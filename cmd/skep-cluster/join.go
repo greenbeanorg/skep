@@ -8,8 +8,10 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -168,6 +170,9 @@ func runStage(ctx context.Context, e env, uid, gid uint32, args []string) (stage
 // checkNoRootFiles is the end of every root-run command: nothing in the
 // data directory may belong to root (ADR 0013 B4, B6).
 func checkNoRootFiles(e env, dataDir string) error {
+	if _, err := os.Lstat(dataDir); errors.Is(err, fs.ErrNotExist) {
+		return nil // nothing there, nothing root-owned
+	}
 	rootOwned, err := store.RootOwned(dataDir, e.owner)
 	if err != nil {
 		return err
@@ -292,6 +297,7 @@ func runAdmit(ctx context.Context, args []string, e env) error {
 	flags.SetOutput(e.stderr)
 	var (
 		socket   = flags.String("socket", clusterconf.DefaultSocket, "Unix socket of the service")
+		dataDir  = flags.String("data-dir", clusterconf.DefaultDataDir, "directory of the node key and the cluster store")
 		withdraw = flags.String("withdraw", "", "withdraw the pending admission of the host with this name")
 	)
 	if err := flags.Parse(args); err != nil {
@@ -307,6 +313,9 @@ func runAdmit(ctx context.Context, args []string, e env) error {
 		}
 		res, err := client.Withdraw(ctx, *withdraw)
 		if err != nil {
+			return errors.Join(err, checkNoRootFiles(e, *dataDir))
+		}
+		if err := checkNoRootFiles(e, *dataDir); err != nil {
 			return err
 		}
 		fmt.Fprintf(e.stdout, "Withdrawn: the pending admission of %s (node ID %s) is removed (operation %s).\n", res.Name, res.NodeID, res.OpID)
@@ -321,6 +330,9 @@ func runAdmit(ctx context.Context, args []string, e env) error {
 	}
 	res, err := client.Admit(ctx, flags.Arg(0))
 	if err != nil {
+		return errors.Join(err, checkNoRootFiles(e, *dataDir))
+	}
+	if err := checkNoRootFiles(e, *dataDir); err != nil {
 		return err
 	}
 	fmt.Fprintf(e.stdout, "Admitted %s (node ID %s, address %s)\n  pin %s\n", req.Name, req.NodeID, req.Address, req.Pin)

@@ -1,7 +1,7 @@
 // Package localapi is skep-cluster's local API on its Unix socket: who may
 // connect is decided by the kernel-reported peer credentials, and every
 // operation names which of the two allowed callers, root and the skep
-// account (skep-api), may call it (ADR 0013 B12, step 8a).
+// account (skep-api), may call it (ADR 0013 B12).
 //
 // The service account itself is not an allowed peer, and no other account
 // is.

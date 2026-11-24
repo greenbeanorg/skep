@@ -474,7 +474,7 @@ func TestStatusDoesNotShowLibraryEntriesAsLag(t *testing.T) {
 }
 
 func (w *world) listen(euid int, socket string, extra ...string) error {
-	args := append([]string{"listen", "-config", w.config, "-socket", socket}, extra...)
+	args := append([]string{"listen", "-config", w.config, "-data-dir", w.dataDir, "-socket", socket}, extra...)
 	return run(context.Background(), args, w.env(euid))
 }
 

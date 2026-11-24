@@ -38,7 +38,7 @@
 #       Holds the service's Unix socket, cluster.sock. Recreated at every
 #       start, because /var/run is cleared at boot.
 #   skep_cluster_config="/usr/local/etc/skep/cluster.json"
-#       Written by "skep-cluster init" and "skep-cluster listen"
+#       Written by "skep-cluster init", "listen" and "join-request"
 #       (root:skep-cluster, 0640): the service reads it and cannot change
 #       it.
 #   skep_cluster_args=""

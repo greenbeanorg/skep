@@ -372,35 +372,105 @@ and the two rc.d services were validated on `hearst`, a lab VM nested
 under KVM, on 2026-11-12 (`tests/integration/peercred`,
 `tests/integration/rcd`).
 
-### skep-cluster (Milestone 8, step 8a)
+### skep-cluster and the cluster (Milestone 8, steps 8a and 8b-1)
 
 [ADR 0013](../decisions/0013-clustering.md) adds a third process,
-`skep-cluster`, with its own account (`skep-cluster`, UID/GID 410). Step
-8a builds it for one node; details are in
-[skep-cluster](../architecture/skep-cluster.md).
+`skep-cluster`, with its own account (`skep-cluster`, UID/GID 410). What is
+built is in [skep-cluster](../architecture/skep-cluster.md); the join
+procedure in [Joining hosts into a cluster](../administration/cluster.md).
+
+**The local process.**
 
 - **The node key is out of `skep-api`'s reach.** It is in
   `/var/db/skep/cluster` (`0700`, the service account), mode `0600`. The
   API runs as `skep`, a different UID.
 - **The service never talks to the agent,** and the agent's allow-list
-  (`root`, `skep`) does not admit its account. Only the root-run
-  `skep-cluster init` reads the node ID from the agent, as peer UID 0.
-- **No root-owned file in the data directory.** `init` does its root work
-  first, gives up root for the service account, and only then creates the
-  key and the store.
+  (`root`, `skep`) does not admit its account. Only the root-run commands
+  `init` (the node ID) and `join-request` / `join` (whether the host has
+  guests) read from the agent, as peer UID 0.
+- **No root-owned file in the data directory.** Root-run commands do
+  their root work (reading the agent, writing `cluster.json`, stopping and
+  starting the service) and start the same executable **as the service
+  account** for anything inside the directory; each ends by checking that
+  no file there belongs to root. Decisions with a root effect are not
+  taken on the running service's word: "is this node alone" is read from
+  the store with the service stopped.
 - **Its socket admits root and `skep` only,** by kernel peer credentials
   on top of file permissions, and each operation names which of the two
-  may call it. The service account itself is refused. All operations of
-  8a are reads.
-- **A single host opens no cluster port.** Port 8444 opens only after
-  `skep-cluster listen -address`, on that one address: TLS 1.3 only, a
-  client certificate required and accepted only when its key is pinned in
-  the membership. With one member that is the node's own key, and nothing
-  is served to it.
-- **Not built yet:** joining, the per-RPC identity check, the cluster
-  audit, replicated users. The statement of what one compromised node can
-  do to the others (ADR 0013 B2) belongs to the steps that add a second
-  node and will be written here with them.
+  may call it. `admit` and `admit --withdraw` are root-only in this step.
+- **A single host opens no cluster port.** Port 8444 opens only on a
+  listen address given by `listen`, `join-request` or `init -address`.
+
+**Trust between nodes: pinned keys.** There is no cluster CA. Each node
+generates its own key; the replicated membership stores the SHA-256 of
+each member's public key (its pin), and a peer is accepted only by that
+pin.
+
+- **The fingerprint exchange.** A host asks to join with a request
+  carrying its pin (`join-request`); an administrator admits it on a member
+  (`admit`), which creates a pending entry valid for 30 minutes and prints
+  an admission carrying every member's pin; the host joins with the
+  admission (`join`). Both sides are pinned before the first connection.
+  Neither line is secret. **The administrator must compare the pin in the
+  request with `skep-cluster status` on the new host's own console**
+  before admitting it: an attacker who gets their own request admitted
+  joins with a vote. `join` prints the cluster ID and every member and asks
+  for confirmation (or `-cluster-id`), so an admission from the wrong
+  cluster is not used by mistake.
+- **What the listener accepts.** TLS 1.3 only, a client certificate whose
+  key is pinned in a member entry or a pending entry; everything else is
+  refused in the handshake. A pending key may call the join operation and
+  nothing else: no Raft RPC, no read. Withdrawal and expiry close that
+  key's open connections; a listener whose clock has passed the expiry
+  refuses the key earlier, and none is accepted after the expiry entry.
+- **The pin is the identity, on every RPC.** The node ID in each RPC's
+  header must belong to the key of the connection, that kind of key must
+  be allowed the operation, and a Raft RPC must also come from a server in
+  the receiver's latest Raft configuration and carry that node's address.
+  The TCP source address is not compared (a multi-homed host may connect
+  from another address). The dialler accepts only the pin of the node it
+  dials. Raft's inbound handler is Skep's own adaptation of the library's
+  (the library's does not let the receiver check the sender); it is
+  compared with upstream at every library update.
+- **A joining node trusts only its admission** (and the members the
+  cluster's answer adds) until it has applied a membership listing itself.
+- **No member meets a leader it does not know**: a new node becomes a voter
+  only when every member has applied the entry carrying its pin. The
+  applied membership is kept on disk (`membership.json`), so this holds
+  across restarts.
+- Every replicated entry is checked again when it is applied, on every
+  node, the same way; an entry a node cannot read stops its state machine
+  instead of being skipped.
+
+**What one compromised node can do to the others (ADR 0013 B2).** The
+cluster is **one trust domain for Skep-managed resources**:
+
+- **Root on one node** has that node's cluster key and a full copy of the
+  replicated store. It can propose any entry and, as a voter, become
+  leader. Once users are replicated (step 8c) and requests forwarded (8e),
+  that means creating an administrator, changing roles, editing the guest
+  inventory, and through them controlling Skep-managed guests, volumes and
+  jails on **every** node, including reading and changing the guests'
+  disks through ordinary Skep operations, and attacking every user's
+  password hash offline (Argon2id slows this down; it does not stop it for
+  weak passwords). In this step the replicated store holds only the
+  membership: such a node can admit hosts of its own and vote.
+- It **cannot** get a root shell or run commands on another node, touch
+  anything outside another node's local allow-lists in `agent.json`, cut
+  another node's management interface, or erase another node's logs.
+- **A compromised `skep-api`** (not root) will be able to act as any user
+  on every node and make every replicated write the socket offers to it,
+  including `admit` from step 8c; it cannot vote, send Raft RPCs or change
+  a pin.
+- After a node is compromised, every password should be changed, and the
+  node removed (removal is the next run). A member that was down during a
+  removal still pins the removed node until it catches up; the operator
+  rule is to wipe every member that was down at that time before it
+  returns (ADR 0013 amendment 1, point 6).
+
+**Not built yet:** removal, `leave --wipe`, key rotation, the cluster
+audit (membership events are log lines with actor, operation ID and
+origin), clock-offset health, replicated users, forwarding.
 
 ## Host operations and confinement (Milestone 6)
 

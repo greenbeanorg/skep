@@ -174,7 +174,9 @@ func (s *Service) certificate() *tls.Certificate {
 func (s *Service) SetStore(st Store, t *raftnet.Transport) {
 	s.mu.Lock()
 	s.store, s.transport = st, t
-	if m := st.Machine(); m != nil {
+	if m := st.Machine(); m != nil && m != s.machine {
+		// Only before Run: the service and the store share one machine
+		// in skep-cluster (cmd/skep-cluster serve passes the same one).
 		s.machine = m
 	}
 	s.mu.Unlock()
