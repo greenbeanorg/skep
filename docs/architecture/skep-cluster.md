@@ -11,6 +11,11 @@ There is no join, no second node, no Raft traffic between nodes, and no
 replicated users. `skep-api`, `skep-agent` and `skep-setup` do not use
 `skep-cluster` yet and are unchanged; the public API is unchanged.
 
+**Validated on FreeBSD** on the lab VM `smith` (15.1-RELEASE-p7, UFS
+root) on 2026-11-24, build `67396a5`:
+[record](../../tests/integration/cluster/results/8a-67396a5-20261124-smith.md).
+Not validated: a boot with the service enabled, ZFS-root hosts, hardware.
+
 ## What exists after 8a
 
 | Piece | Where | Notes |
