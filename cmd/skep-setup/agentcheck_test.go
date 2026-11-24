@@ -93,3 +93,46 @@ func TestReportAgentProblemIsAManualItem(t *testing.T) {
 		t.Fatalf("items %+v\n%s", items, out.String())
 	}
 }
+
+// Without -mgmt there is no plan, but the agent's state and start check
+// are still printed before the usage error, which keeps exit code 2.
+func TestCheckWithoutMgmtStillReportsTheAgent(t *testing.T) {
+	f := hostFacts()
+	f.Running = map[string]bool{"skep_agent": true}
+	r := runWith(t, env{prober: fakeProber{f: f}, startFS: startFake{}}, "check", "-root", stockRoot(t))
+	if r.code != exitUsage {
+		t.Fatalf("exit %d, want %d", r.code, exitUsage)
+	}
+	for _, want := range []string{"no plan without -mgmt", "agent: running", "agent start check: passed"} {
+		if !strings.Contains(r.stdout, want) {
+			t.Errorf("missing %q in:\n%s", want, r.stdout)
+		}
+	}
+	if !strings.Contains(r.stderr, "name the management interface") {
+		t.Errorf("stderr:\n%s", r.stderr)
+	}
+
+	bad := startFake{bad: map[string]startcheck.Info{"/usr/local/sbin": {UID: 0, Perm: 0o775}}}
+	r = runWith(t, env{prober: fakeProber{f: hostFacts()}, startFS: bad}, "check", "-root", stockRoot(t))
+	if r.code != exitUsage {
+		t.Fatalf("refused agent: exit %d, want %d", r.code, exitUsage)
+	}
+	for _, want := range []string{"agent: not running", "REFUSED", "/usr/local/sbin is writable", "Fix: chmod go-w /usr/local/sbin"} {
+		if !strings.Contains(r.stdout, want) {
+			t.Errorf("refused agent: missing %q in:\n%s", want, r.stdout)
+		}
+	}
+
+	r = runWith(t, env{prober: fakeProber{f: hostFacts()}, euid: 1000}, "check", "-root", stockRoot(t))
+	if r.code != exitUsage || !strings.Contains(r.stdout, "not read") {
+		t.Errorf("not root: exit %d:\n%s", r.code, r.stdout)
+	}
+}
+
+// Another usage error prints nothing about the agent.
+func TestCheckOtherUsageErrorPrintsNoAgent(t *testing.T) {
+	r := runWith(t, env{prober: fakeProber{f: hostFacts()}, startFS: startFake{}}, "check", "-root", stockRoot(t), "-mgmt", "vtnet0", "extra")
+	if r.code != exitUsage || strings.Contains(r.stdout, "agent") {
+		t.Errorf("exit %d:\n%s", r.code, r.stdout)
+	}
+}
