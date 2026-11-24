@@ -1,24 +1,34 @@
 # Skep
 
+> **Status: 0.1.0, a pre-release. Not for production.**
+>
+> **0.1 is a single-host preview validated only nested under KVM; it has not
+> been run on bare metal.**
+>
+> Skep 0.1 manages one FreeBSD 15.1 host: bhyve virtual machines, jails, ZFS
+> storage and guest-port filtering, through a web interface, a REST API and
+> `skepctl`. It has been run on lab virtual machines only (Intel VT-x, nested
+> under KVM); bare metal and AMD hosts are not validated yet
+> ([bare-metal runbook](tests/integration/bare-metal/README.md)). There is no
+> clustering, no high availability and no backup in 0.1.
+>
+> **It runs a root agent.** `skep-agent` runs as root on the host and performs
+> privileged operations (bhyve, jails, ZFS, network interfaces) on behalf of
+> the unprivileged `skep-api`. The boundary between them is a Unix socket
+> with a closed set of typed operations and an allow-list in `agent.json`
+> ([ADR 0004](docs/decisions/0004-privilege-boundary.md)), and it has had no
+> external security review. A flaw in the agent, or in what it allows, is a
+> flaw with root privileges. Run 0.1 on a host you can afford to rebuild,
+> keep `skep-api` on loopback or a management network you trust, and read
+> [docs/security/overview.md](docs/security/overview.md) first.
+>
+> Known issues: [docs/release/0.1/known-issues.md](docs/release/0.1/known-issues.md).
+
 Skep is an open-source virtualization and infrastructure management platform
 built on the FreeBSD® operating system. It manages virtual machines (bhyve,
 with QEMU as an optional secondary engine), jails, OpenZFS storage, and
 networking on single hosts and, later, multi-node clusters, through a REST
 API, a web UI, and a CLI.
-
-**Status: 0.1.0, Milestone 7 phase 7a "Storage".** The code contains the
-host agent, the API server with TLS, accounts, sessions, and permissions,
-the `skepctl` command-line client, the web interface, read-only host
-discovery, a task engine with history, two audit logs, bhyve virtual
-machines (Milestone 6), and storage management: snapshots, rollback,
-clones, disk changes, directory pools, and resource monitoring (phase 7a).
-It cannot give jails a network interface yet (phase 7b, step 8), and it does not manage host networks.
-
-> **Security notice:** this is pre-release software. `skep-api` listens on
-> loopback by default; opening it to a network is an explicit
-> configuration change. See
-> [docs/security/overview.md](docs/security/overview.md) for what is and is
-> not protected.
 
 ## What works today
 
@@ -49,7 +59,8 @@ It cannot give jails a network interface yet (phase 7b, step 8), and it does not
 
 ## Platforms
 
-- **Production host:** FreeBSD 15.x, amd64. The qualification target is
+- **Host:** FreeBSD 15.x, amd64 (0.1 has run only nested under KVM, see the
+  status note at the top). The qualification target is
   FreeBSD 15.1-RELEASE.
 - **Development and CI:** Linux. A Linux build is a development build only.
   It runs the agent with Linux discovery so you can work on the API, but it

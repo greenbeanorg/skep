@@ -1,6 +1,7 @@
-# Draft: Skep 0.1.0 release notes
+# Skep 0.1.0 release notes
 
-*Draft for Andy (2026-11-23). Pre-release; not for production.*
+*Pre-release; not for production. 0.1 is a single-host preview validated
+only nested under KVM; it has not been run on bare metal.*
 
 Skep is an open-source virtualization and infrastructure management platform
 built on the FreeBSD® operating system. 0.1.0 is the first release: one
@@ -63,8 +64,10 @@ jails. See [host requirements](../../installation/host-requirements.md).
 ## Known issues
 
 See [known-issues.md](known-issues.md). In short: validated on lab virtual
-machines only; modules configured by setup load at the next boot; the agent
-runs as root and has not had an external review.
+machines only, nested under KVM, and never run on bare metal (the items
+pending bare-metal validation are listed there); modules configured by setup
+load at the next boot; the agent runs as root and has not had an external
+review.
 
 ## License
 
