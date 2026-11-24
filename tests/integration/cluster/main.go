@@ -17,6 +17,13 @@
 //	    member's data directory, read only), claiming the given node
 //	    ID; prints ACCEPTED or REFUSED and why. "raft" is a heartbeat
 //	    (AppendEntries), "status" Skep's status RPC
+//	cluster-probe request -id ID -name NAME -address IP:8444 -pin PIN
+//	    prints a join request line for these public values (for keys
+//	    nobody holds, and for duplicate cases)
+//	cluster-probe admission -cluster-id ID -for ID,NAME,ADDR,PIN
+//	                        -member ID,NAME,ADDR,PIN [-member ...]
+//	    prints an admission line for these public values (for a wrong
+//	    pin, or an admission naming a member)
 //
 // It writes only the directory keygen is given, and changes nothing in
 // any Skep file.
@@ -39,6 +46,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/hashicorp/go-msgpack/v2/codec"
@@ -65,6 +73,10 @@ func main() {
 		err = keygen(os.Args[2:])
 	case "rpc":
 		err = rpcProbe(os.Args[2:])
+	case "request":
+		err = requestLine(os.Args[2:])
+	case "admission":
+		err = admissionLine(os.Args[2:])
 	default:
 		err = fmt.Errorf("unknown command %q", os.Args[1])
 	}
@@ -260,5 +272,70 @@ func rpcProbe(args []string) error {
 		return nil
 	}
 	fmt.Printf("ACCEPTED: answered (error string %q)\n", respErr)
+	return nil
+}
+
+func requestLine(args []string) error {
+	fs := flag.NewFlagSet("request", flag.ContinueOnError)
+	id := fs.String("id", "", "node ID (empty: a new one)")
+	name := fs.String("name", "", "node name")
+	address := fs.String("address", "", "ip:8444")
+	pin := fs.String("pin", "", "key pin")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *id == "" {
+		var err error
+		if *id, err = ids.NewUUID(); err != nil {
+			return err
+		}
+	}
+	line, err := joincode.EncodeRequest(joincode.Request{Node: joincode.Node{NodeID: *id, Name: *name, Address: *address, Pin: *pin}})
+	if err != nil {
+		return err
+	}
+	fmt.Println(line)
+	return nil
+}
+
+type nodeList []joincode.Node
+
+func (l *nodeList) String() string { return fmt.Sprint(*l) }
+
+func (l *nodeList) Set(v string) error {
+	n, err := parseNode(v)
+	if err != nil {
+		return err
+	}
+	*l = append(*l, n)
+	return nil
+}
+
+func parseNode(v string) (joincode.Node, error) {
+	f := strings.Split(v, ",")
+	if len(f) != 4 {
+		return joincode.Node{}, errors.New("a node is ID,NAME,ADDR,PIN")
+	}
+	return joincode.Node{NodeID: f[0], Name: f[1], Address: f[2], Pin: f[3]}, nil
+}
+
+func admissionLine(args []string) error {
+	fs := flag.NewFlagSet("admission", flag.ContinueOnError)
+	cid := fs.String("cluster-id", "", "cluster ID")
+	forNode := fs.String("for", "", "ID,NAME,ADDR,PIN of the admitted node")
+	var members nodeList
+	fs.Var(&members, "member", "ID,NAME,ADDR,PIN of a member (repeat)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	f, err := parseNode(*forNode)
+	if err != nil {
+		return err
+	}
+	line, err := joincode.EncodeAdmission(joincode.Admission{ClusterID: *cid, For: f, Members: members, ExpiresAt: time.Now().Add(30 * time.Minute).Unix()})
+	if err != nil {
+		return err
+	}
+	fmt.Println(line)
 	return nil
 }
