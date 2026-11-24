@@ -20,7 +20,9 @@
 > external security review. A flaw in the agent, or in what it allows, is a
 > flaw with root privileges. Run 0.1 on a host you can afford to rebuild,
 > keep `skep-api` on loopback or a management network you trust, and read
-> [docs/security/overview.md](docs/security/overview.md) first.
+> [docs/security/overview.md](docs/security/overview.md) first. Report
+> vulnerabilities privately as [SECURITY.md](SECURITY.md) describes, not in a
+> public issue.
 >
 > Known issues: [docs/release/0.1/known-issues.md](docs/release/0.1/known-issues.md).
 
