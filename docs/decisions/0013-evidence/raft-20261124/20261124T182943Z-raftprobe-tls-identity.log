@@ -1,0 +1,47 @@
+smith before: Follower term 14 leader star
+A inbound, other CA (rogue-langrishe) from merrick:
+  {"cert":"rogue-langrishe","claim":"langrishe","handshake":"client side complete","response":"no response: msgpack decode error [pos 0]: remote error: tls: certificate required","target":"10.79.20.81:17400"}
+    refusal: 10.79.20.80:59400 inbound handshake: tls: client didn't provide a certificate
+B1 inbound, valid star cert from merrick claiming langrishe:
+  {"cert":"star","claim":"langrishe","handshake":"client side complete","response":"no response: EOF","target":"10.79.20.81:17400"}
+    refusal: 10.79.20.80:59430 inbound: certificate names "star" but the connection comes from 10.79.20.80 ("")
+B3 inbound, valid CA, non-member name mallory, from merrick:
+  {"cert":"mallory","claim":"mallory","handshake":"client side complete","response":"no response: EOF","target":"10.79.20.81:17400"}
+    refusal: 10.79.20.80:59444 inbound: certificate names "mallory", not a cluster node
+B2 inbound, on star with star's own cert, RPC header claims langrishe:
+  {"cert":"star","claim":"langrishe","handshake":"client side complete","response":"no response: EOF","target":"10.79.20.81:17400"}
+    refusal: 10.79.20.83:49636 inbound rpc 1: header claims id "langrishe" addr "10.79.20.82:17400", certificate names "star"
+B0 positive control, on star, header claims star, term 1 (stale, harmless):
+  {"cert":"star","claim":"star","handshake":"client side complete","response":"ANSWERED err=\"\" granted=false term=14","target":"10.79.20.81:17400"}
+smith after: Follower term 14 leader star
+A (rerun, certificate always presented) inbound, other CA rogue-langrishe from merrick:
+  {"cert":"rogue-langrishe","claim":"langrishe","handshake":"client side complete","response":"no response: msgpack decode error [pos 0]: remote error: tls: unknown certificate authority","target":"10.79.20.81:17400"}
+    refusal: 10.79.20.80:42122 inbound handshake: tls: failed to verify certificate: x509: certificate signed by unknown authority
+smith: Follower term 14
+C outbound: impostor at 10.79.20.82:17400 presenting star for 12 s:
+    impostor saw: {"handshake":"remote error: tls: bad certificate","presented":"star","remote":"10.79.20.83:14523"}
+    impostor saw: {"handshake":"remote error: tls: bad certificate","presented":"star","remote":"10.79.20.83:63957"}
+    impostor saw: {"handshake":"remote error: tls: bad certificate","presented":"star","remote":"10.79.20.83:62592"}
+    impostor saw: {"handshake":"remote error: tls: bad certificate","presented":"star","remote":"10.79.20.83:20601"}
+    leader star term 14 outbound refusals: 6
+      outbound to langrishe: tls: failed to verify certificate: x509: certificate is valid for star, not langrishe
+      outbound to langrishe: tls: failed to verify certificate: x509: certificate is valid for star, not langrishe
+C outbound: impostor at 10.79.20.82:17400 presenting rogue-langrishe for 12 s:
+    impostor saw: {"handshake":"remote error: tls: bad certificate","presented":"rogue-langrishe","remote":"10.79.20.83:41281"}
+    impostor saw: {"handshake":"remote error: tls: bad certificate","presented":"rogue-langrishe","remote":"10.79.20.83:11000"}
+    impostor saw: {"handshake":"remote error: tls: bad certificate","presented":"rogue-langrishe","remote":"10.79.20.83:37178"}
+    impostor saw: {"handshake":"remote error: tls: bad certificate","presented":"rogue-langrishe","remote":"10.79.20.83:11451"}
+    leader star term 14 outbound refusals: 12
+      outbound to langrishe: tls: failed to verify certificate: x509: certificate signed by unknown authority
+      outbound to langrishe: tls: failed to verify certificate: x509: certificate signed by unknown authority
+ca.pem
+langrishe-key.pem
+langrishe.pem
+node.log
+raft.db
+raftprobe
+serve.out
+snapshots
+  after restore smith Follower term 14 applied 21 bbf3886de5fbd101
+  after restore langrishe Follower term 14 applied 21 bbf3886de5fbd101
+  after restore star Leader term 14 applied 21 bbf3886de5fbd101

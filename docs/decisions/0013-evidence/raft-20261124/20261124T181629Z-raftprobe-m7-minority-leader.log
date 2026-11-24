@@ -1,0 +1,75 @@
+-- run 1
+leader=smith majority= langrishe star
+cut at 1795544189.577611253
+      3.9ms smith     Leader term=56 leader=smith commit=6029 applied=6029 keys=6004
+    491.1ms smith     Follower term=56 leader= commit=6029 applied=6029 keys=6004
+   1616.7ms smith     Candidate term=56 leader= commit=6029 applied=6029 keys=6004
+minority write (3 s timeout): False node is not the leader 15
+minority stale read of majority key (before majority write): True '' False Candidate last_contact 2026-11-24T13:16:30.627328487-05:00
+majority leader: star [Leader 57 star 6030]
+majority write: True None 10266
+majority linear read: True 'M' 948
+minority stale read: True '' False Candidate last_contact 2026-11-24T13:16:30.627328487-05:00
+minority linear read: False node is not the leader 13
+minority node: [Candidate 56 - 6029]
+after heal smith [Follower 57 star 6031] minority-key: False majority-key: 'M'
+after heal langrishe [Follower 57 star 6031] minority-key: False majority-key: 'M'
+after heal star [Leader 57 star 6031] minority-key: False majority-key: 'M'
+-- run 2
+leader=star majority= smith langrishe
+cut at 1795544198.995860345
+      7.6ms star      Leader term=57 leader=star commit=6031 applied=6031 keys=6005
+    506.7ms star      Follower term=57 leader= commit=6031 applied=6031 keys=6005
+   1872.6ms star      Candidate term=57 leader= commit=6031 applied=6031 keys=6005
+minority write (3 s timeout): False node is not the leader 302
+minority stale read of majority key (before majority write): True '' False Candidate last_contact 2026-11-24T18:16:39.497689453Z
+majority leader: smith [Leader 58 smith 6032]
+majority write: True None 5234
+majority linear read: True 'M' 226
+minority stale read: True '' False Candidate last_contact 2026-11-24T18:16:39.497689453Z
+minority linear read: False node is not the leader 63
+minority node: [Candidate 57 - 6031]
+after heal smith [Leader 58 smith 6033] minority-key: False majority-key: 'M'
+after heal langrishe [Follower 58 smith 6033] minority-key: False majority-key: 'M'
+after heal star [Follower 58 smith 6033] minority-key: False majority-key: 'M'
+-- run 3
+leader=smith majority= langrishe star
+cut at 1795544208.420518028
+      3.4ms smith     Leader term=58 leader=smith commit=6033 applied=6033 keys=6006
+    445.8ms smith     Follower term=58 leader= commit=6033 applied=6033 keys=6006
+   1812.9ms smith     Candidate term=58 leader= commit=6033 applied=6033 keys=6006
+minority write (3 s timeout): False node is not the leader 18
+minority stale read of majority key (before majority write): True '' False Candidate last_contact 2026-11-24T13:16:49.425389563-05:00
+majority leader: star [Leader 59 star 6034]
+majority write: True None 10532
+majority linear read: True 'M' 887
+minority stale read: True '' False Candidate last_contact 2026-11-24T13:16:49.425389563-05:00
+minority linear read: False node is not the leader 14
+minority node: [Candidate 58 - 6033]
+after heal smith [Follower 59 star 6035] minority-key: False majority-key: 'M'
+after heal langrishe [Follower 59 star 6035] minority-key: False majority-key: 'M'
+after heal star [Leader 59 star 6035] minority-key: False majority-key: 'M'
+-- lease-window run 1 leader=star:   {'ok': True, 'client_ms': 6.689}
+  {'ok': True, 'client_ms': 0.753}
+  {'ok': False, 'err': 'leadership lost while committing log', 'us': 506576, 'state': 'Follower', 'client_ms': 507.525}
+  {'ok': False, 'err': 'node is not the leader', 'us': 63, 'state': 'Follower', 'term': 59, 'client_ms': 0.894}
+  {'ok': True, 'state': 'Follower', 'term': 59, 'last_index': 6036, 'commit_index': '6035', 'client_ms': 9.046}
+  after heal smith: Follower found True
+  after heal langrishe: Follower found True
+  after heal star: Leader found True
+-- lease-window run 2 leader=star:   {'ok': True, 'client_ms': 4.097}
+  {'ok': True, 'client_ms': 0.528}
+  {'ok': False, 'err': 'leadership lost while committing log', 'us': 471061, 'state': 'Follower', 'client_ms': 471.823}
+  {'ok': False, 'err': 'node is not the leader', 'us': 59, 'state': 'Follower', 'term': 60, 'client_ms': 1.174}
+  {'ok': True, 'state': 'Follower', 'term': 60, 'last_index': 6038, 'commit_index': '6037', 'client_ms': 8.826}
+  after heal smith: Follower found True
+  after heal langrishe: Leader found True
+  after heal star: Follower found True
+-- lease-window run 3 leader=langrishe:   {'ok': True, 'client_ms': 1.723}
+  {'ok': True, 'client_ms': 0.18}
+  {'ok': False, 'err': 'leadership lost while committing log', 'us': 469093, 'state': 'Follower', 'client_ms': 469.446}
+  {'ok': False, 'err': 'node is not the leader', 'us': 10, 'state': 'Follower', 'term': 61, 'client_ms': 0.238}
+  {'ok': True, 'state': 'Follower', 'term': 61, 'last_index': 6040, 'commit_index': '6039', 'client_ms': 2.057}
+  after heal smith: Follower found True
+  after heal langrishe: Follower found True
+  after heal star: Leader found True

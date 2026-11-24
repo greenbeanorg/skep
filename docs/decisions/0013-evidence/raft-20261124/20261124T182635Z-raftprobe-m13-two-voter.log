@@ -1,0 +1,97 @@
+two-voter bootstrap: {"go_sent":true,"leader":"langrishe","leader_seen_ms":1147.511,"scenario":"leader","term":2,"write_ok_ms":1151.922,"writer":"langrishe"}
+-- run 1: SIGKILL langrishe (leader was langrishe), survivor smith
+  smith [Candidate term 2 applied 3 config langrishe:Voter,smith:Voter 4c36a19348e63ddb] write: False node is not the leader 17 stale: True 'x' linear: False node is not the leader
+  after 13 s: smith [Candidate term 2 applied 3 config langrishe:Voter,smith:Voter 4c36a19348e63ddb]
+  restarted: smith [Leader term 3 applied 4 config langrishe:Voter,smith:Voter 4c36a19348e63ddb] langrishe [Follower term 3 applied 4 config langrishe:Voter,smith:Voter 4c36a19348e63ddb]
+-- run 2: SIGKILL langrishe (leader was smith), survivor smith
+  smith [Candidate term 3 applied 4 config langrishe:Voter,smith:Voter 4c36a19348e63ddb] write: False node is not the leader 19 stale: True 'x' linear: False node is not the leader
+  after 13 s: smith [Candidate term 3 applied 4 config langrishe:Voter,smith:Voter 4c36a19348e63ddb]
+  restarted: smith [Follower term 4 applied 5 config langrishe:Voter,smith:Voter 4c36a19348e63ddb] langrishe [Leader term 4 applied 5 config langrishe:Voter,smith:Voter 4c36a19348e63ddb]
+-- run 3: SIGKILL langrishe (leader was langrishe), survivor smith
+  smith [Candidate term 4 applied 5 config langrishe:Voter,smith:Voter 4c36a19348e63ddb] write: False node is not the leader 13 stale: True 'x' linear: False node is not the leader
+  after 13 s: smith [Candidate term 4 applied 5 config langrishe:Voter,smith:Voter 4c36a19348e63ddb]
+  restarted: smith [Leader term 5 applied 6 config langrishe:Voter,smith:Voter 4c36a19348e63ddb] langrishe [Follower term 5 applied 6 config langrishe:Voter,smith:Voter 4c36a19348e63ddb]
+-- add star as a third voter (witness)
+  addvoter star via smith: True None 7.638
+  smith [Leader term 5 applied 7 config langrishe:Voter,smith:Voter,star:Voter 4c36a19348e63ddb]
+  langrishe [Follower term 5 applied 7 config langrishe:Voter,smith:Voter,star:Voter 4c36a19348e63ddb]
+  star [Follower term 5 applied 7 config langrishe:Voter,smith:Voter,star:Voter 4c36a19348e63ddb]
+-- witness run 1: SIGKILL smith (leader was smith)
+raftprobe: smith: dial tcp 10.79.20.81:17400: connect: connection refused
+  
+  smith [Leader term 6 applied 8 config langrishe:Voter,smith:Voter,star:Voter 4c36a19348e63ddb]
+  langrishe [Follower term 6 applied 8 config langrishe:Voter,smith:Voter,star:Voter 4c36a19348e63ddb]
+  star [Follower term 6 applied 8 config langrishe:Voter,smith:Voter,star:Voter 4c36a19348e63ddb]
+-- witness run 2: SIGKILL smith (leader was smith)
+raftprobe: smith: dial tcp 10.79.20.81:17400: connect: connection refused
+  
+  smith [Follower term 7 applied 9 config langrishe:Voter,smith:Voter,star:Voter 4c36a19348e63ddb]
+  langrishe [Leader term 7 applied 9 config langrishe:Voter,smith:Voter,star:Voter 4c36a19348e63ddb]
+  star [Follower term 7 applied 9 config langrishe:Voter,smith:Voter,star:Voter 4c36a19348e63ddb]
+-- witness run 3: SIGKILL langrishe (leader was langrishe)
+raftprobe: langrishe: dial tcp 10.79.20.82:17400: connect: connection refused
+  
+  smith [Follower term 8 applied 10 config langrishe:Voter,smith:Voter,star:Voter 4c36a19348e63ddb]
+  langrishe [Leader term 8 applied 10 config langrishe:Voter,smith:Voter,star:Voter 4c36a19348e63ddb]
+  star [Follower term 8 applied 10 config langrishe:Voter,smith:Voter,star:Voter 4c36a19348e63ddb]
+-- witness reruns (driver polls survivors only)
+-- witness run 1: SIGKILL langrishe (leader was langrishe), survivors smith,star
+  {"leader":"star","leader_seen_ms":2007.702,"old_leader":"langrishe","scenario":"fail-die","term":9,"write_ok_ms":2015.481,"writer":"star"}
+  smith [Follower term 9 applied 12 b36bbb0f72e8b7f6]
+  langrishe [Follower term 9 applied 12 b36bbb0f72e8b7f6]
+  star [Leader term 9 applied 12 b36bbb0f72e8b7f6]
+-- witness run 2: SIGKILL smith (leader was star), survivors langrishe,star
+  {"leader":"langrishe","leader_seen_ms":2042.277,"old_leader":"star","scenario":"fail-die","term":10,"write_ok_ms":2046.675,"writer":"langrishe"}
+  smith [Follower term 10 applied 14 b36bbb0f72e8b7f6]
+  langrishe [Leader term 10 applied 14 b36bbb0f72e8b7f6]
+  star [None term None applied None None]
+-- witness run 3: SIGKILL langrishe (leader was langrishe), survivors smith,star
+raftprobe: star: dial tcp 10.79.20.83:17400: connect: connection refused
+  
+  smith [Follower term 10 applied 14 b36bbb0f72e8b7f6]
+  langrishe [Leader term 10 applied 14 b36bbb0f72e8b7f6]
+  star [None term None applied None None]
+-- witness: star plus one node, other data node down
+raftprobe: unknown node "{\"op\":\"put\",\"k\":\"witness-write\",\"v\":\"x\"}"
+Traceback (most recent call last):
+  File "<string>", line 1, in <module>
+    import json,sys;d=json.load(sys.stdin);print(d["ok"],d.get("err"))
+                      ~~~~~~~~~^^^^^^^^^^^
+  File "/usr/lib/python3.13/json/__init__.py", line 293, in load
+    return loads(fp.read(),
+        cls=cls, object_hook=object_hook,
+        parse_float=parse_float, parse_int=parse_int,
+        parse_constant=parse_constant, object_pairs_hook=object_pairs_hook, **kw)
+  File "/usr/lib/python3.13/json/__init__.py", line 346, in loads
+    return _default_decoder.decode(s)
+           ~~~~~~~~~~~~~~~~~~~~~~~^^^
+  File "/usr/lib/python3.13/json/decoder.py", line 345, in decode
+    obj, end = self.raw_decode(s, idx=_w(s, 0).end())
+               ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.13/json/decoder.py", line 363, in raw_decode
+    raise JSONDecodeError("Expecting value", s, err.value) from None
+json.decoder.JSONDecodeError: Expecting value: line 1 column 1 (char 0)
+  leader with langrishe down: ; write: 
+  smith [Leader term 11 applied 15 b36bbb0f72e8b7f6]
+  langrishe [Follower term 11 applied 15 b36bbb0f72e8b7f6]
+  star [None term None applied None None]
+-- correction: run 2 killed star (the leader), not smith; the script restarted smith, which was already running (second process failed to bind and exited). star restarted now.
+  smith [Leader term 11 applied 15 b36bbb0f72e8b7f6]
+  langrishe [Follower term 11 applied 15 b36bbb0f72e8b7f6]
+  star [Follower term 11 applied 15 b36bbb0f72e8b7f6]
+-- witness run 3: SIGKILL leader smith
+  {"leader":"star","leader_seen_ms":1824.845,"old_leader":"smith","scenario":"fail-die","term":12,"write_ok_ms":1837.636,"writer":"star"}
+  smith [Follower term 12 applied 17 b36bbb0f72e8b7f6]
+  langrishe [Follower term 12 applied 17 b36bbb0f72e8b7f6]
+  star [Leader term 12 applied 17 b36bbb0f72e8b7f6]
+-- witness run 4: SIGKILL leader star
+  {"leader":"langrishe","leader_seen_ms":2489.799,"old_leader":"star","scenario":"fail-die","term":13,"write_ok_ms":2494.214,"writer":"langrishe"}
+  smith [Follower term 13 applied 19 b36bbb0f72e8b7f6]
+  langrishe [Leader term 13 applied 19 b36bbb0f72e8b7f6]
+  star [Follower term 13 applied 19 b36bbb0f72e8b7f6]
+-- witness: star plus one data node, other data node down
+  smith [Follower term 14 applied 20 b36bbb0f72e8b7f6] write: False node is not the leader
+  star [Leader term 14 applied 20 b36bbb0f72e8b7f6] write: True None
+  smith [Follower term 14 applied 21 bbf3886de5fbd101] witness-write found: True
+  langrishe [Follower term 14 applied 21 bbf3886de5fbd101] witness-write found: True
+  star [Leader term 14 applied 21 bbf3886de5fbd101] witness-write found: True

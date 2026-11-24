@@ -1,0 +1,48 @@
+== out run 1
+leader=smith follower=star held at leader: out
+      3.2ms smith     Leader term=68 leader=smith commit=6052 applied=6052 keys=6015
+      6.4ms langrishe Follower term=68 leader=smith commit=6052 applied=6052 keys=6015
+     20.9ms star      Follower term=68 leader=smith commit=6047 applied=6047 keys=6010
+   1260.1ms star      Candidate term=68 leader= commit=6047 applied=6047 keys=6010
+write during cut: True None 5486
+healed: smith[Leader 68 smith 6053] langrishe[Follower 68 smith 6053] star[Follower 68 smith 6053]
+== out run 2
+leader=smith follower=star held at leader: out
+      3.3ms smith     Leader term=68 leader=smith commit=6058 applied=6058 keys=6016
+      6.4ms langrishe Follower term=68 leader=smith commit=6058 applied=6058 keys=6016
+     21.8ms star      Follower term=68 leader=smith commit=6053 applied=6053 keys=6016
+    361.5ms star      Candidate term=68 leader= commit=6053 applied=6053 keys=6016
+write during cut: True None 5260
+healed: smith[Leader 68 smith 6059] langrishe[Follower 68 smith 6059] star[Follower 68 smith 6059]
+== out run 3
+leader=smith follower=star held at leader: out
+      3.5ms smith     Leader term=68 leader=smith commit=6064 applied=6064 keys=6016
+      6.5ms langrishe Follower term=68 leader=smith commit=6064 applied=6064 keys=6016
+     20.3ms star      Follower term=68 leader=smith commit=6059 applied=6059 keys=6016
+   1170.8ms star      Candidate term=68 leader= commit=6059 applied=6059 keys=6016
+write during cut: True None 5244
+healed: smith[Leader 68 smith 6065] langrishe[Follower 68 smith 6065] star[Follower 68 smith 6065]
+== in run 1
+leader=smith follower=star held at leader: in
+      3.2ms smith     Leader term=68 leader=smith commit=6070 applied=6070 keys=6016
+      6.1ms langrishe Follower term=68 leader=smith commit=6070 applied=6070 keys=6016
+     12.0ms star      Follower term=68 leader=smith commit=6065 applied=6065 keys=6016
+   1484.6ms star      Candidate term=68 leader= commit=6065 applied=6065 keys=6016
+write during cut: True None 5686
+healed: smith[Leader 68 smith 6071] langrishe[Follower 68 smith 6071] star[Follower 68 smith 6071]
+== in run 2
+leader=smith follower=star held at leader: in
+      3.1ms smith     Leader term=68 leader=smith commit=6076 applied=6076 keys=6016
+      6.0ms langrishe Follower term=68 leader=smith commit=6076 applied=6076 keys=6016
+     21.5ms star      Follower term=68 leader=smith commit=6072 applied=6072 keys=6016
+   1500.7ms star      Candidate term=68 leader= commit=6072 applied=6072 keys=6016
+write during cut: True None 5589
+healed: smith[Leader 68 smith 6077] langrishe[Follower 68 smith 6077] star[Follower 68 smith 6077]
+== in run 3
+leader=smith follower=star held at leader: in
+      3.6ms smith     Leader term=68 leader=smith commit=6082 applied=6082 keys=6016
+      6.8ms langrishe Follower term=68 leader=smith commit=6082 applied=6082 keys=6016
+     20.6ms star      Follower term=68 leader=smith commit=6078 applied=6078 keys=6016
+    136.0ms star      Candidate term=68 leader= commit=6078 applied=6078 keys=6016
+write during cut: True None 5500
+healed: smith[Leader 68 smith 6083] langrishe[Follower 68 smith 6083] star[Follower 68 smith 6083]

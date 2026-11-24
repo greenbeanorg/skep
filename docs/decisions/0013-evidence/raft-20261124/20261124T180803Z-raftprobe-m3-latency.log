@@ -1,0 +1,12 @@
+leader star
+{"client_ms":26.961,"node":"star","ok":true,"recv_unix_ns":1795543683106971400}
+smith-leader run 1: {"client_ms":5904.047,"errors":0,"first_err":"","max_us":21045,"median_us":5558,"min_us":2097,"n":1000,"node":"smith","ok":true,"p99_us":9585,"recv_unix_ns":1795543691566224000,"total_ms":5901}
+smith-leader run 2: {"client_ms":6570.701,"errors":0,"first_err":"","max_us":14652,"median_us":7019,"min_us":2759,"n":1000,"node":"smith","ok":true,"p99_us":9694,"recv_unix_ns":1795543698142941400,"total_ms":6568}
+smith-leader run 3: {"client_ms":6614.104,"errors":0,"first_err":"","max_us":13542,"median_us":6808,"min_us":2608,"n":1000,"node":"smith","ok":true,"p99_us":9776,"recv_unix_ns":1795543704761025800,"total_ms":6612}
+{"client_ms":9.309,"node":"smith","ok":true,"recv_unix_ns":1795543704773663000}
+star-leader run 1: {"client_ms":9152.134,"errors":0,"first_err":"","max_us":22203,"median_us":8228,"min_us":2604,"n":1000,"node":"star","ok":true,"p99_us":14775,"recv_unix_ns":1795543715398191400,"total_ms":9145}
+star-leader run 2: {"client_ms":6111.16,"errors":0,"first_err":"","max_us":16908,"median_us":6076,"min_us":2418,"n":1000,"node":"star","ok":true,"p99_us":9520,"recv_unix_ns":1795543721512907000,"total_ms":6105}
+star-leader run 3: {"client_ms":5998.365,"errors":0,"first_err":"","max_us":16364,"median_us":5770,"min_us":2574,"n":1000,"node":"star","ok":true,"p99_us":9321,"recv_unix_ns":1795543727515602200,"total_ms":5992}
+smith Follower 4 6004 6000 8a608f8b259f99b7
+langrishe Follower 4 6004 6000 8a608f8b259f99b7
+star Leader 4 6005 6001 36094a394bcb1b68

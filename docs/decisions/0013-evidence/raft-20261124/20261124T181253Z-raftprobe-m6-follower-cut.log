@@ -1,0 +1,92 @@
+== prevote ON
+-- run 1
+leader=smith isolated=star before: leader[Leader 10 smith 6017] f[Follower 10 smith 6017]
+write during cut ok= True
+after 20s cut: leader[Leader 10 smith 6018] f[Candidate 10  6017]
+      3.7ms smith     Leader term=10 leader=smith commit=6018 applied=6018 keys=6004
+      7.9ms langrishe Follower term=10 leader=smith commit=6018 applied=6018 keys=6004
+     26.3ms star      Follower term=10 leader=smith commit=6018 applied=6018 keys=6004
+end smith [Leader 10 smith 6018]
+end langrishe [Follower 10 smith 6018]
+end star [Follower 10 smith 6018]
+-- run 2
+leader=smith isolated=star before: leader[Leader 10 smith 6018] f[Follower 10 smith 6018]
+write during cut ok= True
+after 20s cut: leader[Leader 10 smith 6019] f[Candidate 10  6018]
+      3.8ms smith     Leader term=10 leader=smith commit=6019 applied=6019 keys=6004
+      7.7ms langrishe Follower term=10 leader=smith commit=6019 applied=6019 keys=6004
+     34.3ms star      Follower term=10 leader=smith commit=6019 applied=6019 keys=6004
+end smith [Leader 10 smith 6019]
+end langrishe [Follower 10 smith 6019]
+end star [Follower 10 smith 6019]
+-- run 3
+leader=smith isolated=star before: leader[Leader 10 smith 6019] f[Follower 10 smith 6019]
+write during cut ok= True
+after 20s cut: leader[Leader 10 smith 6020] f[Candidate 10  6019]
+      3.8ms smith     Leader term=10 leader=smith commit=6020 applied=6020 keys=6004
+      6.9ms langrishe Follower term=10 leader=smith commit=6020 applied=6020 keys=6004
+     31.7ms star      Follower term=10 leader=smith commit=6020 applied=6020 keys=6004
+end smith [Leader 10 smith 6020]
+end langrishe [Follower 10 smith 6020]
+end star [Follower 10 smith 6020]
+== prevote OFF (all three restarted with -prevote=false)
+smith Follower 11 prevote False
+langrishe Leader 11 prevote False
+star Follower 11 prevote False
+-- run 1
+leader=langrishe isolated=star before: leader[Leader 11 langrishe 6021] f[Follower 11 langrishe 6021]
+write during cut ok= True
+after 20s cut: leader[Leader 11 langrishe 6022] f[Candidate 24  6021]
+      3.7ms smith     Follower term=11 leader=langrishe commit=6022 applied=6022 keys=6004
+      7.4ms langrishe Leader term=11 leader=langrishe commit=6022 applied=6022 keys=6004
+     15.8ms star      Candidate term=24 leader= commit=6021 applied=6021 keys=6004
+     69.8ms langrishe Follower term=18 leader= commit=6022 applied=6022 keys=6004
+   1090.7ms smith     Follower term=19 leader=langrishe commit=6022 applied=6022 keys=6004
+   1092.5ms langrishe Follower term=19 leader= commit=6022 applied=6022 keys=6004
+   1283.1ms langrishe Follower term=25 leader= commit=6022 applied=6022 keys=6004
+   1292.1ms star      Candidate term=25 leader= commit=6021 applied=6021 keys=6004
+   2401.3ms smith     Follower term=26 leader=langrishe commit=6022 applied=6022 keys=6004
+   2403.0ms langrishe Leader term=26 leader=langrishe commit=6022 applied=6022 keys=6004
+   2408.6ms star      Follower term=26 leader= commit=6021 applied=6021 keys=6004
+   2463.8ms langrishe Leader term=26 leader=langrishe commit=6024 applied=6024 keys=6004
+   2469.7ms star      Follower term=26 leader=langrishe commit=6024 applied=6024 keys=6004
+   2523.3ms smith     Follower term=26 leader=langrishe commit=6024 applied=6024 keys=6004
+end smith [Follower 26 langrishe 6024]
+end langrishe [Leader 26 langrishe 6024]
+end star [Follower 26 langrishe 6024]
+-- run 2
+leader=langrishe isolated=star before: leader[Leader 26 langrishe 6024] f[Follower 26 langrishe 6024]
+write during cut ok= True
+after 20s cut: leader[Leader 26 langrishe 6025] f[Candidate 39  6024]
+      3.6ms smith     Follower term=26 leader=langrishe commit=6025 applied=6025 keys=6004
+      6.7ms langrishe Leader term=26 leader=langrishe commit=6025 applied=6025 keys=6004
+     24.4ms star      Candidate term=39 leader= commit=6024 applied=6024 keys=6004
+     78.1ms langrishe Follower term=38 leader= commit=6025 applied=6025 keys=6004
+    662.2ms langrishe Follower term=40 leader= commit=6025 applied=6025 keys=6004
+    671.4ms star      Candidate term=40 leader= commit=6024 applied=6024 keys=6004
+   1165.0ms langrishe Candidate term=41 leader= commit=6025 applied=6025 keys=6004
+   1226.4ms smith     Follower term=41 leader=langrishe commit=6025 applied=6025 keys=6004
+   1228.5ms langrishe Leader term=41 leader=langrishe commit=6026 applied=6026 keys=6004
+   1237.4ms star      Follower term=41 leader=langrishe commit=6026 applied=6026 keys=6004
+   1291.7ms smith     Follower term=41 leader=langrishe commit=6026 applied=6026 keys=6004
+end smith [Follower 41 langrishe 6026]
+end langrishe [Leader 41 langrishe 6026]
+end star [Follower 41 langrishe 6026]
+-- run 3
+leader=langrishe isolated=star before: leader[Leader 41 langrishe 6026] f[Follower 41 langrishe 6026]
+write during cut ok= True
+after 20s cut: leader[Leader 41 langrishe 6027] f[Candidate 53  6026]
+      3.3ms smith     Follower term=41 leader=langrishe commit=6027 applied=6027 keys=6004
+      6.6ms langrishe Follower term=41 leader= commit=6027 applied=6027 keys=6004
+     13.6ms star      Candidate term=53 leader= commit=6026 applied=6026 keys=6004
+     67.6ms langrishe Follower term=53 leader= commit=6027 applied=6027 keys=6004
+    695.8ms langrishe Follower term=54 leader= commit=6027 applied=6027 keys=6004
+    703.6ms star      Candidate term=54 leader= commit=6026 applied=6026 keys=6004
+   1946.7ms smith     Follower term=54 leader= commit=6027 applied=6027 keys=6004
+   2009.8ms smith     Follower term=55 leader=langrishe commit=6027 applied=6027 keys=6004
+   2011.6ms langrishe Leader term=55 leader=langrishe commit=6028 applied=6028 keys=6004
+   2020.8ms star      Follower term=55 leader=langrishe commit=6028 applied=6028 keys=6004
+   2072.9ms smith     Follower term=55 leader=langrishe commit=6028 applied=6028 keys=6004
+end smith [Follower 55 langrishe 6028]
+end langrishe [Leader 55 langrishe 6028]
+end star [Follower 55 langrishe 6028]

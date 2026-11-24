@@ -1,0 +1,12 @@
+run 1: {"leader":"smith","leader_seen_ms":2444.904,"old_leader":"star","scenario":"fail-die","term":5,"write_ok_ms":2450.126,"writer":"smith"}
+   smith Leader term 5 applied 6007 d5a0d1b0e9d5513f
+   langrishe Follower term 5 applied 6007 d5a0d1b0e9d5513f
+   star Follower term 5 applied 6007 d5a0d1b0e9d5513f
+run 2: {"leader":"langrishe","leader_seen_ms":1719.027,"old_leader":"smith","scenario":"fail-die","term":6,"write_ok_ms":1725.556,"writer":"langrishe"}
+   smith Follower term 6 applied 6009 d5a0d1b0e9d5513f
+   langrishe Leader term 6 applied 6009 d5a0d1b0e9d5513f
+   star Follower term 6 applied 6009 d5a0d1b0e9d5513f
+run 3: {"leader":"smith","leader_seen_ms":1662.355,"old_leader":"langrishe","scenario":"fail-die","term":7,"write_ok_ms":1666.004,"writer":"smith"}
+   smith Leader term 7 applied 6011 d5a0d1b0e9d5513f
+   langrishe Follower term 7 applied 6011 d5a0d1b0e9d5513f
+   star Follower term 7 applied 6011 d5a0d1b0e9d5513f

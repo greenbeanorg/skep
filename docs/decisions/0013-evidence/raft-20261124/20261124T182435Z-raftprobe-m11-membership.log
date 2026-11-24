@@ -1,0 +1,36 @@
+run 1 leader=langrishe target=star
+  remove: True None client_ms 7.374
+  leader: Leader term 72 applied 12088 config langrishe:Voter,smith:Voter 5c139ba9ca9e020b
+  removed node: Follower term 72 applied 12087 config langrishe:Voter,smith:Voter 5c139ba9ca9e020b
+  write with two voters: True None
+  removed node restarted (5 s): Follower term 72 applied 12086 config langrishe:Voter,smith:Voter 5c139ba9ca9e020b
+  addnonvoter: True None client_ms 8.176
+  non-voter: Follower term 72 applied 12090 config langrishe:Voter,smith:Voter,star:Nonvoter ab80fd6722642280
+  addvoter (promote): True None client_ms 7.175
+  end smith: Follower term 72 applied 12091 config langrishe:Voter,smith:Voter,star:Voter ab80fd6722642280
+  end langrishe: Leader term 72 applied 12091 config langrishe:Voter,smith:Voter,star:Voter ab80fd6722642280
+  end star: Follower term 72 applied 12091 config langrishe:Voter,smith:Voter,star:Voter ab80fd6722642280
+run 2 leader=langrishe target=star
+  remove: True None client_ms 7.671
+  leader: Leader term 72 applied 12092 config langrishe:Voter,smith:Voter ab80fd6722642280
+  removed node: Follower term 72 applied 12091 config langrishe:Voter,smith:Voter ab80fd6722642280
+  write with two voters: True None
+  removed node restarted (5 s): Follower term 72 applied 12086 config langrishe:Voter,smith:Voter 5c139ba9ca9e020b
+  addnonvoter: True None client_ms 7.545
+  non-voter: Follower term 72 applied 12094 config langrishe:Voter,smith:Voter,star:Nonvoter db7289e09f6d20f9
+  addvoter (promote): True None client_ms 7.468
+  end smith: Follower term 72 applied 12095 config langrishe:Voter,smith:Voter,star:Voter db7289e09f6d20f9
+  end langrishe: Leader term 72 applied 12095 config langrishe:Voter,smith:Voter,star:Voter db7289e09f6d20f9
+  end star: Follower term 72 applied 12095 config langrishe:Voter,smith:Voter,star:Voter db7289e09f6d20f9
+run 3 leader=langrishe target=star
+  remove: True None client_ms 7.154
+  leader: Leader term 72 applied 12096 config langrishe:Voter,smith:Voter db7289e09f6d20f9
+  removed node: Follower term 72 applied 12095 config langrishe:Voter,smith:Voter db7289e09f6d20f9
+  write with two voters: True None
+  removed node restarted (5 s): Follower term 72 applied 12086 config langrishe:Voter,smith:Voter 5c139ba9ca9e020b
+  addnonvoter: True None client_ms 7.23
+  non-voter: Follower term 72 applied 12098 config langrishe:Voter,smith:Voter,star:Nonvoter 5d143a5023e83b5f
+  addvoter (promote): True None client_ms 6.997
+  end smith: Follower term 72 applied 12099 config langrishe:Voter,smith:Voter,star:Voter 5d143a5023e83b5f
+  end langrishe: Leader term 72 applied 12099 config langrishe:Voter,smith:Voter,star:Voter 5d143a5023e83b5f
+  end star: Follower term 72 applied 12099 config langrishe:Voter,smith:Voter,star:Voter 5d143a5023e83b5f

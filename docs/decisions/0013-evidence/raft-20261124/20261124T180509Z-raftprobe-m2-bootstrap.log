@@ -1,0 +1,29 @@
+run 1: {"go_sent":true,"leader":"star","leader_seen_ms":1183.06,"scenario":"leader","term":2,"write_ok_ms":1188.717,"writer":"star"}
+run 1 rss smith: 
+run 1 rss langrishe: 
+run 1 rss star: 
+run 2: {"go_sent":true,"leader":"langrishe","leader_seen_ms":1086.607,"scenario":"leader","term":2,"write_ok_ms":1098.058,"writer":"langrishe"}
+run 2 rss smith: 
+run 2 rss langrishe: 
+run 2 rss star: 
+run 3: {"go_sent":true,"leader":"star","leader_seen_ms":1046.037,"scenario":"leader","term":2,"write_ok_ms":1051.966,"writer":"star"}
+run 3 rss smith: 
+run 3 rss langrishe: 
+run 3 rss star: 
+smith: ,rss=,vsz=,etime=
+            77668 KiB(rss,vsz)
+langrishe: ,rss=,vsz=,etime=
+            85711 KiB(rss,vsz)
+star: ,rss=,vsz=,etime=
+             2490 KiB(rss,vsz)
+smith pid=77668 14044 1267420   01:16
+langrishe pid=85711 14132 1267172   01:15
+star pid=2490 14744 1267748   01:16
+RSS reading 2 (after all scenarios, 21-key state, idle):
+  smith pid=79177 rss_kib,vsz_kib,etime: 15500 1268036   01:32
+  langrishe pid=87387 rss_kib,vsz_kib,etime: 11164 1266612   00:16
+  star pid=2869 rss_kib,vsz_kib,etime: 15392 1268036   01:25
+RSS reading 3 (fresh processes, 60 s idle):
+  smith pid=79283 rss_kib,vsz_kib,etime: 14960 1268036   01:01
+  langrishe pid=87427 rss_kib,vsz_kib,etime: 13932 1333060   01:01
+  star pid=2903 rss_kib,vsz_kib,etime: 14024 1332804   01:01
