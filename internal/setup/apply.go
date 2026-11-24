@@ -221,7 +221,8 @@ func (a *Applier) fail(j *Journal, i int, effects []effect, err error) error {
 		return inc
 	}
 	if serr != nil {
-		return fmt.Errorf("%w (and the journal could not be saved: %v)", err, serr)
+		return fmt.Errorf("%s failed: %w; the host's configuration was not changed (and the journal could not be saved: %v). Clear this run before running %s again: skep-setup rollback %s",
+			j.Entries[i].Action, err, serr, j.Command, j.ID)
 	}
 	return fmt.Errorf("%s failed: %w; the host's configuration was not changed. Clear this run before running %s again: skep-setup rollback %s",
 		j.Entries[i].Action, err, j.Command, j.ID)

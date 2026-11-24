@@ -685,7 +685,7 @@ func (s *Service) cloneOf(ctx context.Context, src models.Container, req models.
 	}
 	if (!sameAddressing(src.NICs, nics) || !slices.Equal(ns, src.Nameservers)) && src.StartedOnce {
 		return c, &models.Error{Code: models.CodeContainerStarted,
-			Message: "the source jail has started, so the clone's tree has run code and Skep does not write new addressing into it (decision 13); clone a snapshot of a jail that never started, or keep the source's addressing",
+			Message: "the source jail has started, so the clone's tree has run code and Skep does not write new addressing into it; clone a snapshot of a jail that never started, or keep the source's addressing",
 			Details: map[string]any{"container_id": src.ID}}
 	}
 	c.NICs, c.Nameservers = nics, ns

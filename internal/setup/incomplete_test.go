@@ -452,6 +452,25 @@ func TestCancelledSaveFailedNamesTheRollback(t *testing.T) {
 	}
 }
 
+// A failed action with nothing changed whose journal could not be saved
+// still leaves the journal directory, so the message names the rollback.
+func TestFailSaveFailedNamesTheRollback(t *testing.T) {
+	root := stockHost(t)
+	a := newApplyEnv(t, root).applier()
+	j := &Journal{ID: "20261123T000000Z", Command: "apply", Entries: []Entry{{Action: Action{Type: ActMkdir, File: "/x"}}}}
+	cause := errors.New("boom")
+	err := a.fail(j, 0, make([]effect, 1), cause) // the journal's directory does not exist, so the save fails
+	wantNotIncomplete(t, err)
+	msg := err.Error()
+	if !strings.Contains(msg, "could not be saved") || !strings.Contains(msg, "skep-setup rollback "+j.ID) ||
+		!strings.Contains(msg, "the host's configuration was not changed") {
+		t.Fatalf("message: %v", err)
+	}
+	if !errors.Is(err, cause) {
+		t.Fatalf("cause lost: %v", err)
+	}
+}
+
 // killRunner fails "service NAME stop" the way a killed command does.
 type killRunner struct {
 	*fakeRunner
