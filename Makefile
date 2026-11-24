@@ -81,6 +81,8 @@ build-freebsd-test: ## Cross-compile the FreeBSD test agent and integration test
 		-o $(BIN_DIR)/freebsd-amd64-test/skepctl-test ./tests/integration/skepctl
 	GOOS=freebsd GOARCH=amd64 $(GO) build -trimpath \
 		-o $(BIN_DIR)/freebsd-amd64-test/retention-test ./tests/integration/retention
+	GOOS=freebsd GOARCH=amd64 $(GO) build -trimpath \
+		-o $(BIN_DIR)/freebsd-amd64-test/cluster-probe ./tests/integration/cluster
 
 test: ## Run the unit tests, with the race detector (needs a C compiler)
 	CGO_ENABLED=1 $(GO) test -race -count=1 ./...
