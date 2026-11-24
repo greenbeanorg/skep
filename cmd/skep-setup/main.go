@@ -362,6 +362,10 @@ func summary(items []setup.Item) string {
 
 func runCheck(ctx context.Context, args []string, e env) error {
 	o, p, f, err := computePlanFacts(ctx, "check", args, e, nil, nil)
+	if errors.Is(err, setup.ErrNoMgmt) {
+		reportAgentWithoutPlan(ctx, o.Root, e)
+		return err
+	}
 	if err != nil {
 		return err
 	}

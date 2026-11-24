@@ -231,8 +231,11 @@ func NewHandler(opts Options) http.Handler {
 	mux.HandleFunc("/api/", httpkit.NotFound)
 	// The usual health-check paths are not the interface: its 200 would
 	// read as a passing check whatever the state of the service.
+	// With a trailing slash too ("{$}": that path only, not the subtree).
 	mux.HandleFunc("/health", healthMoved)
 	mux.HandleFunc("/healthz", healthMoved)
+	mux.HandleFunc("/health/{$}", healthMoved)
+	mux.HandleFunc("/healthz/{$}", healthMoved)
 	if opts.UI != nil {
 		mux.Handle("/", opts.UI)
 	} else {
