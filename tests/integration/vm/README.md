@@ -1,6 +1,6 @@
 # VM integration checks (Milestone 6)
 
-The named checks of [ADR 0009 decision 11](../../docs/decisions/0009-first-vm-bhyve.md#decision-11-what-verified-on-freebsd-151-means),
+The named checks of [ADR 0009 decision 11](../../../docs/decisions/0009-first-vm-bhyve.md#decision-11-what-verified-on-freebsd-151-means),
 run on `hearst` (FreeBSD 15.1-RELEASE-p6, amd64, itself a KVM guest on
 Proxmox with CPU type `host`) with the FreeBSD build of the binaries,
 against the test installation in `/home/aba/skep-m6`. The output of every
