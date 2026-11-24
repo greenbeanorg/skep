@@ -60,9 +60,13 @@ procedure, and results recorded as it describes are welcome.
   and 23 ([installer](../../../tests/integration/setup/results/lab-vm-validation-20261122.md),
   [zvol nodes](../../../tests/integration/setup/results/zvol-device-node-20261122.md),
   [c9ecac9](../../../tests/integration/setup/results/task-error-details-20261123.md)).
-  No VM start on a build after ce1d910, such as the 0.1 release build, is
-  recorded, and a guest operating system's boot has not been checked since
-  2026-11-14.
+  On the 0.1 build (the installed package from c8ce17b), on `smith` (UFS
+  root, nested under KVM) on 2026-11-24, a VM with one zvol disk and no NIC
+  was created, started, stopped, force-stopped and deleted, and booted from
+  the FreeBSD 15.1 bootonly ISO to the installer's first prompt on the
+  serial console ([results](../../../tests/integration/vm/results/smoke-0.1-c8ce17b-20261124-smith.md)).
+  A guest operating system's install, its boot from its own disk, and its
+  networking have not been checked since 2026-11-14.
 - **Nested under KVM**, a guest's first start can stop the whole host unless
   `hw.vmm.vmx.cap.virtual_interrupt_delivery=0` is set before `vmm` loads.
   The agent logs a warning at start and reports a degraded `nested_interrupts`

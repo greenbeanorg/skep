@@ -5,6 +5,12 @@ Decision 1). The tree and the manifest are staged on the development
 machine; `pkg create` runs by hand on a FreeBSD 15 amd64 lab VM, because
 it needs FreeBSD's `pkg` (answer 2). There is no Go `.pkg` writer.
 
+**0.1 has no release asset.** No package, checksum file or signature is
+published for 0.1, and there is no `pkg` repository: build the package
+yourself with the steps below. Signed packages on GitHub Releases and the
+signed repository (ADR 0012 Decision 8) are deferred until signing is
+built ([ADR 0012, amendment of 2026-11-24](../decisions/0012-installer.md#amendment-2026-11-24-no-release-asset-for-01)).
+
 **Status:** the staging is built and tested on Linux, and `pkg create`,
 `pkg add`, `pkg upgrade` and `pkg delete` with this manifest and these
 scripts ran on the lab VMs (FreeBSD 15.1-RELEASE-p7, pkg 2.9.2, smith and
@@ -29,8 +35,9 @@ firmware removed first):
 - `pkg add ./skep-0.1.0.pkg` does not fetch it: "pkg: Missing dependency
   'edk2-bhyve'", exit 1, and the installed skep is left as it was. It
   works once the firmware is installed (`pkg install edk2-bhyve`).
-- From a repository (`pkg install skep`, Decision 8, not built yet) pkg
-  resolves the dependency like any other.
+- From a repository (`pkg install skep`, Decision 8, deferred until
+  signing is built; none exists for 0.1) pkg resolves the dependency like
+  any other.
 
 A host installed by hand (binaries copied, as on hearst) has no package and
 so no dependency; `skep-setup check` and `plan` still warn when the
@@ -138,4 +145,5 @@ On a VM restored from its clean snapshot:
    `/var/db/skep`, `/usr/local/etc/skep/*.json` and the account.
 
 Signing and the repository (Decision 8) are separate, manual release
-steps with Andy's keys; they are not built yet.
+steps with Andy's keys. They are not built yet and are deferred until
+they are: 0.1 publishes no package (ADR 0012, amendment of 2026-11-24).
