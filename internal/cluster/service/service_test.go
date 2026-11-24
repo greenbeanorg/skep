@@ -17,7 +17,10 @@ import (
 	"github.com/greenbeanorg/skep/pkg/models"
 )
 
-const nodeA = "0b5e3a52-7f0e-4c58-9d0b-3f1d6f0a9c11"
+const (
+	nodeA       = "0b5e3a52-7f0e-4c58-9d0b-3f1d6f0a9c11"
+	testCluster = "7d1c2a9e-1b0f-4f3e-9a51-2c6b8e0d4f10"
+)
 
 // oneNode makes a one-node cluster as "skep-cluster init" does.
 func oneNode(t *testing.T, pinOverride string) (*store.Node, *nodekey.Key) {
@@ -45,11 +48,16 @@ func oneNode(t *testing.T, pinOverride string) (*store.Node, *nodekey.Key) {
 		pin = pinOverride
 	}
 	e, _ := clusterstate.NewEntry(clusterstate.TypeClusterInit, "op-init", clusterstate.ActorSystem, nodeA,
-		clusterstate.ClusterInit{ClusterID: "c1", Member: clusterstate.Member{ID: nodeA, Name: "smith", Pin: pin, State: clusterstate.StateMember}})
+		clusterstate.ClusterInit{ClusterID: testCluster, Member: clusterstate.Member{ID: nodeA, Name: "smith", Pin: pin, State: clusterstate.StateMember}})
 	if _, err := n.Apply(e); err != nil {
 		t.Fatal(err)
 	}
 	return n, key
+}
+
+func withStore(s *Service, n *store.Node) *Service {
+	s.SetStore(n, nil)
+	return s
 }
 
 func run(t *testing.T, s *Service) {
@@ -73,7 +81,7 @@ func eventually(t *testing.T, what string, ok func() bool) {
 // A single host: no listen address, so no network listener at all.
 func TestSingleHostOpensNoListener(t *testing.T) {
 	n, key := oneNode(t, "")
-	s := New(Options{Config: clusterconf.Config{NodeID: nodeA, NodeName: "smith"}, Key: key, Store: n, Interval: 20 * time.Millisecond})
+	s := withStore(New(Options{Config: clusterconf.Config{NodeID: nodeA, NodeName: "smith"}, Key: key, Interval: 20 * time.Millisecond}), n)
 	run(t, s)
 	eventually(t, "health ok", func() bool { return s.Health(context.Background()).Status == models.HealthOK })
 	time.Sleep(100 * time.Millisecond) // several rounds of background work
@@ -87,7 +95,7 @@ func TestSingleHostOpensNoListener(t *testing.T) {
 	if l != nil {
 		t.Fatal("a listener was opened without a listen address")
 	}
-	if st.NodeID != nodeA || st.ClusterID != "c1" || st.Pin != key.Pin() || len(st.Members) != 1 ||
+	if st.NodeID != nodeA || st.ClusterID != testCluster || st.Pin != key.Pin() || len(st.Members) != 1 ||
 		st.Members[0].Address != "" || st.Raft.State != "leader" {
 		t.Fatalf("status %+v", st)
 	}
@@ -106,7 +114,7 @@ func TestListenAddressOpensListenerAndUpdatesRecords(t *testing.T) {
 	probe.Close()
 	n, key := oneNode(t, "")
 	cfg := clusterconf.Config{NodeID: nodeA, NodeName: "smith", ListenAddress: "127.0.0.1"}
-	s := New(Options{Config: cfg, Key: key, Store: n, Interval: 20 * time.Millisecond})
+	s := withStore(New(Options{Config: cfg, Key: key, Interval: 20 * time.Millisecond}), n)
 	run(t, s)
 	eventually(t, "listener open and records updated", func() bool {
 		st := s.Status(context.Background())
@@ -145,7 +153,7 @@ func TestListenAddressOpensListenerAndUpdatesRecords(t *testing.T) {
 
 func TestHealthNamesAKeyThatIsNotPinned(t *testing.T) {
 	n, key := oneNode(t, "sha256:"+strings.Repeat("0", 64))
-	s := New(Options{Config: clusterconf.Config{NodeID: nodeA, NodeName: "smith"}, Key: key, Store: n})
+	s := withStore(New(Options{Config: clusterconf.Config{NodeID: nodeA, NodeName: "smith"}, Key: key}), n)
 	h := s.Health(context.Background())
 	if h.Status != models.HealthUnavailable || h.Checks["membership"].Status != models.HealthUnavailable {
 		t.Fatalf("health %+v", h)
@@ -156,7 +164,7 @@ func TestHealthNamesAnotherNodeID(t *testing.T) {
 	// cluster.json names a node the store does not know.
 	n, key := oneNode(t, "")
 	other := "11111111-2222-4333-8444-555555555555"
-	s := New(Options{Config: clusterconf.Config{NodeID: other, NodeName: "smith"}, Key: key, Store: n})
+	s := withStore(New(Options{Config: clusterconf.Config{NodeID: other, NodeName: "smith"}, Key: key}), n)
 	if c := s.Health(context.Background()).Checks["membership"]; c.Status != models.HealthUnavailable {
 		t.Fatalf("membership check %+v", c)
 	}
@@ -166,7 +174,7 @@ func TestListenerThatCannotBindIsUnhealthy(t *testing.T) {
 	n, key := oneNode(t, "")
 	// 192.0.2.1 (TEST-NET-1) is not an address of this machine.
 	cfg := clusterconf.Config{NodeID: nodeA, NodeName: "smith", ListenAddress: "192.0.2.1"}
-	s := New(Options{Config: cfg, Key: key, Store: n, Interval: 20 * time.Millisecond})
+	s := withStore(New(Options{Config: cfg, Key: key, Interval: 20 * time.Millisecond}), n)
 	run(t, s)
 	eventually(t, "listener check failing", func() bool {
 		c := s.Health(context.Background()).Checks["listener"]
@@ -181,7 +189,7 @@ func TestListenerThatCannotBindIsUnhealthy(t *testing.T) {
 // library's (ADR 0013 amendment 1).
 func TestStatusCarriesTheStateMachineIndex(t *testing.T) {
 	n, key := oneNode(t, "")
-	s := New(Options{Config: clusterconf.Config{NodeID: nodeA, NodeName: "smith"}, Key: key, Store: n, Interval: time.Hour})
+	s := withStore(New(Options{Config: clusterconf.Config{NodeID: nodeA, NodeName: "smith"}, Key: key, Interval: time.Hour}), n)
 	st := s.Status(context.Background())
 	if want := n.Machine().View().AppliedIndex; st.StateMachine.AppliedIndex != want || want == 0 || st.StateMachine.Stalled != nil {
 		t.Fatalf("state machine status %+v, want applied %d", st.StateMachine, want)

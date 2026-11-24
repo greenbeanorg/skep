@@ -98,6 +98,8 @@ but is not named gets `403 forbidden`.
 | `health` | `GET /cluster/v1/health` | yes | yes |
 | `status` | `GET /cluster/v1/status` | yes | yes |
 | `raft-configuration` | `GET /cluster/v1/raft/configuration` | yes | no |
+| `admit` | `POST /cluster/v1/admit` | yes | no |
+| `admit-withdraw` | `POST /cluster/v1/admit/withdraw` | yes | no |
 
 All three are reads. `status` returns the node ID and name, the cluster
 ID, the node key's pin, the certificate's expiry, the listener's state,

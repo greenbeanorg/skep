@@ -401,9 +401,33 @@ func TestStatusPrintsTheStateMachine(t *testing.T) {
 		t.Fatal(err)
 	}
 	out := w.out.String()
-	for _, want := range []string{"applied 6 of 9", "STOPPED at log index 7 (applied up to 6)", "unknown to this build"} {
+	for _, want := range []string{"STOPPED at log index 7 (applied up to 6)", "unknown to this build"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("status output lacks %q:\n%s", want, out)
+		}
+	}
+}
+
+// "applied 7 of 10" with only the library's own entries in between is
+// shown as up to date, not as a lag (D6 of the 8b-1 run).
+func TestStatusDoesNotShowLibraryEntriesAsLag(t *testing.T) {
+	for _, c := range []struct {
+		upToDate bool
+		want     string
+	}{
+		{true, "up to date, last Skep entry 7 (entries 8-10 are Raft's own)"},
+		{false, "applied 7, catching up (Raft applied 10, commit 10)"},
+	} {
+		w := newWorld(t)
+		f := &fakeService{status: localapi.Status{
+			Raft:         store.Stats{State: "leader", Term: 2, LastIndex: 10, CommitIndex: 10, AppliedIndex: 10},
+			StateMachine: localapi.StateMachineStatus{AppliedIndex: 7, UpToDate: c.upToDate},
+		}}
+		if err := run(context.Background(), []string{"status", "-socket", f.start(t)}, w.env(os.Getuid())); err != nil {
+			t.Fatal(err)
+		}
+		if out := w.out.String(); !strings.Contains(out, c.want) || strings.Contains(out, "applied 7 of 10") {
+			t.Errorf("status output lacks %q:\n%s", c.want, out)
 		}
 	}
 }
@@ -493,7 +517,7 @@ func TestListenNeedsTheRunningService(t *testing.T) {
 
 func TestUnknownCommand(t *testing.T) {
 	w := newWorld(t)
-	for _, c := range []string{"join", "admit", "join-request", "recover"} {
+	for _, c := range []string{"recover", "leave", "remove"} {
 		if err := run(context.Background(), []string{c}, w.env(0)); err == nil || !strings.Contains(err.Error(), "unknown command") {
 			t.Errorf("%s: %v", c, err)
 		}

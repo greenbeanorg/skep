@@ -10,6 +10,10 @@ import (
 	"time"
 
 	"github.com/greenbeanorg/skep/internal/cluster/clusterconf"
+	"github.com/greenbeanorg/skep/internal/cluster/clusterstate"
+	"github.com/greenbeanorg/skep/internal/cluster/joinstate"
+	"github.com/greenbeanorg/skep/internal/cluster/membership"
+	"github.com/greenbeanorg/skep/internal/cluster/raftnet"
 	"github.com/greenbeanorg/skep/internal/cluster/localapi"
 	"github.com/greenbeanorg/skep/internal/cluster/nodekey"
 	"github.com/greenbeanorg/skep/internal/cluster/service"
@@ -65,13 +69,49 @@ func runServe(ctx context.Context, args []string, e env) error {
 		log.Warn("the node certificate could not be used; a new one was issued with the same key, the pin is unchanged",
 			"reason", repaired.Error(), "pin", key.Pin(), "not_after", key.NotAfter())
 	}
-	node, err := store.Open(store.Options{Dir: *dataDir, NodeID: cfg.NodeID, Logger: log})
+	// The applied-membership file (ADR 0013 amendment 1) is read before
+	// the store starts: until the state machine reaches its index, the
+	// node accepts keys by it.
+	writer, err := membership.NewWriter(*dataDir)
+	if err != nil {
+		return fmt.Errorf("the applied-membership file: %w", err)
+	}
+	join, err := joinstate.Read(*dataDir)
+	if err != nil {
+		return fmt.Errorf("the join record: %w", err)
+	}
+	if join != nil && join.Phase == joinstate.PhaseCalling {
+		// The join command stopped while it may have sent the call:
+		// its outcome is unknown (ADR 0013 amendment 1, point 3).
+		join.Phase = joinstate.PhaseUnknown
+		if err := joinstate.Write(*dataDir, *join); err != nil {
+			return fmt.Errorf("the join record: %w", err)
+		}
+	}
+	machine := clusterstate.New()
+	machine.SetMembershipWriter(writer.Write)
+	svc := service.New(service.Options{Config: cfg, Key: key, DataDir: *dataDir, Machine: machine, Writer: writer, Join: join, Logger: log})
+	machine.SetOnApplied(svc.OnApplied)
+	var trans *raftnet.Transport
+	if addr := cfg.PeerAddress(); addr != "" {
+		// A node with a listen address runs Raft over TLS on 8444.
+		trans, err = raftnet.New(raftnet.Options{LocalAddress: addr, Certificate: key.Certificate, Trust: svc, Peer: svc, Logger: log})
+		if err != nil {
+			return err
+		}
+	} else if join != nil {
+		return errors.New("this node is joining a cluster but cluster.json has no listen address")
+	}
+	opts := store.Options{Dir: *dataDir, NodeID: cfg.NodeID, Logger: log, Machine: machine, Empty: join != nil}
+	if trans != nil {
+		opts.Transport = trans
+	}
+	node, err := store.Open(opts)
 	if err != nil {
 		return err
 	}
 	defer node.Close()
-
-	svc := service.New(service.Options{Config: cfg, Key: key, Store: node, Logger: log})
+	svc.SetStore(node, trans)
 	ln, err := localapi.Listen(localapi.ListenOptions{
 		Path:           *socket,
 		AllowedUIDs:    []uint32{0, api.UID},

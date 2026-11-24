@@ -3,10 +3,11 @@
 // (ADR 0013 A2, B11). It is the only package that imports the Raft
 // library.
 //
-// Step 8a runs a one-node cluster. Raft RPCs between nodes need the
-// inbound handler with per-RPC identity, which is step 8b; until then the
-// store uses the library's in-memory transport, which reaches no other
-// process.
+// A node with a listen address runs Raft over the network transport of
+// package raftnet (TLS 1.3 on port 8444, per-RPC identity); a single host
+// without one uses the library's in-memory transport, which reaches no
+// other process and opens no port. With raftnet, this is the only package
+// that imports the Raft library.
 package store
 
 import (
@@ -18,6 +19,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/hashicorp/go-hclog"
@@ -61,7 +63,21 @@ type Options struct {
 	NodeID string
 	// Logger defaults to slog.Default().
 	Logger *slog.Logger
+	// Transport carries Raft RPCs to other nodes (a *raftnet.Transport).
+	// Nil uses the in-memory transport: a single host.
+	Transport raft.Transport
+	// Empty creates an empty store when the directory holds none: a
+	// joining node starts with an empty log and no configuration, and
+	// receives both from the leader (ADR 0013 B1, join command step 4).
+	Empty bool
+	// Machine is the state machine to feed. Nil makes a new one.
+	Machine *clusterstate.Machine
 }
+
+// SnapshotThreshold is the library's default snapshot threshold, which
+// Skep keeps: a non-voter has caught up when its applied index is within
+// this many entries of the leader's commit index (ADR 0013 B1, step 3).
+var SnapshotThreshold = raft.DefaultConfig().SnapshotThreshold
 
 // Server is one server of the Raft configuration.
 type Server struct {
@@ -157,9 +173,13 @@ type Node struct {
 	id      string
 	raft    *raft.Raft
 	bolt    *raftboltdb.BoltStore
-	trans   *raft.InmemTransport
+	trans   raft.Transport
 	machine *clusterstate.Machine
 	log     *slog.Logger
+
+	cacheMu   sync.Mutex
+	cache     map[string]bool
+	cacheTime time.Time
 }
 
 // Open opens the store and starts the Raft node.
@@ -167,30 +187,43 @@ func Open(o Options) (*Node, error) {
 	if o.Logger == nil {
 		o.Logger = slog.Default()
 	}
-	if !Exists(o.Dir) {
+	if !Exists(o.Dir) && !o.Empty {
 		return nil, fmt.Errorf("%s: %w", o.Dir, ErrNotInitialised)
 	}
 	b, err := openBackends(o.Dir)
 	if err != nil {
 		return nil, err
 	}
-	machine := clusterstate.New()
-	// The transport's own address does not matter while the node is
-	// alone: a single voter elects itself without sending anything.
-	_, trans := raft.NewInmemTransport(raft.ServerAddress("local-" + o.NodeID))
-	r, err := raft.NewRaft(raftConfig(o.NodeID), &fsm{machine: machine}, b.bolt, b.bolt, b.snaps, trans)
+	machine := o.Machine
+	if machine == nil {
+		machine = clusterstate.New()
+	}
+	trans := o.Transport
+	if trans == nil {
+		// The transport's own address does not matter while the node
+		// is alone: a single voter elects itself without sending
+		// anything.
+		_, trans = raft.NewInmemTransport(raft.ServerAddress("local-" + o.NodeID))
+	}
+	r, err := raft.NewRaft(raftConfig(o.NodeID), &fsm{machine: machine, log: o.Logger}, b.bolt, b.bolt, b.snaps, trans)
 	if err != nil {
-		trans.Close()
+		closeTransport(trans)
 		b.bolt.Close()
 		return nil, fmt.Errorf("store: start raft: %w", err)
 	}
 	return &Node{id: o.NodeID, raft: r, bolt: b.bolt, trans: trans, machine: machine, log: o.Logger}, nil
 }
 
+func closeTransport(t raft.Transport) {
+	if c, ok := t.(raft.WithClose); ok {
+		_ = c.Close()
+	}
+}
+
 // Close stops the Raft node and closes the store.
 func (n *Node) Close() error {
 	err := n.raft.Shutdown().Error()
-	n.trans.Close()
+	closeTransport(n.trans)
 	if cerr := n.bolt.Close(); err == nil {
 		err = cerr
 	}
@@ -350,10 +383,27 @@ func (n *Node) Snapshot() error {
 }
 
 // fsm adapts the state machine to the library.
-type fsm struct{ machine *clusterstate.Machine }
+type fsm struct {
+	machine *clusterstate.Machine
+	log     *slog.Logger
+}
 
 func (f *fsm) Apply(l *raft.Log) any {
-	return f.machine.Apply(l.Index, l.Data)
+	res := f.machine.Apply(l.Index, l.Data)
+	if f.log != nil {
+		// Every membership event is one log line on every node, with
+		// actor, operation ID and origin (the cluster audit, ADR 0013
+		// B10, is the next run).
+		for _, ev := range res.Events {
+			f.log.Info("cluster membership: "+ev.Kind, "event", ev.Kind, "node_id", ev.NodeID, "name", ev.Name,
+				"actor", res.Entry.Actor, "op_id", res.Entry.OpID, "origin", res.Entry.Origin, "index", l.Index)
+		}
+		if res.Err != nil && errors.Is(res.Err, clusterstate.ErrRefused) {
+			f.log.Warn("cluster entry refused by the state machine", "type", res.Entry.Type, "op_id", res.Entry.OpID,
+				"actor", res.Entry.Actor, "origin", res.Entry.Origin, "index", l.Index, "error", res.Err.Error())
+		}
+	}
+	return res
 }
 
 func (f *fsm) Snapshot() (raft.FSMSnapshot, error) {
@@ -400,4 +450,123 @@ func RootOwned(dir string, ownerUID func(fs.FileInfo) (uint32, bool)) ([]string,
 		return nil
 	})
 	return out, err
+}
+
+// raftErr maps a configuration change's error.
+func raftErr(err error) error {
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, raft.ErrNotLeader) || errors.Is(err, raft.ErrLeadershipLost) {
+		return fmt.Errorf("%w (%v)", ErrNotLeader, err)
+	}
+	return fmt.Errorf("%w (%v)", ErrOutcomeUnknown, err)
+}
+
+// AddNonvoter adds a server without a vote (join step 2). For a server
+// that is already in the configuration it changes nothing the library
+// would not (v1.8.0 configuration.go nextConfiguration).
+func (n *Node) AddNonvoter(id, address string) error {
+	err := raftErr(n.raft.AddNonvoter(raft.ServerID(id), raft.ServerAddress(address), 0, applyTimeout).Error())
+	n.invalidateCache()
+	return err
+}
+
+// AddVoter gives a server a vote (join step 3); on a server that already
+// votes it changes nothing.
+func (n *Node) AddVoter(id, address string) error {
+	err := raftErr(n.raft.AddVoter(raft.ServerID(id), raft.ServerAddress(address), 0, applyTimeout).Error())
+	n.invalidateCache()
+	return err
+}
+
+// Leader returns the leader's node ID and address as this node knows them,
+// or "" when there is none.
+func (n *Node) Leader() (id, address string) {
+	addr, lid := n.raft.LeaderWithID()
+	return string(lid), string(addr)
+}
+
+func (n *Node) invalidateCache() {
+	n.cacheMu.Lock()
+	n.cacheTime = time.Time{}
+	n.cacheMu.Unlock()
+}
+
+// IsServer reports whether the node is a server in the latest Raft
+// configuration (committed or not; what the library itself uses). With
+// cached, an answer at most maxAge old may be used, so that a caller on the
+// heartbeat fast path never waits for the Raft main loop.
+func (n *Node) IsServer(id string, cached bool, maxAge time.Duration) bool {
+	if cached {
+		n.cacheMu.Lock()
+		if !n.cacheTime.IsZero() && time.Since(n.cacheTime) <= maxAge {
+			ok := n.cache[id]
+			n.cacheMu.Unlock()
+			return ok
+		}
+		n.cacheMu.Unlock()
+	}
+	servers, err := n.Servers()
+	if err != nil {
+		return false
+	}
+	set := make(map[string]bool, len(servers))
+	for _, s := range servers {
+		set[s.ID] = true
+	}
+	n.cacheMu.Lock()
+	n.cache, n.cacheTime = set, time.Now()
+	n.cacheMu.Unlock()
+	return set[id]
+}
+
+// LibraryEntriesOnly reports whether every log entry in (from, to] is one
+// of the library's own (a no-op, a barrier, a configuration change), so
+// that a state machine applied up to from is up to date with a library
+// applied up to to. It looks at no more than 4096 entries and answers
+// false beyond that.
+func (n *Node) LibraryEntriesOnly(from, to uint64) bool {
+	if to <= from {
+		return true
+	}
+	if to-from > 4096 {
+		return false
+	}
+	var l raft.Log
+	for i := from + 1; i <= to; i++ {
+		if err := n.bolt.GetLog(i, &l); err != nil {
+			return false
+		}
+		if l.Type == raft.LogCommand {
+			return false
+		}
+	}
+	return true
+}
+
+// ReadServers reads the Raft configuration from the store in dir without
+// starting a Raft node or opening a network port: the root-run commands use
+// it, through a process running as the service account, while the service
+// is stopped (ADR 0013 B1: "is this node alone" is read from the store).
+func ReadServers(dir, nodeID string) ([]Server, error) {
+	if !Exists(dir) {
+		return nil, fmt.Errorf("%s: %w", dir, ErrNotInitialised)
+	}
+	b, err := openBackends(dir)
+	if err != nil {
+		return nil, err
+	}
+	defer b.bolt.Close()
+	_, trans := raft.NewInmemTransport(raft.ServerAddress("offline-" + nodeID))
+	defer trans.Close()
+	conf, err := raft.GetConfiguration(raftConfig(nodeID), &fsm{machine: clusterstate.New()}, b.bolt, b.bolt, b.snaps, trans)
+	if err != nil {
+		return nil, fmt.Errorf("store: read the raft configuration: %w", err)
+	}
+	var out []Server
+	for _, s := range conf.Servers {
+		out = append(out, Server{ID: string(s.ID), Address: string(s.Address), Voter: s.Suffrage == raft.Voter})
+	}
+	return out, nil
 }

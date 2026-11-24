@@ -1,11 +1,9 @@
 // Package peerlistener is skep-cluster's node-to-node listener on TCP
 // port 8444 (ADR 0013 B1, "What the listener accepts"): TLS 1.3 only, with
-// a client certificate whose key is pinned in the membership. Every other
-// key is refused in the handshake.
-//
-// In step 8a the membership is this node alone, there is no join and no
-// inbound Raft RPC handler: an accepted connection (only this node's own
-// key can be) is closed after the handshake without any data.
+// a client certificate whose key is pinned in the membership the node has
+// applied (a member entry or a pending entry). Every other key is refused
+// in the handshake. What an accepted key may do is decided per RPC by the
+// handler (package raftnet).
 package peerlistener
 
 import (
@@ -27,6 +25,8 @@ const (
 	handshakeTimeout = 10 * time.Second
 	// maxHandshakes bounds the handshakes in progress.
 	maxHandshakes = 64
+	// MaxConnections bounds the accepted connections open at once.
+	MaxConnections = 256
 )
 
 // Options configures the listener.
@@ -35,12 +35,13 @@ type Options struct {
 	Address netip.AddrPort
 	// Certificate returns this node's current certificate.
 	Certificate func() *tls.Certificate
-	// Pinned reports whether a key's pin is in the membership the node
-	// has applied, and whose it is. It is asked at every handshake.
-	Pinned func(pin string) (nodeID string, ok bool)
-	// Handle serves an accepted connection from a pinned key. Nil
-	// closes it at once, which is all step 8a does.
-	Handle func(conn *tls.Conn, nodeID string)
+	// Accept reports whether a key's pin is accepted now: pinned in a
+	// member entry or a pending entry of the membership the node has
+	// applied (ADR 0013 B1). It is asked at every handshake and again by
+	// Revalidate.
+	Accept func(pin string) bool
+	// Handle serves an accepted connection. Nil closes it at once.
+	Handle func(conn *tls.Conn, pin string)
 	// Now defaults to time.Now.
 	Now func() time.Time
 	// Logger defaults to slog.Default().
@@ -54,6 +55,9 @@ type Listener struct {
 	opts Options
 	wg   sync.WaitGroup
 	sem  chan struct{}
+
+	mu    sync.Mutex
+	conns map[*tls.Conn]string
 }
 
 // errNotPinned is the handshake failure for a key outside the membership.
@@ -94,7 +98,7 @@ func TLSConfig(o Options) *tls.Config {
 			if t := now(); t.Before(leaf.NotBefore) || t.After(leaf.NotAfter) {
 				return errors.New("the client certificate is expired or not yet valid")
 			}
-			if _, ok := o.Pinned(nodekey.PinOfCertificate(leaf)); !ok {
+			if !o.Accept(nodekey.PinOfCertificate(leaf)) {
 				return errNotPinned
 			}
 			return nil
@@ -107,7 +111,7 @@ func Listen(o Options) (*Listener, error) {
 	if !o.Address.IsValid() || o.Address.Addr().IsUnspecified() {
 		return nil, errors.New("peerlistener: the listen address must be one specific address")
 	}
-	if o.Certificate == nil || o.Pinned == nil {
+	if o.Certificate == nil || o.Accept == nil {
 		return nil, errors.New("peerlistener: a certificate and a pin check are required")
 	}
 	if o.Logger == nil {
@@ -121,7 +125,7 @@ func Listen(o Options) (*Listener, error) {
 	if err != nil {
 		return nil, fmt.Errorf("peerlistener: %w", err)
 	}
-	l := &Listener{ln: ln, conf: TLSConfig(o), opts: o, sem: make(chan struct{}, maxHandshakes)}
+	l := &Listener{ln: ln, conf: TLSConfig(o), opts: o, sem: make(chan struct{}, maxHandshakes), conns: map[*tls.Conn]string{}}
 	l.wg.Add(1)
 	go l.accept()
 	return l, nil
@@ -130,11 +134,44 @@ func Listen(o Options) (*Listener, error) {
 // Addr returns the bound address.
 func (l *Listener) Addr() net.Addr { return l.ln.Addr() }
 
-// Close stops accepting and waits for the connections in progress.
+// Close stops accepting, closes the open connections and waits for their
+// handlers.
 func (l *Listener) Close() error {
 	err := l.ln.Close()
+	l.mu.Lock()
+	for c := range l.conns {
+		_ = c.Close()
+	}
+	l.mu.Unlock()
 	l.wg.Wait()
 	return err
+}
+
+// Revalidate closes every open connection whose key is no longer accepted
+// (ADR 0013 B1: when a node applies a withdrawal or a pending entry's
+// expiry, it closes that key's open connections). It returns how many it
+// closed.
+func (l *Listener) Revalidate() int {
+	l.mu.Lock()
+	var drop []*tls.Conn
+	for c, pin := range l.conns {
+		if !l.opts.Accept(pin) {
+			drop = append(drop, c)
+		}
+	}
+	l.mu.Unlock()
+	for _, c := range drop {
+		l.opts.Logger.Info("node listener: closing a connection whose key is no longer accepted", "remote", c.RemoteAddr().String())
+		_ = c.Close()
+	}
+	return len(drop)
+}
+
+// Open returns the number of accepted connections open now.
+func (l *Listener) Open() int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return len(l.conns)
 }
 
 func (l *Listener) accept() {
@@ -157,34 +194,41 @@ func (l *Listener) accept() {
 			continue
 		}
 		l.wg.Add(1)
-		go func() {
-			defer l.wg.Done()
-			defer func() { <-l.sem }()
-			l.serve(c)
-		}()
+		go l.serve(c)
 	}
 }
 
 func (l *Listener) serve(c net.Conn) {
-	defer c.Close()
+	defer l.wg.Done()
 	tc := tls.Server(c, l.conf)
 	ctx, cancel := context.WithTimeout(context.Background(), handshakeTimeout)
-	defer cancel()
-	if err := tc.HandshakeContext(ctx); err != nil {
+	err := tc.HandshakeContext(ctx)
+	cancel()
+	<-l.sem
+	if err != nil {
 		l.opts.Logger.Warn("node listener: connection refused in the handshake",
 			"remote", c.RemoteAddr().String(), "error", err.Error())
+		_ = c.Close()
 		return
 	}
-	cs := tc.ConnectionState()
-	nodeID, ok := l.opts.Pinned(nodekey.PinOfCertificate(cs.PeerCertificates[0]))
-	if !ok {
-		return
-	}
-	if l.opts.Handle == nil {
-		l.opts.Logger.Info("node listener: pinned key connected; nothing is served to it in this build",
-			"remote", c.RemoteAddr().String(), "node_id", nodeID)
+	pin := nodekey.PinOfCertificate(tc.ConnectionState().PeerCertificates[0])
+	l.mu.Lock()
+	if len(l.conns) >= MaxConnections {
+		l.mu.Unlock()
+		l.opts.Logger.Warn("node listener: too many connections; closing", "remote", c.RemoteAddr().String())
 		_ = tc.Close()
 		return
 	}
-	l.opts.Handle(tc, nodeID)
+	l.conns[tc] = pin
+	l.mu.Unlock()
+	defer func() {
+		l.mu.Lock()
+		delete(l.conns, tc)
+		l.mu.Unlock()
+		_ = tc.Close()
+	}()
+	if l.opts.Handle == nil {
+		return
+	}
+	l.opts.Handle(tc, pin)
 }
