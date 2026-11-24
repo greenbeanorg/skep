@@ -1,11 +1,14 @@
-# Draft: README status note for 0.1
+# README status note for 0.1
 
-*Draft for Andy; replaces the "Status" paragraph and the security notice at
-the top of README.md when 0.1 is tagged. Links are relative to the repository root, as README.md needs.*
+*This note is at the top of README.md. Change the two together. Links are
+relative to the repository root, as README.md needs.*
 
 ---
 
 > **Status: 0.1.0, a pre-release. Not for production.**
+>
+> **0.1 is a single-host preview validated only nested under KVM; it has not
+> been run on bare metal.**
 >
 > Skep 0.1 manages one FreeBSD 15.1 host: bhyve virtual machines, jails, ZFS
 > storage and guest-port filtering, through a web interface, a REST API and

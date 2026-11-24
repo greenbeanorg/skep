@@ -1,7 +1,45 @@
-# Draft: Skep 0.1 known issues
+# Skep 0.1 known issues
 
-*Draft for Andy (2026-11-23). Each item says what happens and what to do;
-the source is linked.*
+> **0.1 is a single-host preview validated only nested under KVM; it has not
+> been run on bare metal.**
+
+## Pending bare-metal validation
+
+Each item is a step of the
+[bare-metal runbook](../../../tests/integration/bare-metal/README.md), which
+gives the commands and the pass criterion. None has run on real hardware.
+
+- **Install on hardware** (step 2): a fresh Auto-ZFS install, the package
+  and `skep-setup apply`, with the agent's start check passing on the
+  installed paths with no path changed by hand.
+- **Discovery** (step 3): CPU cores and threads on a host with SMT, memory,
+  every disk and NIC, and the virtualization fields while `vmm` is unloaded.
+- **bhyve without the nested-KVM workaround** (step 4):
+  `hw.vmm.vmx.cap.virtual_interrupt_delivery` at its default while guests
+  run.
+- **A VM on real disks** (step 5): non-thin zvols with a full
+  `refreservation`, the guest's SMT topology, `nvme` and `ahci-hd` disks
+  beyond a smoke boot, and an `e1000` NIC.
+- **Thick disks larger than the pool** (step 6): refused with
+  `insufficient_space` and nothing created.
+- **Zvol device-node miss rate on real disks** (step 7). On the lab VMs'
+  virtual disks: 45/50 and 43/50 creates; on file-backed pools, 0/100 on
+  hearst and 98/100 on smith, cause not known ([backlog](../../backlog.md)).
+  The repair before a VM start covers any rate.
+- **A degraded pool** (step 8): reported `DEGRADED` with the storage health
+  check degraded, then `ONLINE` after the resilver.
+- **The password prompt on the system console** (step 9) of
+  `skep-api admin create`.
+- **Guest ports on a physical uplink** (step 10): spoofed MAC and IPv4 from a
+  static-IPv4 jail stopped, tagged frames kept off the uplink, and the
+  filter's throughput cost (about 12 % in a VM).
+- **A reboot with guests** (step 11): no guest started, drift recorded, no
+  leftover epairs or taps.
+- **An AMD-V host with nested paging** (step 12).
+
+If you have a machine to spare, the
+[runbook](../../../tests/integration/bare-metal/README.md) is the whole
+procedure, and results recorded as it describes are welcome.
 
 ## Platform and validation
 
