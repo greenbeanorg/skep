@@ -8,8 +8,15 @@
 // /usr/local/etc/pkg/repos/*.conf, each directory in name order; a later
 // definition of a repository overrides the keys it sets. A repository
 // whose first definition does not set "enabled" is enabled (pkg's
-// default); a later one that does not set it leaves it as it was. It
-// does not follow a REPOS_DIR set in pkg.conf or the environment.
+// default); a later one that does not set it leaves it as it was. Within
+// one file only the first block of a name and its first "enabled" count,
+// as in pkg. It does not follow a REPOS_DIR set in pkg.conf or the
+// environment.
+//
+// It reads the UCL forms pkg's files use: NAME: { ... }, NAME = { ... }
+// and NAME { ... }, and # and /* */ comments. pkg 2.9 does not read // as
+// a comment (checked on langrishe, 2026-11-24), so neither does this.
+// tests/integration/pkgrepo has the comparison with pkg.
 package pkgrepo
 
 import (
@@ -34,12 +41,12 @@ const BaseName = "FreeBSD-base"
 const EnableBase = `mkdir -p /usr/local/etc/pkg/repos && printf 'FreeBSD-base: { enabled: yes }\n' >> /usr/local/etc/pkg/repos/FreeBSD.conf`
 
 var (
-	// blockRE finds a repository block: NAME: { ... } (UCL, as pkg's
-	// files are written; the name may be quoted). Nested braces do not
+	// blockRE finds a repository block: NAME: { ... }, NAME = { ... } or
+	// NAME { ... } (UCL; the name may be quoted). Nested braces do not
 	// occur in repository blocks.
-	blockRE   = regexp.MustCompile(`(?s)"?([A-Za-z0-9_.-]+)"?\s*:\s*\{([^{}]*)\}`)
-	enabledRE = regexp.MustCompile(`(?i)\benabled\s*[:=]\s*"?(yes|true|on|no|false|off)"?`)
-	commentRE = regexp.MustCompile(`(?m)#.*$`)
+	blockRE   = regexp.MustCompile(`(?s)"?([A-Za-z0-9_.-]+)"?\s*[:=]?\s*\{([^{}]*)\}`)
+	enabledRE = regexp.MustCompile(`(?i)\benabled\s*[:=]?\s*"?(yes|true|on|no|false|off)"?`)
+	commentRE = regexp.MustCompile(`/\*(?s:.*?)\*/|#[^\n]*`)
 	// varRE is a ${VAR} expansion in a url; its braces are not blocks.
 	varRE = regexp.MustCompile(`\$\{[A-Za-z0-9_]*\}`)
 )
@@ -67,10 +74,12 @@ func Base(fsys fs.FS) (enabled bool, where string) {
 			if err != nil {
 				continue
 			}
+			inFile := false
 			for _, m := range blockRE.FindAllStringSubmatch(varRE.ReplaceAllString(commentRE.ReplaceAllString(string(bs), ""), ""), -1) {
-				if m[1] != BaseName {
+				if m[1] != BaseName || inFile {
 					continue
 				}
+				inFile = true
 				v := enabledRE.FindStringSubmatch(m[2])
 				switch {
 				case v != nil:

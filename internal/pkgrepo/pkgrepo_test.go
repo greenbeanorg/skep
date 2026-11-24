@@ -44,6 +44,26 @@ func TestBase(t *testing.T) {
 			"usr/local/etc/pkg/repos/FreeBSD.conf": "#FreeBSD-base: { enabled: yes }\n"}, false, "/etc/pkg/FreeBSD.conf"},
 		{"not .conf", map[string]string{"etc/pkg/FreeBSD.conf": stock,
 			"usr/local/etc/pkg/repos/FreeBSD.conf.sample": "FreeBSD-base: { enabled: yes }"}, false, "/etc/pkg/FreeBSD.conf"},
+		{"block without a colon", map[string]string{"etc/pkg/FreeBSD.conf": stock,
+			"usr/local/etc/pkg/repos/FreeBSD.conf": "FreeBSD-base {\n  enabled = yes\n}\n"}, true, "/usr/local/etc/pkg/repos/FreeBSD.conf"},
+		{"block with =", map[string]string{"etc/pkg/FreeBSD.conf": stock,
+			"usr/local/etc/pkg/repos/FreeBSD.conf": "FreeBSD-base = { enabled: true }"}, true, "/usr/local/etc/pkg/repos/FreeBSD.conf"},
+		{"enabled without a separator", map[string]string{"etc/pkg/FreeBSD.conf": stock,
+			"usr/local/etc/pkg/repos/FreeBSD.conf": "FreeBSD-base { enabled yes }"}, true, "/usr/local/etc/pkg/repos/FreeBSD.conf"},
+		{"block comment", map[string]string{"etc/pkg/FreeBSD.conf": stock,
+			"usr/local/etc/pkg/repos/FreeBSD.conf": "/* FreeBSD-base: {\n enabled: yes\n} */\n"}, false, "/etc/pkg/FreeBSD.conf"},
+		{"comment after a value", map[string]string{"etc/pkg/FreeBSD.conf": stock,
+			"usr/local/etc/pkg/repos/FreeBSD.conf": "FreeBSD-base: { enabled: yes /* enabled: no */ }"}, true, "/usr/local/etc/pkg/repos/FreeBSD.conf"},
+		{"url with https://", map[string]string{"etc/pkg/FreeBSD.conf": stock,
+			"usr/local/etc/pkg/repos/FreeBSD.conf": "FreeBSD-base: { url: \"pkg+https://mirror/${ABI}/x\", enabled: yes }\n"}, true, "/usr/local/etc/pkg/repos/FreeBSD.conf"},
+		// pkg 2.9 keeps the first "enabled" and the first block of a name
+		// in one file (langrishe, 2026-11-24).
+		{"first enabled in a block", map[string]string{"etc/pkg/FreeBSD.conf": stock,
+			"usr/local/etc/pkg/repos/FreeBSD.conf": "FreeBSD-base: { enabled: yes, enabled: no }"}, true, "/usr/local/etc/pkg/repos/FreeBSD.conf"},
+		{"first block in a file", map[string]string{"etc/pkg/FreeBSD.conf": stock,
+			"usr/local/etc/pkg/repos/FreeBSD.conf": "FreeBSD-base: { enabled: yes }\nFreeBSD-base: { enabled: no }"}, true, "/usr/local/etc/pkg/repos/FreeBSD.conf"},
+		{"second block in a file ignored", map[string]string{
+			"usr/local/etc/pkg/repos/FreeBSD.conf": "FreeBSD-base: { url: \"x\" }\nFreeBSD-base: { enabled: no }"}, true, "/usr/local/etc/pkg/repos/FreeBSD.conf"},
 		{"other repository", map[string]string{"etc/pkg/FreeBSD.conf": stock,
 			"usr/local/etc/pkg/repos/x.conf": "FreeBSD-base-latest: { enabled: yes }"}, false, "/etc/pkg/FreeBSD.conf"},
 	}
