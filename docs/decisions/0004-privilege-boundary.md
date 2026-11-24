@@ -587,7 +587,7 @@ the node key belongs to `skep-cluster` (answer 6).
    > receiving node's API verifies, together with the user and their role,
    > before the request reaches its agent. The agent records the envelope
    > and the originating node in its audit entry; it does not verify the
-   > envelope itself. That work is part of the clustering milestone and
+   > envelope itself, and refuses one larger than 4 KiB. That work is part of the clustering milestone and
    > must be done before any request is forwarded.
 
    The bullet's title becomes "Multi-node is the trigger for signed
@@ -613,8 +613,8 @@ the node key belongs to `skep-cluster` (answer 6).
    with
 
    > Password hashes live in the replicated cluster store, held by
-   > `skep-cluster` on every voter, and in `skep-api`'s read copy in
-   > `api.db`. The agent never sees them.
+   > `skep-cluster` on every member (voter or not), and in `skep-api`'s
+   > read copy in `api.db`. The agent never sees them.
 
 4. **Decisions**, item 4. Replace
 
@@ -642,13 +642,33 @@ the node key belongs to `skep-cluster` (answer 6).
 
 ### What does not change
 
-- "Nothing else talks to the agent socket" (Decision, Processes):
-  `skep-cluster` never connects to it (ADR 0013 A3).
-- The threat model, the typed operations, host confinement in
-  `agent.json` (never replicated), the two databases, and the statement of
-  what a compromised API can do on its own node.
+- "Nothing else talks to the agent socket" (Decision, Processes): the
+  `skep-cluster` **service** never connects to it (ADR 0013 A3). The
+  `skep-cluster join` **command**, run by root, does, as `skep-setup`
+  already does: it takes a drain and reads the guest list as peer UID 0
+  (ADR 0013 B3, B7).
+- The threat model, the typed operations and host confinement in
+  `agent.json` (never replicated).
+- The separation of the databases, with two changes of content. `api.db`
+  keeps the sessions and the access audit, and holds a **read copy** of
+  the users and roles instead of being their source. There is a
+  **third database**, the cluster store, owned by the `skep-cluster`
+  account, which neither `skep-api` nor the agent can open. `agent.db`
+  is unchanged in ownership and role.
+- The statement of what a compromised API can do **on its own node**. It
+  is **extended** for a cluster by ADR 0013 B2: every replicated write
+  `skep-cluster`'s socket offers, every password hash in the read copy,
+  and requests forwarded to other nodes in any user's name.
 - The agent's peer-credential allow-list (`root`, `skep`). ADR 0013 B7
   adds a root-only operation within it, not a new UID.
+
+### The stored envelope has a size limit
+
+The agent stores the envelope it is given in `audit_log.details` without
+verifying it. So that a compromised API cannot fill the agent's audit
+through this field, the internal API refuses an envelope larger than
+**4 KiB** (its fields are fixed and well below that) before anything is
+recorded or run.
 
 ### Consequence elsewhere
 
