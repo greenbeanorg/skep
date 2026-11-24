@@ -64,6 +64,25 @@ func Open(ctx context.Context, path string) (*sql.DB, error) {
 	if err != nil {
 		return nil, err
 	}
+	return withIndex(ctx, db)
+}
+
+// OpenReadOnly opens the database of a running service for ExportUnsealed.
+// It cannot write, and it creates nothing.
+func OpenReadOnly(ctx context.Context, path string) (*sql.DB, error) {
+	db, err := database.OpenReadOnly(ctx, path)
+	if errors.Is(err, database.ErrNotInUse) {
+		return nil, fmt.Errorf("%w; --unsealed reads the database only while the agent runs, so that it leaves no files behind", err)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return withIndex(ctx, db)
+}
+
+// withIndex returns db if its schema has the segment index, and closes it
+// otherwise.
+func withIndex(ctx context.Context, db *sql.DB) (*sql.DB, error) {
 	v, err := database.SchemaVersion(ctx, db)
 	if err != nil {
 		db.Close()
@@ -128,4 +147,16 @@ func Export(ctx context.Context, a *auditarchive.Archiver, month string, out io.
 		return fmt.Errorf("there is no sealed segment for %s", month)
 	}
 	return nil
+}
+
+// ExportUnsealed prints the entries not yet in a sealed segment, oldest
+// first, one JSON object per line, as Export does, and returns how many
+// there were. It seals nothing.
+func ExportUnsealed(ctx context.Context, a *auditarchive.Archiver, out io.Writer) (int64, error) {
+	w := bufio.NewWriterSize(out, 256<<10)
+	n, err := a.ExportUnsealed(ctx, func(line []byte) error {
+		_, err := w.Write(line)
+		return err
+	})
+	return n, errors.Join(err, w.Flush())
 }
