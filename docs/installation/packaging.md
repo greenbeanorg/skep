@@ -87,6 +87,12 @@ Both are plain `sh`, embedded in `+MANIFEST` from `packaging/pkg/`.
   install stops) when only one of them exists, or when 409 belongs to
   another name. It warns, and changes nothing, when both exist with other
   numbers (a host set up by hand earlier, such as `hearst` with 1002).
+  It then does the same for the **`skep-cluster`** group and user, UID
+  and GID **410** (the cluster service's account, ADR 0013 B1; comment
+  "Skep cluster service account"). On an upgrade from 0.1 the `skep`
+  account exists and only `skep-cluster` is created. If `skep` was just
+  created and `skep-cluster` is then refused, `skep` stays and the next
+  install goes on from there.
 - **pre-deinstall** **warns** while Skep guests run: jails named `skep-*`
   in `jls` and VMs named `skep-*` in `/dev/vmm`. It asks the host, not the
   agent, so it warns even when `skep_agent` is stopped. The warning says

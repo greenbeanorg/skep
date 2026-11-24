@@ -39,7 +39,7 @@ func fakeELF(t *testing.T, path string, osabi byte, machine uint16) {
 func fakeBins(t *testing.T, osabi byte) string {
 	t.Helper()
 	dir := t.TempDir()
-	for _, n := range []string{"skep-agent", "skep-api", "skep-setup", "skepctl"} {
+	for _, n := range []string{"skep-agent", "skep-api", "skep-cluster", "skep-setup", "skepctl"} {
 		fakeELF(t, filepath.Join(dir, n), osabi, 62)
 	}
 	return dir
@@ -55,6 +55,8 @@ func TestStageLayoutManifestPlist(t *testing.T) {
 		"usr/local/sbin/skep-agent":                         0o555,
 		"usr/local/sbin/skep-api":                           0o555,
 		"usr/local/sbin/skep-setup":                         0o555,
+		"usr/local/sbin/skep-cluster":                       0o555,
+		"usr/local/etc/rc.d/skep_cluster":                   0o555,
 		"usr/local/bin/skepctl":                             0o555,
 		"usr/local/etc/rc.d/skep_agent":                     0o555,
 		"usr/local/etc/rc.d/skep_api":                       0o555,
@@ -117,6 +119,8 @@ func TestStageLayoutManifestPlist(t *testing.T) {
 	for _, line := range []string{
 		"@(root,wheel,0555) sbin/skep-agent",
 		"@(root,wheel,0555) sbin/skep-setup",
+		"@(root,wheel,0555) sbin/skep-cluster",
+		"@(root,wheel,0555) etc/rc.d/skep_cluster",
 		"@(root,wheel,0555) bin/skepctl",
 		"@(root,wheel,0644) etc/skep/agent.json.sample",
 		"@(root,wheel,0444) share/licenses/skep/THIRD_PARTY_NOTICES",

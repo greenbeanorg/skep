@@ -11,12 +11,25 @@ removed, or upgraded across a license change.
 
 ## Conclusion
 
-Every component that ends up in a Skep binary is under a permissive
-license (BSD-3-Clause, MIT, ISC, Apache-2.0, or public domain), all
-compatible with distributing Skep under BSD-2-Clause. No copyleft
-(GPL, LGPL, AGPL, MPL) code is linked or bundled. The MPL-2.0, Python-2.0,
-and CC-BY-4.0 packages in the list below are build or test tools that
-are not distributed.
+Every component that ends up in `skep-agent`, `skep-api`, `skepctl` or
+`skep-setup` is under a permissive license (BSD-3-Clause, MIT, ISC,
+Apache-2.0, or public domain), all compatible with distributing Skep
+under BSD-2-Clause. No GPL, LGPL or AGPL code is linked or bundled.
+
+**`skep-cluster` links MPL-2.0 code** (since Milestone 8, step 8a,
+2026-11-24): the Raft library and three of its dependencies, listed in
+their own table below. This was decided in
+[ADR 0013](decisions/0013-clustering.md) B11. MPL-2.0 is a file-level
+copyleft: it covers those modules' own files and not Skep's. Skep uses
+them **unmodified**, so what it owes is the license text (in
+`THIRD_PARTY_NOTICES`) and a pointer to their source, which is their
+module path and version. If Skep ever changes one of those files, or
+adapts one (ADR 0013 plans to adapt the library's inbound RPC handler in
+step 8b), that file stays under MPL-2.0, must say so, and its source must
+be published with the release.
+
+The MPL-2.0 npm packages, and the Python-2.0 and CC-BY-4.0 packages in the
+list further down, are build or test tools that are not distributed.
 
 **What a binary distribution owes.** BSD, MIT, ISC, and Apache-2.0 all
 require their copyright and license notices to be reproduced with a
@@ -52,6 +65,26 @@ The Go standard library and runtime (BSD-3-Clause) are in every binary
 too. `modernc.org/sqlite` and `modernc.org/libc` carry their own
 `LICENSE-3RD-PARTY.md` with the full texts of what they include; those
 texts belong in the notices file.
+
+### Linked into `skep-cluster` only
+
+From `GOOS=freebsd GOARCH=amd64 go list -deps ./cmd/skep-cluster`, read on
+2026-11-24. `golang.org/x/sys` and `github.com/mattn/go-isatty` from the
+table above are linked too.
+
+| Module | Version | License | Why |
+|---|---|---|---|
+| `github.com/hashicorp/raft` | v1.8.0 | **MPL-2.0** | The Raft library (ADR 0013 A1, B11) |
+| `github.com/hashicorp/raft-boltdb/v2` | v2.4.2 | **MPL-2.0** | Raft log and stable store on bbolt |
+| `github.com/hashicorp/go-immutable-radix` | v1.3.1 | **MPL-2.0** | Used by `go-metrics` |
+| `github.com/hashicorp/golang-lru` | v1.0.2 | **MPL-2.0** | Used by `go-immutable-radix` |
+| `github.com/hashicorp/go-hclog` | v1.6.3 | MIT | The Raft library's logger |
+| `github.com/hashicorp/go-metrics` | v0.7.0 | MIT | The Raft library's metrics |
+| `github.com/hashicorp/go-msgpack/v2` | v2.1.5 | MIT | The Raft library's encoding |
+| `go.etcd.io/bbolt` | v1.4.1 | MIT | The store's database file |
+| `github.com/boltdb/bolt` | v1.3.1 | MIT | Archived; linked by `raft-boltdb/v2` for its v1 migration helper ([backlog](backlog.md)) |
+| `github.com/fatih/color` | v1.19.0 | MIT | Used by `go-hclog` |
+| `github.com/mattn/go-colorable` | v0.1.15 | MIT | Used by `go-hclog` |
 
 `go list -m all` shows more modules (for example
 `github.com/hashicorp/golang-lru/v2`, MPL-2.0, and `github.com/google/pprof`,

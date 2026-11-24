@@ -12,6 +12,12 @@ Two binaries run on a host ([ADR 0004](../decisions/0004-privilege-boundary.md),
 runs as root, discovers the host, keeps the node's state in SQLite, runs
 tasks, and listens on a Unix socket only.
 
+A third binary, `skep-cluster` ([ADR 0013](../decisions/0013-clustering.md)),
+holds the node's cluster key and a one-node Raft store as its own
+unprivileged account. Since Milestone 8, step 8a it exists and runs, but
+the other two do not use it yet; it is described in
+[skep-cluster](skep-cluster.md) and left out of the picture below.
+
 ```
             HTTPS (TLS 1.3; session cookie or bearer token)
                           |

@@ -197,7 +197,7 @@ jobs:
             exit 1
           fi
           # The other binaries never embed it.
-          for b in skep-agent skepctl skep-setup; do
+          for b in skep-agent skep-cluster skepctl skep-setup; do
             if grep -a -q 'src="/theme.js"' bin/freebsd-amd64/$b; then
               echo "$b contains the web interface"
               exit 1
