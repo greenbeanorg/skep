@@ -2,9 +2,14 @@ package hostops
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 )
+
+// ErrLeftoverDevfsNotRemoved marks a leftover devfs that was found and could
+// not be unmounted, as opposed to a check that failed before finding one.
+var ErrLeftoverDevfsNotRemoved = errors.New("a leftover devfs was not removed")
 
 // fsMount is one entry of the host's mount table as getfsstat(2) reports
 // it.
@@ -83,10 +88,10 @@ func (h *host) removeLeftoverDevfs(containerID, root string) ([]string, error) {
 	for i := len(found) - 1; i >= 0; i-- {
 		m := found[i]
 		if m.FSID == ([2]int32{}) {
-			return removed, fmt.Errorf("hostops: the devfs on %s has no fsid; not unmounting it", want)
+			return removed, fmt.Errorf("hostops: the devfs on %s has no fsid; not unmounting it: %w", want, ErrLeftoverDevfsNotRemoved)
 		}
 		if err := h.mounts.UnmountFSID(m.FSID); err != nil {
-			return removed, fmt.Errorf("hostops: unmount the devfs %s on %s: %w", fsidString(m.FSID), want, err)
+			return removed, fmt.Errorf("hostops: unmount the devfs %s on %s: %w: %w", fsidString(m.FSID), want, ErrLeftoverDevfsNotRemoved, err)
 		}
 		removed = append(removed, fsidString(m.FSID))
 	}

@@ -469,3 +469,21 @@ func TestRolesAndLookups(t *testing.T) {
 		t.Errorf("malformed name: %v", err)
 	}
 }
+
+// The audit log's actor for the agent's own actions cannot be a user's name.
+func TestCreateUserRefusesTheSystemName(t *testing.T) {
+	if auth.ReservedUsername != audit.System {
+		t.Fatalf("reserved %q, audit actor %q", auth.ReservedUsername, audit.System)
+	}
+	f := newFixture(t)
+	for _, name := range []string{"system", "System", "SYSTEM"} {
+		_, err := f.users.Create(context.Background(), admin, auth.NewUser{Username: name, Password: goodPassword})
+		var me *models.Error
+		if !errors.As(err, &me) || me.Code != models.CodeInvalidRequest {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	if users, _ := f.users.List(context.Background()); len(users) != 0 {
+		t.Errorf("a refused creation left %d users", len(users))
+	}
+}

@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"regexp"
 	"sync"
 	"time"
@@ -62,10 +63,20 @@ type Options struct {
 	// start, which the default is a quarter of (amendment o, SR-04).
 	MaxLockedMemory int64
 	PhysicalMemory  int64
-	Logger          *slog.Logger
+	// Audit receives one entry, actor "system", per start-up sweep action.
+	Audit  audit.Writer
+	Logger *slog.Logger
 	// Now defaults to time.Now.
 	Now func() time.Time
 }
+
+// The audit actions of the start-up sweeps.
+const (
+	actionSweepStopCompleted = "container.sweep.stop_completed"
+	actionSweepHalfStarted   = "container.sweep.half_started_removed"
+	actionSweepQuarantine    = "container.sweep.quarantine_removed"
+	actionSweepDevfs         = "container.sweep.devfs_removed"
+)
 
 // Service implements the container operations of the internal API.
 type Service struct {
@@ -82,6 +93,7 @@ type Service struct {
 	release      func(context.Context) (string, error)
 	stopTimeout  time.Duration
 	startTimeout time.Duration
+	audit        audit.Writer
 	// maxLocked is the total locked_memory of all running jails; locked
 	// guards lockedStarting, the locked_memory of the starts under way
 	// (amendment o, SR-04).
@@ -120,7 +132,28 @@ func New(opts Options) (*Service, error) {
 		conf: opts.Host.Conf, jails: opts.Host.Jails, filters: opts.Host.Filters, zfs: opts.Host.ZFS, release: opts.Host.Templates.HostRelease,
 		stopTimeout: opts.StopTimeout, startTimeout: opts.StartTimeout, log: opts.Logger, now: opts.Now,
 		maxLocked: MaxLockedMemory(opts.MaxLockedMemory, opts.PhysicalMemory), lockedStarting: map[string]int64{},
+		audit: opts.Audit,
 	}, nil
+}
+
+// auditSweep records one start-up sweep action. It has its own context: what
+// the host did is recorded even while the agent shuts down. Details are fixed
+// texts; the cause of a failure is in the log. A failed write is logged and
+// does not stop the sweep.
+func (s *Service) auditSweep(ctx context.Context, id, action string, outcome audit.Outcome, reason string) {
+	if s.audit == nil {
+		return
+	}
+	actx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	var details map[string]any
+	if reason != "" {
+		details = map[string]any{"reason": reason}
+	}
+	e := audit.SystemFinished(uint32(os.Getuid()), action, "container", id, outcome, details)
+	if err := s.audit.Write(actx, e); err != nil {
+		s.log.Error("containers: could not write a sweep's audit entry", "action", action, "container_id", id, "error", err)
+	}
 }
 
 // Submission is who a write is made for and how it arrived: the actor as
@@ -408,6 +441,7 @@ func (s *Service) completeStop(ctx context.Context, c models.Container) bool {
 	if err != nil && ctx.Err() != nil {
 		s.log.Warn("containers: the agent is shutting down during a stop completion; the container stays stopping and the next agent start completes it",
 			"event", "jail_stop_completion_cancelled", "container_id", c.ID, "error", err)
+		s.auditSweep(ctx, c.ID, actionSweepStopCompleted, audit.Failure, "the agent shut down during the stop; the next start tries again")
 		return false
 	}
 	// Recorded on its own context, as a stop task records: what the host
@@ -417,6 +451,7 @@ func (s *Service) completeStop(ctx context.Context, c models.Container) bool {
 	if err != nil {
 		s.log.Error("containers: could not complete a stop an agent restart interrupted", "event", "jail_stop_interrupted",
 			"container_id", c.ID, "error", err)
+		s.auditSweep(rctx, c.ID, actionSweepStopCompleted, audit.Failure, "the stop could not be completed; see the agent's log")
 		detail := "a stop interrupted by an agent restart could not be completed at agent start: " + err.Error() + "; stop it again"
 		if serr := s.store.SaveObserved(rctx, c.ID, models.ContainerUnknown, nil, detail, s.now().UTC()); serr != nil {
 			s.log.Warn("containers: could not record the observed state", "container_id", c.ID, "error", serr)
@@ -425,6 +460,7 @@ func (s *Service) completeStop(ctx context.Context, c models.Container) bool {
 	}
 	s.log.Warn("containers: completed a stop an agent restart interrupted", "event", "jail_stop_completed",
 		"container_id", c.ID)
+	s.auditSweep(rctx, c.ID, actionSweepStopCompleted, audit.Success, "")
 	if err := s.store.SaveEpairs(rctx, c.ID, nil); err != nil {
 		s.log.Warn("containers: could not clear the observed epairs", "container_id", c.ID, "error", err)
 	}
@@ -441,9 +477,20 @@ func (s *Service) completeStop(ctx context.Context, c models.Container) bool {
 // each one it removes. A failure is logged and the start-up goes on: the
 // next start or delete of the jail tries again.
 func (s *Service) sweepLeftoverDevfs(ctx context.Context, c models.Container) {
-	if _, err := s.jails.RemoveLeftoverDevfs(ctx, c.Pool, c.ID); err != nil {
+	removed, err := s.jails.RemoveLeftoverDevfs(ctx, c.Pool, c.ID)
+	if err != nil {
 		s.log.Warn("containers: could not check the jail's root for a leftover devfs", "event", "orphaned_devfs_check_failed",
 			"container_id", c.ID, "error", err)
+	}
+	// Only a devfs that was found is an action: a check that found nothing,
+	// or failed before finding anything, writes no entry.
+	notRemoved := errors.Is(err, hostops.ErrLeftoverDevfsNotRemoved)
+	if len(removed) > 0 || notRemoved {
+		outcome, reason := audit.Success, ""
+		if notRemoved {
+			outcome, reason = audit.Failure, "a leftover devfs mount could not be removed; see the agent's log"
+		}
+		s.auditSweep(ctx, c.ID, actionSweepDevfs, outcome, reason)
 	}
 }
 
@@ -458,10 +505,12 @@ func (s *Service) sweepHalfStarted(ctx context.Context, c models.Container) bool
 	if err := s.jails.DiscardJail(ctx, s.spec(c, 0)); err != nil {
 		s.log.Error("containers: could not remove a jail an agent restart left half-started", "event", "jail_start_interrupted",
 			"container_id", c.ID, "error", err)
+		s.auditSweep(ctx, c.ID, actionSweepHalfStarted, audit.Failure, "the jail could not be removed and is quarantined; see the agent's log")
 		return false
 	}
 	s.log.Warn("containers: removed a jail an agent restart left half-started", "event", "jail_start_interrupted",
 		"container_id", c.ID)
+	s.auditSweep(ctx, c.ID, actionSweepHalfStarted, audit.Success, "")
 	if err := s.store.SaveEpairs(ctx, c.ID, nil); err != nil {
 		s.log.Warn("containers: could not clear the observed epairs", "container_id", c.ID, "error", err)
 	}
@@ -480,10 +529,12 @@ func (s *Service) sweepQuarantined(ctx context.Context, c models.Container) bool
 	if err := s.jails.DiscardJail(ctx, s.spec(c, 0)); err != nil {
 		s.log.Error("containers: could not remove a quarantined jail", "event", "jail_quarantined",
 			"container_id", c.ID, "error", err)
+		s.auditSweep(ctx, c.ID, actionSweepQuarantine, audit.Failure, "the jail could not be removed and stays quarantined; see the agent's log")
 		return false
 	}
 	s.log.Warn("containers: removed a quarantined jail without running any of its code", "event", "jail_quarantine_removed",
 		"container_id", c.ID)
+	s.auditSweep(ctx, c.ID, actionSweepQuarantine, audit.Success, "")
 	if err := s.store.SaveEpairs(ctx, c.ID, nil); err != nil {
 		s.log.Warn("containers: could not clear the observed epairs", "container_id", c.ID, "error", err)
 	}

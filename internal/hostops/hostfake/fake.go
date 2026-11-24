@@ -124,6 +124,7 @@ type Fake struct {
 	// leftoverDevfs are the jails with a devfs a removal outside Skep
 	// left on their <root>/dev (amendment l).
 	leftoverDevfs map[string]bool
+	devfsStuck    map[string]bool // their unmount fails (StickDevfs)
 	calls         []string
 	// taps maps a tap to its description and bridge.
 	taps    map[string]fakeTap

@@ -70,6 +70,7 @@ func (HostProber) Probe(ctx context.Context) (Facts, error) {
 	}
 	f.Modules = probeModules(ctx)
 	f.Kenv = func(name string) (string, bool) { return readKenv(ctx, name) }
+	f.KenvNames = func() []string { return kenvNames(ctx) }
 	f.Running = map[string]bool{}
 	for _, svc := range []string{"skep_agent", "skep_api"} {
 		if _, err := output(ctx, cmdService, svc, "status"); err == nil {
@@ -91,6 +92,15 @@ func readKenv(ctx context.Context, name string) (string, bool) {
 		return "", false
 	}
 	return strings.TrimSuffix(out, "\n"), true
+}
+
+// kenvNames lists the kernel environment's names with /bin/kenv, read only.
+func kenvNames(ctx context.Context) []string {
+	out, err := output(ctx, cmdKenv)
+	if err != nil {
+		return nil
+	}
+	return parseKenvNames(out)
 }
 
 // probeModules asks the kernel about each guest module: kldstat -q -m
