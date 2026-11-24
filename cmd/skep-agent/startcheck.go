@@ -1,8 +1,6 @@
 package main
 
 import (
-	"errors"
-	"io/fs"
 	"os"
 
 	"github.com/greenbeanorg/skep/internal/config"
@@ -12,11 +10,7 @@ import (
 // configToCheck is the file config.Load will read, from the same resolver:
 // empty when no path is given and the default file does not exist.
 func configToCheck(configFlag string, lookup func(string) (string, bool), exists func(string) bool) string {
-	path, explicit := config.ResolvePath(configFlag, "", lookup)
-	if !explicit && !exists(path) {
-		return ""
-	}
-	return path
+	return config.FileToCheck(configFlag, lookup, exists)
 }
 
 // programTargets are the running binary and the configuration file the
@@ -58,12 +52,8 @@ func checkProgram(configFlag string) (checked string, active bool, err error) {
 	if err != nil {
 		return "", true, &startcheck.Refusal{Path: "the running program", Why: "cannot be located: " + err.Error()}
 	}
-	exists := func(p string) bool {
-		_, err := os.Lstat(p)
-		return !errors.Is(err, fs.ErrNotExist)
-	}
-	checked = configToCheck(configFlag, os.LookupEnv, exists)
-	return checked, true, startcheck.Check(fsys, programTargets(exe, configFlag, os.LookupEnv, exists))
+	checked = configToCheck(configFlag, os.LookupEnv, config.FileMayExist)
+	return checked, true, startcheck.Check(fsys, programTargets(exe, configFlag, os.LookupEnv, config.FileMayExist))
 }
 
 // checkState runs after the configuration is read and before the database

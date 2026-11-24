@@ -316,6 +316,24 @@ func ResolvePath(path, defaultPath string, lookup func(string) (string, bool)) (
 	return defaultPath, false
 }
 
+// FileToCheck is the file Load will read for this path and environment, as
+// the agent's start check and skep-setup check both need it: empty when no
+// path is given and the default file does not exist.
+func FileToCheck(path string, lookup func(string) (string, bool), exists func(string) bool) string {
+	resolved, explicit := ResolvePath(path, "", lookup)
+	if !explicit && !exists(resolved) {
+		return ""
+	}
+	return resolved
+}
+
+// FileMayExist is the exists test for FileToCheck: only a definite "not
+// there" counts as absent, so a path that cannot be examined is still checked.
+func FileMayExist(path string) bool {
+	_, err := os.Lstat(path)
+	return !errors.Is(err, fs.ErrNotExist)
+}
+
 // Load builds the configuration: file, then environment, then overrides,
 // then defaults for anything still unset, followed by validation.
 func Load(opts LoadOptions) (Config, error) {

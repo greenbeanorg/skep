@@ -1,7 +1,6 @@
 # Proposal: `skep-setup check` reports the agent's start check
 
-Status: proposal, not built. It passed the job's size limit (about 150
-changed non-test lines), so it needs Andy's decision first.
+Status: built as option A in PR #74.
 
 ## Problem
 
@@ -45,8 +44,9 @@ checks the paths the service really uses.
 - The refactor touches the agent's start check, which is root-running,
   security-relevant code. Its behaviour must not change.
 
-## Questions for Andy
+## Answered questions
 
-1. Build option A at about 210 added lines?
-2. Should a check that could not run (for example an unreadable
-   `agent.json`) also be exit 1, as the prototype does?
+1. Build option A at about 210 added lines? Yes, built in PR #74.
+2. Should a check that could not run also be exit 1? Yes: it is a "not
+   confirmed" item, and `check` exits 1. A malformed `agent.json` stays
+   exit 3, because the plan refuses that file first.

@@ -30,13 +30,12 @@ func CheckAgentStart(root string, fsys startcheck.FS) (r AgentStartReport) {
 	r.ArgsIgnored = args != ""
 	bin, _ := rc.Get("skep_agent_bin")
 	if bin == "" {
-		bin = "/usr/local/sbin/skep-agent" // the rc.d script's default
+		bin = agentBin // the rc.d script's default
 	}
 	file, _ := rc.Get("skep_agent_config")
-	configPath, explicit := config.ResolvePath(file, "", noEnv)
-	if !explicit && !exists(hostPath(root, configPath)) {
-		configPath = ""
-	}
+	configPath := config.FileToCheck(file, noEnv, func(p string) bool {
+		return config.FileMayExist(hostPath(root, p))
+	})
 	targets := startcheck.ProgramTargets(bin, configPath)
 	if r.run(fsys, targets) {
 		return r
