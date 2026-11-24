@@ -36,6 +36,11 @@ network.
 
 1. A `-wait-for PATTERN -timeout D` mode in `consolectl`, which today is
    interactive only. The existing pinned-key and token-file handling stay.
+   **Built on a PR (2026-11-24 overnight run, job 7), not merged; unit-tested
+   only:** literal match across messages over a bounded 4 KiB tail, exit 0
+   on a match, 2 on the timeout and 1 otherwise, the last 512 bytes printed
+   escaped (`strconv.QuoteToASCII`), nothing read from stdin or sent to the
+   guest.
 2. A bootable guest image on each lab VM. `snaptest` cannot pass, because it
    has no OS.
 3. A temporary test user with `vm:console`, deleted at cleanup.

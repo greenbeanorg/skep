@@ -10,6 +10,13 @@
 // The server's public key is pinned (the same pin skepctl uses); there is
 // no option to skip verification. The bearer token is read from a file.
 // Ctrl-] ends the session.
+//
+// With -wait-for PATTERN -timeout D it is not interactive: it reads
+// nothing from stdin, sends nothing to the guest, and waits for the
+// literal PATTERN in the console text. It exits 0 when the pattern
+// appears, 2 on the timeout and 1 on any other failure (the console
+// closed, for example); on 2 and 1 it prints the end of the console text,
+// escaped. The text is untrusted guest output: it is only matched.
 package main
 
 import (
@@ -23,15 +30,48 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/coder/websocket"
 )
 
 func main() {
-	if err := run(); err != nil {
+	err := run()
+	var t timeoutError
+	switch {
+	case errors.As(err, &t):
+		fmt.Fprintln(os.Stderr, "consolectl:", err)
+		os.Exit(2)
+	case err != nil:
 		fmt.Fprintln(os.Stderr, "\r\nconsolectl:", err)
 		os.Exit(1)
 	}
+}
+
+// timeoutError is a -wait-for timeout: exit code 2.
+type timeoutError struct{ msg string }
+
+func (e timeoutError) Error() string { return e.msg }
+
+// waitMode is -wait-for: it reads the console until the pattern appears
+// or the timeout passes. The console text is never written out except
+// escaped, and nothing is sent to the guest.
+func waitMode(ctx context.Context, conn *websocket.Conn, pattern []byte, timeout time.Duration) error {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	tail, err := waitFor(ctx, func(ctx context.Context) ([]byte, error) {
+		_, data, err := conn.Read(ctx)
+		return data, err
+	}, pattern)
+	if err == nil {
+		conn.Close(websocket.StatusNormalClosure, "")
+		fmt.Println("consolectl: the pattern appeared")
+		return nil
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return timeoutError{fmt.Sprintf("the pattern did not appear within %s; last console text: %s", timeout, escaped(tail))}
+	}
+	return fmt.Errorf("%w; last console text: %s", err, escaped(tail))
 }
 
 func run() error {
@@ -40,9 +80,14 @@ func run() error {
 	tokenFile := flag.String("token-file", "", "file holding a bearer session token")
 	vm := flag.String("vm", "", "VM ID")
 	requestID := flag.String("request-id", "", "X-Request-ID of the attachment, to find it in both audit logs")
+	pattern := flag.String("wait-for", "", "not interactive: wait for this literal text in the console, then exit 0")
+	timeout := flag.Duration("timeout", 0, "with -wait-for: give up after this long and exit 2")
 	flag.Parse()
 	if *server == "" || *pin == "" || *tokenFile == "" || *vm == "" {
 		return errors.New("-server, -pin, -token-file, and -vm are required")
+	}
+	if (*pattern == "") != (*timeout == 0) || *timeout < 0 {
+		return errors.New("-wait-for and a positive -timeout go together")
 	}
 	want, ok := strings.CutPrefix(*pin, "sha256:")
 	if !ok || len(want) != 64 {
@@ -87,6 +132,9 @@ func run() error {
 	}
 	defer conn.CloseNow()
 	conn.SetReadLimit(1 << 20)
+	if *pattern != "" {
+		return waitMode(ctx, conn, []byte(*pattern), *timeout)
+	}
 
 	go func() {
 		defer cancel()
