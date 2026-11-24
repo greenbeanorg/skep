@@ -162,7 +162,8 @@ func (r *UpgradeRefusal) Error() string {
 }
 
 // UpgradeIncomplete is an upgrade that made changes and could not verify
-// the result: skep_agent was stopped and did not come back as the new
+// the result: a service's stop failed and may have taken effect,
+// skep_agent was stopped and did not come back as the new
 // build (its start or its check failed), skep_api did not come up after
 // the agent's restart, the agent did not answer on its socket within the
 // wait, or its health was not ok. skep-setup exits 4 for it.
@@ -199,13 +200,10 @@ const (
 	// again would fail the same way until the cause is found.
 	stateAPIStopFailed = "skep_agent was not restarted; find out why skep_api could not be stopped " +
 		"(service skep_api status, and the API's log in /var/log/daemon.log), then run skep-setup upgrade again"
-	// stateAgentFailed: "service skep_agent stop" failed. Upgrade again
-	// repeats the same stop and start, so it is no remedy by itself.
-	stateAgentFailed = "skep_agent did not come back as the new build, so the API cannot serve agent requests. " +
-		"See the agent's log (/var/log/daemon.log): running skep-setup upgrade again repeats the same start " +
-		"and helps only once the cause is fixed (it starts a stopped agent)"
-	// againAgentFailed: skep_agent was stopped and its start or check
-	// failed, so it is not the new build. Upgrade again repeats the same
+	// againAPIStopFailed: upgrade again repeats the stop that failed.
+	againAPIStopFailed = "Running skep-setup upgrade again repeats the same stop and helps only once the cause is fixed"
+	// againAgentFailed: skep_agent's stop, start or check failed, so it is
+	// not known to run the new build. Upgrade again repeats the same
 	// start, so it is no remedy by itself.
 	againAgentFailed = "Until skep_agent runs the new build the API cannot serve agent requests; " +
 		"running skep-setup upgrade again repeats the same start and helps only once the cause is fixed (it starts a stopped agent)"
@@ -392,7 +390,7 @@ func (u *Upgrader) Upgrade(ctx context.Context) error {
 	// (restoreAPI), except a failure of its own final start.
 	u.printf("  service skep_api stop\n")
 	if err := stopService(ctx, u.Runner, "skep_api", u.printf); err != nil {
-		return u.restoreAPI(ctx, want, fmt.Errorf("stop skep_api: %w", err), "no database was backed up; "+stateAPIStopFailed)
+		return u.apiStopFailed(ctx, want, err)
 	}
 	tc, err = u.waitForTasks(ctx)
 	if err != nil {
@@ -428,7 +426,13 @@ func (u *Upgrader) Upgrade(ctx context.Context) error {
 	defer cancel()
 	u.printf("  service skep_agent stop (from here on, Ctrl-C does not interrupt the upgrade)\n")
 	if err := stopService(nctx, u.Runner, "skep_agent", u.printf); err != nil {
-		return u.restoreAPI(nctx, want, fmt.Errorf("stop skep_agent: %w", err), "backups in "+dir+"; "+stateAgentFailed)
+		// A failed stop may still have delivered its signal, so the agent
+		// may be down: the same rule as apply and remove (exit 4).
+		restored := u.restoreAPI(nctx, want, fmt.Errorf("stop skep_agent: %w", err), "backups in "+dir)
+		return &UpgradeIncomplete{
+			Problem: stopFailedText("skep_agent", err) + ", so the agent may be down or still the old build: " + restored.Error(),
+			Check:   "service skep_agent status and the agent's log (/var/log/daemon.log)",
+			Again:   againAgentFailed}
 	}
 	// The agent was stopped: from here on a failure has changed the host
 	// and is incomplete (exit 4), not a refusal.
@@ -477,6 +481,36 @@ func (u *Upgrader) Upgrade(ctx context.Context) error {
 	}
 	u.printf("upgraded to %s; backups in %s\n", want, dir)
 	return nil
+}
+
+// stopFailedText says a stop failed and may have taken effect, unless it
+// was killed: that error's own message already says so.
+func stopFailedText(svc string, err error) string {
+	if strings.Contains(err.Error(), "may have taken effect") {
+		return "the stop of " + svc + " failed"
+	}
+	return "the stop of " + svc + " failed and may have taken effect"
+}
+
+// apiStopFailed is a failed "service skep_api stop" (exit 4). A skep_api
+// still running is left alone; one that is down gets restoreAPI's start.
+func (u *Upgrader) apiStopFailed(ctx context.Context, want string, stopErr error) error {
+	running := func() bool {
+		rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+		defer cancel()
+		_, err := u.Runner.Run(rctx, Cmd{Name: cmdService, Args: []string{"skep_api", "status"}})
+		return err == nil
+	}
+	cause, state := fmt.Errorf("stop skep_api: %w", stopErr), "no database was backed up; "+stateAPIStopFailed
+	detail := fmt.Sprintf("%v; %s", cause, state)
+	if !running() {
+		detail = u.restoreAPI(ctx, want, cause, state).Error()
+	}
+	now := map[bool]string{true: "running", false: "not running"}[running()]
+	return &UpgradeIncomplete{
+		Problem: stopFailedText("skep_api", stopErr) + "; skep_api is " + now + " now: " + detail,
+		Check:   "service skep_api status and the API's log (/var/log/daemon.log)",
+		Again:   againAPIStopFailed}
 }
 
 // waitForAgent polls the agent's socket every second for up to

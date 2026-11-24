@@ -97,7 +97,10 @@ func (h HostRunner) Run(ctx context.Context, c Cmd) (string, error) {
 	var out, errb bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errb
 	if err := cmd.Run(); err != nil {
-		return out.String(), fmt.Errorf("%s: %w: %s", c, err, strings.TrimSpace(errb.String()))
+		if tail := strings.TrimSpace(errb.String()); tail != "" {
+			return out.String(), fmt.Errorf("%s: %w: %s", c, err, tail)
+		}
+		return out.String(), fmt.Errorf("%s: %w", c, err)
 	}
 	return out.String(), nil
 }

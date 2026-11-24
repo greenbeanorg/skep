@@ -11,7 +11,9 @@ the source is linked.*
   unvalidated ([runbook](../../../tests/integration/bare-metal/README.md)).
 - **Nested under KVM**, a guest's first start can stop the whole host unless
   `hw.vmm.vmx.cap.virtual_interrupt_delivery=0` is set before `vmm` loads.
-  Skep does not detect it ([VM guide](../../administration/virtual-machines.md)).
+  The agent logs a warning at start and reports a degraded `nested_interrupts`
+  health check when it sees this, but does not prevent it
+  ([VM guide](../../administration/virtual-machines.md)).
 - No clustering, HA, backup, network management, graphical consoles or
   metric history.
 
@@ -37,10 +39,6 @@ the source is linked.*
   refuses and says to wait for tasks that cannot finish until the agent
   starts, and `-force` first waits its full task wait (default 60 s). Start
   the agent, then upgrade.
-- **`skep-setup upgrade` exits 3 when the agent's stop fails**, although the
-  stop signal may have been delivered. Treat that exit 3 as "the agent may
-  have stopped": check `service skep_agent status`
-  ([skep-setup](../../installation/skep-setup.md)).
 - `skep-setup remove -revert-host` also lists lines an earlier install added,
   because journals survive `pkg delete` (backlog).
 

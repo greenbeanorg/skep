@@ -96,7 +96,11 @@ func (a *Applier) Apply(ctx context.Context, p Plan) (*Journal, error) {
 	}
 	j, err := a.newJournal(cmd, acts)
 	if err != nil {
-		return nil, err
+		var partial *partialJournalError
+		if errors.As(err, &partial) {
+			return nil, fmt.Errorf("could not create the journal: %w; no action ran, so the host's configuration was not changed", err)
+		}
+		return nil, fmt.Errorf("could not create the journal: %w; no action ran, so nothing was changed", err)
 	}
 	backedUp := map[string]bool{}
 	var adminErr *AdminCreateError
@@ -104,7 +108,7 @@ func (a *Applier) Apply(ctx context.Context, p Plan) (*Journal, error) {
 	effects := make([]effect, len(j.Entries))
 	for i := range j.Entries {
 		if err := ctx.Err(); err != nil {
-			return j, a.fail(j, i, effects, err)
+			return j, a.cancelled(j, i, effects, err)
 		}
 		e := &j.Entries[i]
 		act := e.Action
@@ -185,11 +189,22 @@ func (a *Applier) newJournal(command string, acts []Action) (*Journal, error) {
 		}
 		return nil, err
 	}
+	// From here the directory exists, and the next plan refuses on it as
+	// an unfinished run until it is rolled back.
 	if err := os.Mkdir(filepath.Join(JournalDir(a.Root, j.ID), "files"), 0o700); err != nil {
-		return nil, err
+		return nil, &partialJournalError{fmt.Errorf("%w (clear the partial journal before running %s again: skep-setup rollback %s)", err, command, j.ID)}
 	}
-	return j, j.save(a.Root)
+	if err := j.save(a.Root); err != nil {
+		return nil, &partialJournalError{fmt.Errorf("%w (clear the partial journal before running %s again: skep-setup rollback %s)", err, command, j.ID)}
+	}
+	return j, nil
 }
+
+// partialJournalError is a journal creation that failed after the journal's
+// directory was made, so the directory is left for rollback to clear.
+type partialJournalError struct{ error }
+
+func (e *partialJournalError) Unwrap() error { return e.error }
 
 // fail records a failed action. With nothing changed it is a plain error
 // (exit 3); after any change, or when the failed action may have changed
@@ -208,14 +223,37 @@ func (a *Applier) fail(j *Journal, i int, effects []effect, err error) error {
 	if serr != nil {
 		return fmt.Errorf("%w (and the journal could not be saved: %v)", err, serr)
 	}
-	return fmt.Errorf("%s failed: %w; nothing was changed. Clear this run before running %s again: skep-setup rollback %s",
+	return fmt.Errorf("%s failed: %w; the host's configuration was not changed. Clear this run before running %s again: skep-setup rollback %s",
 		j.Entries[i].Action, err, j.Command, j.ID)
+}
+
+// cancelled records a run cancelled between actions: action i never
+// started, so the message names the point of interruption and does not
+// present that action as having failed.
+func (a *Applier) cancelled(j *Journal, i int, effects []effect, cause error) error {
+	point := fmt.Sprintf("cancelled (%v) before %s started; that action did not run", cause, j.Entries[i].Action)
+	j.Entries[i].Error = point
+	serr := j.save(a.Root)
+	if anyEffect(effects) {
+		inc := newIncomplete(j, effects, point)
+		if serr != nil {
+			inc.Problem += fmt.Sprintf(" (and the journal could not be saved: %v, so it may not list the last change)", serr)
+		}
+		inc.Err = cause
+		return inc
+	}
+	if serr != nil {
+		return fmt.Errorf("%s; the host's configuration was not changed (and the journal could not be saved: %v). Clear this run before running %s again: skep-setup rollback %s: %w",
+			point, serr, j.Command, j.ID, cause)
+	}
+	return fmt.Errorf("%s; the host's configuration was not changed. Clear this run before running %s again: skep-setup rollback %s: %w",
+		point, j.Command, j.ID, cause)
 }
 
 // saveFailed is a journal that could not be saved after an action.
 func (a *Applier) saveFailed(j *Journal, effects []effect, err error) error {
 	if !anyEffect(effects) {
-		return fmt.Errorf("the journal could not be saved: %w; nothing was changed. Clear this run before running %s again: skep-setup rollback %s",
+		return fmt.Errorf("the journal could not be saved: %w; the host's configuration was not changed. Clear this run before running %s again: skep-setup rollback %s",
 			err, j.Command, j.ID)
 	}
 	inc := newIncomplete(j, effects, fmt.Sprintf("the journal could not be saved (%v), so it may not list the last change", err))
@@ -302,6 +340,10 @@ func stopIfRunning(ctx context.Context, r Runner, svc string, printf func(string
 		return true, nil
 	}
 	_, err = r.Run(ctx, Cmd{Name: cmdService, Args: []string{svc, "stop"}})
+	var killed *interruptedError
+	if errors.As(markInterrupted(ctx, err), &killed) {
+		return false, fmt.Errorf("the stop of %s was killed and may have taken effect: %w", svc, err)
+	}
 	return false, err
 }
 
