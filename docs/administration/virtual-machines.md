@@ -215,6 +215,11 @@ start, the agent logs one warning on a host under a hypervisor with this
 setting not 0, and adds a `degraded` `nested_interrupts` health check. It
 never refuses a VM and never changes the setting.
 
+The agent evaluates this condition once, when it starts. If `vmm` is loaded
+after the agent started, there is no warning and no check until the agent
+restarts, so a missing warning does not prove the host is safe. Read the
+setting itself with `sysctl hw.vmm.vmx.cap.virtual_interrupt_delivery`.
+
 ## Creating and installing a VM
 
 In the web interface: **Virtual machines → Create VM**. Choose the CPUs,
