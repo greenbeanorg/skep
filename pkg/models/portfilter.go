@@ -26,6 +26,10 @@ const (
 	// port has no VLAN filtering, or a guest port on it has no PVID
 	// (decision 8, answer 6). It never stops or refuses a guest.
 	CheckBridgeVLANUnfiltered = "bridge_vlan_unfiltered"
+	// CheckNestedInterrupts is present only on a host running under a
+	// hypervisor with VT-x virtual interrupt delivery on: nested bhyve can
+	// freeze the host on the first VM start.
+	CheckNestedInterrupts = "nested_interrupts"
 )
 
 // Events, logged with event=<name> and written to the audit log as

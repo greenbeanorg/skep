@@ -37,8 +37,8 @@ Run it as root: it reads `agent.json` (`0600`).
 | `0` | done, or nothing to do |
 | `1` | `check`: something for `apply` or for you; any command: not confirmed |
 | `2` | usage |
-| `3` | refused: nothing was (or would be) done. `upgrade` also exits 3 for its failures before the agent was restarted (a backup, or the agent's stop), after starting `skep_api` again; its message says what was left |
-| `4` | **incomplete**: changes were made and the run failed or its result could not be verified. The message starts `incomplete:`. `upgrade`: the agent was stopped and did not come back as the new build (its start or its check failed), `skep_api` did not come up after the agent's restart, the agent did not answer on its socket within the wait, or its health was not `ok` (see [Upgrades](#upgrades)). `apply`: an action failed after earlier ones changed something, or the failed action may itself have changed something (a failed service stop always counts), or the administrator's creation failed after other changes or was killed or timed out. `rollback`: it failed after restoring or removing some files. `remove`: as `apply`. See [Failures part way](#failures-part-way) |
+| `3` | refused: nothing was (or would be) done. `upgrade` also exits 3 for a failure between the two services' stops (for example a backup), after starting `skep_api` again; its message says what was left |
+| `4` | **incomplete**: changes were made and the run failed or its result could not be verified. The message starts `incomplete:`. `upgrade`: the stop of `skep_api` or of `skep_agent` failed (it may have taken effect), the agent was stopped and did not come back as the new build (its start or its check failed), `skep_api` did not come up after the agent's restart, the agent did not answer on its socket within the wait, or its health was not `ok` (see [Upgrades](#upgrades)). `apply`: an action failed after earlier ones changed something, or the failed action may itself have changed something (a failed service stop always counts), or the administrator's creation failed after other changes or was killed or timed out. `rollback`: it failed after restoring or removing some files. `remove`: as `apply`. See [Failures part way](#failures-part-way) |
 
 ## The answers
 
@@ -342,7 +342,12 @@ not come back as the new build (its start or its check failed; upgrade
 starts `skep_api` again first), when `skep_api` did not come up after the
 agent's restart, when the agent did not answer on its socket within 200 s,
 or when its health (or reading it) was not `ok`. The agent failing to
-stop stays exit 3. The message starts with
+stop, or `skep_api` failing to stop, is exit 4 too, because the stop may
+have taken effect. After a failed `skep_api` stop the message says whether
+`skep_api` is running now and that `skep_agent` was not restarted; a
+`skep_api` that is down gets the usual start, and one still running is left
+alone. Find the cause, then run `skep-setup upgrade` again. The message
+starts with
 `incomplete:`, names the backup directory, and says what to check: the
 API's or the agent's log (`/var/log/daemon.log`; `jail_stop_completing`
 means the agent is still completing interrupted jail stops and will
@@ -366,8 +371,8 @@ agent_version_mismatch` to everything that needs the agent, and its
 health is `unavailable`. The tasks keep running on the agent; run
 `skep-setup upgrade` again once they have finished.
 
-If the **agent** did not come back as the new build (exit 4, or exit 3
-when its stop failed), upgrade starts the API and says so; running `skep-setup upgrade` again repeats the same
+If the **agent** did not come back as the new build, or its stop failed
+(exit 4 in both cases), upgrade starts the API and says so; running `skep-setup upgrade` again repeats the same
 start, so it helps only once the cause (in `/var/log/daemon.log`) is
 fixed. If only the final `skep_api` start fails, the agent is upgraded:
 start the API by hand (`service skep_api start`); upgrade need not run

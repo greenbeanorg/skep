@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -514,7 +515,8 @@ func TestUpgradeIncomplete(t *testing.T) {
 // start or its check failed, is incomplete (skep-setup exits 4): upgrade
 // changed the host and could not verify the result. It still starts
 // skep_api again, and its advice does not promise that running upgrade
-// again fixes it. The agent failing to stop is not incomplete (exit 3).
+// again fixes it. The agent failing to stop is incomplete too: the stop
+// may have taken effect.
 func TestUpgradeAgentNotBackIsIncomplete(t *testing.T) {
 	incomplete := func(t *testing.T, err error, want ...string) {
 		t.Helper()
@@ -562,16 +564,31 @@ func TestUpgradeAgentNotBackIsIncomplete(t *testing.T) {
 			t.Fatalf("err %T %v", err, err)
 		}
 	})
-	t.Run("stop fails: not incomplete", func(t *testing.T) {
+	t.Run("stop fails: may have changed, incomplete", func(t *testing.T) {
 		u, h := newUpgrade(t)
 		h.fail["service skep_agent stop"] = errors.New("exit status 1")
 		err := u.Upgrade(context.Background())
 		var inc *UpgradeIncomplete
-		if err == nil || errors.As(err, &inc) || !strings.Contains(err.Error(), "stop skep_agent: ") ||
-			!strings.Contains(err.Error(), "skep_agent did not come back as the new build") {
+		if !errors.As(err, &inc) || !strings.HasPrefix(err.Error(), "incomplete: ") ||
+			!strings.Contains(err.Error(), "stop skep_agent: ") || !strings.Contains(err.Error(), "may have taken effect") ||
+			!strings.Contains(err.Error(), "backups in ") {
 			t.Fatalf("err %T %v", err, err)
 		}
+		var ref *UpgradeRefusal
+		if errors.As(err, &ref) {
+			t.Fatal("also a refusal")
+		}
 		apiRestarted(t, h)
+	})
+	t.Run("stop fails and the API does not come back", func(t *testing.T) {
+		u, h := newUpgrade(t)
+		h.fail["service skep_agent stop"] = errors.New("exit status 1")
+		h.fail["service skep_api start"] = errors.New("exit status 1")
+		err := u.Upgrade(context.Background())
+		var inc *UpgradeIncomplete
+		if !errors.As(err, &inc) || !strings.Contains(err.Error(), "skep_api could not be started again") {
+			t.Fatalf("err %T %v", err, err)
+		}
 	})
 }
 
@@ -684,6 +701,56 @@ func TestUpgradeCtrlCBeforeTheAgentStopRestoresTheAPI(t *testing.T) {
 		}
 	}
 	apiRestarted(t, h)
+}
+
+// A failed skep_api stop is exit 4. The API that still runs is not started
+// again, and the agent is not touched.
+func TestUpgradeAPIStopFailedStillRunning(t *testing.T) {
+	u, h := newUpgrade(t)
+	h.fail["service skep_api stop"] = errors.New("exit status 1")
+	err := u.Upgrade(context.Background())
+	var inc *UpgradeIncomplete
+	if !errors.As(err, &inc) {
+		t.Fatalf("err %v", err)
+	}
+	for _, w := range []string{"the stop of skep_api failed and may have taken effect", "skep_api is running now",
+		"skep_agent was not restarted", "helps only once the cause is fixed"} {
+		if !strings.Contains(err.Error(), w) {
+			t.Errorf("missing %q: %v", w, err)
+		}
+	}
+	if got := strings.Join(serviceCalls(h), ", "); got != "service skep_api status, service skep_api stop, service skep_api status, service skep_api status" {
+		t.Fatalf("services: %s", got)
+	}
+}
+
+// A failed stop that did take effect gets the one existing start.
+func TestUpgradeAPIStopFailedButStopped(t *testing.T) {
+	u, h := newUpgrade(t)
+	h.fail["service skep_api stop"] = errors.New("exit status 1")
+	h.on["service skep_api stop"] = func() { os.Remove(hostPath(h.root, apiPID)) }
+	err := u.Upgrade(context.Background())
+	var inc *UpgradeIncomplete
+	if !errors.As(err, &inc) || !strings.Contains(err.Error(), "skep_api is running now") || !strings.Contains(err.Error(), "skep_api was started again") {
+		t.Fatalf("err %v", err)
+	}
+	if n := strings.Count(strings.Join(serviceCalls(h), ","), "service skep_api start"); n != 1 {
+		t.Fatalf("%d starts: %v", n, serviceCalls(h))
+	}
+}
+
+// A killed stop says "may have taken effect" once.
+func TestUpgradeKilledStopSaysItOnce(t *testing.T) {
+	killedErr := exec.Command("/bin/sh", "-c", "kill -9 $$").Run()
+	for _, svc := range []string{"skep_api", "skep_agent"} {
+		u, h := newUpgrade(t)
+		h.fail["service "+svc+" stop"] = killedErr
+		err := u.Upgrade(context.Background())
+		var inc *UpgradeIncomplete
+		if !errors.As(err, &inc) || strings.Count(err.Error(), "may have taken effect") != 1 {
+			t.Errorf("%s: %v", svc, err)
+		}
+	}
 }
 
 // A1: the advice after a failed agent start does not promise that running

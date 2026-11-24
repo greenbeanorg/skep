@@ -213,6 +213,30 @@ func TestCloneStaticAddressing(t *testing.T) {
 	_, err = f.svc.CloneContainer(ctx, src.ID, models.ContainerClone{Name: "web3", NICs: []models.ContainerNICSpec{
 		{IPv4: static("192.0.2.12/24", "192.0.2.1")}, {}}}, f.sub)
 	wantCode(t, err, models.CodeContainerStarted)
+	// Without new addressing the answer is the same: asking for addressing
+	// would send the client to the refusal above.
+	_, err = f.svc.CloneContainer(ctx, src.ID, models.ContainerClone{Name: "web3"}, f.sub)
+	wantCode(t, err, models.CodeContainerStarted)
+	if !strings.Contains(err.Error(), "cannot be cloned") {
+		t.Fatalf("message: %v", err)
+	}
+	// So is a change of that NIC to DHCP.
+	_, err = f.svc.CloneContainer(ctx, src.ID, models.ContainerClone{Name: "web3", NICs: []models.ContainerNICSpec{
+		{IPv4: &models.ContainerIPv4{Mode: models.IPv4DHCP}}, {}}}, f.sub)
+	wantCode(t, err, models.CodeContainerStarted)
+}
+
+// A started DHCP jail can still be cloned: the rule is about static
+// addresses.
+func TestCloneStartedDHCPJailStillWorks(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	src := f.create(models.ContainerCreate{Name: "d1", TemplateID: f.minimal,
+		NICs: []models.ContainerNICSpec{{Bridge: "bridge0"}}})
+	f.succeed(f.svc.Action(ctx, src.ID, models.ContainerAction{Action: "start"}, f.sub))
+	if c := f.clone(src.ID, models.ContainerClone{Name: "d2"}); !c.StartedOnce {
+		t.Fatalf("clone: %+v", c)
+	}
 }
 
 func TestStartRefusedWhenAddressHeld(t *testing.T) {
