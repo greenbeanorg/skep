@@ -39,7 +39,8 @@ export interface paths {
          *     a caller without a session still gets the status alone.
          *
          *     This is the only health endpoint. `/health` and `/healthz` at the
-         *     root of the HTTPS port, outside `/api/v1`, answer `404` with the
+         *     root of the HTTPS port, outside `/api/v1`, with or without a
+         *     trailing slash, answer `404` with the
          *     standard error body naming this path, so that a check pointed at
          *     them cannot pass on the web interface's `200`.
          *

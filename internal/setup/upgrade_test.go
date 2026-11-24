@@ -713,7 +713,7 @@ func TestUpgradeAPIStopFailedStillRunning(t *testing.T) {
 	if !errors.As(err, &inc) {
 		t.Fatalf("err %v", err)
 	}
-	for _, w := range []string{"the stop of skep_api failed and may have taken effect", "skep_api is running now",
+	for _, w := range []string{"the stop of skep_api failed and may have taken effect", "skep_api was running when checked, but a supervisor still holding the failed stop can stop it afterwards",
 		"skep_agent was not restarted", "helps only once the cause is fixed"} {
 		if !strings.Contains(err.Error(), w) {
 			t.Errorf("missing %q: %v", w, err)
@@ -731,7 +731,7 @@ func TestUpgradeAPIStopFailedButStopped(t *testing.T) {
 	h.on["service skep_api stop"] = func() { os.Remove(hostPath(h.root, apiPID)) }
 	err := u.Upgrade(context.Background())
 	var inc *UpgradeIncomplete
-	if !errors.As(err, &inc) || !strings.Contains(err.Error(), "skep_api is running now") || !strings.Contains(err.Error(), "skep_api was started again") {
+	if !errors.As(err, &inc) || !strings.Contains(err.Error(), "skep_api was running when checked, but a supervisor still holding the failed stop can stop it afterwards") || !strings.Contains(err.Error(), "skep_api was started again") {
 		t.Fatalf("err %v", err)
 	}
 	if n := strings.Count(strings.Join(serviceCalls(h), ","), "service skep_api start"); n != 1 {
