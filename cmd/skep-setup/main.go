@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/greenbeanorg/skep/internal/setup"
+	"github.com/greenbeanorg/skep/internal/startcheck"
 	"github.com/greenbeanorg/skep/pkg/version"
 )
 
@@ -36,6 +37,14 @@ const (
 	exitPending = 1 // check: there is work for apply, or something for the operator
 	exitUsage   = 2
 	exitRefused = 3 // a refusal: nothing was (or would be) done
+	// exitIncomplete: incomplete: changes were made and the run failed or
+	// its result could not be verified. For upgrade: the stop of skep_api
+	// or skep_agent failed (it may have taken effect), the agent was stopped and did not
+	// come back as the new build (its start or its check failed), skep_api
+	// did not come up after the agent's restart, the agent's socket did
+	// not answer within the wait, or health was not ok.
+	// For apply, rollback and remove: a failure after changing something.
+	exitIncomplete = 4
 )
 
 // env is what the program takes from its surroundings. Tests replace it.
@@ -57,6 +66,20 @@ type env struct {
 	inode func(string) (uint64, error)
 	// umask sets the process umask (syscall.Umask); nil leaves it.
 	umask func(int) int
+	// dataDir checks Skep's data directory; nil means setup.CheckDataDir.
+	dataDir func(root string) error
+	// startFS replaces the host in check's agent start check; nil means
+	// the real host, as root, on the real root only.
+	startFS startcheck.FS
+}
+
+// checkDataDir is the check every command makes before its first read or
+// write under /var/db/skep.
+func (e env) checkDataDir(root string) error {
+	if e.dataDir != nil {
+		return e.dataDir(root)
+	}
+	return setup.CheckDataDir(root)
 }
 
 // setUmask gives every command that changes the host umask 022, so what
@@ -174,6 +197,11 @@ func run(ctx context.Context, args []string, e env) int {
 		}
 		return ee.code
 	}
+	var refusal *setup.DataDirRefusal
+	if errors.As(err, &refusal) {
+		fmt.Fprintln(e.stderr, "skep-setup: refused:", refusal)
+		return exitRefused
+	}
 	if errors.Is(err, flag.ErrHelp) {
 		return exitOK
 	}
@@ -255,6 +283,12 @@ func (a *answers) options() (setup.Options, error) {
 // computePlan parses the answers, probes the host, and computes the plan.
 // gate, when set, runs on the parsed options before anything is read.
 func computePlan(ctx context.Context, name string, args []string, e env, extra func(*flag.FlagSet), gate func(setup.Options) error) (setup.Options, setup.Plan, error) {
+	o, p, _, err := computePlanFacts(ctx, name, args, e, extra, gate)
+	return o, p, err
+}
+
+// computePlanFacts is computePlan, also returning the facts it probed.
+func computePlanFacts(ctx context.Context, name string, args []string, e env, extra func(*flag.FlagSet), gate func(setup.Options) error) (setup.Options, setup.Plan, setup.Facts, error) {
 	flags := flag.NewFlagSet("skep-setup "+name, flag.ContinueOnError)
 	flags.SetOutput(e.stderr)
 	var a answers
@@ -263,27 +297,30 @@ func computePlan(ctx context.Context, name string, args []string, e env, extra f
 		extra(flags)
 	}
 	if err := flags.Parse(args); err != nil {
-		return setup.Options{}, setup.Plan{}, err
+		return setup.Options{}, setup.Plan{}, setup.Facts{}, err
 	}
 	if flags.NArg() > 0 {
-		return setup.Options{}, setup.Plan{}, fmt.Errorf("unexpected argument %q", flags.Arg(0))
+		return setup.Options{}, setup.Plan{}, setup.Facts{}, fmt.Errorf("unexpected argument %q", flags.Arg(0))
 	}
 	o, err := a.options()
 	if err != nil {
-		return o, setup.Plan{}, err
+		return o, setup.Plan{}, setup.Facts{}, err
 	}
 	if gate != nil {
 		if err := gate(o); err != nil {
-			return o, setup.Plan{}, err
+			return o, setup.Plan{}, setup.Facts{}, err
 		}
+	}
+	if err := e.checkDataDir(o.Root); err != nil {
+		return o, setup.Plan{}, setup.Facts{}, err
 	}
 	o.Admins = e.adminChecker(o.Root)
 	f, err := e.prober.Probe(ctx)
 	if err != nil {
-		return o, setup.Plan{}, err
+		return o, setup.Plan{}, setup.Facts{}, err
 	}
 	p, err := setup.Compute(ctx, o, f)
-	return o, p, err
+	return o, p, f, err
 }
 
 // printItems prints plan items; with all false only those that are not OK.
@@ -324,11 +361,16 @@ func summary(items []setup.Item) string {
 }
 
 func runCheck(ctx context.Context, args []string, e env) error {
-	o, p, err := computePlan(ctx, "check", args, e, nil, nil)
+	o, p, f, err := computePlanFacts(ctx, "check", args, e, nil, nil)
+	if errors.Is(err, setup.ErrNoMgmt) {
+		reportAgentWithoutPlan(ctx, o.Root, e)
+		return err
+	}
 	if err != nil {
 		return err
 	}
 	fmt.Fprintf(e.stdout, "skep-setup check, root %s (read-only; nothing was changed)\n", o.Root)
+	p.Items = append(p.Items, reportAgent(o.Root, f, e)...)
 	fmt.Fprintln(e.stdout, " ", summary(p.Items))
 	printItems(e.stdout, p.Items, false)
 	switch {

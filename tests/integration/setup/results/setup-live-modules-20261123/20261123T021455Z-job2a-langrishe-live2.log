@@ -1,0 +1,74 @@
++ jls -q name
++ ls /dev/vmm
++ pgrep -l bhyve
++ sudo skep-setup check -mgmt vtnet0 -pool zroot
+check1-rc=1
++ echo 'check1-rc=1'
++ grep -A1 'kernel modules' /tmp/c1
++ grep -E 'ok, .* refused' /tmp/c1
+  17 ok, 1 to add, 0 warnings, 0 conflicts, 1 for you, 0 refused
++ sudo kldunload nmdm
+unload-rc=0
++ echo 'unload-rc=0'
++ kldstat -q -m nmdm
+nmdm-present=1
++ echo 'nmdm-present=1'
++ sudo skep-setup check -mgmt vtnet0 -pool zroot
+check2-rc=1
++ echo 'check2-rc=1'
++ grep -A9 'kernel modules' /tmp/c2
+  warn     kernel modules                     configured but not loaded: nmdm
+                                                configured to load at boot, not loaded now; until they are, these do not work:
+                                                nmdm: VM serial consoles
+                                                and the agent's health can read degraded (skep-setup upgrade then exits 3).
+                                                Setup never loads modules. Either reboot, or load them now:
+                                                $ shutdown -r now
+                                                $ kldload -n nmdm
+  manual   network                            no guest bridge
+                                                guests can have no NIC until a bridge is allow-listed (--bridge, or --create-bridge with --uplink)
++ grep -E 'ok, .* refused' /tmp/c2
+  16 ok, 1 to add, 1 warnings, 0 conflicts, 1 for you, 0 refused
++ sudo skep-setup plan -mgmt vtnet0 -pool zroot
+plan-rc=0
++ echo 'plan-rc=0'
++ grep -A9 'kernel modules' /tmp/p2
+  warn     kernel modules                     configured but not loaded: nmdm
+                                                configured to load at boot, not loaded now; until they are, these do not work:
+                                                nmdm: VM serial consoles
+                                                and the agent's health can read degraded (skep-setup upgrade then exits 3).
+                                                Setup never loads modules. Either reboot, or load them now:
+                                                $ shutdown -r now
+                                                $ kldload -n nmdm
+  ok       storage                            pool zroot
+                                                ONLINE; Skep works only under zroot/skep, which the agent creates on use
+  ok       /etc/rc.conf                       zfs_enable
++ sudo kldload -n nmdm
+load-rc=0
++ echo 'load-rc=0'
++ kldstat -q -m nmdm
+nmdm-present=0
++ echo 'nmdm-present=0'
++ sudo skep-setup check -mgmt vtnet0 -pool zroot
+check3-rc=1
++ echo 'check3-rc=1'
++ grep -A1 'kernel modules' /tmp/c3
++ grep -E 'ok, .* refused' /tmp/c3
+  17 ok, 1 to add, 0 warnings, 0 conflicts, 1 for you, 0 refused
+--- full check2 output:
++ echo '--- full check2 output:'
++ cat /tmp/c2
+skep-setup check, root / (read-only; nothing was changed)
+  16 ok, 1 to add, 1 warnings, 0 conflicts, 1 for you, 0 refused
+  add      /boot/loader.conf                  kern.racct.enable="1"
+                                                -> append kern.racct.enable="1" to /boot/loader.conf
+                                                RACCT, which Skep's jail limits (RCTL) need; takes effect only after a reboot
+  warn     kernel modules                     configured but not loaded: nmdm
+                                                configured to load at boot, not loaded now; until they are, these do not work:
+                                                nmdm: VM serial consoles
+                                                and the agent's health can read degraded (skep-setup upgrade then exits 3).
+                                                Setup never loads modules. Either reboot, or load them now:
+                                                $ shutdown -r now
+                                                $ kldload -n nmdm
+  manual   network                            no guest bridge
+                                                guests can have no NIC until a bridge is allow-listed (--bridge, or --create-bridge with --uplink)
++ rm -f /tmp/c1 /tmp/c2 /tmp/c3 /tmp/p2

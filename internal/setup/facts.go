@@ -3,6 +3,7 @@ package setup
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/netip"
 	"os/exec"
 	"sort"
@@ -32,6 +33,46 @@ type Facts struct {
 	// Running holds the Skep services whose "service NAME status"
 	// succeeded (skep_agent, skep_api).
 	Running map[string]bool
+	// Bridges are the bridges that exist now (ifconfig -g bridge), as
+	// ifconfig shows them: rc.conf says what a bridge is at the next
+	// boot, this what it is now.
+	Bridges map[string]Bridge
+	// Modules holds, for each module in GuestModules, whether the kernel
+	// has it now ("kldstat -q -m NAME"; compiled in counts as loaded).
+	// Nil when it could not be read.
+	Modules map[string]bool
+	// Kenv reads one variable of the running kernel environment. ok is
+	// false when the variable is absent or could not be read. Nil when
+	// the prober cannot read it at all: callers treat that as differing.
+	Kenv func(name string) (value string, ok bool)
+	// KenvNames lists the kernel environment's variable names. Nil when
+	// the prober cannot; a failed read returns none.
+	KenvNames func() []string
+}
+
+// Bridge is the run-time state of one bridge.
+type Bridge struct {
+	// Members are the member interfaces ("member:" lines).
+	Members []string
+	// VLANFilter is whether the bridge flags include VLANFILTER.
+	VLANFilter bool
+}
+
+// BridgeOf returns the live bridge that has iface as a member, if any.
+func (f Facts) BridgeOf(iface string) (string, bool) {
+	names := make([]string, 0, len(f.Bridges))
+	for n := range f.Bridges {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	for _, n := range names {
+		for _, m := range f.Bridges[n].Members {
+			if m == iface {
+				return n, true
+			}
+		}
+	}
+	return "", false
 }
 
 // SkepGuests returns the running Skep jails and VMs.
@@ -101,6 +142,30 @@ func parseIfconfigInet(out string) []netip.Prefix {
 	return addrs
 }
 
+// parseIfconfigBridge reads "ifconfig BRIDGE" on FreeBSD 15.1:
+//
+//	bridge flags=1<VLANFILTER>
+//	member: vtnet1 flags=143<LEARNING,DISCOVER,AUTOEDGE,AUTOPTP>
+func parseIfconfigBridge(out string) Bridge {
+	var b Bridge
+	for _, line := range strings.Split(out, "\n") {
+		f := strings.Fields(line)
+		switch {
+		case len(f) >= 2 && f[0] == "member:":
+			b.Members = append(b.Members, f[1])
+		case len(f) >= 2 && f[0] == "bridge" && strings.HasPrefix(f[1], "flags="):
+			if i := strings.IndexByte(f[1], '<'); i >= 0 {
+				for _, fl := range strings.Split(strings.Trim(f[1][i:], "<>"), ",") {
+					if fl == "VLANFILTER" {
+						b.VLANFilter = true
+					}
+				}
+			}
+		}
+	}
+	return b
+}
+
 // parseZpoolList reads "zpool list -H -o name,health".
 func parseZpoolList(out string) map[string]string {
 	pools := map[string]string{}
@@ -122,4 +187,30 @@ func lines(out string) []string {
 	}
 	sort.Strings(l)
 	return l
+}
+
+// commandOutput runs a read-only command and returns its standard output
+// (output, or a fake in the tests).
+type commandOutput func(ctx context.Context, name string, args ...string) (string, error)
+
+// readBridges reads the bridges as they are now: "ifconfig -g bridge",
+// then "ifconfig BRIDGE" for each. Any error fails it, the group listing
+// included: on FreeBSD 15.1 "ifconfig -g bridge" exits 0 with no output
+// when there is no bridge (smith, 2026-11-23), so an error is not "no
+// bridges", and setup must not judge bridges it could not read as absent
+// or empty.
+func readBridges(ctx context.Context, run commandOutput) (map[string]Bridge, error) {
+	out, err := run(ctx, cmdIfconfig, "-g", "bridge")
+	if err != nil {
+		return nil, fmt.Errorf("ifconfig -g bridge: %w", err)
+	}
+	bridges := map[string]Bridge{}
+	for _, n := range strings.Fields(out) {
+		bo, err := run(ctx, cmdIfconfig, n)
+		if err != nil {
+			return nil, fmt.Errorf("ifconfig %s: %w", n, err)
+		}
+		bridges[n] = parseIfconfigBridge(bo)
+	}
+	return bridges, nil
 }

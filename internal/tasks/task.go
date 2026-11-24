@@ -58,9 +58,13 @@ type Task struct {
 	Result            json.RawMessage
 	ErrorCode         string
 	ErrorMessage      string
-	CreatedAt         time.Time
-	StartedAt         *time.Time
-	FinishedAt        *time.Time
+	// ErrorDetails is what the failure recorded in the task's "finished"
+	// audit entry (Failure.Details). Public exposes only the keys in
+	// ErrorDetailKeys.
+	ErrorDetails map[string]any
+	CreatedAt    time.Time
+	StartedAt    *time.Time
+	FinishedAt   *time.Time
 }
 
 // Public returns the API representation of the task.
@@ -84,7 +88,8 @@ func (t Task) Public() models.Task {
 		p.Result = t.Result
 	}
 	if t.ErrorCode != "" {
-		p.Error = &models.TaskError{Code: t.ErrorCode, Message: t.ErrorMessage}
+		p.Error = &models.TaskError{Code: t.ErrorCode, Message: t.ErrorMessage,
+			Details: PublicErrorDetails(t.ErrorCode, t.ErrorDetails)}
 	}
 	return p
 }
@@ -165,7 +170,8 @@ type Failure struct {
 	Code    string
 	Message string
 	// Details is added to the task's "finished" audit entry. Optional. It
-	// must not contain secrets.
+	// must not contain secrets. The keys listed for Code in
+	// ErrorDetailKeys are also shown with the task's error in the API.
 	Details map[string]any
 }
 

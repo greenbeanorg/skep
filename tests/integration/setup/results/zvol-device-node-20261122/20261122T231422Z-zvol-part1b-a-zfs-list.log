@@ -1,0 +1,13 @@
+0000000    z   r   o   o   t   /   z   v   o   l   p   r   o   b   e   /
+0000020    p   l   a   i   n   0  \t   v   o   l   u   m   e  \t   1   0
+0000040    7   3   7   4   1   8   2   4  \t   5   7   3   4   4  \t   5
+0000060    7   3   4   4  \t   0  \t   d   e   v  \t   1   6   3   8   4
+0000100   \t   6   6   9  \t   -  \t   -  \t   o   f   f  \t   -  \t   o
+0000120    n  \t   1   .   0   0  \t   p   r   o   b   e  \t   d   0  \t
+0000140    -  \t   -  \t   -  \t   -  \n                                
+0000150
+
+zroot/zvolprobe/plain0	volume	1073741824	57344	57344	0	dev	16384	669	-	-	off	-	on	1.00	probe	d0	-	-	-	-
+zroot/zvolprobe/plain0	keystatus	-	-
+zroot/zvolprobe/plain0	encryption	off	default
+zroot/zvolprobe/plain0	volmode	dev	local

@@ -229,6 +229,13 @@ func NewHandler(opts Options) http.Handler {
 	// registered too, or the mux would redirect it to "/api/".
 	mux.HandleFunc("/api", httpkit.NotFound)
 	mux.HandleFunc("/api/", httpkit.NotFound)
+	// The usual health-check paths are not the interface: its 200 would
+	// read as a passing check whatever the state of the service.
+	// With a trailing slash too ("{$}": that path only, not the subtree).
+	mux.HandleFunc("/health", healthMoved)
+	mux.HandleFunc("/healthz", healthMoved)
+	mux.HandleFunc("/health/{$}", healthMoved)
+	mux.HandleFunc("/healthz/{$}", healthMoved)
 	if opts.UI != nil {
 		mux.Handle("/", opts.UI)
 	} else {
@@ -242,6 +249,13 @@ func NewHandler(opts Options) http.Handler {
 	root = httpkit.WithSecurityHeaders(root)
 	root = httpkit.WithRequestID(root)
 	return root
+}
+
+// healthMoved answers the usual health-check paths with a 404 that names
+// the real endpoint.
+func healthMoved(w http.ResponseWriter, r *http.Request) {
+	httpkit.WriteError(w, r, http.StatusNotFound, httpkit.CodeNotFound,
+		"no such endpoint: "+r.URL.Path+"; the health endpoint is "+Prefix+"/health")
 }
 
 // dispatch serves the routes of one path: it picks the route by method,

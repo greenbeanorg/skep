@@ -40,9 +40,10 @@ type Applier struct {
 // api.db before it creates the first administrator.
 const DefaultAdminWait = 30 * time.Second
 
-// AdminCreateError is a failed "skep-api admin create". Every other action
-// of the run was made and the journal is complete, so the same apply can
-// simply be run again: it plans only the administrator.
+// AdminCreateError is a failed "skep-api admin create". The run went on to
+// its end and the journal is complete, so the same apply can simply be run
+// again: it plans only the administrator. Alone it means the run changed
+// nothing else; after other changes it is wrapped in an *Incomplete.
 type AdminCreateError struct {
 	Username string
 	Journal  string
@@ -50,8 +51,7 @@ type AdminCreateError struct {
 }
 
 func (e *AdminCreateError) Error() string {
-	return fmt.Sprintf("creating the administrator %s failed: %v. Every other change was made (journal %s, complete)",
-		e.Username, e.Err, e.Journal)
+	return fmt.Sprintf("creating the administrator %s failed: %v (journal %s, complete)", e.Username, e.Err, e.Journal)
 }
 
 func (e *AdminCreateError) Unwrap() error { return e.Err }
@@ -96,13 +96,19 @@ func (a *Applier) Apply(ctx context.Context, p Plan) (*Journal, error) {
 	}
 	j, err := a.newJournal(cmd, acts)
 	if err != nil {
-		return nil, err
+		var partial *partialJournalError
+		if errors.As(err, &partial) {
+			return nil, fmt.Errorf("could not create the journal: %w; no action ran, so the host's configuration was not changed", err)
+		}
+		return nil, fmt.Errorf("could not create the journal: %w; no action ran, so nothing was changed", err)
 	}
 	backedUp := map[string]bool{}
 	var adminErr *AdminCreateError
+	// What each entry did to the host, for the message if the run fails.
+	effects := make([]effect, len(j.Entries))
 	for i := range j.Entries {
 		if err := ctx.Err(); err != nil {
-			return j, a.fail(j, i, err)
+			return j, a.cancelled(j, i, effects, err)
 		}
 		e := &j.Entries[i]
 		act := e.Action
@@ -111,13 +117,14 @@ func (a *Applier) Apply(ctx context.Context, p Plan) (*Journal, error) {
 			e.File = act.File
 			if !backedUp[act.File] {
 				if err := a.backup(j, e); err != nil {
-					return j, a.fail(j, i, err)
+					return j, a.fail(j, i, effects, err)
 				}
 				backedUp[act.File] = true
 			}
 		}
 		a.printf("  %s\n", act)
-		err := a.do(ctx, act)
+		before := a.snapshot(act, e.File)
+		noop, err := a.do(ctx, act)
 		a.recordAfter(e)
 		var skip *skippedError
 		switch {
@@ -129,21 +136,33 @@ func (a *Applier) Apply(ctx context.Context, p Plan) (*Journal, error) {
 			// simply retry; the run itself is not left unfinished.
 			e.Error = err.Error()
 			adminErr = &AdminCreateError{Username: act.Username, Journal: j.ID, Err: err}
+			var killed *interruptedError
+			if errors.As(err, &killed) {
+				effects[i] = effectUncertain
+			}
 		case err != nil:
-			return j, a.fail(j, i, err)
+			effects[i] = a.failedEffect(act, e.File, before)
+			return j, a.fail(j, i, effects, err)
 		default:
 			e.Done = true
+			if !noop && a.changed(act, e.File, before) {
+				effects[i] = effectChanged
+			}
 		}
 		if err := j.save(a.Root); err != nil {
-			return j, err
+			return j, a.saveFailed(j, effects, err)
 		}
 	}
 	now := a.Now().UTC()
 	j.Complete, j.FinishedAt = true, &now
 	if err := j.save(a.Root); err != nil {
-		return j, err
+		j.Complete, j.FinishedAt = false, nil
+		return j, a.saveFailed(j, effects, err)
 	}
 	if adminErr != nil {
+		if inc := adminIncomplete(j, effects, adminErr); inc != nil {
+			return j, inc
+		}
 		return j, adminErr
 	}
 	return j, nil
@@ -170,18 +189,77 @@ func (a *Applier) newJournal(command string, acts []Action) (*Journal, error) {
 		}
 		return nil, err
 	}
+	// From here the directory exists, and the next plan refuses on it as
+	// an unfinished run until it is rolled back.
 	if err := os.Mkdir(filepath.Join(JournalDir(a.Root, j.ID), "files"), 0o700); err != nil {
-		return nil, err
+		return nil, &partialJournalError{fmt.Errorf("%w (clear the partial journal before running %s again: skep-setup rollback %s)", err, command, j.ID)}
 	}
-	return j, j.save(a.Root)
+	if err := j.save(a.Root); err != nil {
+		return nil, &partialJournalError{fmt.Errorf("%w (clear the partial journal before running %s again: skep-setup rollback %s)", err, command, j.ID)}
+	}
+	return j, nil
 }
 
-func (a *Applier) fail(j *Journal, i int, err error) error {
+// partialJournalError is a journal creation that failed after the journal's
+// directory was made, so the directory is left for rollback to clear.
+type partialJournalError struct{ error }
+
+func (e *partialJournalError) Unwrap() error { return e.error }
+
+// fail records a failed action. With nothing changed it is a plain error
+// (exit 3); after any change, or when the failed action may have changed
+// something, it is an *Incomplete.
+func (a *Applier) fail(j *Journal, i int, effects []effect, err error) error {
 	j.Entries[i].Error = err.Error()
-	if serr := j.save(a.Root); serr != nil {
-		return fmt.Errorf("%w (and the journal could not be saved: %v)", err, serr)
+	serr := j.save(a.Root)
+	if anyEffect(effects) {
+		inc := newIncomplete(j, effects, fmt.Sprintf("%s failed: %v", j.Entries[i].Action, err))
+		if serr != nil {
+			inc.Problem += fmt.Sprintf(" (and the journal could not be saved: %v, so it may not list the last change)", serr)
+		}
+		inc.Err = err
+		return inc
 	}
-	return fmt.Errorf("%s failed: %w; nothing after it was done. Undo with: skep-setup rollback %s", j.Entries[i].Action, err, j.ID)
+	if serr != nil {
+		return fmt.Errorf("%s failed: %w; the host's configuration was not changed (and the journal could not be saved: %v). Clear this run before running %s again: skep-setup rollback %s",
+			j.Entries[i].Action, err, serr, j.Command, j.ID)
+	}
+	return fmt.Errorf("%s failed: %w; the host's configuration was not changed. Clear this run before running %s again: skep-setup rollback %s",
+		j.Entries[i].Action, err, j.Command, j.ID)
+}
+
+// cancelled records a run cancelled between actions: action i never
+// started, so the message names the point of interruption and does not
+// present that action as having failed.
+func (a *Applier) cancelled(j *Journal, i int, effects []effect, cause error) error {
+	point := fmt.Sprintf("cancelled (%v) before %s started; that action did not run", cause, j.Entries[i].Action)
+	j.Entries[i].Error = point
+	serr := j.save(a.Root)
+	if anyEffect(effects) {
+		inc := newIncomplete(j, effects, point)
+		if serr != nil {
+			inc.Problem += fmt.Sprintf(" (and the journal could not be saved: %v, so it may not list the last change)", serr)
+		}
+		inc.Err = cause
+		return inc
+	}
+	if serr != nil {
+		return fmt.Errorf("%s; the host's configuration was not changed (and the journal could not be saved: %v). Clear this run before running %s again: skep-setup rollback %s: %w",
+			point, serr, j.Command, j.ID, cause)
+	}
+	return fmt.Errorf("%s; the host's configuration was not changed. Clear this run before running %s again: skep-setup rollback %s: %w",
+		point, j.Command, j.ID, cause)
+}
+
+// saveFailed is a journal that could not be saved after an action.
+func (a *Applier) saveFailed(j *Journal, effects []effect, err error) error {
+	if !anyEffect(effects) {
+		return fmt.Errorf("the journal could not be saved: %w; the host's configuration was not changed. Clear this run before running %s again: skep-setup rollback %s",
+			err, j.Command, j.ID)
+	}
+	inc := newIncomplete(j, effects, fmt.Sprintf("the journal could not be saved (%v), so it may not list the last change", err))
+	inc.Err = err
+	return inc
 }
 
 // backupName is the copy's name inside the journal's files/ directory.
@@ -218,43 +296,56 @@ func (a *Applier) recordAfter(e *Entry) {
 }
 
 // do runs one action.
-func (a *Applier) do(ctx context.Context, act Action) error {
+// do runs one action. noop reports that it succeeded without changing
+// anything (the service was already in that state).
+func (a *Applier) do(ctx context.Context, act Action) (noop bool, err error) {
 	switch act.Type {
 	case ActSysrc:
-		return a.sysrc(ctx, act)
+		return false, a.sysrc(ctx, act)
 	case ActWrite:
-		return a.writeNew(act)
+		return false, a.writeNew(act)
 	case ActMkdir:
-		return a.mkdir(act)
+		return false, a.mkdir(act)
 	case ActServiceStart:
 		if _, err := a.Runner.Run(ctx, Cmd{Name: cmdService, Args: []string{act.Service, "status"}}); err == nil {
 			a.printf("    %s is running already\n", act.Service)
-			return nil
+			return true, nil
 		}
 		_, err := a.Runner.Run(ctx, Cmd{Name: cmdService, Args: []string{act.Service, "start"}})
-		return err
+		return false, err
 	case ActAdminCreate:
-		return a.adminCreate(ctx, act.Username)
+		return false, a.adminCreate(ctx, act.Username)
 	case ActServiceStop:
-		return stopService(ctx, a.Runner, act.Service, a.printf)
+		return stopIfRunning(ctx, a.Runner, act.Service, a.printf)
 	case ActRemovePath:
-		return a.removePath(act.File)
+		return false, a.removePath(act.File)
 	case ActPwDelete:
-		return a.pwDelete(ctx, act.Name)
+		return false, a.pwDelete(ctx, act.Name)
 	}
-	return fmt.Errorf("unknown action %q", act.Type)
+	return false, fmt.Errorf("unknown action %q", act.Type)
 }
 
 // stopService stops an rc.d service that is running; one that is not
 // ("service NAME status" fails) is left as it is, since "service NAME
 // stop" fails on it.
 func stopService(ctx context.Context, r Runner, svc string, printf func(string, ...any)) error {
+	_, err := stopIfRunning(ctx, r, svc, printf)
+	return err
+}
+
+// stopIfRunning is stopService, also reporting that the service was not
+// running, so nothing changed.
+func stopIfRunning(ctx context.Context, r Runner, svc string, printf func(string, ...any)) (noop bool, err error) {
 	if _, err := r.Run(ctx, Cmd{Name: cmdService, Args: []string{svc, "status"}}); err != nil {
 		printf("    %s is not running\n", svc)
-		return nil
+		return true, nil
 	}
-	_, err := r.Run(ctx, Cmd{Name: cmdService, Args: []string{svc, "stop"}})
-	return err
+	_, err = r.Run(ctx, Cmd{Name: cmdService, Args: []string{svc, "stop"}})
+	var killed *interruptedError
+	if errors.As(markInterrupted(ctx, err), &killed) {
+		return false, fmt.Errorf("the stop of %s was killed and may have taken effect: %w", svc, err)
+	}
+	return false, err
 }
 
 // adminCreate runs "skep-api admin create" as the skep account (its UID
@@ -294,9 +385,13 @@ func (a *Applier) adminCreate(ctx context.Context, username string) error {
 		}
 		sleep(time.Second)
 	}
-	_, err = a.Runner.Run(ctx, Cmd{Name: hostPath(a.Root, apiBin), Args: []string{"admin", "create", "--username", username},
+	svc, err := apiServiceArgs(a.Root)
+	if err != nil {
+		return err
+	}
+	_, err = a.Runner.Run(ctx, Cmd{Name: hostPath(a.Root, apiBin), Args: append([]string{"admin", "create", "--username", username}, svc...),
 		Interactive: true, As: cred})
-	return err
+	return markInterrupted(ctx, err)
 }
 
 // skepCredential is the skep account's UID and primary GID from the
@@ -810,6 +905,11 @@ func Rollback(root, id string, now time.Time) (RollbackReport, error) {
 			// mode, so a crash leaves the old or the new content, never
 			// a part.
 			if err := replaceFile(full, b); err != nil {
+				// The rename may have happened before a failed directory
+				// sync: report what is on disk.
+				if sum, herr := fileSHA256(full); herr == nil && sum == before {
+					r.Restored = append(r.Restored, path)
+				}
 				return r, err
 			}
 			r.Restored = append(r.Restored, path)

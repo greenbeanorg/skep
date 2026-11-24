@@ -3,9 +3,14 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
+	"flag"
+	"io"
 	"net/netip"
 	"os"
 	"path/filepath"
+	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -45,7 +50,11 @@ func stockRoot(t *testing.T) string {
 			t.Fatal(err)
 		}
 	}
-	os.MkdirAll(filepath.Join(root, "usr/local/share/edk2-bhyve"), 0o755)
+	fw := filepath.Join(root, "usr/local/share/edk2-bhyve")
+	os.MkdirAll(fw, 0o755)
+	for _, f := range []string{"BHYVE_UEFI.fd", "BHYVE_UEFI_VARS.fd"} {
+		os.WriteFile(filepath.Join(fw, f), []byte("fd"), 0o644)
+	}
 	return root
 }
 
@@ -164,4 +173,84 @@ func TestAdminCheckerChoice(t *testing.T) {
 	if _, ok := (env{runner: nil, euid: 1001}).adminChecker("/tmp/fixture").(setup.SkepAPIAdmins); !ok {
 		t.Error("a test runner is not asked")
 	}
+}
+
+// TestRootDefault: with no -root, check, plan and apply read the real /.
+// setup's FreeBSD-base check reads the repository files through
+// os.DirFS(root), and os.DirFS("") fails every read, so an empty root
+// must never get that far: an explicit -root "" is a usage error.
+func TestRootDefault(t *testing.T) {
+	parse := func(args ...string) (setup.Options, error) {
+		flags := flag.NewFlagSet("t", flag.ContinueOnError)
+		flags.SetOutput(io.Discard)
+		var a answers
+		a.register(flags)
+		if err := flags.Parse(args); err != nil {
+			t.Fatal(err)
+		}
+		return a.options()
+	}
+	o, err := parse("-mgmt", "vtnet0")
+	if err != nil || o.Root != "/" {
+		t.Fatalf("default root %q, %v", o.Root, err)
+	}
+	if _, err := parse("-root", "", "-mgmt", "vtnet0"); err == nil {
+		t.Fatal(`-root "" accepted`)
+	}
+	r := runWith(t, env{prober: fakeProber{f: hostFacts()}}, "check", "-root", "", "-mgmt", "vtnet0")
+	if r.code != exitUsage || !strings.Contains(r.stderr, "root must not be empty") {
+		t.Fatalf("%+v", r)
+	}
+}
+
+// TestDataDirRefusalExitsThree: every command meets the data-directory
+// check before it probes the host, asks anything, or reads a journal, and
+// exits 3 on the typed refusal.
+func TestDataDirRefusalExitsThree(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		args []string
+	}{
+		{"check", []string{"check", "-mgmt", "vtnet0"}},
+		{"plan", []string{"plan", "-mgmt", "vtnet0"}},
+		{"apply", []string{"apply", "-mgmt", "vtnet0", "-yes"}},
+		{"rollback", []string{"rollback", "-yes"}},
+		{"upgrade", []string{"upgrade", "-yes"}},
+		{"remove", []string{"remove", "-yes"}},
+		{"remove -plan", []string{"remove", "-plan"}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			root := stockRoot(t)
+			before := snapshot(t, root)
+			checked := 0
+			e := env{
+				euid:   0,
+				prober: failingProber{t},
+				confirm: func(string) bool {
+					t.Error("asked before the data-directory check")
+					return false
+				},
+				dataDir: func(string) error {
+					checked++
+					return &setup.DataDirRefusal{Err: errors.New("/var/db/skep/setup is writable by its group or others (0770)")}
+				},
+			}
+			args := append(slices.Clone(c.args), "-root", root)
+			r := runWith(t, e, args...)
+			if r.code != exitRefused || checked != 1 || !strings.Contains(r.stderr, "refused: /var/db/skep/setup is writable") {
+				t.Fatalf("exit %d, checked %d, stderr %q", r.code, checked, r.stderr)
+			}
+			if after := snapshot(t, root); !reflect.DeepEqual(before, after) {
+				t.Fatal("the refusal changed the root")
+			}
+		})
+	}
+}
+
+// failingProber fails a test that probes the host.
+type failingProber struct{ t *testing.T }
+
+func (p failingProber) Probe(context.Context) (setup.Facts, error) {
+	p.t.Error("probed the host before the data-directory check")
+	return setup.Facts{}, errors.New("probe")
 }

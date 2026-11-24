@@ -1,0 +1,14 @@
+add-rc=0
+  installed: skep-agent, skep-api and skep-setup are 0.1.0+90270cf
+  service skep_api stop
+  skep-agent db backup: /var/db/skep/backup/0.1.0+c9ecac9-20261123T023854Z/agent.db sha256 9f5beb6f16f38dc65d9d01fcacfbd637d8582e04c9bd6eec749d5c0d69c94403
+  skep-agent db backup: removed the old backup /var/db/skep/backup/0.1.0+6a93dd2-20261123T003519Z
+  skep-api db backup: /var/db/skep/backup/0.1.0+c9ecac9-20261123T023854Z/api.db sha256 ec28a8c04d432f2d78bce85c615f86e4bfd4f9ef9abb5bca94a4cbd8cd2a7ed8
+  service skep_agent stop (from here on, Ctrl-C does not interrupt the upgrade)
+  skep_agent pid 24296 runs /usr/local/sbin/skep-agent at 0.1.0+90270cf
+  skep_api pid 24359 runs /usr/local/sbin/skep-api at 0.1.0+90270cf
+  agent socket: answers as 0.1.0+90270cf
+  health: ok
+upgraded to 0.1.0+90270cf; backups in /var/db/skep/backup/0.1.0+c9ecac9-20261123T023854Z
+upgrade-rc=0
+ls: /var/run/skep: Permission denied

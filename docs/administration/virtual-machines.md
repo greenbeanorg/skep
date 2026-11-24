@@ -6,11 +6,15 @@ networking, and a serial console in the web interface. The design is
 [ADR 0009](../decisions/0009-first-vm-bhyve.md).
 
 > **Validation status.** Verified on FreeBSD 15.1-RELEASE (amd64,
-> UFS-root, itself a KVM guest): FreeBSD was installed into a VM through
-> the browser console, and every check in
+> UFS root) in a lab VM nested under KVM (`hearst`), on 2026-11-14 with
+> build 44a8784: FreeBSD was installed into a VM through the browser
+> console and booted to its login prompt, and every check in
 > [tests/integration/vm](../../tests/integration/vm/README.md) passed
-> (guest isolation once the lab firewall was fixed). A ZFS-root
-> host, real disks, `e1000`, `nvme`, and `ahci-hd` are still pending.
+> (guest isolation once the lab firewall was fixed). Later builds only
+> started VMs at the bhyve level, without looking inside the guest
+> ([known issues](../release/0.1/known-issues.md)). Bare metal, a guest
+> operating system on a ZFS-root host, real disks, `e1000`, `nvme`, and
+> `ahci-hd` are still pending.
 
 ## What this release does and does not do
 
@@ -210,8 +214,15 @@ little in a nested lab and is not needed on bare metal. **Status on
 `hearst`: applied and verified** (both caps 0, also after a reboot; a
 plain bhyve boot and then a full FreeBSD installation through Skep ran
 without trouble); see
-[tests/integration/vm](../../tests/integration/vm/README.md). Skep does
-not detect this condition yet (a follow-up).
+[tests/integration/vm](../../tests/integration/vm/README.md). At
+start, the agent logs one warning on a host under a hypervisor with this
+setting not 0, and adds a `degraded` `nested_interrupts` health check. It
+never refuses a VM and never changes the setting.
+
+The agent evaluates this condition once, when it starts. If `vmm` is loaded
+after the agent started, there is no warning and no check until the agent
+restarts, so a missing warning does not prove the host is safe. Read the
+setting itself with `sysctl hw.vmm.vmx.cap.virtual_interrupt_delivery`.
 
 ## Creating and installing a VM
 

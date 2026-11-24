@@ -5,9 +5,11 @@ A host installed from the package (Milestone 10) is upgraded with
 which refuses while agent tasks are pending or running, stops `skep_api`
 so no new task arrives, waits up to `-wait` (60 s) for the tasks to
 finish, backs up both databases (`skep-agent db backup`, `skep-api db
-backup`), restarts the services in order and checks them. That path is
-**pending FreeBSD validation**. A host installed by hand, as every host
-is today, is upgraded as below: replace the binaries, prepare the host
+backup`), restarts the services in order and checks them. That path ran
+on two lab VMs nested under KVM (`smith` and `langrishe`) on 2026-11-22
+([record](../../tests/integration/setup/results/lab-vm-validation-20261122.md),
+part 7), not on bare metal. A host installed by hand is upgraded as
+below: replace the binaries, prepare the host
 for whatever the new release needs, and restart the services in order.
 This page has one section per upgrade that needs more than the binaries.
 
@@ -128,7 +130,8 @@ agent checks the ports of every running jail and VM once:
 | Modules loaded, but the install fails | The port is **removed from its bridge** (`port_filter_detached`): the guest is cut off rather than left unfiltered, until it is restarted. Not seen in validation. |
 | Modules **not** loaded | Nothing is installed and nothing is detached. Health check `port_filters` reports every port unfiltered, the agent's health is `degraded`, and guests keep running unfiltered. Load the modules: the next check, within 10 seconds, installs the filters. New starts with a NIC are refused until then. |
 
-Validated on `hearst` on 2026-11-21 (m7c-validation item 5): b61e578
+Validated on `hearst`, a lab VM nested under KVM, on 2026-11-21
+(m7c-validation item 5): b61e578
 rebuilt from its commit, a jail started under it with a bare port, then
 the M7c build deployed: the start-up check installed the filter
 (`missing`, then `restored`, before the socket was served), the program

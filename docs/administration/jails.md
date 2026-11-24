@@ -8,7 +8,7 @@ The design is [ADR 0010](../decisions/0010-storage-and-jails.md), decisions
 
 Status: built in Milestone 7, phase 7b, steps 7 to 9 (jails, VNET
 networking, limits, snapshots, and clones), validated on FreeBSD 15.1
-(`hearst`, see
+in a lab VM nested under KVM (`hearst`; not on bare metal; see
 [tests/integration/jails](../../tests/integration/jails/README.md)); what
 is pending FreeBSD validation is listed in the step 9 progress log. The
 web interface's Containers section is built in step 10 (see
@@ -288,6 +288,41 @@ finds a jail still recorded `starting` (a start that ended without
 recording its outcome) is refused with `container_quarantined` for the
 same reason; the next agent start removes it.
 
+A jail whose **stop** the agent's death interrupted (its epairs already
+destroyed, `/etc/rc.shutdown` perhaps not finished) has its stop completed
+at the next agent start, with `/etc/rc.shutdown` run again as a stop runs
+it; it ends `stopped` with no epairs, and `state_detail` says the stop was
+completed at agent start. This can delay the agent's start by up to the
+jail's start timeout plus its stop timeout plus 60 s (`jail -r` is killed
+after the two timeouts plus 30 s, and a failed `jail -r` is followed by
+`jail -R`, bounded by 30 s): about 190 s with the defaults, per such jail.
+Before each one the agent logs `jail_stop_completing` (WARN) with the
+container ID and that bound in `max_wait_seconds`, so a slow start can be
+explained from the log while it happens. If the agent is stopped during a
+completion, nothing is recorded: the jail stays `stopping` and the next
+agent start completes it (`jail_stop_completion_cancelled` in the log).
+Containers it had not reached yet stay as recorded (`observe_cancelled`,
+with their number), and the agent exits as a normal stop. If the
+completion fails, the agent records the jail `unknown` with the reason.
+What a read then shows depends on the host: while the jail still runs
+(the usual case: `jail -r` and then `jail -R` failed),
+`GET /api/v1/containers/{id}` and the list show `state: running`,
+`desired_state: stopped`, its `jid`, and that reason in `state_detail`;
+stop it again. If the jail is gone, they show `stopped` with no detail.
+(ADR 0010 amendment aa.)
+
+**A jail running although it should be stopped.** Whenever a jail runs
+while its desired state is `stopped`, reads show the observed state,
+`running`. After a failed stop task or a failed stop completion at agent
+start, `state_detail` keeps the reason recorded with the failure (a failed
+stop task's "the last stop failed: …", or the completion's reason above) on
+every read, the first and all later ones. A jail that Skep had recorded
+`stopped` and that was then started outside Skep shows "the jail is running
+although it should be stopped; stop it again", not the detail it had while
+stopped; so does a failure that recorded no reason. A successful stop clears
+the detail. A jail in the middle of its own start or stop is not judged
+this way.
+
 ## Limits
 
 `limits` on create, or on an update of a stopped jail (which replaces
@@ -531,14 +566,14 @@ POST /api/v1/containers/<id>/clone
 - **A clone has its source's `started_once`.** A snapshot of a jail that
   has started may hold a tree that has run code, so Skep never writes
   into such a clone.
-- **Static addresses.** Every NIC of the source with a static address
-  needs new addressing in `nics` (one entry per NIC, in slot order; empty
-  fields keep the source's), or the request is refused with
-  `clone_addressing_required` (422) and the slots. The new address must go
-  into the clone's `rc.conf`, so it is accepted only when the source has
-  never started; for a started source the request is `container_started`.
-  **A jail with a static address can therefore be cloned only before its
-  first start.** A DHCP jail can always be cloned, and its clone asks for
+- **Static addresses.** **A jail with a static address can be cloned only
+  before its first start.** Once it has started, every clone request is
+  refused with `container_started` (409), with or without new addressing,
+  because the new address would have to be written into a tree that has
+  run code. Before the first start, every NIC with a static address needs
+  new addressing in `nics` (one entry per NIC, in slot order; empty fields
+  keep the source's), or the request is refused with
+  `clone_addressing_required` (422) and the slots. A DHCP jail can always be cloned, and its clone asks for
   its own lease with its new MAC address.
 - **A start is refused when a running or starting Skep jail on the same
   bridge holds one of the jail's static addresses**
@@ -588,4 +623,10 @@ stopped.
 
 `max_locked_memory_bytes` is the total `limits.locked_memory` of all
 running jails (see [Limits](#limits)); 0 means a quarter of physical
-memory, and a negative value is refused at load.
+memory, and a negative value is refused at load. `GET /api/v1/system` reports the value in effect as
+`containers.max_locked_memory_bytes`. It is the limit, not the memory wired
+now. A reported 0 differs from a configured 0, which selects the default: it
+means none was configured and physical memory could not be read. A non-zero
+`locked_memory`, and so `options.mlock`, is then refused at create, update,
+and start. A jail without `locked_memory` is unaffected, and a jail already
+running keeps its rule.

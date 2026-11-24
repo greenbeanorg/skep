@@ -1,0 +1,6 @@
+create 202
+create task succeeded None
+start succeeded None
+{"state": "running", "desired_state": "running", "jid": 2, "state_detail": null} [{"id": "0ffa663a-c64a-4b3b-868e-8eea75a62187", "slot": 0, "bridge": "bridge1", "mac_address": "02:f8:68:c3:cc:f6", "interface": "skep0", "ipv4": {"mode": "dhcp"}, "host_interface": "epair0a"}]
+	inet 10.79.60.137 netmask 0xffffff00 broadcast 10.79.60.255
+epair0a

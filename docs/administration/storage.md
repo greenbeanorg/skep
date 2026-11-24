@@ -5,14 +5,15 @@ and directory pools for hosts without ZFS. On ZFS it takes snapshots of a
 VM, rolls a VM back, and makes linked clones. It reports the current space
 and load of everything it uses, with two health checks. The design is
 [ADR 0010](../decisions/0010-storage-and-jails.md), phase 7a. Jail
-templates (phase 7b) have [their own guide](jail-templates.md); jails
-themselves are not in this release yet.
+templates (phase 7b) have [their own guide](jail-templates.md), and
+jails have [theirs](jails.md).
 
 > **Validation status.** Verified on FreeBSD 15.1-RELEASE (amd64,
-> UFS-root, a file-backed test pool and a directory pool on the root file
-> system). Every check of
+> UFS root) in a lab VM nested under KVM (`hearst`, a file-backed test
+> pool and a directory pool on the root file system), 2026-11-14 and 15.
+> Every check of
 > [tests/integration/storage](../../tests/integration/storage/README.md)
-> passed. A ZFS-root host and real disks are still pending.
+> passed. Bare metal, a ZFS-root host and real disks are still pending.
 
 ## What Skep manages and what it does not
 
@@ -195,4 +196,5 @@ destroyed, is in both audit logs.
 | `storage_feature_unsupported` on a snapshot | The VM has a disk in a directory pool, or disks in two pools |
 | `snapshot_not_latest` | Roll back with `destroy_newer`, or clone the older snapshot instead |
 | `snapshot_has_clones` | Delete the clones it names first |
+| `disk_device_missing` on a start | A zvol has no `/dev/zvol/...` node (a FreeBSD 15.1 ZFS bug, ADR 0010 amendment z). Skep repairs it itself (`volmode` none, then dev) when the zvol is at `volmode=dev` and the VM is stopped. Otherwise the error's `reason` says why not: `volmode_none` and `volmode_not_dev` give the exact `zfs set volmode=dev <dataset>` to run; `restore_failed` means the zvol may have been left at `volmode=none`, so run the command it gives. The agent's log has every repair and refusal (`zvol device`) |
 | An `unowned` dataset | Find out where it came from; Skep leaves it alone. Remove it by hand if it is not wanted |

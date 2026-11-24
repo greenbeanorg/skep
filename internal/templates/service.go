@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"regexp"
 	"time"
 
@@ -50,7 +51,10 @@ type Options struct {
 	Host hostops.Ops
 	// Packages are storage.template_packages.
 	Packages []string
-	Logger   *slog.Logger
+	// Audit receives one entry, actor "system", per build jail the
+	// start-up sweep tries to remove.
+	Audit  audit.Writer
+	Logger *slog.Logger
 	// Now defaults to time.Now.
 	Now func() time.Time
 }
@@ -64,6 +68,7 @@ type Service struct {
 	host     hostops.Templates
 	jails    hostops.Jails
 	packages []string
+	audit    audit.Writer
 	builder  *Builder
 	log      *slog.Logger
 	now      func() time.Time
@@ -85,6 +90,7 @@ func New(opts Options) (*Service, error) {
 		nodeID: opts.NodeID, store: opts.Store, engine: opts.Engine, conf: opts.Host.Conf,
 		host: opts.Host.Templates, jails: opts.Host.Jails, packages: append([]string(nil), opts.Packages...),
 		builder: &Builder{Host: opts.Host.Templates, Log: opts.Logger}, log: opts.Logger, now: opts.Now,
+		audit: opts.Audit,
 	}, nil
 }
 
@@ -508,11 +514,31 @@ func (s *Service) SweepBuildJails(ctx context.Context) error {
 			s.log.Error("templates: a leftover build jail could not be removed", "event", "build_jail_sweep_failed",
 				"jail", name, "template_id", id, "error", err)
 			errs = append(errs, err)
+			s.auditSweep(ctx, id, audit.Failure, "the build jail could not be removed; see the agent's log")
 			continue
 		}
 		removed++
 		s.log.Warn("templates: removed a build jail left by an earlier run", "event", "build_jail_removed",
 			"jail", name, "template_id", id)
+		s.auditSweep(ctx, id, audit.Success, "")
 	}
 	return errors.Join(errs...)
+}
+
+// auditSweep records one build jail removal. A failed write is logged and
+// does not stop the sweep.
+func (s *Service) auditSweep(ctx context.Context, id string, outcome audit.Outcome, reason string) {
+	if s.audit == nil {
+		return
+	}
+	actx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	var details map[string]any
+	if reason != "" {
+		details = map[string]any{"reason": reason}
+	}
+	e := audit.SystemFinished(uint32(os.Getuid()), "template.sweep.build_jail_removed", "template", id, outcome, details)
+	if err := s.audit.Write(actx, e); err != nil {
+		s.log.Error("templates: could not write a sweep's audit entry", "template_id", id, "error", err)
+	}
 }

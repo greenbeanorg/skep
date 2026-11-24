@@ -102,6 +102,9 @@ func TestStageLayoutManifestPlist(t *testing.T) {
 		m.Version != "0.1.0" || len(m.Licenses) != 1 || m.Licenses[0] != "BSD2CLAUSE" || m.LicenseLogic != "single" {
 		t.Errorf("manifest = %+v", m)
 	}
+	if d, ok := m.Deps["edk2-bhyve"]; len(m.Deps) != 1 || !ok || d.Origin != "sysutils/edk2" || d.Version == "" {
+		t.Errorf("manifest deps = %+v, want edk2-bhyve from sysutils/edk2 only", m.Deps)
+	}
 	if len(m.Scripts) != 2 || !strings.Contains(m.Scripts["pre-install"], "409") ||
 		!strings.Contains(m.Scripts["pre-deinstall"], "PKG_UPGRADE") {
 		t.Errorf("manifest scripts = %v", keys(m.Scripts))

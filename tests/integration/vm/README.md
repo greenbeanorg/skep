@@ -1,6 +1,6 @@
 # VM integration checks (Milestone 6)
 
-The named checks of [ADR 0009 decision 11](../../docs/decisions/0009-first-vm-bhyve.md#decision-11-what-verified-on-freebsd-151-means),
+The named checks of [ADR 0009 decision 11](../../../docs/decisions/0009-first-vm-bhyve.md#decision-11-what-verified-on-freebsd-151-means),
 run on `hearst` (FreeBSD 15.1-RELEASE-p6, amd64, itself a KVM guest on
 Proxmox with CPU type `host`) with the FreeBSD build of the binaries,
 against the test installation in `/home/aba/skep-m6`. The output of every
@@ -11,6 +11,14 @@ Most checks drive the public API with `curl` (the server's key pinned,
 never `-k` alone) and read the host with read-only commands (`zfs list`,
 `ifconfig`, `ls /dev/vmm`, the run state files). The guest installation is
 done through the serial console in a browser.
+
+The 0.1 build (the installed package from c8ce17b) had a smoke test on
+`smith` (FreeBSD 15.1-RELEASE-p7, UFS root, nested under KVM) on
+2026-11-24: create, start, stop, force-stop and delete of a VM with one
+zvol disk and no NIC, and a boot from the bootonly ISO to the installer's
+first prompt, seen with `consolectl -wait-for`
+([smoke-0.1-c8ce17b-20261124-smith.md](results/smoke-0.1-c8ce17b-20261124-smith.md)).
+It is not a rerun of the checks below.
 
 Design for the next VM check (hostile frames from inside a real guest, to
 replace the emulated half of M7c item 7): [hostile-guest-design.md](hostile-guest-design.md).

@@ -1,0 +1,16 @@
+  [before] ps: 2588   SC nanslp
+  [before] dd: 262144 bytes transferred in 3.022605 secs (86728 bytes/sec)
+  [before] fd:  2588 dd                   3 v c r-------   1  262144 -   /dev/zvol/zroot/zvolprobe/a7
+set none rc=0 node=gone
+  [after-none] ps: 
+  [after-none] dd: 262144 bytes transferred in 3.022605 secs (86728 bytes/sec)
+  [after-none] fd: 
+set dev rc=0 node=present
+  [after-dev] ps: 
+  [after-dev] dd: 262144 bytes transferred in 3.022605 secs (86728 bytes/sec)
+  [after-dev] fd: 
+dd exit status 143
+full dd stderr:
+4+0 records in
+4+0 records out
+262144 bytes transferred in 3.022605 secs (86728 bytes/sec)

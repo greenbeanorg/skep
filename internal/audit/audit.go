@@ -66,6 +66,13 @@ type Entry struct {
 	Details map[string]any
 }
 
+// SystemFinished is the entry for an action the agent took by itself, for
+// example a start-up sweep. uid is the agent's own UID.
+func SystemFinished(uid uint32, action, resourceType, resourceID string, outcome Outcome, details map[string]any) Entry {
+	return Entry{ActorID: System, ActorName: System, PeerUID: uid, Action: action,
+		ResourceType: resourceType, ResourceID: resourceID, Phase: Finished, Outcome: outcome, Details: details}
+}
+
 // ErrActorRequired is returned for an entry, or an operation, without an
 // actor. Such an operation is refused before anything is written.
 var ErrActorRequired = errors.New("audit: actor_id and actor_name are required")

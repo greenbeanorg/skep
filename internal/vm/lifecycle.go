@@ -216,6 +216,7 @@ func (s *Service) runCreate(ctx context.Context, task tasks.Task, report tasks.R
 	if err := s.saveVolumes(ctx, made.Datasets); err != nil {
 		s.log.Warn("vm: could not record the observed volumes", "vm_id", vm.ID, "error", err)
 	}
+	s.ensureDevices(ctx, vm.ID, vm.Disks, report)
 	if err := s.store.SetProvisioned(ctx, vm.ID, s.now().UTC()); err != nil {
 		return nil, err
 	}

@@ -601,9 +601,11 @@ func (s *Service) cloneSource(ctx context.Context, srcID, snapID string) (models
 // MAC addresses. The NICs keep the source's bridges and addressing except
 // where the request changes them (amendment k):
 //
-//   - every NIC of the source with a static address needs new addressing
-//     in the request (clone_addressing_required), or the clone would
-//     hold the source's address;
+//   - a source with a static address that has started cannot be cloned,
+//     with or without new addressing (container_started);
+//   - otherwise every NIC of the source with a static address needs new
+//     addressing in the request (clone_addressing_required), or the clone
+//     would hold the source's address;
 //   - new addressing or nameservers go into the clone's rc.conf and
 //     resolv.conf, which Skep writes only into a tree that has never run
 //     code (decision 13): a source that has started gives a clone whose
@@ -657,12 +659,24 @@ func (s *Service) cloneOf(ctx context.Context, src models.Container, req models.
 	if err := s.checkMACsFree(ctx, "", nics); err != nil {
 		return c, err
 	}
+	// A started source with a static address cannot be cloned whatever the
+	// request says: the clone would hold its address, and new addressing
+	// cannot be written into a tree that has run code (decision 13). The
+	// state refuses it (409); asking for new addressing (422) would send
+	// the client to a request that cannot succeed.
 	var keep []int
+	sourceStatic := false
 	for i, n := range src.NICs {
+		sourceStatic = sourceStatic || n.IPv4.Mode == models.IPv4Static
 		if n.IPv4.Mode == models.IPv4Static && nics[i].IPv4.Mode == models.IPv4Static &&
 			sameIP(n.IPv4.Address, nics[i].IPv4.Address) {
 			keep = append(keep, n.Slot)
 		}
+	}
+	if sourceStatic && src.StartedOnce {
+		return c, &models.Error{Code: models.CodeContainerStarted,
+			Message: "the source jail has a static address and has started: a clone would hold the same address, and Skep does not write new addressing into a tree that has run code, so this jail cannot be cloned",
+			Details: map[string]any{"container_id": src.ID}}
 	}
 	if len(keep) > 0 {
 		return c, &models.Error{Code: models.CodeCloneAddressingRequired,
@@ -671,7 +685,7 @@ func (s *Service) cloneOf(ctx context.Context, src models.Container, req models.
 	}
 	if (!sameAddressing(src.NICs, nics) || !slices.Equal(ns, src.Nameservers)) && src.StartedOnce {
 		return c, &models.Error{Code: models.CodeContainerStarted,
-			Message: "the source jail has started, so the clone's tree has run code and Skep does not write new addressing into it (decision 13); clone a snapshot of a jail that never started, or keep the source's addressing",
+			Message: "the source jail has started, so the clone's tree has run code and Skep does not write new addressing into it; clone a snapshot of a jail that never started, or keep the source's addressing",
 			Details: map[string]any{"container_id": src.ID}}
 	}
 	c.NICs, c.Nameservers = nics, ns

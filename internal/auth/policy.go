@@ -48,6 +48,10 @@ func ValidateUsername(username string) error {
 	return nil
 }
 
+// ReservedUsername is the audit log's actor for what the agent does by
+// itself (audit.System). A user of that name could not be told from it.
+const ReservedUsername = "system"
+
 // MaxDisplayNameLength bounds a user's display name.
 const MaxDisplayNameLength = 128
 

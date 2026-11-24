@@ -129,8 +129,15 @@ type Upgrader struct {
 }
 
 // DefaultSocketWait is how long upgrade waits for the restarted agent to
-// answer on its socket.
-const DefaultSocketWait = 30 * time.Second
+// answer on its socket. The agent serves its socket only after its
+// start-up work, which includes completing jail stops an agent restart
+// interrupted (ADR 0010 amendment aa): up to about 190 s for one jail with
+// the default timeouts.
+const DefaultSocketWait = 200 * time.Second
+
+// socketNoticeAfter is when the wait for the agent's socket prints its one
+// line saying why the agent may be slow.
+const socketNoticeAfter = 30 * time.Second
 
 // DefaultTaskWait is how long upgrade waits for tasks after stopping
 // skep_api.
@@ -154,6 +161,34 @@ func (r *UpgradeRefusal) Error() string {
 	return "refused: " + r.Reason + "; nothing was changed"
 }
 
+// UpgradeIncomplete is an upgrade that made changes and could not verify
+// the result: a service's stop failed and may have taken effect,
+// skep_agent was stopped and did not come back as the new
+// build (its start or its check failed), skep_api did not come up after
+// the agent's restart, the agent did not answer on its socket within the
+// wait, or its health was not ok. skep-setup exits 4 for it.
+type UpgradeIncomplete struct {
+	// Problem says what could not be verified; Check says what to look at.
+	Problem, Check string
+	// Again, when set, replaces the default advice on running upgrade
+	// again (which assumes both services already run the new build).
+	Again string
+}
+
+// againSafe is the advice for the cases in which both services already
+// run the new build.
+const againSafe = "Running skep-setup upgrade again is safe " +
+	"(the services already run the new build; it backs up and restarts both again) but does not fix the cause, " +
+	"and while the agent is still completing interrupted jail stops a second restart only delays them"
+
+func (e *UpgradeIncomplete) Error() string {
+	again := e.Again
+	if again == "" {
+		again = againSafe
+	}
+	return "incomplete: " + e.Problem + ". Check: " + e.Check + ". " + again
+}
+
 // What a failure leaves, for restoreAPI's message.
 const (
 	// stateAgentUntouched: before skep_agent was stopped. The API is the
@@ -165,12 +200,13 @@ const (
 	// again would fail the same way until the cause is found.
 	stateAPIStopFailed = "skep_agent was not restarted; find out why skep_api could not be stopped " +
 		"(service skep_api status, and the API's log in /var/log/daemon.log), then run skep-setup upgrade again"
-	// stateAgentFailed: skep_agent was stopped and did not come back as
-	// the new build. Upgrade again repeats the same start, so it is no
-	// remedy by itself.
-	stateAgentFailed = "skep_agent did not come back as the new build, so the API cannot serve agent requests. " +
-		"See the agent's log (/var/log/daemon.log): running skep-setup upgrade again repeats the same start " +
-		"and helps only once the cause is fixed (it starts a stopped agent)"
+	// againAPIStopFailed: upgrade again repeats the stop that failed.
+	againAPIStopFailed = "Running skep-setup upgrade again repeats the same stop and helps only once the cause is fixed"
+	// againAgentFailed: skep_agent's stop, start or check failed, so it is
+	// not known to run the new build. Upgrade again repeats the same
+	// start, so it is no remedy by itself.
+	againAgentFailed = "Until skep_agent runs the new build the API cannot serve agent requests; " +
+		"running skep-setup upgrade again repeats the same start and helps only once the cause is fixed (it starts a stopped agent)"
 )
 
 func (u *Upgrader) printf(format string, args ...any) {
@@ -291,6 +327,11 @@ func (u *Upgrader) Upgrade(ctx context.Context) error {
 	if u.Wait == 0 {
 		u.Wait = DefaultTaskWait
 	}
+	// Setup backs the databases up under /var/db/skep: refuse a data
+	// directory someone other than root can change.
+	if err := CheckDataDir(u.Root); err != nil {
+		return &UpgradeRefusal{Reason: err.Error()}
+	}
 	// 1. Platform and versions.
 	f, err := u.Prober.Probe(ctx)
 	if err != nil {
@@ -349,7 +390,7 @@ func (u *Upgrader) Upgrade(ctx context.Context) error {
 	// (restoreAPI), except a failure of its own final start.
 	u.printf("  service skep_api stop\n")
 	if err := stopService(ctx, u.Runner, "skep_api", u.printf); err != nil {
-		return u.restoreAPI(ctx, want, fmt.Errorf("stop skep_api: %w", err), "no database was backed up; "+stateAPIStopFailed)
+		return u.apiStopFailed(ctx, want, err)
 	}
 	tc, err = u.waitForTasks(ctx)
 	if err != nil {
@@ -385,17 +426,33 @@ func (u *Upgrader) Upgrade(ctx context.Context) error {
 	defer cancel()
 	u.printf("  service skep_agent stop (from here on, Ctrl-C does not interrupt the upgrade)\n")
 	if err := stopService(nctx, u.Runner, "skep_agent", u.printf); err != nil {
-		return u.restoreAPI(nctx, want, fmt.Errorf("stop skep_agent: %w", err), "backups in "+dir+"; "+stateAgentFailed)
+		// A failed stop may still have delivered its signal, so the agent
+		// may be down: the same rule as apply and remove (exit 4).
+		restored := u.restoreAPI(nctx, want, fmt.Errorf("stop skep_agent: %w", err), "backups in "+dir)
+		return &UpgradeIncomplete{
+			Problem: stopFailedText("skep_agent", err) + ", so the agent may be down or still the old build: " + restored.Error(),
+			Check:   "service skep_agent status and the agent's log (/var/log/daemon.log)",
+			Again:   againAgentFailed}
+	}
+	// The agent was stopped: from here on a failure has changed the host
+	// and is incomplete (exit 4), not a refusal.
+	agentDown := func(err error) error {
+		restored := u.restoreAPI(nctx, want, err, "backups in "+dir)
+		return &UpgradeIncomplete{
+			Problem: "skep_agent was stopped and did not come back as the new build: " + restored.Error(),
+			Check:   "the agent's log (/var/log/daemon.log), service skep_agent status and skep-setup check",
+			Again:   againAgentFailed}
 	}
 	if _, err := u.Runner.Run(nctx, Cmd{Name: cmdService, Args: []string{"skep_agent", "start"}}); err != nil {
-		return u.restoreAPI(nctx, want, fmt.Errorf("start skep_agent: %w", err), "backups in "+dir+"; "+stateAgentFailed)
+		return agentDown(fmt.Errorf("start skep_agent: %w", err))
 	}
 	if err := u.verify(nctx, "skep_agent", agentBin, agentPID, want); err != nil {
-		return u.restoreAPI(nctx, want, err, "backups in "+dir+"; "+stateAgentFailed)
+		return agentDown(err)
 	}
 	apiDown := func(err error) error {
-		return fmt.Errorf("skep_agent runs %s, but skep_api did not come up: %w; see the API's log (/var/log/daemon.log) "+
-			"and start it with service skep_api start; upgrade need not run again (backups in %s)", want, err, dir)
+		return &UpgradeIncomplete{
+			Problem: fmt.Sprintf("skep_agent runs %s, but skep_api did not come up: %v (backups in %s)", want, err, dir),
+			Check:   "the API's log (/var/log/daemon.log), then start it with service skep_api start; upgrade need not run again"}
 	}
 	if _, err := u.Runner.Run(nctx, Cmd{Name: cmdService, Args: []string{"skep_api", "start"}}); err != nil {
 		return apiDown(err)
@@ -405,18 +462,59 @@ func (u *Upgrader) Upgrade(ctx context.Context) error {
 	}
 	// 6. The agent answers on its socket as the new build, then health.
 	if err := u.waitForAgent(nctx, want); err != nil {
-		return fmt.Errorf("both services restarted, but %w (backups in %s)", err, dir)
+		return &UpgradeIncomplete{
+			Problem: fmt.Sprintf("both services restarted, but %v (backups in %s)", err, dir),
+			Check: "the agent's log (/var/log/daemon.log): jail_stop_completing means it is completing interrupted jail " +
+				"stops and will answer when they end; then service skep_agent status and skep-setup check"}
 	}
 	status, err := u.Agent.Health(nctx)
 	if err != nil {
-		return fmt.Errorf("both services restarted, but the agent's health is unknown: %w", err)
+		return &UpgradeIncomplete{
+			Problem: fmt.Sprintf("both services restarted at %s, but the agent's health is unknown: %v (backups in %s)", want, err, dir),
+			Check:   "the agent's log (/var/log/daemon.log) and skep-setup check"}
 	}
 	u.printf("  health: %s\n", status)
 	if status != "ok" {
-		return fmt.Errorf("both services restarted at %s, but health is %s; see skep-setup check and the agent's log", want, status)
+		return &UpgradeIncomplete{
+			Problem: fmt.Sprintf("both services restarted at %s, but health is %s (backups in %s)", want, status, dir),
+			Check:   u.modulesHint(nctx) + "skep-setup check and the agent's log (/var/log/daemon.log)"}
 	}
 	u.printf("upgraded to %s; backups in %s\n", want, dir)
 	return nil
+}
+
+// stopFailedText says a stop failed and may have taken effect, unless it
+// was killed: that error's own message already says so.
+func stopFailedText(svc string, err error) string {
+	if strings.Contains(err.Error(), "may have taken effect") {
+		return "the stop of " + svc + " failed"
+	}
+	return "the stop of " + svc + " failed and may have taken effect"
+}
+
+// apiStopFailed is a failed "service skep_api stop" (exit 4). A skep_api
+// still running is left alone; one that is down gets restoreAPI's start.
+func (u *Upgrader) apiStopFailed(ctx context.Context, want string, stopErr error) error {
+	running := func() bool {
+		rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+		defer cancel()
+		_, err := u.Runner.Run(rctx, Cmd{Name: cmdService, Args: []string{"skep_api", "status"}})
+		return err == nil
+	}
+	cause, state := fmt.Errorf("stop skep_api: %w", stopErr), "no database was backed up; "+stateAPIStopFailed
+	detail := fmt.Sprintf("%v; %s", cause, state)
+	if !running() {
+		detail = u.restoreAPI(ctx, want, cause, state).Error()
+	}
+	// Only a reading: a supervisor still holding the failed stop can stop
+	// a running skep_api afterwards (seen on langrishe, 2026-11-23).
+	now := map[bool]string{
+		true:  "was running when checked, but a supervisor still holding the failed stop can stop it afterwards",
+		false: "was not running when checked"}[running()]
+	return &UpgradeIncomplete{
+		Problem: stopFailedText("skep_api", stopErr) + "; skep_api " + now + ": " + detail,
+		Check:   "service skep_api status and the API's log (/var/log/daemon.log)",
+		Again:   againAPIStopFailed}
 }
 
 // waitForAgent polls the agent's socket every second for up to
@@ -434,6 +532,10 @@ func (u *Upgrader) waitForAgent(ctx context.Context, want string) error {
 			return nil
 		}
 		last = err
+		if waited == socketNoticeAfter && u.SocketWait > socketNoticeAfter {
+			u.printf("  the agent has not answered on its socket after %s; it may be completing interrupted jail stops "+
+				"(jail_stop_completing in /var/log/daemon.log); waiting up to %s\n", socketNoticeAfter, u.SocketWait)
+		}
 		if waited >= u.SocketWait {
 			return fmt.Errorf("the agent did not answer on its socket within %s: %v", u.SocketWait, last)
 		}
@@ -563,8 +665,8 @@ func inode(path string) (uint64, error) {
 }
 
 // manualUpgradeDoc is the procedure for a host skep-setup upgrade does not
-// handle.
-const manualUpgradeDoc = "docs/installation/upgrading.md (\"Upgrading a host\", the general steps)"
+// handle: a URL, since an installed host has no source tree to look in.
+const manualUpgradeDoc = "https://github.com/greenbeanorg/skep/blob/main/docs/installation/upgrading.md (\"Upgrading a host\", the general steps)"
 
 // defaultDataDirs refuses a service whose rc.conf data directory
 // (skep_agent_data_dir, skep_api_data_dir) is not the default: upgrade
@@ -583,4 +685,15 @@ func defaultDataDirs(root string) error {
 			v, d, config.DefaultDataDir, manualUpgradeDoc)
 	}
 	return nil
+}
+
+// modulesHint names the guest modules that are configured but not
+// loaded, a common reason for a degraded health right after the first
+// apply, or "" when there are none or it cannot be told.
+func (u *Upgrader) modulesHint(ctx context.Context) string {
+	f, err := u.Prober.Probe(ctx)
+	if err != nil {
+		return ""
+	}
+	return modulesHint(u.Root, f)
 }

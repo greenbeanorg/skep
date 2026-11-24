@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"os"
 	"regexp"
 	"strings"
@@ -133,13 +135,52 @@ func TestApplyAdminFailureNamesTheRetry(t *testing.T) {
 	e.sleep = func(time.Duration) {}
 	args := []string{"apply", "-root", root, "-mgmt", "vtnet0", "-start", "-admin", "andy"}
 	res := runWith(t, e, args...)
-	if res.code != exitRefused || !strings.Contains(res.stderr, "creating the administrator andy failed") ||
+	if res.code != exitIncomplete || !strings.Contains(res.stderr, "skep-setup: incomplete:") ||
+		!strings.Contains(res.stderr, "creating the administrator andy failed") ||
+		!strings.Contains(res.stderr, "Running the same command again is safe") ||
 		!strings.Contains(res.stderr, "skep-setup "+strings.Join(args, " ")) {
 		t.Fatalf("%+v", res)
 	}
 	js, err := setup.LoadJournals(root)
 	if err != nil || len(js) != 1 || !js[0].Complete {
 		t.Fatalf("journals %+v %v", js, err)
+	}
+}
+
+// A retry in which only the administrator is left, and fails, changed
+// nothing: exit 3.
+func TestApplyAdminRetryFailureChangedNothing(t *testing.T) {
+	root := stockRoot(t)
+	e := applyEnv(&appendSysrc{}, true)
+	e.sleep = func(time.Duration) {}
+	args := []string{"apply", "-root", root, "-mgmt", "vtnet0", "-start", "-admin", "andy"}
+	if res := runWith(t, e, args...); res.code != exitIncomplete {
+		t.Fatalf("first run: %+v", res)
+	}
+	e.now = func() time.Time { return time.Date(2026, 11, 22, 16, 5, 0, 0, time.UTC) }
+	res := runWith(t, e, args...)
+	if res.code != exitRefused || strings.Contains(res.stderr, "incomplete:") ||
+		!strings.Contains(res.stderr, "Nothing was changed") {
+		t.Fatalf("%+v", res)
+	}
+}
+
+func TestRunFailureExit(t *testing.T) {
+	for _, c := range []struct {
+		err  error
+		want int
+	}{
+		{errors.New("nothing changed"), exitRefused},
+		{&setup.Incomplete{Command: "apply", Problem: "p", Next: "n"}, exitIncomplete},
+		{fmt.Errorf("w: %w", &setup.Incomplete{Command: "remove", Problem: "p", Next: "n"}), exitIncomplete},
+		{&setup.RollbackIncomplete{ID: "x", Restored: []string{"/f"}, Err: errors.New("e")}, exitIncomplete},
+		{setup.RollbackError(setup.RollbackReport{ID: "x"}, errors.New("e")), exitRefused},
+		{setup.RollbackError(setup.RollbackReport{ID: "x", Removed: []string{"/f"}}, errors.New("e")), exitIncomplete},
+	} {
+		var ee *exitError
+		if !errors.As(runFailure(c.err), &ee) || ee.code != c.want {
+			t.Errorf("%v: %+v, want %d", c.err, ee, c.want)
+		}
 	}
 }
 
@@ -177,5 +218,51 @@ func TestFixtureRootWithTheRealRunner(t *testing.T) {
 	}
 	if snapshot(t, root) != before {
 		t.Fatal("changed the root")
+	}
+}
+
+// After apply has configured the guest modules, apply's last lines name
+// those the kernel does not have, with the reboot and the kldload command;
+// check reports the same and keeps its exit code (a warning). Setup never
+// runs kldload itself.
+func TestApplyReportsModulesNotLoaded(t *testing.T) {
+	root := stockRoot(t)
+	r := &appendSysrc{}
+	e := applyEnv(r, true)
+	f := hostFacts()
+	f.Modules = map[string]bool{"vmm": true, "nmdm": false, "if_epair": true, "netgraph": false,
+		"ng_socket": false, "ng_ether": false, "ng_bpf": false}
+	e.prober = fakeProber{f: f}
+	res := runWith(t, e, "apply", "-root", root, "-mgmt", "vtnet0")
+	if res.code != exitOK {
+		t.Fatalf("%+v", res)
+	}
+	done := strings.Index(res.stdout, "done:")
+	tail := res.stdout[done:]
+	for _, s := range []string{"configured but not loaded: nmdm netgraph ng_socket ng_ether ng_bpf",
+		"$ shutdown -r now", "$ kldload -n nmdm netgraph ng_socket ng_ether ng_bpf"} {
+		if done < 0 || !strings.Contains(tail, s) {
+			t.Errorf("apply's end lacks %q:\n%s", s, res.stdout)
+		}
+	}
+	for _, c := range r.calls {
+		if strings.Contains(c, "kldload") {
+			t.Errorf("setup ran %s", c)
+		}
+	}
+	// The fixture leaves manual items (no pool, no bridge), so check exits
+	// 1 either way; the module report is a warning, not one of them.
+	res = runWith(t, e, "check", "-root", root, "-mgmt", "vtnet0")
+	if !strings.Contains(res.stdout, "warn     kernel modules") || !strings.Contains(res.stdout, "configured but not loaded: nmdm netgraph") ||
+		!strings.Contains(res.stdout, "1 warnings") {
+		t.Fatalf("check: %+v", res)
+	}
+	// Once they are loaded, check reports nothing about them.
+	f.Modules = map[string]bool{"vmm": true, "nmdm": true, "if_epair": true, "netgraph": true,
+		"ng_socket": true, "ng_ether": true, "ng_bpf": true}
+	e.prober = fakeProber{f: f}
+	res = runWith(t, e, "check", "-root", root, "-mgmt", "vtnet0")
+	if strings.Contains(res.stdout, "not loaded") || !strings.Contains(res.stdout, "0 warnings") {
+		t.Fatalf("check with the modules loaded: %+v", res)
 	}
 }

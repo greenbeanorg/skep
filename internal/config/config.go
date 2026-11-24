@@ -295,56 +295,101 @@ type LoadOptions struct {
 	Overrides Overrides
 }
 
+// ResolvePath decides which configuration file is read: path when set,
+// then SKEP_CONFIG, then defaultPath (DefaultConfigPath when empty).
+// explicit is false for the default file, which may not exist. A nil
+// lookup reads the process environment. Load and the agent's start check
+// both use it, so they cannot disagree.
+func ResolvePath(path, defaultPath string, lookup func(string) (string, bool)) (resolved string, explicit bool) {
+	if path != "" {
+		return path, true
+	}
+	if lookup == nil {
+		lookup = osLookupEnv
+	}
+	if v, ok := lookup(EnvConfig); ok && v != "" {
+		return v, true
+	}
+	if defaultPath == "" {
+		defaultPath = DefaultConfigPath
+	}
+	return defaultPath, false
+}
+
+// FileToCheck is the file Load will read for this path and environment, as
+// the agent's start check and skep-setup check both need it: empty when no
+// path is given and the default file does not exist.
+func FileToCheck(path string, lookup func(string) (string, bool), exists func(string) bool) string {
+	resolved, explicit := ResolvePath(path, "", lookup)
+	if !explicit && !exists(resolved) {
+		return ""
+	}
+	return resolved
+}
+
+// FileMayExist is the exists test for FileToCheck: only a definite "not
+// there" counts as absent, so a path that cannot be examined is still checked.
+func FileMayExist(path string) bool {
+	_, err := os.Lstat(path)
+	return !errors.Is(err, fs.ErrNotExist)
+}
+
 // Load builds the configuration: file, then environment, then overrides,
 // then defaults for anything still unset, followed by validation.
 func Load(opts LoadOptions) (Config, error) {
+	cfg, _, err := LoadReportingPath(opts)
+	return cfg, err
+}
+
+// LoadReportingPath is Load, and also returns the path of the file it
+// read: empty when the optional default file does not exist.
+func LoadReportingPath(opts LoadOptions) (Config, string, error) {
 	lookup := opts.LookupEnv
 	if lookup == nil {
 		lookup = osLookupEnv
 	}
 
 	var cfg Config
-	path, explicit := opts.Path, opts.Path != ""
-	if !explicit {
-		if v, ok := lookup(EnvConfig); ok && v != "" {
-			path, explicit = v, true
-		} else if path = opts.DefaultPath; path == "" {
-			path = DefaultConfigPath
-		}
+	path, explicit := ResolvePath(opts.Path, opts.DefaultPath, lookup)
+	read, err := loadFile(path, explicit, &cfg)
+	if err != nil {
+		return Config{}, "", err
 	}
-	if err := loadFile(path, explicit, &cfg); err != nil {
-		return Config{}, err
+	readPath := ""
+	if read {
+		readPath = path
 	}
 	if err := applyEnv(lookup, &cfg); err != nil {
-		return Config{}, err
+		return Config{}, "", err
 	}
 	applyOverrides(opts.Overrides, &cfg)
 	cfg.applyDefaults()
 	if err := cfg.Validate(); err != nil {
-		return Config{}, err
+		return Config{}, "", err
 	}
-	return cfg, nil
+	return cfg, readPath, nil
 }
 
-func loadFile(path string, explicit bool, cfg any) error {
+// loadFile decodes path into cfg and reports whether a file was read.
+func loadFile(path string, explicit bool, cfg any) (bool, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		if !explicit && errors.Is(err, fs.ErrNotExist) {
-			return nil // the default file is optional
+			return false, nil // the default file is optional
 		}
-		return fmt.Errorf("config: open %s: %w", path, err)
+		return false, fmt.Errorf("config: open %s: %w", path, err)
 	}
 	defer f.Close()
 
 	dec := json.NewDecoder(f)
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(cfg); err != nil {
-		return fmt.Errorf("config: parse %s: %w", path, err)
+		return false, fmt.Errorf("config: parse %s: %w", path, err)
 	}
 	if dec.More() {
-		return fmt.Errorf("config: parse %s: unexpected data after the configuration object", path)
+		return false, fmt.Errorf("config: parse %s: unexpected data after the configuration object", path)
 	}
-	return nil
+	return true, nil
 }
 
 func applyEnv(lookup func(string) (string, bool), cfg *Config) error {

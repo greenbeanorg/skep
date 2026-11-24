@@ -18,6 +18,9 @@
   under [Decisions](#decisions) and are worked into the text. The changes
   `hearst` needs are under [Changes hearst needs](#changes-hearst-needs),
   all approved.
+- Amendment z, zvol device nodes: **Accepted** (2026-11-22), built on
+  branch `fix/zvol-device-node` and validated on FreeBSD (lab VMs smith and
+  langrishe); see [Amendment z](#amendment-z-accepted-zvol-device-nodes).
 - Date: 2026-11-14 (proposed and accepted)
 - Depends on: [ADR 0003](0003-read-only-discovery.md) (discovery never
   changes the host), [ADR 0004](0004-privilege-boundary.md) (typed
@@ -2337,3 +2340,345 @@ mode refused a missing and a wrong pin before any test and ran the
 host-safe specs pinned. Details in section 29 of
 [step10-progress.md](../../tests/integration/jails/results/step10-progress.md).
 
+
+## Amendment z (Accepted): zvol device nodes
+
+- Status: **Accepted**, 2026-11-22 (Andy, after reviewing the validation
+  results). Built (`fix/zvol-device-node`), unit
+  tested on merrick; FreeBSD validation on the lab VMs smith and langrishe,
+  2026-11-22, and through the API on 2026-11-23 UTC (results in
+  [zvol-device-node-20261122.md](../../tests/integration/setup/results/zvol-device-node-20261122.md)).
+  Andy answered the questions on 2026-11-22 (below), reviewed the
+  validation results, and accepted the amendment.
+
+**The behaviour.** On FreeBSD 15.1-RELEASE-p7 (zfs-2.4.2), a zvol created
+with `-o volmode=dev` usually gets no `/dev/zvol/<dataset>` node: 45 of
+50 on smith and 43 of 50 on langrishe, fresh installs, 2026-11-22. A node
+that is missing never appears later (0 within 30 s). `zfs clone -o
+volmode=dev` misses too (17/20 and 20/20), and so does a zvol in an
+encrypted dataset with its key loaded (19/20, 14/20); `zfs rollback` of a
+zvol that had a node lost it 0 times in 20 on each host, and `zpool
+import` created all 50 of 50 nodes three times. bhyve opens disks by that
+node, so the VM fails to start: "Could not open backing file … No such
+file or directory". `zfs set volmode=none` and then `zfs set volmode=dev`
+brought every missing node back (179 of 179, plain, cloned, and
+encrypted), at once, and never exposed the zvol to GEOM (no `p1` and
+nothing in `kern.geom.conftxt` for a zvol holding a GPT). With a reader
+holding the node open, the toggle does not fail: the node disappears and
+the reader is terminated, which is why rule 3 requires the VM stopped.
+Results: [zvol-device-node-20261122.md](../../tests/integration/setup/results/zvol-device-node-20261122.md).
+
+**The rules.** `ZFS.EnsureVolumeDevice` in hostops (root agent):
+
+1. The dataset is derived from the agent's own record of the VM's disks
+   (pool, VM ID, slot) through `Confinement.DiskDataset`, so it is
+   always under the allow-listed pool's `<pool>/<root>/vm/`. Nothing from
+   a request names it. A repair also requires the zvol's `skep:vm_id`
+   and `skep:disk_id` to name the disk.
+2. The node is checked with `lstat` and must be a character device. A
+   path that exists as anything else is an error. A missing node is
+   first given 1 s to appear on its own (the probe saw 0 of 88 missing
+   nodes appear late, within 30 s; first built with 5 s, shortened on
+   Andy's instruction of 2026-11-22).
+3. A repair happens only if all of these hold: the dataset is a volume;
+   `volmode` is exactly `dev`; `keystatus` is `available` or not
+   applicable; the VM is stopped. The stopped check is the caller's: it
+   re-inspects the VM inside the VM's task, the per-resource exclusivity
+   that `vm.start` takes. In addition, the host must have no vmm instance
+   of the VM. Otherwise nothing is changed and the error is returned:
+   `disk_device_missing` (409) with `dataset` and `reason`, or
+   `storage_locked`.
+4. The repair is `zfs set volmode=none`, then `zfs set volmode=dev`. Once
+   the first set has been attempted, whatever its result, the second is
+   always attempted, up to five times, one second apart, on a context
+   that ignores the caller's cancellation. If `volmode=none` failed and
+   `volmode=dev` was set back, the result is `disk_device_missing` with
+   reason `repair_failed` and the `zfs` error in `error`. Then the node
+   gets up to 10 s.
+   At most two rounds are made, and the stopped check runs before each.
+5. A zvol found at `volmode=none` is never repaired automatically:
+   `disk_device_missing` with reason `volmode_none`, the dataset, and
+   `command: zfs set volmode=dev <dataset>` for the administrator. Any
+   other mode except `dev` is refused the same way (`volmode_not_dev`).
+   Skep never writes a value other than `none` and `dev`.
+6. `/sbin/zfs` through the hostops Runner: absolute path, fixed
+   environment, no shell.
+7. Every repair is logged with dataset, rounds, and duration, and every
+   refusal with its reason.
+8. Disks are only created, attached, cloned, or rolled back while the VM
+   is stopped (`vm.update` and rollback require it, and a clone is not
+   provisioned until its task ends), so there is no hot-attach case.
+
+Where it is called: bhyve's `Adapter.Start`, which covers `vm.start` and
+`vm.restart` and fails the start on an error. The VM service also calls
+it after `vm.create`, a disk added by `vm.update`, `vm.clone` (before the
+clone is marked provisioned), and `vm.snapshot.rollback`. There, a node
+that is still missing is reported in the task's progress and the log,
+not as a failure. The ZFS work stands (a rollback cannot be undone), and
+the next start is the gate.
+
+**Why `volmode=geom` is excluded.** `geom` (or a `default` that resolves
+to it) also creates the node, but it hands the zvol to GEOM. The host
+then tastes the guest's partition table, creates `…p1`-style providers
+for it, and may act on what it finds: labels, swap, and so on. That is
+what `volmode=dev` exists to prevent (ADR 0009 decision 3). A repair
+that switched through `geom` would expose every guest disk to the host
+for a moment, so neither the repair nor the probes ever use it.
+
+**If the agent dies between the two sets.** The zvol is left at
+`volmode=none`, with no node. The data is untouched; only the property
+changed. The next start (or post-operation check) finds `volmode=none`
+and refuses it under rule 5, naming the dataset and the exact `zfs set
+volmode=dev` command. Skep does not repair it automatically, because it
+cannot tell its own interrupted repair from an administrator who set
+`none` on purpose. The window is two `zfs set` calls long.
+
+**Validation.** Done on smith and langrishe (2026-11-22, night): the raw
+`zfs` probe above, and the agent's hostops code on real ZFS (a harness,
+`tests/integration/storage/zvoldev`): 50 disk creates, 20 clones, and 20
+rollbacks of a GPT disk, each ending with a node (repairs: 47/45, 4/7,
+0/0, all in one round), no `p1` and nothing in GEOM after the clones and
+rollbacks, and the refusals `vm_not_stopped` and `volmode_none` (with the
+command) leaving the zvol unchanged.
+
+**Through the API** (2026-11-23 UTC, both VMs, `edk2-bhyve` installed, vmm
+loaded, late wait 1 s): 51 `vm.create`, 20 disk adds, 20 `vm.clone`, and 20
+rollbacks of a GPT disk, VMs without NICs. Every task succeeded and all 91
+volumes ended with a node. Repairs per path, smith / langrishe: create 36 /
+41, disk add 18 / 12, clone 2 / 4, rollback 0 / 0; **left to the next start: 0
+everywhere**, and starting all 71 VMs on each host repaired nothing (71/71
+running). A create took about 1.16 s with a repair and 0.1 s without. No `p`
+node and nothing in `kern.geom.conftxt` after the clones and the rollbacks. On
+smith, a real `vm.start` of a VM whose node was missing repaired it (one round)
+and bhyve ran; `vm.start` of a disk set to `volmode=none` by hand failed with
+`disk_device_missing` and the exact `zfs set volmode=dev …` command, and left
+`volmode` at `none`. The reason `volmode_none` is in the agent's log but not in
+the API: a task's `error` carries only `code` and `message` (open question
+below). Results:
+[zvol-device-node-20261122.md](../../tests/integration/setup/results/zvol-device-node-20261122.md),
+Part 4. An upstream report
+with a Skep-free reproducer is drafted in
+[docs/upstream/openzfs-zvol-volmode-dev-node.md](../upstream/openzfs-zvol-volmode-dev-node.md);
+Andy files it.
+
+**Open question (2026-11-23).** Should a failed task's `error` carry the
+error's `details` (here `dataset`, `reason`, `command`)? Today the
+`Task.error` schema is `{code, message}`; the command is in the message, the
+reason only in the agent's log. Adding it is an API contract change, so it
+was not made.
+
+**Andy's answers** (2026-11-22; Andy then reviewed the validation results
+and accepted the amendment).
+
+1. Post-operation checks (after create, disk add, clone, and rollback)
+   report a node that is still missing but don't fail the task: **accepted;
+   start is the gate.**
+2. The three checks beyond what was asked (the zvol's owner properties, no
+   vmm instance of the VM, and attempting `volmode=dev` even after a failed
+   `volmode=none`): **all three accepted.**
+3. A health check for Skep zvols left at `volmode=none`: **after 0.1**; the
+   backlog row stays.
+4. The error code `disk_device_missing` (409): **name and status
+   accepted.** Its details are `dataset`, `reason` (`volmode_none`,
+   `volmode_not_dev`, `not_a_volume`, `vm_not_stopped`, `repair_failed`,
+   `restore_failed`, `no_stopped_check`), and, where an administrator acts,
+   `command`. A failed `volmode=none` after which `volmode=dev` was set
+   back is `repair_failed`, with the `zfs` error in `error`.
+
+## Amendment aa (Accepted): the agent finishes a half-stopped jail at start
+
+- Status: **Accepted**, 2026-11-23 (Andy). Written before the build, as
+  asked. Andy's answers to the four questions are recorded below (2026-11-23,
+  with the Fable review's fix round, rules 6–9); rule 10 was added with the
+  review's approval. (Amendment z is on PR #55.)
+
+**The problem.** A jail stop is: record desired `stopped` and observed
+`stopping`; `hostops.StopJail`, which destroys the jail's epairs first and
+then runs `jail -r` (exec.stop `/etc/rc.shutdown`, then SIGTERM, then
+SIGKILL after the stop timeout); then record the epairs gone and the jail
+`stopped`. An agent restart in the middle (a crash, an upgrade's restart,
+an operator's `service skep_agent restart`) interrupts the task (ADR 0005:
+it is marked `interrupted` and never resumed) and can leave the jail
+running with its epairs already destroyed. At the next start
+`ObserveAll` observes the jail running and records `running`, with desired
+`stopped` and the recorded `host_interface` of each NIC naming an epair
+that no longer exists. The jail runs with no network until someone stops
+it again; the record says otherwise. (Backlog item from the PR #52 fix
+round, 2026-11-22.)
+
+**The rule.** At agent start, in `ObserveAll`, before the socket is served
+and while no task runs, a container recorded `stopping` has its stop
+completed:
+
+1. `hostops.StopJail` with the default stop timeout: if the jail exists,
+   `jail -r` with exec.stop, as a stop task does; then every epair of the
+   container is destroyed (also when the jail is already gone, so epairs a
+   finished `jail -r` left are not orphaned).
+2. Success: the recorded epairs are cleared, the container is recorded
+   `stopped` with the detail "a stop interrupted by an agent restart was
+   completed at agent start", a leftover devfs on its root is swept
+   (amendment l), and the agent logs `jail_stop_completed` (WARN).
+3. Failure: logged at ERROR (`jail_stop_interrupted`); the container is
+   recorded `unknown` with the detail "a stop interrupted by an agent
+   restart could not be completed at agent start: …; stop it again", as a
+   failed stop task records it. The epairs record is left as it is (a
+   failed stop task does the same); the next stop destroys any epairs and
+   clears it.
+4. Desired state is not changed: a stop set it to `stopped` before
+   anything else. A restart interrupted in its stop half ends stopped; its
+   start half is not resumed (ADR 0005: interrupted work is resubmitted,
+   never resumed).
+5. A container recorded `starting` is still the half-started sweep's
+   (amendment i); a `failed` (quarantined) one is still the quarantine
+   sweep's (amendment n). Neither changes.
+6. **What a read shows after a failure.** Whenever a jail is observed
+   running while its desired state is `stopped` and its recorded state is
+   not `starting` or `stopping`, the state shown is the observed one
+   (`running`, with its `jid`). The recorded `state_detail` is kept when the
+   recorded state is `unknown` or `running`: a failed completion (rule 3:
+   the jail usually still runs, since `jail -r` and `jail -R` both failed)
+   or a failed stop task records `unknown` with its reason, the first read
+   records `running` and keeps it, and every later read keeps it too. A
+   failed stop task's "the last stop failed: …" used to be dropped by the
+   first read the same way (unit test `TestFailedStopTaskDetailOnRead`
+   fails on the build before this rule). When the recorded state is
+   `stopped` (the jail was started outside Skep), or no detail is recorded,
+   the detail is "the jail is running although it should be stopped; stop
+   it again" (`TestStartedOutsideSkepAfterCompletedStop`). Andy's
+   follow-up answer, 2026-11-23: unknown or running keeps the detail,
+   stopped shows the generic sentence. A failed completion whose jail is
+   gone reads `stopped` with no detail. A successful stop clears the detail
+   (the store writes NULL for an empty detail).
+7. **Agent shutdown during a completion.** If the agent's context is
+   cancelled (SIGTERM, `service skep_agent stop`) and `StopJail` returns
+   an error, nothing is recorded: the container stays `stopping`, the
+   agent logs `jail_stop_completion_cancelled` (WARN), and the next agent
+   start completes the stop. `jail -r` is killed with the context
+   (hostops does not force a cancelled removal), so the jail may still
+   run. An outcome `StopJail` did return is recorded on a context
+   detached from the agent's, as a stop task records.
+8. **Log before the wait.** Before `StopJail` the agent logs
+   `jail_stop_completing` (WARN) with `container_id` and
+   `max_wait_seconds`, the longest the call can take (the bound under Cost).
+9. **Epairs are destroyed by ownership, never by recorded name.**
+   `StopJail` destroys only the epair host ends (`epair<N>a`) whose
+   description, read from the host at that moment, is
+   `skep:<container-id>:<slot>` (`DestroyJailInterfaces`); `JailSpec`
+   carries no recorded interface name. The `host_interface` names recorded
+   on the container are only cleared. An interface named as recorded but
+   now described as another owner's, or not described, is left (unit test
+   `TestStopJailOfGoneJailChecksOwnership`). A normal stop task is
+   unchanged. Andy's answer, 2026-11-23: the description check stays the
+   only ownership check; no interface index is recorded.
+10. **Agent shutdown between containers.** At the top of each iteration
+    `ObserveAll` checks its context. If it is cancelled, it logs
+    `observe_cancelled` (WARN) once, with `not_observed`, the number of
+    containers not reached, and returns the context's error. Those
+    containers are not passed to `StopJail` and nothing is recorded about
+    them: one recorded `stopping` stays so, and the next agent start
+    completes its stop. The agent's start then stops the task engine and
+    exits as a normal stop, without the later checks and without serving
+    its socket (unit tests `TestObserveAllStopsWhenCancelled`,
+    `TestObserveContainersShutdown`).
+
+**Why exec.stop, and not a removal without it.** The half-started sweep
+removes the jail without `/etc/rc.shutdown` because the `/dev` guard may not
+have run (amendment i). A half-stopped jail finished its start, ran
+observed `running`, and its operator asked for a stop with
+`/etc/rc.shutdown`; part of it may have run. Running it again is what a
+second stop request does, and lets the jail's services shut down in order.
+Removing it without exec.stop (alternative B) would be faster and run none
+of the jail's code at agent start, but would cut off an orderly shutdown
+the operator asked for.
+
+**Cost.** The agent's start waits for each half-stopped jail's stop, one
+after another. `exec.stop` is bounded by `exec.timeout` (the start timeout,
+120 s), then `stop.timeout` (10 s), and `jail -r` as a whole by those plus
+30 s of slack; a `jail -r` that fails or times out is followed by `jail -R`,
+bounded by another 30 s (amendment u): **up to about 190 s per jail**
+(`JailSpec.StopMaxWait`; the first draft said 160 s, leaving out `jail
+-R`), not the 10 s stop timeout alone (measured: a jail whose `/etc/rc.shutdown.local` sleeps 30 s delayed
+the agent's start by 30 s). Running VMs and jails are not affected; only
+the agent's socket comes up later.
+
+**Questions for Andy, and his answers (2026-11-23).**
+
+1. exec.stop at agent start (this amendment), or removal without it
+   (alternative B)? — **exec.stop.**
+2. The default stop timeout, not the timeout the interrupted task asked
+   for (which is in its payload): acceptable? — **The default timeout is
+   accepted.**
+3. Should the completion also write an entry to the agent's audit log
+   (today the start-up sweeps only log), and if so with which actor? —
+   **No audit entry in this change.** A backlog row "start-up sweeps write
+   audit entries, actor system" covers all three start-up sweeps (the
+   half-started sweep, the quarantine sweep, and this completion).
+4. The start can wait up to about 160 s (in fact about 190 s, see Cost)
+   per half-stopped jail. Acceptable, or should the completion run after
+   the socket is served (the jail would show `stopping` meanwhile)? —
+   **The completion stays before the socket is served, for 0.1.**
+   (The wait of `skep-setup upgrade` for the socket becomes 200 s in
+   PR #61.)
+
+**Validation (langrishe, 2026-11-23 UTC, unattended).** A pkgbase template
+built through the API (41 s), a jail with a DHCP NIC on a test bridge
+`bridge1` on vtnet1 (vlanfilter on; lease 10.79.60.137 inside the jail),
+`/etc/rc.shutdown.local` in the jail set to `sleep 30` so the stop could be
+caught. The test (`j3kill.py`) submits `container.stop`, waits until the
+epair is gone while `jail -r` still runs and the jail is still in `jls`
+(0.1–0.2 s), then `kill -9`s the agent and that `jail -r`; daemon(8)
+restarts the agent.
+
+| | Build without the fix (6a93dd2) | With the fix (8fb036f) |
+|---|---|---|
+| After the restart: state / desired / JID | `running` / `stopped` / 2 | **`stopped` / `stopped` / null** |
+| `host_interface` recorded | `epair0a` (no such interface) | **none** |
+| Jail in `jls` | still there | **gone** |
+| Epairs on the host | none | none |
+| `state_detail` | none | "a stop interrupted by an agent restart was completed at agent start" |
+| Agent log | `task interrupted by agent restart` | that, then `jail_stop_completed` (WARN) 30 s later |
+
+The interrupted task stayed `interrupted` (ADR 0005). The jail, the
+template, and the bridge were removed afterwards, `agent.json` restored
+(sha256 checked). Logs:
+[jail-stop-recovery-20261123/](../../tests/integration/jails/results/jail-stop-recovery-20261123/).
+The failure path (completion fails → `unknown` with a detail) is covered by
+unit tests only.
+
+**Validation of rules 6–9 (langrishe, 2026-11-23 UTC, unattended, build
+eae2ab3).** The success case repeated (`jail_stop_completing` with
+`max_wait_seconds: 190`, then `jail_stop_completed`; `stopped`, no epairs).
+The agent stopped with `service skep_agent stop` during a completion:
+`jail_stop_completion_cancelled`, the jail still present, `agent.db` showing
+the container `stopping`, and the next start completed it. The induced
+failure (`chflags schg` on the jail's `jail.conf`): GET and the list showed
+`running`, desired `stopped`, the `jid`, and the completion's reason in
+`state_detail`; a stop task with the flag still set failed and GET then
+showed "the last stop failed: …"; after the flag was cleared a stop
+succeeded and cleared the detail. Record:
+[jail-stop-fixround-20261123.md](../../tests/integration/jails/results/jail-stop-fixround-20261123.md).
+
+## Amendment ab (Accepted): cloning a started jail with a static address
+
+- Status: **Accepted**, 2026-11-23 (Andy). Built by PR #80.
+
+**The problem.** Amendment k asks for new addressing when a source has a
+static address, and decision 13 forbids writing addressing into a tree that
+has run code. For a source that had started, a request without new
+addressing was refused with `clone_addressing_required` (422), which sent
+the client to a second request that could only fail with
+`container_started` (409).
+
+**The rule.** A clone of a source that has a static address and has started
+is always `container_started` (409), with or without new addressing. The
+check runs before the addressing check.
+
+**What does not change.** A source with a static address that has never
+started still needs new addressing on every static NIC
+(`clone_addressing_required`, 422, naming the slots). A DHCP source can
+still be cloned after it has started.
+
+**Contract.** For a started source with a static address and no new
+addressing, the status changes from 422 to 409 and the code from
+`clone_addressing_required` to `container_started`. Andy accepted this
+change on 2026-11-23.

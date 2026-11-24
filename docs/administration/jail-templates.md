@@ -9,9 +9,13 @@ and the step 6 "Decision on package scripts" with its "Resolved" notes.
 > **Validation status.** The pkgbase builder ran on FreeBSD 15.1-RELEASE-p6
 > (amd64, UFS root, file-backed test pool) through its FreeBSD test binary
 > with the real host operations
-> ([record](../../tests/integration/jails/results/step6-build.txt)). A
-> build through a deployed agent's task and API, the `dist` source, and a
-> ZFS-root host are **pending FreeBSD validation**.
+> ([record](../../tests/integration/jails/results/step6-build.txt)), and
+> through a deployed agent's task and API
+> ([record](../../tests/integration/jails/results/step6-deployed.txt)).
+> On 2026-11-22 the `dist` source ran on a UFS-root lab VM and a pkgbase
+> build through the installed agent on a ZFS-root lab VM
+> ([record](../../tests/integration/setup/results/lab-vm-validation-20261122.md)).
+> All of these are lab VMs nested under KVM; bare metal is not validated.
 
 ## What a template is
 
@@ -53,11 +57,44 @@ configuration.
 use, and why not:
 
 - **pkgbase**: the host's own pkgbase repository configuration and
-  signing keys (`/usr/local/sbin/pkg` must be installed), a non-empty
+  signing keys (`/usr/local/sbin/pkg` must be installed, and pkg's
+  repository files must enable `FreeBSD-base`: on a host installed from the
+  dist sets `/etc/pkg/FreeBSD.conf` has `enabled: no`, and an override such as
+  `FreeBSD-base: { enabled: yes }` in `/usr/local/etc/pkg/repos/FreeBSD.conf`
+  enables it; `skep-setup check` reads the files by the same rules), a non-empty
   `storage.template_packages`, and a compiled allowlist for the host's
   major.minor. Skep 0.1 has one for 15.1.
 - **dist**: `base.txz` and `MANIFEST` in `storage.dist_dir`. The archive's
   SHA-256 must match its `MANIFEST` line (`template_archive_mismatch`).
+
+To enable `FreeBSD-base`, the agent and `skep-setup check` both print:
+
+```sh
+mkdir -p /usr/local/etc/pkg/repos && printf 'FreeBSD-base: { enabled: yes }\n' >> /usr/local/etc/pkg/repos/FreeBSD.conf
+```
+
+A host installed from the dist sets has no `/usr/local/etc/pkg/repos`, so
+the command creates it first.
+
+How the repository files are read (the agent and `skep-setup` share the
+reader, `internal/pkgrepo`): the `*.conf` files in `/etc/pkg`, then in
+`/usr/local/etc/pkg/repos`, each directory in name order; a later
+definition of `FreeBSD-base` overrides the `enabled` it sets, and a first
+definition without `enabled` means enabled (pkg's default). Only these
+UCL forms are read:
+
+- `NAME: { ... }` blocks (the name may be quoted), with `enabled: yes`
+  or `enabled = yes` (`yes`, `true`, `on`, `no`, `false`, `off`, quoted
+  or not) inside;
+- `#` comments, which are ignored.
+
+Any other form (`NAME { ... }` without the colon, `NAME = { ... }`,
+`.include`, a `REPOS_DIR` set in `pkg.conf` or the environment) is not
+read: a definition written that way counts as not defined, so the answer
+comes from the other files (on a stock host, `/etc/pkg/FreeBSD.conf`'s
+`enabled: no`). `//` and `/* */` comments are not understood either: an
+`enabled` inside one is read as if it were not commented out. Use the
+form above.
 
 ## How a pkgbase build works
 

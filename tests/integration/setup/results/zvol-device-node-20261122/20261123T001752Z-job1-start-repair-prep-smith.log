@@ -1,0 +1,36 @@
++ ls -l /dev/zvol/tank/skep/vm/86a3b481-2674-4945-868c-c91a01bc1fb5/disk0
+crw-r-----  1 root operator 0xdf Nov 22 19:13 /dev/zvol/tank/skep/vm/86a3b481-2674-4945-868c-c91a01bc1fb5/disk0
++ sudo zfs rename tank/skep/vm/86a3b481-2674-4945-868c-c91a01bc1fb5/disk0 tank/skep/vm/86a3b481-2674-4945-868c-c91a01bc1fb5/disk0x
++ sudo zfs rename tank/skep/vm/86a3b481-2674-4945-868c-c91a01bc1fb5/disk0x tank/skep/vm/86a3b481-2674-4945-868c-c91a01bc1fb5/disk0
++ sleep 1
+try1 node
++ [ -c /dev/zvol/tank/skep/vm/86a3b481-2674-4945-868c-c91a01bc1fb5/disk0 ]
++ echo try1 node
++ sudo zfs rename tank/skep/vm/86a3b481-2674-4945-868c-c91a01bc1fb5/disk0 tank/skep/vm/86a3b481-2674-4945-868c-c91a01bc1fb5/disk0x
++ sudo zfs rename tank/skep/vm/86a3b481-2674-4945-868c-c91a01bc1fb5/disk0x tank/skep/vm/86a3b481-2674-4945-868c-c91a01bc1fb5/disk0
++ sleep 1
+try2 node
++ [ -c /dev/zvol/tank/skep/vm/86a3b481-2674-4945-868c-c91a01bc1fb5/disk0 ]
++ echo try2 node
++ sudo zfs rename tank/skep/vm/86a3b481-2674-4945-868c-c91a01bc1fb5/disk0 tank/skep/vm/86a3b481-2674-4945-868c-c91a01bc1fb5/disk0x
++ sudo zfs rename tank/skep/vm/86a3b481-2674-4945-868c-c91a01bc1fb5/disk0x tank/skep/vm/86a3b481-2674-4945-868c-c91a01bc1fb5/disk0
++ sleep 1
+try3 node
++ [ -c /dev/zvol/tank/skep/vm/86a3b481-2674-4945-868c-c91a01bc1fb5/disk0 ]
++ echo try3 node
++ sudo zfs rename tank/skep/vm/86a3b481-2674-4945-868c-c91a01bc1fb5/disk0 tank/skep/vm/86a3b481-2674-4945-868c-c91a01bc1fb5/disk0x
++ sudo zfs rename tank/skep/vm/86a3b481-2674-4945-868c-c91a01bc1fb5/disk0x tank/skep/vm/86a3b481-2674-4945-868c-c91a01bc1fb5/disk0
++ sleep 1
+try4 node
++ [ -c /dev/zvol/tank/skep/vm/86a3b481-2674-4945-868c-c91a01bc1fb5/disk0 ]
++ echo try4 node
++ sudo zfs rename tank/skep/vm/86a3b481-2674-4945-868c-c91a01bc1fb5/disk0 tank/skep/vm/86a3b481-2674-4945-868c-c91a01bc1fb5/disk0x
++ sudo zfs rename tank/skep/vm/86a3b481-2674-4945-868c-c91a01bc1fb5/disk0x tank/skep/vm/86a3b481-2674-4945-868c-c91a01bc1fb5/disk0
++ sleep 1
+try5 node
++ [ -c /dev/zvol/tank/skep/vm/86a3b481-2674-4945-868c-c91a01bc1fb5/disk0 ]
++ echo try5 node
++ zfs get -H -o property,value volmode,skep:vm_id,skep:disk_id tank/skep/vm/86a3b481-2674-4945-868c-c91a01bc1fb5/disk0
+volmode	dev
+skep:vm_id	86a3b481-2674-4945-868c-c91a01bc1fb5
+skep:disk_id	575bbb34-fd20-4075-a112-50494945a93e

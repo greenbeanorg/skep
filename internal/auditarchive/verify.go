@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -157,6 +158,43 @@ func (a *Archiver) Export(ctx context.Context, month string, entry func(line []b
 		segments++
 	}
 	return segments, nil
+}
+
+// ExportUnsealed passes each live entry newer than the last sealed segment
+// to entry, oldest first, in the format of a segment's lines, and returns
+// how many there were. It only reads. An entry sealed while it runs may
+// also appear in a later Export; none is skipped.
+func (a *Archiver) ExportUnsealed(ctx context.Context, entry func(line []byte) error) (n int64, err error) {
+	var first int64 = 1
+	last, ok, err := a.lastSegment(ctx)
+	if err != nil {
+		return 0, err
+	}
+	if ok {
+		first = last.LastID + 1
+	}
+	rows, err := a.queryRange(ctx, first, math.MaxInt64)
+	if err != nil {
+		return 0, fmt.Errorf("auditarchive: read the live entries: %w", err)
+	}
+	defer rows.rows.Close()
+	var buf []byte
+	for {
+		_, values, more, err := rows.next()
+		if err != nil {
+			return n, fmt.Errorf("auditarchive: read the live entries: %w", err)
+		}
+		if !more {
+			return n, nil
+		}
+		if buf, err = appendEntry(buf[:0], a.log.Columns, values); err != nil {
+			return n, err
+		}
+		if err := entry(buf); err != nil {
+			return n, err
+		}
+		n++
+	}
 }
 
 // Summary is what one Cycle did.

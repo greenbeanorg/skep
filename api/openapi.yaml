@@ -126,6 +126,19 @@ paths:
         where each check says whether it is critical. The same document is
         in the system document's `health` field.
 
+        When the agent's socket does not answer, the `agent` check's
+        `error` is a fixed text: the agent is down, still starting, or
+        refusing to start; see `/var/log/daemon.log`, where a refused start
+        is logged. It never
+        carries the agent's own error text or the paths it refused on, and
+        a caller without a session still gets the status alone.
+
+        This is the only health endpoint. `/health` and `/healthz` at the
+        root of the HTTPS port, outside `/api/v1`, with or without a
+        trailing slash, answer `404` with the
+        standard error body naming this path, so that a check pointed at
+        them cannot pass on the web interface's `200`.
+
         Two checks concern the audit archives: `audit_archive` (the
         agent's operation audit log) and `access_audit_archive`
         (skep-api's access audit log). Each is `degraded` when the
@@ -133,6 +146,14 @@ paths:
         when the previous month is still unsealed 7 days into the new
         one. Neither is critical. A check is absent when archiving is
         turned off.
+
+        `nested_interrupts` appears only on a host that runs under another
+        hypervisor with `hw.vmm.vmx.cap.virtual_interrupt_delivery` not 0,
+        where the first VM start can freeze the whole host. It is
+        `degraded`, is not critical, and names the `loader.conf` line.
+        The condition is evaluated once, at agent start: if `vmm` is loaded
+        after the agent started, there is no warning and no check until the
+        agent restarts.
 
         Two concern storage (ADR 0010 decision 15), both from the agent's
         resource sample (`GET /metrics`, at most a minute old):
@@ -956,7 +977,13 @@ paths:
           (`port_filter_unavailable`, ADR 0011). Every tap gets its filter
           before it joins the bridge; if that fails, the run ends `failed`
           with `port_filter_failed` in the detail and the task fails with
-          `vm_start_failed`.
+          `vm_start_failed`. Before the runner starts, the device node of
+          every zvol disk must exist; a missing one is repaired by setting
+          `volmode` to `none` and back to `dev`, and when that is not
+          possible or not allowed the task fails with
+          `disk_device_missing`, whose details name the `dataset`, the
+          `reason`, and, when an administrator has to act, the `command`
+          (ADR 0010 amendment z).
         - `stop` sets `desired_state` to `stopped` and presses the guest's
           ACPI power button. It waits `timeout` seconds (default 90, at
           most 300); if the guest has not shut down by then the task fails
@@ -1561,7 +1588,9 @@ paths:
       description: |
         Requires `container:read`. Jails by name, cursor paginated. The
         state is what `jls` reports at the time of the request; a jail
-        that should run but does not says so in `state_detail`.
+        that should run but does not says so in `state_detail`, and so
+        does a jail that runs although it should be stopped (with the
+        reason its stop failed, when one was recorded).
       parameters:
         - $ref: "#/components/parameters/Background"
         - name: limit
@@ -2145,15 +2174,17 @@ paths:
         `skep1`, ... as in every jail, so the copied `rc.conf` configures
         them.
 
-        **Static addresses** (amendment k): every NIC of the source with
-        a static address needs new addressing in `nics`, or the clone
-        would hold the source's address (`clone_addressing_required`,
-        422, naming the slots). New addressing or nameservers are written
-        into the clone's `rc.conf` and `resolv.conf`, which Skep does only
-        for a tree that has never run code: a clone inherits its source's
-        `started_once`, and for a source that has started the change is
-        `container_started`. So a jail with a static address can be
-        cloned only while it has never started.
+        **Static addresses** (amendment k): a jail with a static address
+        can be cloned only while it has never started. Once it has, every
+        clone request is `container_started` (409), with or without new
+        addressing. Before that, every NIC of the source with a static
+        address needs new addressing in `nics`, or the clone would hold
+        the source's address (`clone_addressing_required`, 422, naming the
+        slots). New addressing or nameservers are written into the clone's
+        `rc.conf` and `resolv.conf`, which Skep does only for a tree that
+        has never run code: a clone inherits its source's `started_once`,
+        and for a source that has started such a change is
+        `container_started`.
 
         **A clone is the same guest.** Skep does not change what is inside
         the tree: the clone's `/etc/ssh` host keys and `/etc/hostid` are
@@ -2319,7 +2350,8 @@ components:
         `idempotency_key_conflict`, and for storage operations
         `storage_locked`, `snapshot_limit`, `snapshot_has_clones`,
         `snapshot_not_latest`, `snapshot_incomplete`, `snapshot_name_taken`,
-        `snapshot_not_provisioned`, `disk_has_snapshots`, and for jail
+        `snapshot_not_provisioned`, `disk_has_snapshots`,
+        `disk_device_missing`, and for jail
         templates `template_name_taken`, `template_not_provisioned`,
         `jail_parent_insecure`, and for jails `container_name_taken`,
         `container_not_stopped`, `container_not_running`,
@@ -2914,6 +2946,11 @@ components:
         max_cpu_percent:
           type: integer
           description: 100 per CPU of the host, the bound of `cpu_percent`.
+        max_locked_memory_bytes:
+          type: integer
+          format: int64
+          readOnly: true
+          description: The host's total of `locked_memory` over all running jails (`containers.max_locked_memory_bytes`, by default a quarter of physical memory). It is the limit, not the memory wired now. A reported 0 means none was configured and physical memory could not be read. A non-zero `locked_memory`, and so `options.mlock`, is refused at create, update, and start. A jail without `locked_memory` is unaffected, and a jail already running keeps its rule.
     ContainerIPv4:
       type: object
       additionalProperties: false
@@ -3524,6 +3561,23 @@ components:
               type: string
               example: timeout
             message: { type: string }
+            details:
+              type: object
+              additionalProperties: true
+              description: >-
+                Structured context the agent recorded with the failure, for
+                example `dataset`, `reason` and `command` for
+                `disk_device_missing`. Only the keys reviewed for each error
+                code are included (the list is in the security overview);
+                a key that could hold a secret, a key path, a password, or
+                free text from a command or package is never included.
+                Visible to every caller who can read the task. Absent when
+                there is none.
+              example:
+                dataset: tank/skep/vm/0193.../disk0
+                reason: volmode_none
+                volmode: none
+                command: zfs set volmode=dev tank/skep/vm/0193.../disk0
         created_at:
           type: string
           format: date-time

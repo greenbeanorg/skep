@@ -467,3 +467,38 @@ func (f *Fake) DestroyVolume(_ context.Context, spec hostops.VolumeSpec) (hostop
 	f.record("zfs destroy %s", name)
 	return d, nil
 }
+
+// EnsureVolumeDevice implements hostops.ZFS. A volume not in
+// MissingDevices has its node.
+func (f *Fake) EnsureVolumeDevice(ctx context.Context, spec hostops.VolumeSpec, stopped hostops.StoppedCheck) (hostops.DeviceResult, error) {
+	name, err := f.conf.DiskDataset(spec.Pool, spec.VMID, spec.Slot)
+	if err != nil {
+		return hostops.DeviceResult{}, err
+	}
+	res := hostops.DeviceResult{Path: "/dev/zvol/" + name}
+	f.mu.Lock()
+	want, missing := f.MissingDevices[name]
+	f.record("ensure device %s", name)
+	f.mu.Unlock()
+	if !missing {
+		return res, nil
+	}
+	if stopped == nil {
+		return res, &models.Error{Code: models.CodeDiskDeviceMissing, Message: "no stopped check",
+			Details: map[string]any{"dataset": name, "reason": "no_stopped_check"}}
+	}
+	if err := stopped(ctx); err != nil {
+		return res, &models.Error{Code: models.CodeDiskDeviceMissing, Message: "the virtual machine is not stopped",
+			Details: map[string]any{"dataset": name, "reason": "vm_not_stopped"}}
+	}
+	if want != nil {
+		return res, want
+	}
+	f.mu.Lock()
+	delete(f.MissingDevices, name)
+	f.record("zfs set volmode=none %s", name)
+	f.record("zfs set volmode=dev %s", name)
+	f.mu.Unlock()
+	res.Rounds = 1
+	return res, nil
+}

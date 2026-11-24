@@ -8,10 +8,13 @@ Skep runs as two rc.d services (ADR 0004, ADR 0006):
 | `skep_api` | `packaging/rc.d/skep_api` | `skep` (unprivileged) | TCP, `127.0.0.1:8443` by default |
 
 The package and [`skep-setup`](skep-setup.md) (Milestone 10,
-[ADR 0012](../decisions/0012-installer.md)) are built but pending FreeBSD
-validation, so the steps below are the manual ones;
+[ADR 0012](../decisions/0012-installer.md)) do these steps for you; they
+ran on two lab VMs nested under KVM on 2026-11-22
+([record](../../tests/integration/setup/results/lab-vm-validation-20261122.md)).
+The steps below are the manual ones;
 [Host requirements](host-requirements.md) puts every step of a new host
-in order. They were run on FreeBSD 15.1-RELEASE-p6, including an in-place
+in order. They were run on FreeBSD 15.1-RELEASE-p6 in a lab VM nested
+under KVM (`hearst`), not on bare metal, including an in-place
 upgrade of a Milestone 3 installation; the native test and its recorded
 result are in
 [tests/integration/rcd](../../tests/integration/rcd/README.md).
@@ -299,9 +302,27 @@ Check and read the archive on the host, whether or not the services run:
 ```sh
 skep-agent audit verify                  # as root
 skep-agent audit export --month 2026-10  # archived entries, one JSON object per line
+skep-agent audit export --unsealed       # as root, agent running: entries not yet sealed, read-only
 skep-api audit verify                    # as root (it switches to skep) or as skep
 skep-api audit export
 ```
+
+`audit verify` and `audit export` (without `--unsealed`) refuse a missing database, and one that
+the service has not yet migrated to the segment index; they create and
+migrate nothing, and write no entries. They open the database read-write,
+however, so SQLite may still touch its files: with the service stopped it
+creates `-wal` and `-shm` and removes them again when the command exits,
+after writing into the database any changes an unclean stop left in
+`-wal`. A database in rollback-journal mode, which neither service leaves
+behind, is switched to WAL. With the service running, the files are not
+changed.
+
+`audit export --unsealed` reads only while the agent runs, and refuses
+while it is stopped: SQLite creates the database's `-wal` and `-shm` files
+even for a read-only open, and would leave them behind on a database no
+service has open. Its entries are not sealed yet, so no segment hash covers
+them; it says so on stderr, with the number of entries, and stdout carries
+only the entries.
 
 `audit verify` prints one line per segment and the hash at the head of the
 chain, and exits non-zero at the first break. Use `--allow-missing` if you
@@ -333,6 +354,10 @@ runs both before every restart ([skep-setup](skep-setup.md#upgrades)).
 
 ## Monitoring health
 
+`/health` and `/healthz` at the root of the port, with or without a
+trailing slash, are not health checks:
+they answer `404` with a JSON error naming `/api/v1/health`.
+
 `GET /api/v1/health` needs no session. Without one it answers only the
 status:
 
@@ -341,6 +366,10 @@ status:
 | `ok` | 200 | Every check passed. |
 | `degraded` | 200 | A non-critical check failed, for example an audit archive. The service serves requests, but needs an operator. |
 | `unavailable` | 503 | A critical check failed: `skep-api` cannot reach the agent, or the agent cannot reach its database. The service cannot serve requests. |
+
+With a session, when the agent's socket does not answer, the `agent`
+check says the agent is down, still starting, or refusing to start, and
+points at `/var/log/daemon.log`, where a refused start is logged. Without a session the answer stays the status alone.
 
 Use the HTTP status for a load balancer or a supervisor, which should act
 only when the service cannot serve. Use the `status` field for alerting,
@@ -408,9 +437,14 @@ pw userdel skep             # also removes the skep group
 
 ## Limits
 
-- Validated on a UFS-root host only. A ZFS-root host is pending FreeBSD
-  validation. The audit archive and retention were also validated with
-  the data directory on a ZFS dataset.
+- The native rc.d harness ran on a UFS-root lab VM nested under KVM
+  only. On a ZFS-root lab VM (`langrishe`) the services were installed by
+  the package, enabled and started by `skep-setup apply`, and running
+  after a reboot
+  ([record](../../tests/integration/setup/results/lab-vm-validation-20261122.md)),
+  without the harness. The audit archive and retention were also validated
+  with the data directory on a ZFS dataset. Nothing here has run on bare
+  metal.
 - Logging to a file with rotation is not offered; use syslog and
   `newsyslog(8)`.
 - The account's UID and GID are fixed at 409 by ADR 0012 (the lowest pair

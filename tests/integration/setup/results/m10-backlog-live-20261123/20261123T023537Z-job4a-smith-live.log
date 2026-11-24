@@ -1,0 +1,47 @@
+=== apply -mgmt vtnet0 -pool tank -admin s4-disabled
+skep-setup apply, root /
+  add      /boot/loader.conf                  kern.racct.enable="1"
+                                                -> append kern.racct.enable="1" to /boot/loader.conf
+                                                RACCT, which Skep's jail limits (RCTL) need; takes effect only after a reboot
+  manual   network                            no guest bridge
+                                                guests can have no NIC until a bridge is allow-listed (--bridge, or --create-bridge with --uplink)
+  manual   packages                           FreeBSD-base repository
+                                                disabled; the pkgbase jail template source needs it (or use the dist source)
+                                                $ printf 'FreeBSD-base: { enabled: yes }\n' >> /usr/local/etc/pkg/repos/FreeBSD.conf
+  warn     api                                first administrator s4-disabled
+                                                exists but is disabled (skep-api admin exists: user "s4-disabled" exists (role admin, disabled)); setup never changes an existing user, so this user cannot administer Skep until an administrator changes it in the web interface or the API
+  15 ok, 1 to add, 1 warnings, 0 conflicts, 2 for you, 0 refused
+Make these 1 changes? [type yes to continue] skep-setup: not confirmed: nothing was changed
+apply-rc=1
+=== apply -mgmt vtnet0 -pool tank -admin s4-viewer
+skep-setup apply, root /
+  add      /boot/loader.conf                  kern.racct.enable="1"
+                                                -> append kern.racct.enable="1" to /boot/loader.conf
+                                                RACCT, which Skep's jail limits (RCTL) need; takes effect only after a reboot
+  manual   network                            no guest bridge
+                                                guests can have no NIC until a bridge is allow-listed (--bridge, or --create-bridge with --uplink)
+  manual   packages                           FreeBSD-base repository
+                                                disabled; the pkgbase jail template source needs it (or use the dist source)
+                                                $ printf 'FreeBSD-base: { enabled: yes }\n' >> /usr/local/etc/pkg/repos/FreeBSD.conf
+  warn     api                                first administrator s4-viewer
+                                                exists but has the role viewer, not admin (skep-api admin exists: user "s4-viewer" exists (role viewer)); setup never changes an existing user, so this user cannot administer Skep until an administrator changes it in the web interface or the API
+  15 ok, 1 to add, 1 warnings, 0 conflicts, 2 for you, 0 refused
+Make these 1 changes? [type yes to continue] skep-setup: not confirmed: nothing was changed
+apply-rc=1
+=== data dir
+before: drwxr-xr-x root:wheel 755
+drwx------  3 root wheel 512 Nov 22 18:40 /var/db/skep/setup
+chmod g+w: drwxrwxr-x 775
+--- check
+skep-setup: /var/db/skep is writable by its group or others (0775); setup will not use Skep's data directory (chmod go-w /var/db/skep)
+check-rc=2
+--- apply
+skep-setup: /var/db/skep is writable by its group or others (0775); setup will not use Skep's data directory (chmod go-w /var/db/skep)
+apply-rc=2
+--- upgrade
+skep-setup: refused: /var/db/skep is writable by its group or others (0775); setup will not use Skep's data directory (chmod go-w /var/db/skep); nothing was changed
+upgrade-rc=3
+after: drwxr-xr-x root:wheel 755
+RESTORED-IDENTICAL
+skep_agent is running as pid 21180 (supervisor pid 21179).
+skep_api is running as pid 21252 (supervisor pid 21251).

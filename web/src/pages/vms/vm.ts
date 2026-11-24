@@ -72,6 +72,8 @@ export function vmErrorHint(code: string): string | undefined {
       return "Snapshots and clones need every disk of the VM in one ZFS pool.";
     case "storage_locked":
       return "The encryption key of the VM's dataset is not loaded; an administrator loads it on the host.";
+    case "disk_device_missing":
+      return "A disk's zvol has no device node and Skep could not bring it back. The error names the dataset and, when an administrator has to act, the zfs command to run on the host.";
   }
   return undefined;
 }

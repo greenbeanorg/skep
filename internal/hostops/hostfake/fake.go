@@ -59,6 +59,11 @@ type Fake struct {
 	BridgeMembers  map[string][]string
 	// FailCreateVolume makes the next CreateVolume calls fail.
 	FailCreateVolume error
+	// MissingDevices simulates zvols without a device node, by dataset
+	// name (ADR 0010 amendment z). EnsureVolumeDevice of one calls the
+	// stopped check, then answers with the stored error; nil is a repair
+	// that worked, and the entry is removed.
+	MissingDevices map[string]error
 	// UnusableDirs maps a directory pool to why it cannot be used.
 	UnusableDirs map[string]string
 
@@ -83,6 +88,10 @@ type Fake struct {
 	// FailStop makes StopJail fail with it, leaving the jail running (as
 	// hostops does when jail -r and jail -R both fail: amendment u).
 	FailStop error
+	// OnStop, when set, runs at the start of every StopJail, before the
+	// fake's lock is taken (a test cancels a context here, as an agent
+	// shutdown does during jail -r).
+	OnStop func()
 	// PresentMACs simulates MAC addresses already present on a bridge (its
 	// own, a member's, or learnt), by bridge (amendment n, SR-03).
 	PresentMACs map[string][]string
@@ -115,6 +124,7 @@ type Fake struct {
 	// leftoverDevfs are the jails with a devfs a removal outside Skep
 	// left on their <root>/dev (amendment l).
 	leftoverDevfs map[string]bool
+	devfsStuck    map[string]bool // their unmount fails (StickDevfs)
 	calls         []string
 	// taps maps a tap to its description and bridge.
 	taps    map[string]fakeTap

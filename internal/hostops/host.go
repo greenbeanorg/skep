@@ -2,7 +2,9 @@ package hostops
 
 import (
 	"errors"
+	"io/fs"
 	"log/slog"
+	"os"
 	"sync"
 	"syscall"
 	"time"
@@ -23,6 +25,9 @@ type system interface {
 	// Exists reports whether a path exists, without following a final
 	// symbolic link.
 	Exists(path string) bool
+	// LstatMode returns the mode of a path without following a final
+	// symbolic link; a missing path is an error matching fs.ErrNotExist.
+	LstatMode(path string) (fs.FileMode, error)
 	// Alive reports whether a process exists.
 	Alive(pid int) bool
 	// ProcessArgs returns a process's argument list.
@@ -70,13 +75,21 @@ type host struct {
 	// mounts reads the mount table and unmounts a leftover devfs by its
 	// fsid (amendment l); tests replace it.
 	mounts mountTable
+
+	// rootFS is the host's / for reading pkg's repository files
+	// (PkgbaseAvailable); tests replace it.
+	rootFS fs.FS
+	// dev holds the waits of EnsureVolumeDevice (amendment z); tests
+	// shorten them.
+	dev deviceTimings
 }
 
 func newHost(conf Confinement, run Runner, sys system, log *slog.Logger) *host {
 	if log == nil {
 		log = slog.Default()
 	}
-	return &host{conf: conf, run: run, sys: sys, log: log, ignoredMedia: map[string]bool{}, listDev: listJailDev, mounts: kernelMounts{}}
+	return &host{conf: conf, run: run, sys: sys, log: log, ignoredMedia: map[string]bool{}, listDev: listJailDev, mounts: kernelMounts{},
+		rootFS: os.DirFS("/"), dev: defaultDeviceTimings()}
 }
 
 // NewFiles returns the Files implementation alone. It is plain file I/O
