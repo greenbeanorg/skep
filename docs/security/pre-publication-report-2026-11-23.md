@@ -165,8 +165,7 @@ GitHub tokens, `$argon2id$` hashes, `password = "…"` assignments, SSH public
 keys, ordinary mailbox addresses) over the lines the 41 commits add, i.e.
 `main` after `a46d8ed` plus the PR commits:
 only `docs/security/pre-publication-report-2026-11-23.md` (b9e0f50065,
-cc1aa8a10a), line 26 of that commit's addition, which is this report's own
-pattern description. Nothing needs removing.
+cc1aa8a10a), where the text is this report's own pattern description. Nothing needs removing.
 
 **Pull request text.** 13 pull requests (#92–#104: titles and bodies), 22
 conversation comments, 0 review comments, 0 reviews; gitleaks and the
@@ -193,7 +192,7 @@ One Actions artifact exists; it was not downloaded.
 
 **Identities on `main`.** Two author addresses: the project account's
 ordinary mailbox address on 54 commits (the older squash merges; Andy
-accepts it as public, 2026-11-24) and its GitHub noreply address on 51.
+has accepted it as public) and its GitHub noreply address on 51.
 Committers: `noreply@github.com` (101) and the project noreply address (4).
 Co-author trailers name `noreply@anthropic.com` and the project noreply
 address only. No other personal address appears.
