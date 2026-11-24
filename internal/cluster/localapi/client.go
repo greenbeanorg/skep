@@ -1,0 +1,95 @@
+package localapi
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"time"
+
+	"github.com/greenbeanorg/skep/pkg/models"
+)
+
+// Client calls the local API on the service's socket. The skep-cluster
+// commands use it; skep-api will from step 8c.
+type Client struct {
+	http *http.Client
+}
+
+// NewClient returns a client for the socket. It does not connect.
+func NewClient(socket string) *Client {
+	return &Client{http: &http.Client{
+		Timeout: 20 * time.Second,
+		Transport: &http.Transport{
+			DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+				return (&net.Dialer{Timeout: 5 * time.Second}).DialContext(ctx, "unix", socket)
+			},
+			DisableKeepAlives: true,
+		},
+	}}
+}
+
+// StatusError is an error answer of the local API.
+type StatusError struct {
+	HTTPStatus int
+	Code       string
+	Message    string
+}
+
+func (e *StatusError) Error() string {
+	return fmt.Sprintf("skep-cluster answered %d %s: %s", e.HTTPStatus, e.Code, e.Message)
+}
+
+// ErrUnavailable means the socket could not be reached or the connection
+// was closed: the service is not running, or this user is not an allowed
+// peer.
+var ErrUnavailable = errors.New("skep-cluster is not reachable on its socket (is the service running, and are you root?)")
+
+func (c *Client) get(ctx context.Context, path string, okStatus func(int) bool, out any) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://skep-cluster"+path, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return fmt.Errorf("%w: %v", ErrUnavailable, err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	if err != nil {
+		return fmt.Errorf("%w: %v", ErrUnavailable, err)
+	}
+	if !okStatus(resp.StatusCode) {
+		var e models.ErrorResponse
+		_ = json.Unmarshal(body, &e)
+		return &StatusError{HTTPStatus: resp.StatusCode, Code: e.Error.Code, Message: e.Error.Message}
+	}
+	return json.Unmarshal(body, out)
+}
+
+func is200(s int) bool { return s == http.StatusOK }
+
+// Health returns the service's health document. A 503 answer is a health
+// document too.
+func (c *Client) Health(ctx context.Context) (models.Health, error) {
+	var h models.Health
+	err := c.get(ctx, PathHealth, func(s int) bool { return s == http.StatusOK || s == http.StatusServiceUnavailable }, &h)
+	return h, err
+}
+
+// Status returns the service's status.
+func (c *Client) Status(ctx context.Context) (Status, error) {
+	var s Status
+	err := c.get(ctx, PathStatus, is200, &s)
+	return s, err
+}
+
+// RaftConfiguration returns the Raft configuration (root only).
+func (c *Client) RaftConfiguration(ctx context.Context) (RaftConfiguration, error) {
+	var rc RaftConfiguration
+	err := c.get(ctx, PathRaftConfiguration, is200, &rc)
+	return rc, err
+}

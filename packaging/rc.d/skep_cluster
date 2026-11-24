@@ -1,0 +1,203 @@
+#!/bin/sh
+#
+# rc.d script for the Skep cluster service (ADR 0013).
+#
+# PROVIDE: skep_cluster
+# REQUIRE: LOGIN
+# KEYWORD: shutdown
+#
+# skep-cluster holds the node key, the cluster membership and the
+# replicated store. Every host is a one-node cluster until it joins
+# others. Initialise the host once, as root, before the first start:
+#
+#   skep-cluster init
+#
+# Then add to /etc/rc.conf (or use sysrc) to enable the service:
+#
+#   skep_cluster_enable="YES"
+#
+# Optional settings and their defaults:
+#
+#   skep_cluster_bin="/usr/local/sbin/skep-cluster"
+#       The service binary.
+#   skep_cluster_runas="skep-cluster"
+#   skep_cluster_rungroup="skep-cluster"
+#       The account and group the service runs as. Both must exist; the
+#       package creates them (UID and GID 410) and this script never does.
+#       It is not the skep account: skep-api must not be able to read the
+#       node key. The service refuses to run as root.
+#   skep_cluster_api_group="skep"
+#       The group of the account skep-api runs as. It may reach the
+#       service's socket; the service then checks each caller's UID.
+#   skep_cluster_data_dir="/var/db/skep/cluster"
+#       The node key and the cluster store, passed as -data-dir. Only the
+#       service account can open it (0700).
+#   skep_cluster_run_dir="/var/run/skep"
+#       Holds the pid files, written by daemon(8) as root.
+#   skep_cluster_socket_dir="/var/run/skep-cluster"
+#       Holds the service's Unix socket, cluster.sock. Recreated at every
+#       start, because /var/run is cleared at boot.
+#   skep_cluster_config="/usr/local/etc/skep/cluster.json"
+#       Written by "skep-cluster init" and "skep-cluster listen"
+#       (root:skep-cluster, 0640): the service reads it and cannot change
+#       it.
+#   skep_cluster_args=""
+#       Extra arguments, for example "-log-level debug".
+#   skep_cluster_restart_delay="5"
+#       Seconds to wait before a crashed service is started again. "0"
+#       turns supervision off.
+#   skep_cluster_syslog_facility="daemon"
+#   skep_cluster_syslog_priority="info"
+#   skep_cluster_syslog_tag="skep-cluster"
+#       skep-cluster logs JSON lines to stderr; daemon(8) sends them to
+#       syslog.
+#   skep_cluster_env=""
+#       Environment for skep-cluster (standard rc.subr variable).
+#
+# The service does not need skep_agent or skep_api and they do not need it
+# yet: it never talks to the agent, and skep-api starts using it with
+# Skep 0.2's replicated users.
+#
+# skep_cluster_flags, skep_cluster_user and skep_cluster_group are
+# deliberately not used: rc.subr would apply them to daemon(8), not to
+# skep-cluster.
+
+. /etc/rc.subr
+
+name="skep_cluster"
+desc="Skep cluster service"
+rcvar="skep_cluster_enable"
+
+load_rc_config "${name}"
+
+: "${skep_cluster_enable:=NO}"
+: "${skep_cluster_bin:=/usr/local/sbin/skep-cluster}"
+: "${skep_cluster_runas:=skep-cluster}"
+: "${skep_cluster_rungroup:=skep-cluster}"
+: "${skep_cluster_api_group:=skep}"
+: "${skep_cluster_data_dir:=/var/db/skep/cluster}"
+: "${skep_cluster_run_dir:=/var/run/skep}"
+: "${skep_cluster_socket_dir:=/var/run/skep-cluster}"
+: "${skep_cluster_config:=/usr/local/etc/skep/cluster.json}"
+: "${skep_cluster_args:=}"
+: "${skep_cluster_restart_delay:=5}"
+: "${skep_cluster_syslog_facility:=daemon}"
+: "${skep_cluster_syslog_priority:=info}"
+: "${skep_cluster_syslog_tag:=skep-cluster}"
+
+# pidfile is the daemon(8) supervisor, which rc.subr signals and waits for.
+# The pid of skep-cluster itself is in skep_cluster_child_pidfile.
+pidfile="${skep_cluster_run_dir}/cluster-supervisor.pid"
+skep_cluster_child_pidfile="${skep_cluster_run_dir}/cluster.pid"
+
+command="/usr/sbin/daemon"
+procname="daemon"
+start_precmd="skep_cluster_precmd"
+start_postcmd="skep_cluster_poststart"
+status_cmd="skep_cluster_status"
+
+# These would be applied to daemon(8) by rc.subr. See the header.
+skep_cluster_flags=""
+unset skep_cluster_user skep_cluster_group
+
+skep_cluster_restart_args=""
+case "${skep_cluster_restart_delay}" in
+0)
+	;;
+*[!0-9]* | "")
+	err 1 "skep_cluster_restart_delay must be a number of seconds"
+	;;
+*)
+	skep_cluster_restart_args="-R ${skep_cluster_restart_delay}"
+	;;
+esac
+
+command_args="-f \
+	-S -l ${skep_cluster_syslog_facility} -s ${skep_cluster_syslog_priority} -T ${skep_cluster_syslog_tag} \
+	-P ${pidfile} -p ${skep_cluster_child_pidfile} \
+	${skep_cluster_restart_args} \
+	-u ${skep_cluster_runas} \
+	${skep_cluster_bin} -config ${skep_cluster_config} -data-dir ${skep_cluster_data_dir} \
+	-socket ${skep_cluster_socket_dir}/cluster.sock ${skep_cluster_args}"
+
+skep_cluster_precmd()
+{
+	if [ ! -x "${skep_cluster_bin}" ]; then
+		err 1 "${skep_cluster_bin} is missing or not executable"
+	fi
+	if ! /usr/bin/id -u "${skep_cluster_runas}" >/dev/null 2>&1; then
+		err 1 "user ${skep_cluster_runas} does not exist; the skep package creates it"
+	fi
+	if [ "$(/usr/bin/id -u "${skep_cluster_runas}")" = "0" ]; then
+		err 1 "skep_cluster_runas must not be root: skep-cluster holds the node key and listens on the network"
+	fi
+	if ! /usr/sbin/pw groupshow "${skep_cluster_rungroup}" >/dev/null 2>&1; then
+		err 1 "group ${skep_cluster_rungroup} does not exist; the skep package creates it"
+	fi
+	if ! /usr/sbin/pw groupshow "${skep_cluster_api_group}" >/dev/null 2>&1; then
+		err 1 "group ${skep_cluster_api_group} does not exist; the skep package creates it"
+	fi
+	if [ ! -f "${skep_cluster_config}" ]; then
+		err 1 "${skep_cluster_config} does not exist: run 'skep-cluster init' as root first"
+	fi
+	if [ ! -d "${skep_cluster_data_dir}" ]; then
+		err 1 "${skep_cluster_data_dir} does not exist: run 'skep-cluster init' as root first"
+	fi
+
+	# The pid directory has the layout skep_agent and skep_api create;
+	# whichever service starts first makes it. The pid files are written
+	# by daemon(8), as root.
+	/usr/bin/install -d -o root -g "${skep_cluster_api_group}" -m 0750 "${skep_cluster_run_dir}" ||
+		err 1 "cannot create ${skep_cluster_run_dir}"
+	# The socket directory belongs to the service, which creates the
+	# socket in it. Its group is skep-api's: on FreeBSD the socket
+	# inherits it, so the service account, skep-api's group and root can
+	# reach the socket and nobody else can.
+	/usr/bin/install -d -o "${skep_cluster_runas}" -g "${skep_cluster_api_group}" -m 0750 \
+		"${skep_cluster_socket_dir}" ||
+		err 1 "cannot create ${skep_cluster_socket_dir}"
+}
+
+# Prints the pid of skep-cluster itself, or nothing when it is not running.
+skep_cluster_server_pid()
+{
+	check_pidfile "${skep_cluster_child_pidfile}" "${skep_cluster_bin}"
+}
+
+# daemon(8) returns as soon as the supervisor exists, even when
+# skep-cluster then fails at once. Wait briefly for it, so that "start"
+# does not report success for a service that is only crash-looping.
+skep_cluster_poststart()
+{
+	_skep_tries=0
+	while [ "${_skep_tries}" -lt 50 ]; do
+		if [ -n "$(skep_cluster_server_pid)" ]; then
+			return 0
+		fi
+		sleep 0.2
+		_skep_tries=$((_skep_tries + 1))
+	done
+	warn "skep-cluster is not running after start; see the ${skep_cluster_syslog_facility} log, tag ${skep_cluster_syslog_tag}"
+	if [ -n "${skep_cluster_restart_args}" ]; then
+		warn "the supervisor keeps retrying every ${skep_cluster_restart_delay}s; use 'service ${name} stop' to stop it"
+	fi
+	return 1
+}
+
+# The default status only looks at the supervisor, which stays up while a
+# failing skep-cluster is restarted over and over. Report the service.
+skep_cluster_status()
+{
+	if [ -z "${rc_pid}" ]; then
+		echo "${name} is not running."
+		return 1
+	fi
+	_skep_cluster_pid=$(skep_cluster_server_pid)
+	if [ -z "${_skep_cluster_pid}" ]; then
+		echo "${name} is not running: the supervisor (pid ${rc_pid}) is up, but skep-cluster has exited and is being restarted."
+		return 1
+	fi
+	echo "${name} is running as pid ${_skep_cluster_pid} (supervisor pid ${rc_pid})."
+}
+
+run_rc_command "$1"

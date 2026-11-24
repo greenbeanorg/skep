@@ -35,6 +35,23 @@ The start order does not matter for correctness. `skep_api` declares
 service can start first or restart alone. Without the agent, the API
 answers node requests with `503 agent_unavailable`.
 
+**A third service, `skep_cluster`** (Milestone 8, step 8a), runs
+`skep-cluster` as the `skep-cluster` account (UID/GID 410, created by the
+package). It is not enabled by `skep-setup` yet, and neither of the other
+two services needs it. To try it on a host:
+
+```sh
+skep-cluster init                    # as root, once; reads the node ID from the running agent
+sysrc skep_cluster_enable=YES
+service skep_cluster start
+skep-cluster status
+```
+
+It opens no network port unless `skep-cluster listen -address <addr>` is
+run. What it does, its files and its socket are in
+[skep-cluster](../architecture/skep-cluster.md). After a package upgrade,
+restart it by hand: `skep-setup upgrade` does not know it yet.
+
 Both scripts create what they need at every start, so a cleared `/var/run`
 is not a problem:
 

@@ -7,7 +7,7 @@ BUILD_DATE := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 GO      ?= go
 PKG     := github.com/greenbeanorg/skep
 BIN_DIR := bin
-CMDS    := skep-agent skep-api skepctl skep-setup
+CMDS    := skep-agent skep-api skep-cluster skepctl skep-setup
 
 LDFLAGS := -s -w \
 	-X $(PKG)/pkg/version.Version=$(VERSION) \

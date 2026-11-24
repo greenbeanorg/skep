@@ -41,15 +41,17 @@ type entry struct {
 }
 
 // layout is the package's content (ADR 0012 Decision 1). It never
-// contains agent.json or api.json, so an upgrade cannot overwrite the
-// administrator's configuration.
+// contains agent.json, api.json or cluster.json, so an upgrade cannot
+// overwrite the host's configuration.
 var layout = []entry{
 	{src: "skep-agent", bin: true, dst: "sbin/skep-agent", owner: "root", group: "wheel", mode: 0o555},
 	{src: "skep-api", bin: true, dst: "sbin/skep-api", owner: "root", group: "wheel", mode: 0o555},
+	{src: "skep-cluster", bin: true, dst: "sbin/skep-cluster", owner: "root", group: "wheel", mode: 0o555},
 	{src: "skep-setup", bin: true, dst: "sbin/skep-setup", owner: "root", group: "wheel", mode: 0o555},
 	{src: "skepctl", bin: true, dst: "bin/skepctl", owner: "root", group: "wheel", mode: 0o555},
 	{src: "packaging/rc.d/skep_agent", dst: "etc/rc.d/skep_agent", owner: "root", group: "wheel", mode: 0o555},
 	{src: "packaging/rc.d/skep_api", dst: "etc/rc.d/skep_api", owner: "root", group: "wheel", mode: 0o555},
+	{src: "packaging/rc.d/skep_cluster", dst: "etc/rc.d/skep_cluster", owner: "root", group: "wheel", mode: 0o555},
 	{src: "packaging/etc/agent.json.sample", dst: "etc/skep/agent.json.sample", owner: "root", group: "wheel", mode: 0o644},
 	{src: "packaging/etc/api.json.sample", dst: "etc/skep/api.json.sample", owner: "root", group: "wheel", mode: 0o644},
 	{src: "LICENSE", dst: "share/licenses/skep/LICENSE", owner: "root", group: "wheel", mode: 0o444},

@@ -4,6 +4,7 @@
 # "go build ./cmd/<name>" without -o writes the binary here
 /skep-agent
 /skep-api
+/skep-cluster
 /skepctl
 /skep-installer
 /skep-setup

@@ -372,6 +372,36 @@ and the two rc.d services were validated on `hearst`, a lab VM nested
 under KVM, on 2026-11-12 (`tests/integration/peercred`,
 `tests/integration/rcd`).
 
+### skep-cluster (Milestone 8, step 8a)
+
+[ADR 0013](../decisions/0013-clustering.md) adds a third process,
+`skep-cluster`, with its own account (`skep-cluster`, UID/GID 410). Step
+8a builds it for one node; details are in
+[skep-cluster](../architecture/skep-cluster.md).
+
+- **The node key is out of `skep-api`'s reach.** It is in
+  `/var/db/skep/cluster` (`0700`, the service account), mode `0600`. The
+  API runs as `skep`, a different UID.
+- **The service never talks to the agent,** and the agent's allow-list
+  (`root`, `skep`) does not admit its account. Only the root-run
+  `skep-cluster init` reads the node ID from the agent, as peer UID 0.
+- **No root-owned file in the data directory.** `init` does its root work
+  first, gives up root for the service account, and only then creates the
+  key and the store.
+- **Its socket admits root and `skep` only,** by kernel peer credentials
+  on top of file permissions, and each operation names which of the two
+  may call it. The service account itself is refused. All operations of
+  8a are reads.
+- **A single host opens no cluster port.** Port 8444 opens only after
+  `skep-cluster listen -address`, on that one address: TLS 1.3 only, a
+  client certificate required and accepted only when its key is pinned in
+  the membership. With one member that is the node's own key, and nothing
+  is served to it.
+- **Not built yet:** joining, the per-RPC identity check, the cluster
+  audit, replicated users. The statement of what one compromised node can
+  do to the others (ADR 0013 B2) belongs to the steps that add a second
+  node and will be written here with them.
+
 ## Host operations and confinement (Milestone 6)
 
 The agent changes the host for the first time in Milestone 6
