@@ -1,11 +1,11 @@
 # ADR 0013: Clustering (Milestone 8)
 
-- Status: **Proposed.** Rewritten on 2026-11-24 as the Milestone 8 design,
-  after Andy chose the direction (Raft inside Skep) with the review chat on
-  2026-11-24. Part A records those decisions in direction. Part B is
-  the proposals, revised on 2026-11-24 after Andy's review. Part C holds
-  his answers and the questions still open. Not to be merged while
-  Proposed.
+- Status: **Accepted** (Andy, 2026-11-24). Rewritten on 2026-11-24 as the
+  Milestone 8 design, after Andy chose the direction (Raft inside Skep)
+  with the review chat on 2026-11-24. Part A records those decisions in
+  direction. Part B is the design as proposed and then revised by his
+  answers and the final review. Part C holds the answers and the final
+  review; no question is open.
 - Date: 2026-11-23 (evaluation draft), 2026-11-24 (rewritten as the design)
 - Depends on: [ADR 0004](0004-privilege-boundary.md) (privilege boundary),
   [ADR 0005](0005-agent-task-engine.md) (task engine),
@@ -914,8 +914,8 @@ the receiving node's API, and recorded in its agent's audit, where it can
 be checked later. Verifying in the agent too would need the agent to hold
 the cluster's pins, from `skep-cluster` (which A3 keeps away from the
 agent) or from its own API (which, compromised, controls the agent
-anyway). This changes ADR 0004; the amendment is drafted there
-(Proposed).
+anyway). This changes ADR 0004; its amendment of 2026-11-24 was
+accepted with this ADR.
 
 **What the inventory is for:** routing and cluster-wide name uniqueness.
 The owning node's agent remains the truth about its guests (ADR 0004). A
@@ -1225,8 +1225,8 @@ previous draft (head `ff265b5`). Part B has been revised to match.
 | 2 | Joiner a non-voter until its fingerprint is confirmed | **Replaced by the two-way fingerprint exchange** (B1); **automatic promotion once caught up** |
 | 3 | Join token lifetime and binding | **Replaced** by the fingerprint exchange; the token is a rejected option in B1 |
 | 4 | Accept that root on one node controls Skep-managed resources on every node | **Yes**, with the fuller statement (B2: guests' disks, password hashes) |
-| 5 | Where the forwarded request's envelope is verified | **In the receiving API; recorded in the agent's audit** (B8; ADR 0004 amendment, Proposed) |
-| 6 | The node's key belongs to `skep-cluster`, not the agent | **Yes** (ADR 0004 amendment, Proposed) |
+| 5 | Where the forwarded request's envelope is verified | **In the receiving API; recorded in the agent's audit** (B8; ADR 0004 amendment, accepted with this ADR) |
+| 6 | The node's key belongs to `skep-cluster`, not the agent | **Yes** (ADR 0004 amendment, accepted with this ADR) |
 | 7 | `skep-cluster` as its own account with a fixed UID/GID | **Yes** |
 | 8 | Joining a host with users | **Replace them after listing and confirmation** (B3) |
 | 9 | Guest names unique across the cluster | **Yes** |
@@ -1263,6 +1263,36 @@ revised to match.
 | 10 | The `join` confirmation: cluster ID and members from the admission, then the host's own users and guests | **Agreed** (B1, B3) |
 | 11 | `join-request` on a one-node cluster reuses its node key | **Yes; a wiped node gets a new key** (B1) |
 
+### Final review, 2026-11-24
+
+Andy accepted the ADR and the ADR 0004 amendment with these changes, all
+worked into the text. No question is open.
+
+| # | Where | Change |
+|---|---|---|
+| F1 | B1, B13 | Skep's membership entries and Raft's configuration are two records; their order and every crash point; a Raft RPC needs both; removal is `RemoveServer` first, then the Skep entry |
+| F2 | B1 | The pin is the identity, checked on every RPC against the applied membership; the source address is not compared; connections closed on removal and expiry; TLS 1.3 on 8444 |
+| F3 | B1, B3 | Only a one-node host joins; its state is moved aside and put back if the join fails; local sessions deleted, not exported |
+| F4 | B3, B7, ADR 0004 | The `skep-cluster` service never touches the agent; the root-run `join` command takes the drain and reads the guests; `node_draining` reason `join` |
+| F5 | B3, B8 | The name check is atomic in the join call; a refusal shows one cluster guest name; reconciliation flags a name conflict and never refuses or renames |
+| F6 | B1 | Pending entries expire by a log entry; `admit` refuses duplicates; withdrawal; the request carries the node ID and the API's pin; who may change the API pin |
+| F7 | B1, B8, B12 | Listeners only on clustered nodes; `skep-cluster listen -address`; `admit` refused without a listen address |
+| F8 | B2 | What a compromised API can do in a cluster; why `admit` stays in the API |
+| F9 | B8 | Reconciliation by a read; a vanished guest's entry removed; delete is agent first; the owner's API writes the task ID; envelope issued-at, query, epoch rules, receiver's quorum state, console streams |
+| F10 | B9 | `skep-cluster` unreachable is no quorum, on a single host too; `skep-api admin` needs quorum |
+| F11 | B3, 8c | The 0.1 migration of users and roles |
+| F12 | B4, B6 | The backup is streamed by the running service (bbolt holds an exclusive lock); no root-owned files in the store's directory; no key in the backup; restore onto another key only with a one-node `recover` |
+| F13 | B10 | Audit keyed by log index; a node's audit starts at its join |
+| F14 | ADR 0004 amendment, B2 | "Every member"; what stays of the databases and of the compromised-API statement; the stored envelope's size limit |
+| F15 | B5, B13 | Forwarding detects operations, not fields; a removed host that is not wiped keeps its last user copy |
+
+Written while applying them, for the record: the build order moves the
+agent's root-only drain operation from 8f to 8d (the join needs it); a
+new leader does not forget a removed node's guests on its own (the
+removal is run again); the 4 KiB limit for the stored envelope; and one
+risk found in B1 (a member that was down across a join can refuse a new
+leader), which is in the backlog.
+
 ## Consequences
 
 - A third service and a third account on every node; three databases to
@@ -1272,8 +1302,8 @@ revised to match.
   down, the API behaves as without quorum (B9), so nothing can be
   created, edited or deleted, and `skep-api admin` cannot change users.
 - ADR 0004 changes, after answers 5 and 6: the node key's owner, and where
-  forwarded identity is verified. The amendment is drafted in ADR 0004
-  (Proposed) and is accepted with this ADR. The agent gains its first
+  forwarded identity is verified. The amendment in ADR 0004 was accepted
+  with this ADR and its replacements are applied there. The agent gains its first
   root-only internal operation (B7).
 - The security overview gains a cluster section: the trust model and the
   join exchange, the compromised-node statement (B2, guests' data and

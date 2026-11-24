@@ -186,12 +186,17 @@ key if any.
   the API.
 - The agent also records the *verified* peer: the UID read from the socket
   (`audit_log.peer_uid`, also mandatory).
-- **Multi-node is the trigger for signed tokens.** Trusting an asserted
+- **Multi-node is the trigger for signed envelopes.** Trusting an asserted
   identity is acceptable while the only caller is a local process that the
-  kernel has identified. As soon as an agent accepts requests that
-  originate on another node, the asserted identity is replaced by a signed,
-  short-lived token that the agent verifies. That work is part of the
-  clustering milestone and must be done before a remote caller exists.
+  kernel has identified. A request that originates on another node reaches
+  an agent only through that agent's own `skep-api`. It carries a signed,
+  short-lived envelope from the originating node's API (ADR 0013 B8),
+  which the receiving node's API verifies, together with the user and
+  their role, before the request reaches its agent. The agent records the
+  envelope and the originating node in its audit entry; it does not
+  verify the envelope itself, and refuses one larger than 4 KiB. That
+  work is part of the clustering milestone and must be done before any
+  request is forwarded. (Amended 2026-11-24.)
 
 Audit is written on both sides. The API records authentication events and
 authorization decisions, including denials that never reach the agent. The
@@ -244,13 +249,19 @@ the API restarts, nothing happens to tasks.
 
 - The API's TLS private key and session secrets are readable by `skep`
   only. The agent never sees them.
-- Password hashes live in `api.db`. The agent never sees them.
-- The node's future mutual-TLS key belongs to the agent and is readable by
-  root only. The API never sees it.
+- Password hashes live in the replicated cluster store, held by
+  `skep-cluster` on every member (voter or not), and in `skep-api`'s read
+  copy in `api.db`. The agent never sees them. (Amended 2026-11-24.)
+- The node's cluster key belongs to `skep-cluster`, which runs as its own
+  account, and is readable by that account only. Neither the API nor the
+  agent sees it. The key `skep-api` uses for node-to-node forwarding
+  (ADR 0013 B8) belongs to `skep-api`; the agent never sees it. (Amended
+  2026-11-24.)
 
 ### Clusters
 
-Not designed here; the cluster technology is undecided. Two constraints
+Designed in ADR 0013 (Raft in an unprivileged `skep-cluster` service).
+(Amended 2026-11-24.) Two constraints
 carry forward. The internal API is independent of its transport, so a
 remote agent can be reached later without changing operations. And any
 network path to an agent will require mutual TLS with peer identity
@@ -318,7 +329,8 @@ Accepted on 2026-11-11 with these outcomes.
 4. **Trust the API's asserted identity, for now.** Accepted, with
    conditions: the actor field is mandatory, it is recorded in the agent's
    audit log, and multi-node operation is the trigger for moving to signed
-   tokens that the agent verifies.
+   envelopes, verified by the receiving node's API and recorded by the
+   agent (amendment of 2026-11-24, ADR 0013 B8).
 5. **Audit on both sides.** Accepted.
 6. **Two processes in dev mode.** Accepted.
 7. **Service account `skep`.** Accepted, for both the user and the group.
@@ -340,7 +352,7 @@ accepting this ADR.
 | Authentication, sessions, RBAC, TLS | Done (Milestone 4, [ADR 0006](0006-api-split-authentication-tls.md)) |
 | First operation that carries a user across the boundary: task cancel, with the actor and the verified peer in the agent's audit log | Done (Milestone 4) |
 | Privileged operations package (`internal/hostops`) and host confinement configuration | With the first privileged operation |
-| Signed per-request tokens | Clustering milestone, before any remote caller |
+| Signed per-request envelopes, verified by the receiving API and recorded in the agent's audit | Milestone 8, step 8e, before any forwarded request |
 
 The agent no longer has a network listener. `skep-api` serves the public
 API and reaches the agent through the socket only.
@@ -552,12 +564,13 @@ hearst layout under `/home/aba/skep-m6`, removed since) would be refused:
   verified. A refusal for a POSIX.1e extended ACL (UFS mounted with `acls`)
   and a getfacl failure are unit-tested only.
 
-## Amendment (2026-11-24, Proposed): cluster identity (ADR 0013)
+## Amendment (2026-11-24, Accepted): cluster identity (ADR 0013)
 
-Status: **Proposed**, 2026-11-24. Drafted from Andy's answers 5 and 6 to
-[ADR 0013](0013-clustering.md) (Part C). Not in force until ADR 0013 is
-accepted; it is accepted or rejected with it. The text above is unchanged
-until then.
+Status: **Accepted** (Andy, 2026-11-24), with
+[ADR 0013](0013-clustering.md). Drafted from Andy's answers 5 and 6 to
+that ADR (Part C). The six replacements below **have been applied to
+the text above**, each marked "Amended 2026-11-24" or citing this
+amendment; the old wording is kept here as the record.
 
 ### Why
 
@@ -569,7 +582,7 @@ owning node's `skep-api`, which reaches its agent over the socket as today
 forwarded request is checked by the receiving node's API (answer 5), and
 the node key belongs to `skep-cluster` (answer 6).
 
-### Sentences that change
+### Sentences that changed
 
 1. **Identity and audit across the boundary**, the bullet "Multi-node is
    the trigger for signed tokens". Replace
@@ -674,8 +687,7 @@ recorded or run.
 
 `docs/security/overview.md`, "Open items": the item "Signed per-request
 tokens replace the API-asserted identity before any agent accepts requests
-from another node" is reworded to the envelope rule above when this
-amendment is accepted.
+from another node" has been reworded to the envelope rule above.
 
 ### What this gives up, stated plainly
 

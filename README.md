@@ -467,7 +467,7 @@ docs/                  architecture, security, and decision records
   [0010 Storage management and jails](docs/decisions/0010-storage-and-jails.md),
   [0011 Anti-spoofing on guest ports](docs/decisions/0011-guest-port-anti-spoofing.md) (Accepted 2026-11-21),
   [0012 Installing, upgrading, and removing Skep](docs/decisions/0012-installer.md) (Accepted),
-  [0013 Clustering (Milestone 8)](docs/decisions/0013-clustering.md) (Proposed)
+  [0013 Clustering (Milestone 8)](docs/decisions/0013-clustering.md) (Accepted 2026-11-24)
 
 ## License
 

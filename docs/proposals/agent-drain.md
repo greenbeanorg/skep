@@ -1,11 +1,11 @@
 # Proposal: an agent drain mode for `skep-setup upgrade`
 
 Status: proposal, no code. **Superseded in design by [ADR 0013](../decisions/0013-clustering.md),
-section B7** (Proposed, 2026-11-24): option B below becomes one of two sources
+section B7** (Accepted, 2026-11-24): option B below becomes one of two sources
 of a single refusal rule in the agent, beside a node maintenance mode set
 through the cluster, with one error code (`node_draining`, reason `upgrade` or
 `maintenance`). This page is kept for the options and risks it records; the
-current proposal is in ADR 0013.
+accepted design is in ADR 0013.
 
 ## Today
 
