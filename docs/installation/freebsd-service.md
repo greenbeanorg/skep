@@ -304,6 +304,13 @@ skep-api audit verify                    # as root (it switches to skep) or as s
 skep-api audit export
 ```
 
+`audit export --unsealed` reads only while the agent runs, and refuses
+while it is stopped: SQLite creates the database's `-wal` and `-shm` files
+even for a read-only open, and would leave them behind on a database no
+service has open. Its entries are not sealed yet, so no segment hash covers
+them; it says so on stderr, with the number of entries, and stdout carries
+only the entries.
+
 `audit verify` prints one line per segment and the hash at the head of the
 chain, and exits non-zero at the first break. Use `--allow-missing` if you
 moved segments away on purpose.

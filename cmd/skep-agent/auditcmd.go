@@ -23,7 +23,9 @@ func runAudit(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 
   skep-agent audit export --unsealed [flags]
         as root, while the agent runs: print the entries not yet sealed, in
-        the same format, opening the database read-only`
+        the same format, opening the database read-only. It refuses while
+        the agent is stopped: SQLite would create the -wal and -shm files
+        even for a read-only open and leave them behind`
 	if len(args) == 0 {
 		fmt.Fprintln(stderr, usage)
 		return errors.New("missing audit command")
@@ -94,7 +96,11 @@ func runAudit(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 		return auditcmd.Verify(ctx, archive, *allowMissing, stdout)
 	}
 	if *unsealed {
-		return auditcmd.ExportUnsealed(ctx, archive, stdout)
+		n, err := auditcmd.ExportUnsealed(ctx, archive, stdout)
+		if err == nil {
+			fmt.Fprintf(stderr, "%d entries exported; they are not sealed yet, so the archive's hash verification does not cover them\n", n)
+		}
+		return err
 	}
 	return auditcmd.Export(ctx, archive, *month, stdout)
 }

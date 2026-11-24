@@ -74,8 +74,8 @@ func TestExportUnsealedWhileInUse(t *testing.T) {
 		t.Fatal(err)
 	}
 	var out bytes.Buffer
-	if err := auditcmd.ExportUnsealed(ctx, a, &out); err != nil {
-		t.Fatal(err)
+	if n, err := auditcmd.ExportUnsealed(ctx, a, &out); err != nil || n != 1 {
+		t.Fatalf("ExportUnsealed = %d, %v", n, err)
 	}
 	got := out.String()
 	if strings.Count(got, "\n") != 1 || !strings.HasPrefix(got, `{"id":2,"occurred_at":"2099-01-01T00:00:00.000Z",`) ||
@@ -117,5 +117,66 @@ func TestOpenReadOnlyRefusesAndCreatesNothing(t *testing.T) {
 	}
 	if _, err := auditcmd.OpenReadOnly(ctx, filepath.Join(dir, "absent.db")); err == nil || !strings.Contains(err.Error(), "no database") {
 		t.Errorf("missing database: %v", err)
+	}
+}
+
+// With archiving turned off nothing is ever sealed and there is no archive
+// directory: every entry is printed, and the directory is not created.
+func TestExportUnsealedArchivingOff(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "agent", "agent.db")
+	w, err := database.Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.Close()
+	if _, err := database.Migrate(ctx, w, migrations.Agent()); err != nil {
+		t.Fatal(err)
+	}
+	for _, at := range []string{"2020-03-10T12:00:00.000Z", "2020-04-10T12:00:00.000Z", "2099-01-01T00:00:00.000Z"} {
+		if _, err := w.Exec(`INSERT INTO audit_log (occurred_at, actor_id, actor_name, peer_uid, action, outcome)
+			VALUES (?, 'system', 'system', 0, 'vm.start', 'success')`, at); err != nil {
+			t.Fatal(err)
+		}
+	}
+	before, err := os.ReadDir(filepath.Dir(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := auditcmd.OpenReadOnly(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	archiveDir := filepath.Join(dir, "agent", "audit-archive")
+	a, err := auditarchive.New(auditarchive.Options{DB: r, Log: auditarchive.AgentLog, Dir: archiveDir,
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	n, err := auditcmd.ExportUnsealed(ctx, a, &out)
+	if err != nil || n != 3 {
+		t.Fatalf("ExportUnsealed = %d, %v", n, err)
+	}
+	lines := strings.Split(strings.TrimSuffix(out.String(), "\n"), "\n")
+	for i, l := range lines {
+		if !strings.HasPrefix(l, fmt.Sprintf(`{"id":%d,`, i+1)) {
+			t.Errorf("line %d: %s", i+1, l)
+		}
+	}
+	if len(lines) != 3 {
+		t.Errorf("printed %d lines:\n%s", len(lines), out.String())
+	}
+	if _, err := os.Stat(archiveDir); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("archive directory after export: %v", err)
+	}
+	after, err := os.ReadDir(filepath.Dir(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(after) != len(before) {
+		t.Errorf("files before %v, after %v", before, after)
 	}
 }

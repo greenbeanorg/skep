@@ -143,12 +143,13 @@ func Export(ctx context.Context, a *auditarchive.Archiver, month string, out io.
 }
 
 // ExportUnsealed prints the entries not yet in a sealed segment, oldest
-// first, one JSON object per line, as Export does. It seals nothing.
-func ExportUnsealed(ctx context.Context, a *auditarchive.Archiver, out io.Writer) error {
+// first, one JSON object per line, as Export does, and returns how many
+// there were. It seals nothing.
+func ExportUnsealed(ctx context.Context, a *auditarchive.Archiver, out io.Writer) (int64, error) {
 	w := bufio.NewWriterSize(out, 256<<10)
-	_, err := a.ExportUnsealed(ctx, func(line []byte) error {
+	n, err := a.ExportUnsealed(ctx, func(line []byte) error {
 		_, err := w.Write(line)
 		return err
 	})
-	return errors.Join(err, w.Flush())
+	return n, errors.Join(err, w.Flush())
 }

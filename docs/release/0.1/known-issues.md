@@ -99,9 +99,11 @@ the source is linked.*
   cause. After the fix the agent came back by itself within 5 s.
 - **`skep-setup check` does not report these paths yet:** its output was the
   same with the agent refused and healthy.
-- **The agent's start-up sweep audit entries have no supported live reader.**
-  They are in the agent's audit log, which the API does not serve, and
-  `skep-agent audit export` reads sealed months only (backlog).
+- **Recent agent audit entries are read on the host, and only while the
+  agent runs.** Entries not yet sealed, such as the start-up sweep's, are
+  read with `skep-agent audit export --unsealed` as root while the agent
+  runs. It refuses while the agent is stopped, and the API does not serve
+  the agent's audit log (backlog).
 - **`user:manage` is admin-equivalent:** a holder can assign any role,
   `admin` included. Grant it only to administrators.
 - **Task error messages can carry command output** (for example the last
