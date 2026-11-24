@@ -44,6 +44,36 @@ func TestReadLoaderFollowsTheLoadersOrder(t *testing.T) {
 	}
 }
 
+// The loader stats a *.conf entry, following links: a link to a regular
+// file is read, and a dangling link, a loop, or a link to a directory is
+// skipped.
+func TestReadLoaderFollowsSymlinksInTheDirectory(t *testing.T) {
+	root := t.TempDir()
+	writeBoot(t, root, map[string]string{
+		"boot/loader.conf":        "a=\"main\"\n",
+		"boot/shared/vm.txt":      "a=\"linked\"\n",
+		"boot/loader.conf.d/keep": "",
+	})
+	dir := filepath.Join(root, "boot/loader.conf.d")
+	for link, target := range map[string]string{
+		"vm.conf": "../shared/vm.txt", "dangling.conf": "../shared/none", "loop.conf": "loop.conf", "dir.conf": "../shared",
+	} {
+		if err := os.Symlink(target, filepath.Join(dir, link)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	l, err := readLoader(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := l.Get("a"); got != "linked" {
+		t.Errorf("a = %q, want the linked file's value", got)
+	}
+	if len(l.Overrides) != 1 {
+		t.Errorf("%d files read, want only the link to a regular file", len(l.Overrides))
+	}
+}
+
 func TestReadLoaderHonoursRenamedDirsAndLocal(t *testing.T) {
 	root := t.TempDir()
 	writeBoot(t, root, map[string]string{

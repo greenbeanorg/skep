@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 )
 
 // The loader's defaults for the variables that name more files
@@ -39,7 +40,8 @@ func readLoader(root string) (RCConf, error) {
 		}
 		seen[p] = true
 		// Stat first: opening a FIFO named here would block.
-		if st, err := os.Stat(hostPath(root, p)); errors.Is(err, fs.ErrNotExist) || (err == nil && !st.Mode().IsRegular()) {
+		// It follows links, as the loader's lfs.attributes does.
+		if st, err := os.Stat(hostPath(root, p)); errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ELOOP) || (err == nil && !st.Mode().IsRegular()) {
 			return nil
 		}
 		v, err := ReadShVars(hostPath(root, p))
@@ -73,7 +75,7 @@ func readLoader(root string) (RCConf, error) {
 			return l, err
 		}
 		for _, e := range entries { // ReadDir sorts by name
-			if e.Type().IsRegular() && strings.HasSuffix(e.Name(), ".conf") {
+			if strings.HasSuffix(e.Name(), ".conf") { // read skips what is not a regular file
 				if err := read(filepath.Join(dir, e.Name())); err != nil {
 					return l, err
 				}
