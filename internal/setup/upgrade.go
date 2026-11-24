@@ -506,9 +506,13 @@ func (u *Upgrader) apiStopFailed(ctx context.Context, want string, stopErr error
 	if !running() {
 		detail = u.restoreAPI(ctx, want, cause, state).Error()
 	}
-	now := map[bool]string{true: "running", false: "not running"}[running()]
+	// Only a reading: a supervisor still holding the failed stop can stop
+	// a running skep_api afterwards (seen on langrishe, 2026-11-23).
+	now := map[bool]string{
+		true:  "was running when checked, but a supervisor still holding the failed stop can stop it afterwards",
+		false: "was not running when checked"}[running()]
 	return &UpgradeIncomplete{
-		Problem: stopFailedText("skep_api", stopErr) + "; skep_api is " + now + " now: " + detail,
+		Problem: stopFailedText("skep_api", stopErr) + "; skep_api " + now + ": " + detail,
 		Check:   "service skep_api status and the API's log (/var/log/daemon.log)",
 		Again:   againAPIStopFailed}
 }
