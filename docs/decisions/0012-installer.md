@@ -7,7 +7,9 @@
   records three build decisions Andy confirmed;
   [the fix-round amendment](#amendment-2026-11-22-fix-round-the-pre-deinstall-guard-and-the-review-fixes)
   records the pre-deinstall guard for 0.1 and the review fixes Andy
-  approved.
+  approved. [The release-asset amendment (2026-11-24)](#amendment-2026-11-24-no-release-asset-for-01),
+  accepted by Andy, defers Decision 8's signed downloads: 0.1 has no
+  release asset.
 - Date: 2026-11-22
 - Depends on: [ADR 0003](0003-read-only-discovery.md) (enabling a
   capability is an administrative act), [ADR 0004](0004-privilege-boundary.md)
@@ -658,6 +660,26 @@ differ, this amendment wins.
 Covered by tests in `internal/setup`, `cmd/skep-setup`,
 `internal/dbbackup` and `scripts/pkgstage`; all of it is pending FreeBSD
 validation on the lab VMs.
+
+## Amendment (2026-11-24): no release asset for 0.1
+
+Accepted by Andy on 2026-11-24. It changes when Decision 8 applies, not
+what it says; where they differ for 0.1, this amendment wins.
+
+- **0.1 has no release asset.** No `skep-<version>.pkg`, `SHA256SUMS` or
+  `SHA256SUMS.sig` is published on GitHub Releases for 0.1, and there is
+  no `pkg` repository.
+- **Users build the package themselves**, as the README describes:
+  `make stage` on a development machine, then `pkg create` on a FreeBSD
+  15 amd64 host, and `pkg install ./skep-0.1.0.pkg`
+  ([packaging.md](../installation/packaging.md)).
+- **Signed packages on GitHub Releases, and the signed repository, are
+  deferred until signing is built.** Decision 8 stays as written and is
+  the plan for the first release that publishes a package; its "signing
+  is a manual release step for 0.1" applies to that release instead.
+  The keys in [What Andy must provide](#what-andy-must-provide), item 4,
+  are needed then.
+- The work is a row in the [backlog](../backlog.md).
 
 ## What Andy must provide
 

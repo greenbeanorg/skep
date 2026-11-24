@@ -12,6 +12,14 @@ never `-k` alone) and read the host with read-only commands (`zfs list`,
 `ifconfig`, `ls /dev/vmm`, the run state files). The guest installation is
 done through the serial console in a browser.
 
+The 0.1 build (the installed package from c8ce17b) had a smoke test on
+`smith` (FreeBSD 15.1-RELEASE-p7, UFS root, nested under KVM) on
+2026-11-24: create, start, stop, force-stop and delete of a VM with one
+zvol disk and no NIC, and a boot from the bootonly ISO to the installer's
+first prompt, seen with `consolectl -wait-for`
+([smoke-0.1-c8ce17b-20261124-smith.md](results/smoke-0.1-c8ce17b-20261124-smith.md)).
+It is not a rerun of the checks below.
+
 Design for the next VM check (hostile frames from inside a real guest, to
 replace the emulated half of M7c item 7): [hostile-guest-design.md](hostile-guest-design.md).
 
