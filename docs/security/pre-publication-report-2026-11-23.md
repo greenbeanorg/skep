@@ -188,7 +188,27 @@ non-empty archives (1006 log files) were scanned:
 - The pattern sweep found nothing. No lab address (10.79.20.x), no lab
   account name and no mailbox address appear in the logs.
 
-One Actions artifact exists; it was not downloaded.
+**The one Actions artifact**, scanned in a follow-up run the same day
+(logs: `/home/aba/skep-test-logs/20261124T152812Z-release-prep2-job1-artifact/`).
+It is `playwright-report` (artifact 14763040320, 224,881 bytes, from run
+45042859721 on PR #52's branch, created 2026-11-22, expiring 2026-11-29).
+The token downloaded it without refusal, and its SHA-256 matches the digest
+GitHub lists. It holds one file, the Playwright HTML report, whose embedded
+zip holds `report.json`; both were extracted and scanned with the same
+method as the logs:
+
+- gitleaks: no findings.
+- Pattern sweep (the patterns above plus lab addresses and lab host names):
+  two hits, both in the report's metadata. Playwright records the tested
+  commit (GitHub's merge commit for PR #52), and its author address is the
+  project account's mailbox address, the one on the 54 older commits that
+  Andy has accepted as public. Playwright also records the first 100,000
+  characters of that PR's diff, which name `hearst`. That is text already
+  in the repository, and lab host names are allowed there.
+- No private key, token, password, hash or lab address appears.
+
+Once the repository is public, anyone signed in to GitHub can download the
+artifact until it expires on 2026-11-29. Nothing in it needs removing.
 
 **Identities on `main`.** Two author addresses: the project account's
 ordinary mailbox address on 54 commits (the older squash merges; Andy
