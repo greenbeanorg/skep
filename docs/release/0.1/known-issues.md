@@ -97,11 +97,14 @@ the source is linked.*
   its health answers 503 `unavailable`. With a session, the `agent` check says
   the socket is not answering and points at `daemon.log`, which holds the
   cause. After the fix the agent came back by itself within 5 s.
-- **`skep-setup check` does not report these paths yet:** its output was the
-  same with the agent refused and healthy.
-- **The agent's start-up sweep audit entries have no supported live reader.**
-  They are in the agent's audit log, which the API does not serve, and
-  `skep-agent audit export` reads sealed months only (backlog).
+- **`skep-setup check` reports a start-check refusal only when it is given
+  the host's answers** (for example `-mgmt`). Without them it exits 2 before
+  it reports the agent. Its exit code 1 also covers other items for the
+  operator, so read the printed "agent start check" line.
+- **Recent entries in the agent's audit log have no supported reader until
+  their month is sealed.** This includes the start-up sweep entries.
+  `skep-agent audit export` reads sealed months only, and the API does not
+  serve the agent's log, by design (backlog).
 - **`user:manage` is admin-equivalent:** a holder can assign any role,
   `admin` included. Grant it only to administrators.
 - **Task error messages can carry command output** (for example the last
