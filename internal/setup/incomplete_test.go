@@ -64,7 +64,7 @@ func TestApplyFirstActionFailsChangedNothing(t *testing.T) {
 	e.runner.fail["vmm_load"] = errors.New("sysrc: boom")
 	j, err := e.applier().Apply(context.Background(), compute(t, newBridgeOpts(root), facts()))
 	wantNotIncomplete(t, err)
-	if !strings.Contains(err.Error(), "nothing was changed") || !strings.Contains(err.Error(), "skep-setup rollback "+j.ID) {
+	if !strings.Contains(err.Error(), "the host's configuration was not changed") || !strings.Contains(err.Error(), "skep-setup rollback "+j.ID) {
 		t.Fatal(err)
 	}
 }
@@ -385,7 +385,7 @@ func TestSaveFailedNothingChanged(t *testing.T) {
 	j := &Journal{ID: "20261123T000000Z", Command: "apply", Entries: []Entry{{Action: Action{Type: ActMkdir, File: "/x"}}}}
 	err := a.saveFailed(j, make([]effect, 1), errors.New("disk full"))
 	wantNotIncomplete(t, err)
-	if !strings.Contains(err.Error(), "nothing was changed") || !strings.Contains(err.Error(), "skep-setup rollback "+j.ID) || !strings.Contains(err.Error(), "disk full") {
+	if !strings.Contains(err.Error(), "the host's configuration was not changed") || !strings.Contains(err.Error(), "skep-setup rollback "+j.ID) || !strings.Contains(err.Error(), "disk full") {
 		t.Fatal(err)
 	}
 }
@@ -427,6 +427,24 @@ func TestCancelledBeforeActionDoesNotBlameIt(t *testing.T) {
 	wantNotIncomplete(t, err)
 	msg := err.Error()
 	if !strings.Contains(msg, "before") || !strings.Contains(msg, "did not run") || strings.Contains(msg, " failed:") {
+		t.Fatalf("message: %v", err)
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("cause lost: %v", err)
+	}
+}
+
+// A run cancelled with nothing changed whose journal could not be saved
+// still leaves the journal directory, so the message names the rollback.
+func TestCancelledSaveFailedNamesTheRollback(t *testing.T) {
+	root := stockHost(t)
+	a := newApplyEnv(t, root).applier()
+	j := &Journal{ID: "20261123T000000Z", Command: "apply", Entries: []Entry{{Action: Action{Type: ActMkdir, File: "/x"}}}}
+	err := a.cancelled(j, 0, make([]effect, 1), context.Canceled) // the journal's directory does not exist, so the save fails
+	wantNotIncomplete(t, err)
+	msg := err.Error()
+	if !strings.Contains(msg, "could not be saved") || !strings.Contains(msg, "skep-setup rollback "+j.ID) ||
+		!strings.Contains(msg, "the host's configuration was not changed") || strings.Contains(msg, "nothing was changed") {
 		t.Fatalf("message: %v", err)
 	}
 	if !errors.Is(err, context.Canceled) {

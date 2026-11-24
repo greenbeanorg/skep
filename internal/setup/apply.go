@@ -96,6 +96,10 @@ func (a *Applier) Apply(ctx context.Context, p Plan) (*Journal, error) {
 	}
 	j, err := a.newJournal(cmd, acts)
 	if err != nil {
+		var partial *partialJournalError
+		if errors.As(err, &partial) {
+			return nil, fmt.Errorf("could not create the journal: %w; no action ran, so the host's configuration was not changed", err)
+		}
 		return nil, fmt.Errorf("could not create the journal: %w; no action ran, so nothing was changed", err)
 	}
 	backedUp := map[string]bool{}
@@ -188,13 +192,19 @@ func (a *Applier) newJournal(command string, acts []Action) (*Journal, error) {
 	// From here the directory exists, and the next plan refuses on it as
 	// an unfinished run until it is rolled back.
 	if err := os.Mkdir(filepath.Join(JournalDir(a.Root, j.ID), "files"), 0o700); err != nil {
-		return nil, fmt.Errorf("%w (clear the partial journal before running %s again: skep-setup rollback %s)", err, command, j.ID)
+		return nil, &partialJournalError{fmt.Errorf("%w (clear the partial journal before running %s again: skep-setup rollback %s)", err, command, j.ID)}
 	}
 	if err := j.save(a.Root); err != nil {
-		return nil, fmt.Errorf("%w (clear the partial journal before running %s again: skep-setup rollback %s)", err, command, j.ID)
+		return nil, &partialJournalError{fmt.Errorf("%w (clear the partial journal before running %s again: skep-setup rollback %s)", err, command, j.ID)}
 	}
 	return j, nil
 }
+
+// partialJournalError is a journal creation that failed after the journal's
+// directory was made, so the directory is left for rollback to clear.
+type partialJournalError struct{ error }
+
+func (e *partialJournalError) Unwrap() error { return e.error }
 
 // fail records a failed action. With nothing changed it is a plain error
 // (exit 3); after any change, or when the failed action may have changed
@@ -213,7 +223,7 @@ func (a *Applier) fail(j *Journal, i int, effects []effect, err error) error {
 	if serr != nil {
 		return fmt.Errorf("%w (and the journal could not be saved: %v)", err, serr)
 	}
-	return fmt.Errorf("%s failed: %w; nothing was changed. Clear this run before running %s again: skep-setup rollback %s",
+	return fmt.Errorf("%s failed: %w; the host's configuration was not changed. Clear this run before running %s again: skep-setup rollback %s",
 		j.Entries[i].Action, err, j.Command, j.ID)
 }
 
@@ -233,16 +243,17 @@ func (a *Applier) cancelled(j *Journal, i int, effects []effect, cause error) er
 		return inc
 	}
 	if serr != nil {
-		return fmt.Errorf("%s; nothing was changed (and the journal could not be saved: %v): %w", point, serr, cause)
+		return fmt.Errorf("%s; the host's configuration was not changed (and the journal could not be saved: %v). Clear this run before running %s again: skep-setup rollback %s: %w",
+			point, serr, j.Command, j.ID, cause)
 	}
-	return fmt.Errorf("%s; nothing was changed. Clear this run before running %s again: skep-setup rollback %s: %w",
+	return fmt.Errorf("%s; the host's configuration was not changed. Clear this run before running %s again: skep-setup rollback %s: %w",
 		point, j.Command, j.ID, cause)
 }
 
 // saveFailed is a journal that could not be saved after an action.
 func (a *Applier) saveFailed(j *Journal, effects []effect, err error) error {
 	if !anyEffect(effects) {
-		return fmt.Errorf("the journal could not be saved: %w; nothing was changed. Clear this run before running %s again: skep-setup rollback %s",
+		return fmt.Errorf("the journal could not be saved: %w; the host's configuration was not changed. Clear this run before running %s again: skep-setup rollback %s",
 			err, j.Command, j.ID)
 	}
 	inc := newIncomplete(j, effects, fmt.Sprintf("the journal could not be saved (%v), so it may not list the last change", err))
