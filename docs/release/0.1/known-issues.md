@@ -101,10 +101,11 @@ the source is linked.*
   the host's answers** (for example `-mgmt`). Without them it exits 2 before
   it reports the agent. Its exit code 1 also covers other items for the
   operator, so read the printed "agent start check" line.
-- **Recent entries in the agent's audit log have no supported reader until
-  their month is sealed.** This includes the start-up sweep entries.
-  `skep-agent audit export` reads sealed months only, and the API does not
-  serve the agent's log, by design (backlog).
+- **Recent agent audit entries are read on the host, and only while the
+  agent runs.** Entries not yet sealed, such as the start-up sweep's, are
+  read with `skep-agent audit export --unsealed` as root while the agent
+  runs. It refuses while the agent is stopped, and the API does not serve
+  the agent's audit log (backlog).
 - **`user:manage` is admin-equivalent:** a holder can assign any role,
   `admin` included. Grant it only to administrators.
 - **Task error messages can carry command output** (for example the last

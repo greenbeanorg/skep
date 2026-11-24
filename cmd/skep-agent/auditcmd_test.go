@@ -246,3 +246,17 @@ func TestAuditCommandErrors(t *testing.T) {
 		}
 	}
 }
+
+func TestAuditExportUnsealedRefusals(t *testing.T) {
+	dataDir, _ := sealedDataDir(t)
+	if _, err := auditCommand(t, dataDir, "export", "-unsealed", "-month", "2020-04"); err == nil || !strings.Contains(err.Error(), "cannot be combined") {
+		t.Errorf("--unsealed with --month: %v", err)
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("the refusal is for a user other than root")
+	}
+	out, err := auditCommand(t, dataDir, "export", "-unsealed")
+	if err == nil || !strings.Contains(err.Error(), "must run as root") || out != "" {
+		t.Errorf("--unsealed as uid %d: %v, printed %q", os.Geteuid(), err, out)
+	}
+}
