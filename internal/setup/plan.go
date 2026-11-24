@@ -331,6 +331,7 @@ func Compute(ctx context.Context, o Options, f Facts) (Plan, error) {
 	b.loaderLines()
 	b.kldList()
 	b.liveModules()
+	b.staleTunables()
 	b.storage()
 	b.management()
 	b.bridges()
@@ -441,35 +442,6 @@ func (b *builder) refuse(area, what, detail string) {
 }
 func (b *builder) add(area, what, detail string, a Action) {
 	b.item(Item{Kind: Add, Area: area, What: what, Detail: detail, Action: &a})
-}
-
-func readLoader(root string) (RCConf, error) {
-	var l RCConf
-	var err error
-	if l.Main, err = ReadShVars(hostPath(root, loaderConfPath)); err != nil {
-		return l, err
-	}
-	local, err := ReadShVars(hostPath(root, "/boot/loader.conf.local"))
-	if err != nil {
-		return l, err
-	}
-	if !local.Missing {
-		l.Overrides = append(l.Overrides, local)
-	}
-	entries, err := os.ReadDir(hostPath(root, "/boot/loader.conf.d"))
-	if err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return l, err
-	}
-	for _, e := range entries {
-		if e.Type().IsRegular() && strings.HasSuffix(e.Name(), ".conf") {
-			v, err := ReadShVars(hostPath(root, "/boot/loader.conf.d/"+e.Name()))
-			if err != nil {
-				return l, err
-			}
-			l.Overrides = append(l.Overrides, v)
-		}
-	}
-	return l, nil
 }
 
 // platform: FreeBSD 15.x amd64 only, kernel and userland at the same

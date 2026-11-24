@@ -211,7 +211,8 @@ func (s *Service) Capabilities(ctx context.Context) (models.ContainerCapabilitie
 	if err != nil {
 		return models.ContainerCapabilities{}, err
 	}
-	return models.ContainerCapabilities{RCTL: info.Enabled, MaxCPUPercent: 100 * info.CPUs}, nil
+	return models.ContainerCapabilities{RCTL: info.Enabled, MaxCPUPercent: 100 * info.CPUs,
+		MaxLockedMemoryBytes: s.maxLocked}, nil
 }
 
 // jailLimits are a container's RCTL limits as hostops takes them.

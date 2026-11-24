@@ -45,6 +45,9 @@ type Facts struct {
 	// false when the variable is absent or could not be read. Nil when
 	// the prober cannot read it at all: callers treat that as differing.
 	Kenv func(name string) (value string, ok bool)
+	// KenvNames lists the kernel environment's variable names. Nil when
+	// the prober cannot; a failed read returns none.
+	KenvNames func() []string
 }
 
 // Bridge is the run-time state of one bridge.

@@ -540,3 +540,23 @@ func TestConsoleLogIsCleanedWhenServed(t *testing.T) {
 		t.Fatalf("short log = %+v, %v", log, err)
 	}
 }
+
+// The system document reports the host's locked-memory total in effect:
+// the setting when there is one, otherwise a quarter of physical memory.
+func TestCapabilitiesReportLockedMemoryTotal(t *testing.T) {
+	ctx := context.Background()
+	caps, err := newFixture(t).svc.Capabilities(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if caps.MaxLockedMemoryBytes != 4<<30 {
+		t.Fatalf("default total = %d, want a quarter of 16 GiB", caps.MaxLockedMemoryBytes)
+	}
+	caps, err = newFixture(t, func(o *Options) { o.MaxLockedMemory = 1 << 30 }).svc.Capabilities(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if caps.MaxLockedMemoryBytes != 1<<30 {
+		t.Fatalf("configured total = %d", caps.MaxLockedMemoryBytes)
+	}
+}

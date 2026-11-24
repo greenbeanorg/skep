@@ -117,19 +117,19 @@ func TestRemoveLeftoverDevfsRefusals(t *testing.T) {
 
 	m := &fakeMounts{table: []fsMount{{On: root + "/dev", FSType: "devfs"}}}
 	h.mounts = m
-	if _, err := h.removeLeftoverDevfs(ctrA, root); err == nil || len(m.unmounted) != 0 {
+	if _, err := h.removeLeftoverDevfs(ctrA, root); !errors.Is(err, ErrLeftoverDevfsNotRemoved) || len(m.unmounted) != 0 {
 		t.Fatalf("a devfs without an fsid: %v, unmounted %v", err, m.unmounted)
 	}
 
 	m = &fakeMounts{table: []fsMount{{On: root + "/dev", FSType: "devfs", FSID: [2]int32{4, 4}}}, unmountErr: errors.New("EBUSY")}
 	h.mounts = m
-	if _, err := h.removeLeftoverDevfs(ctrA, root); err == nil || !strings.Contains(err.Error(), "EBUSY") {
+	if _, err := h.removeLeftoverDevfs(ctrA, root); !errors.Is(err, ErrLeftoverDevfsNotRemoved) || !strings.Contains(err.Error(), "EBUSY") {
 		t.Fatalf("an unmount failure: %v", err)
 	}
 
 	h.mounts = &fakeMounts{err: errors.New("no table")}
-	if _, err := h.removeLeftoverDevfs(ctrA, root); err == nil {
-		t.Fatal("a mount table that could not be read was ignored")
+	if _, err := h.removeLeftoverDevfs(ctrA, root); err == nil || errors.Is(err, ErrLeftoverDevfsNotRemoved) {
+		t.Fatalf("a mount table that could not be read: %v", err)
 	}
 
 	for _, bad := range []string{"relative/root", root + "/../" + ctrA} {

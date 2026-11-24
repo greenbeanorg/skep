@@ -440,7 +440,20 @@ func (j fakeJails) RemoveLeftoverDevfs(_ context.Context, pool, containerID stri
 	if _, ok := f.jails[containerID]; ok {
 		return nil, &models.Error{Code: models.CodeContainerNotStopped, Message: "the jail is running"}
 	}
+	if f.leftoverDevfs[containerID] && f.devfsStuck[containerID] {
+		return nil, fmt.Errorf("fake unmount: EBUSY: %w", hostops.ErrLeftoverDevfsNotRemoved)
+	}
 	return f.removeLeftoverDevfsLocked(containerID), nil
+}
+
+// StickDevfs makes the unmount of a jail's leftover devfs fail.
+func (f *Fake) StickDevfs(containerID string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.devfsStuck == nil {
+		f.devfsStuck = map[string]bool{}
+	}
+	f.devfsStuck[containerID] = true
 }
 
 func (f *Fake) removeLeftoverDevfsLocked(containerID string) []string {
