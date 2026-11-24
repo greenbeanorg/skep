@@ -333,6 +333,9 @@ runs both before every restart ([skep-setup](skep-setup.md#upgrades)).
 
 ## Monitoring health
 
+`/health` and `/healthz` at the root of the port are not health checks:
+they answer `404` with a JSON error naming `/api/v1/health`.
+
 `GET /api/v1/health` needs no session. Without one it answers only the
 status:
 
@@ -343,8 +346,8 @@ status:
 | `unavailable` | 503 | A critical check failed: `skep-api` cannot reach the agent, or the agent cannot reach its database. The service cannot serve requests. |
 
 With a session, when the agent's socket does not answer, the `agent`
-check says so and points at `/var/log/daemon.log`, where a refused start
-is logged. Without a session the answer stays the status alone.
+check says the agent is down, still starting, or refusing to start, and
+points at `/var/log/daemon.log`, where a refused start is logged. Without a session the answer stays the status alone.
 
 Use the HTTP status for a load balancer or a supervisor, which should act
 only when the service cannot serve. Use the `status` field for alerting,

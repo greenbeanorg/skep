@@ -132,7 +132,7 @@ func (c *Client) Close() { c.http.CloseIdleConnections() }
 
 // AgentNotAnsweringReason is the agent check's error when the agent's
 // socket does not answer.
-const AgentNotAnsweringReason = "the host agent's socket is not answering: the agent is down or refusing to start; see /var/log/daemon.log"
+const AgentNotAnsweringReason = "the host agent's socket is not answering: the agent is down, still starting, or refusing to start; see /var/log/daemon.log"
 
 // Health returns the agent's health document. When the agent cannot be
 // reached the result is an unavailable document saying so; it never fails.

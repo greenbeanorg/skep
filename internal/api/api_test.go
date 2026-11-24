@@ -262,6 +262,37 @@ func TestUnknownPathsAndMethods(t *testing.T) {
 	}
 }
 
+// The usual health-check paths must not reach the interface, whose 200
+// would read as a passing check; other paths still do.
+func TestHealthPathsAreNotTheInterface(t *testing.T) {
+	ui := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte("<html>ui</html>"))
+	})
+	h := NewHandler(Options{Backend: newBackend(), UI: ui, Logger: slog.New(slog.NewJSONHandler(&bytes.Buffer{}, nil))})
+	get := func(method, path string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(method, path, nil))
+		return rec
+	}
+	for _, path := range []string{"/health", "/healthz"} {
+		rec := get(http.MethodGet, path)
+		body := rec.Body.String()
+		wantError(t, rec, http.StatusNotFound, httpkit.CodeNotFound)
+		if !strings.Contains(body, "/api/v1/health") || strings.Contains(body, "<html") {
+			t.Errorf("%s: body %s", path, body)
+		}
+		if rec := get(http.MethodHead, path); rec.Code != http.StatusNotFound || rec.Body.Len() != 0 {
+			t.Errorf("HEAD %s: %d, %d bytes", path, rec.Code, rec.Body.Len())
+		}
+	}
+	for _, path := range []string{"/", "/vms", "/health/x", "/healthy"} {
+		if rec := get(http.MethodGet, path); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "ui") {
+			t.Errorf("%s: %d %s", path, rec.Code, rec.Body)
+		}
+	}
+}
+
 func TestHeadHasNoBody(t *testing.T) {
 	rec := do(t, newBackend(), http.MethodHead, "/api/v1/health", nil)
 	if rec.Code != http.StatusOK || rec.Body.Len() != 0 {
