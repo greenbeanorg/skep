@@ -2657,3 +2657,28 @@ failure (`chflags schg` on the jail's `jail.conf`): GET and the list showed
 showed "the last stop failed: …"; after the flag was cleared a stop
 succeeded and cleared the detail. Record:
 [jail-stop-fixround-20261123.md](../../tests/integration/jails/results/jail-stop-fixround-20261123.md).
+
+## Amendment ab (Accepted): cloning a started jail with a static address
+
+- Status: **Accepted**, 2026-11-23 (Andy). Built by PR #80.
+
+**The problem.** Amendment k asks for new addressing when a source has a
+static address, and decision 13 forbids writing addressing into a tree that
+has run code. For a source that had started, a request without new
+addressing was refused with `clone_addressing_required` (422), which sent
+the client to a second request that could only fail with
+`container_started` (409).
+
+**The rule.** A clone of a source that has a static address and has started
+is always `container_started` (409), with or without new addressing. The
+check runs before the addressing check.
+
+**What does not change.** A source with a static address that has never
+started still needs new addressing on every static NIC
+(`clone_addressing_required`, 422, naming the slots). A DHCP source can
+still be cloned after it has started.
+
+**Contract.** For a started source with a static address and no new
+addressing, the status changes from 422 to 409 and the code from
+`clone_addressing_required` to `container_started`. Andy accepted this
+change on 2026-11-23.

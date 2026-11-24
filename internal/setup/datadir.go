@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"syscall"
+
+	"github.com/greenbeanorg/skep/internal/startcheck"
 )
 
 // dataDirChain is Skep's data directory, setup's directory in it, and the
@@ -82,7 +84,29 @@ func CheckDataDir(root string) error {
 	if filepath.Clean(root) != "/" {
 		return nil
 	}
-	return asRefusal(checkDataDir("/", statUID))
+	if err := asRefusal(checkDataDir("/", statUID)); err != nil {
+		return err
+	}
+	fsys, ok := dataDirFS()
+	if !ok {
+		return nil
+	}
+	return asRefusal(checkDataDirRules(fsys))
+}
+
+// checkDataDirRules applies the agent's start-check rules (owner, mode and
+// ACL of the directory and of every parent up to /) to setup's directory.
+func checkDataDirRules(fsys startcheck.FS) error {
+	err := startcheck.Check(fsys, []startcheck.Target{{Path: dataRoot + "/setup", What: "Skep's data directory", Optional: true}})
+	var r *startcheck.Refusal
+	if !errors.As(err, &r) {
+		return err
+	}
+	msg := r.Path + " " + r.Why + "; setup will not use Skep's data directory"
+	if r.Fix != "" {
+		msg += " (" + r.Fix + ")"
+	}
+	return errors.New(msg)
 }
 
 func asRefusal(err error) error {

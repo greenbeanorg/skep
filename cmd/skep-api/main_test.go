@@ -22,6 +22,7 @@ import (
 
 	_ "modernc.org/sqlite"
 
+	"github.com/greenbeanorg/skep/internal/agentclient"
 	"github.com/greenbeanorg/skep/internal/agentproto"
 	"github.com/greenbeanorg/skep/internal/internalapi"
 	"github.com/greenbeanorg/skep/internal/tasks"
@@ -355,6 +356,9 @@ func TestRunServesAPIThroughTheSocket(t *testing.T) {
 	get(t, c, base+"/api/v1/health", http.StatusServiceUnavailable, &health)
 	if health.Status != models.HealthUnavailable || health.Checks["agent"].Status != models.HealthUnavailable {
 		t.Errorf("health without an agent = %+v", health)
+	}
+	if got := health.Checks["agent"].Error; got != agentclient.AgentNotAnsweringReason {
+		t.Errorf("agent check reason = %q", got)
 	}
 	var apiErr models.ErrorResponse
 	get(t, c, base+"/api/v1/system", http.StatusServiceUnavailable, &apiErr)
