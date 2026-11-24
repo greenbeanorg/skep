@@ -51,6 +51,14 @@ export interface paths {
          *     one. Neither is critical. A check is absent when archiving is
          *     turned off.
          *
+         *     `nested_interrupts` appears only on a host that runs under another
+         *     hypervisor with `hw.vmm.vmx.cap.virtual_interrupt_delivery` not 0,
+         *     where the first VM start can freeze the whole host. It is
+         *     `degraded`, is not critical, and names the `loader.conf` line.
+         *     The condition is evaluated once, at agent start: if `vmm` is loaded
+         *     after the agent started, there is no warning and no check until the
+         *     agent restarts.
+         *
          *     Two concern storage (ADR 0010 decision 15), both from the agent's
          *     resource sample (`GET /metrics`, at most a minute old):
          *     `storage_capacity` is `degraded` when an allow-listed pool or
