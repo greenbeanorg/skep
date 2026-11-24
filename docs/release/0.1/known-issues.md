@@ -94,12 +94,14 @@ the source is linked.*
   and never gives up, so the refusal repeats until the path is fixed or
   `service skep_agent stop` is run. syslogd collapses the repeats into "last
   message repeated N times", so count those too. `skep_api` keeps running and
-  its health answers 503 `unavailable` without the reason, which is only in
-  `daemon.log`. After the fix the agent came back by itself within 5 s.
+  its health answers 503 `unavailable`. With a session, the `agent` check says
+  the socket is not answering and points at `daemon.log`, which holds the
+  cause. After the fix the agent came back by itself within 5 s.
 - **`skep-setup check` does not report these paths yet:** its output was the
   same with the agent refused and healthy.
-- **The data-directory check in `skep-setup` reads mode bits only**, not
-  ACLs, so it can pass a directory the agent then refuses.
+- **The agent's start-up sweep audit entries have no supported live reader.**
+  They are in the agent's audit log, which the API does not serve, and
+  `skep-agent audit export` reads sealed months only (backlog).
 - **`user:manage` is admin-equivalent:** a holder can assign any role,
   `admin` included. Grant it only to administrators.
 - **Task error messages can carry command output** (for example the last
