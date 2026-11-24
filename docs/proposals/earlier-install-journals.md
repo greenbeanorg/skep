@@ -44,12 +44,15 @@ Reject D: the journal is the only record of what setup did to `rc.conf` and
   two can ever differ (check `journal.go`'s listing before building).
 - An interrupted remove (incomplete journal) must not count as completed.
 - A revert that left a line because it had changed was "settled" by being
-  reported; after B a later plan no longer mentions it. The plan should say
-  how many earlier applies it ignored and why, so nothing disappears
-  silently.
+  reported; after B a later plan no longer mentions it. The plan should
+  list the earlier applies it ignored, by journal ID, and why, so nothing
+  disappears silently (the review's answer to question 2).
 
 ## Questions for Andy
 
 1. Accept B?
 2. Should the plan list the ignored earlier applies by journal ID, or only
    count them?
+   **Review's answer (2026-11-24): list them by journal ID.** The plan names
+   each ignored earlier apply by its journal ID, so the operator can find
+   the journal it means; a count alone would not say which ones.
