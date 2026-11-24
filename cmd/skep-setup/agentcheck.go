@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -26,6 +27,23 @@ func (e env) agentStartFS(root string) (startcheck.FS, string) {
 		return nil, "it runs on FreeBSD only"
 	}
 	return fsys, ""
+}
+
+// reportAgentWithoutPlan prints the agent's state and start check when
+// check has no plan because -mgmt is missing: neither needs
+// them. The caller still returns the usage error, so the exit code is
+// unchanged.
+func reportAgentWithoutPlan(ctx context.Context, root string, e env) {
+	fmt.Fprintf(e.stdout, "skep-setup check, root %s (read-only; nothing was changed): no plan without -mgmt\n", root)
+	var f setup.Facts
+	if fsys, _ := e.agentStartFS(root); fsys != nil {
+		var err error
+		if f, err = e.prober.Probe(ctx); err != nil {
+			fmt.Fprintf(e.stdout, "  agent: state and start check not read (%v)\n", err)
+			return
+		}
+	}
+	printItems(e.stdout, reportAgent(root, f, e), false)
 }
 
 // reportAgent prints whether the agent runs and its start check, and
