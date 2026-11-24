@@ -9,9 +9,13 @@ and the step 6 "Decision on package scripts" with its "Resolved" notes.
 > **Validation status.** The pkgbase builder ran on FreeBSD 15.1-RELEASE-p6
 > (amd64, UFS root, file-backed test pool) through its FreeBSD test binary
 > with the real host operations
-> ([record](../../tests/integration/jails/results/step6-build.txt)). A
-> build through a deployed agent's task and API, the `dist` source, and a
-> ZFS-root host are **pending FreeBSD validation**.
+> ([record](../../tests/integration/jails/results/step6-build.txt)), and
+> through a deployed agent's task and API
+> ([record](../../tests/integration/jails/results/step6-deployed.txt)).
+> On 2026-11-22 the `dist` source ran on a UFS-root lab VM and a pkgbase
+> build through the installed agent on a ZFS-root lab VM
+> ([record](../../tests/integration/setup/results/lab-vm-validation-20261122.md)).
+> All of these are lab VMs nested under KVM; bare metal is not validated.
 
 ## What a template is
 
