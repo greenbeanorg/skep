@@ -6,11 +6,15 @@ networking, and a serial console in the web interface. The design is
 [ADR 0009](../decisions/0009-first-vm-bhyve.md).
 
 > **Validation status.** Verified on FreeBSD 15.1-RELEASE (amd64,
-> UFS-root, itself a KVM guest): FreeBSD was installed into a VM through
-> the browser console, and every check in
+> UFS root) in a lab VM nested under KVM (`hearst`), on 2026-11-14 with
+> build 44a8784: FreeBSD was installed into a VM through the browser
+> console and booted to its login prompt, and every check in
 > [tests/integration/vm](../../tests/integration/vm/README.md) passed
-> (guest isolation once the lab firewall was fixed). A ZFS-root
-> host, real disks, `e1000`, `nvme`, and `ahci-hd` are still pending.
+> (guest isolation once the lab firewall was fixed). Later builds only
+> started VMs at the bhyve level, without looking inside the guest
+> ([known issues](../release/0.1/known-issues.md)). Bare metal, a guest
+> operating system on a ZFS-root host, real disks, `e1000`, `nvme`, and
+> `ahci-hd` are still pending.
 
 ## What this release does and does not do
 

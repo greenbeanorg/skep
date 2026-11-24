@@ -368,7 +368,9 @@ means only one was restarted.
 
 The actor of a request is the authenticated user. The health check that
 `skep-api` makes without a user carries the actor `skep-api`. The socket
-and the two rc.d services are pending FreeBSD validation.
+and the two rc.d services were validated on `hearst`, a lab VM nested
+under KVM, on 2026-11-12 (`tests/integration/peercred`,
+`tests/integration/rcd`).
 
 ## Host operations and confinement (Milestone 6)
 
@@ -786,7 +788,11 @@ Database backups (`db backup`) are `0600` in a `0700` directory and
 contain everything the databases do (password hashes, session hashes,
 audit logs): treat them as the databases themselves.
 
-All of this is pending FreeBSD validation.
+All of this ran on two lab VMs nested under KVM, `smith` and
+`langrishe`, on 2026-11-22
+([record](../../tests/integration/setup/results/lab-vm-validation-20261122.md)),
+not on bare metal; pkg did not enforce the pre-deinstall refusal, which
+is why the scripts now only warn.
 
 ## Open items
 

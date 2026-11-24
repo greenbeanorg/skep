@@ -8,7 +8,7 @@ The design is [ADR 0010](../decisions/0010-storage-and-jails.md), decisions
 
 Status: built in Milestone 7, phase 7b, steps 7 to 9 (jails, VNET
 networking, limits, snapshots, and clones), validated on FreeBSD 15.1
-(`hearst`, see
+in a lab VM nested under KVM (`hearst`; not on bare metal; see
 [tests/integration/jails](../../tests/integration/jails/README.md)); what
 is pending FreeBSD validation is listed in the step 9 progress log. The
 web interface's Containers section is built in step 10 (see

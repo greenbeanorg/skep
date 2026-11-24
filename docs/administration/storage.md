@@ -9,10 +9,11 @@ templates (phase 7b) have [their own guide](jail-templates.md), and
 jails have [theirs](jails.md).
 
 > **Validation status.** Verified on FreeBSD 15.1-RELEASE (amd64,
-> UFS-root, a file-backed test pool and a directory pool on the root file
-> system). Every check of
+> UFS root) in a lab VM nested under KVM (`hearst`, a file-backed test
+> pool and a directory pool on the root file system), 2026-11-14 and 15.
+> Every check of
 > [tests/integration/storage](../../tests/integration/storage/README.md)
-> passed. A ZFS-root host and real disks are still pending.
+> passed. Bare metal, a ZFS-root host and real disks are still pending.
 
 ## What Skep manages and what it does not
 

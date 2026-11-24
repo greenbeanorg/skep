@@ -391,13 +391,20 @@ skep-agent
 
 ## FreeBSD validation status
 
-Validated means it ran on FreeBSD 15.1-RELEASE-p6 (amd64, UFS-root, `hearst`)
-and the output was checked. Everything else is **pending FreeBSD validation**,
-even though it cross-compiles and passes unit tests on Linux.
+Validated means it ran on FreeBSD 15.1-RELEASE amd64 on a lab virtual
+machine nested under KVM (Proxmox, Intel VT-x) and the output was checked.
+Unless a row names another host, that is `hearst` (UFS root, a file-backed
+test pool; 15.1-RELEASE-p6, later p7). `smith` (UFS root)
+and `langrishe` (ZFS root) are lab VMs of the same kind. Nothing has been
+validated on bare metal or on an AMD host
+([known issues](../release/0.1/known-issues.md)). Everything else is
+**pending FreeBSD validation**, even though it cross-compiles and passes
+unit tests on Linux. A row records the build and date of its run; a later
+build is not revalidated unless the row says so.
 
-Last validation run: 2026-11-11, in two host states. First with vmm not
-loaded and no pools; then with vmm loaded and the file-backed pool `skeptest`
-imported, both as an unprivileged user and as root.
+The first validation run, on 2026-11-11, used two host states: first with
+vmm not loaded and no pools; then with vmm loaded and the file-backed pool
+`skeptest` imported, both as an unprivileged user and as root.
 
 | Item | Status |
 |---|---|
@@ -443,12 +450,15 @@ imported, both as an unprivileged user and as root.
 | `skep-api` from the FreeBSD build (`make build-freebsd`) serving the web interface under rc.d on the management address, with a scratch state directory: the headers, login (a wrong password first), every page in both themes, a viewer refused Users, a session ended underneath an open page and the return to the same address, task cancel, logout, no CSP violation; the Playwright suite run from merrick against hearst; back to loopback and stopped afterwards | Validated (2026-11-13, `web/e2e`, 5 tests) |
 | The rc.d harness `api` phase with the health statuses of #15 (`unavailable` with the agent down) | Validated (2026-11-13, 71 checks, see `tests/integration/rcd`) |
 | VM storage on ZFS: datasets and zvols with `volmode=dev`, `volblocksize=16K`, full or no reservation, `skep:` user properties; refusals outside the confinement; deletion of the VM's datasets only | Validated (2026-11-14, see `tests/integration/vm`) |
-| Booting a bhyve guest: runner, taps, nmdm console in the browser, a FreeBSD install to a zvol, guest reboot, media detach, stop and `stop_timeout`, force stop (also runner-less), restart, agent restart and `kill -9`, host reboot with drift, console audit, limit, logout and idle, permissions, concurrency, interrupted create, capabilities with `vmm` unloaded, unit tests natively | Validated (2026-11-14, after the nested-KVM workaround; see `tests/integration/vm`). Guest network isolation first failed because the lab firewall routed the guest VLAN to the SERVERS and MGMT VLANs; passed after the firewall fix |
+| Booting a bhyve guest: runner, taps, nmdm console in the browser, a FreeBSD install to a zvol, guest reboot, media detach, stop and `stop_timeout`, force stop (also runner-less), restart, agent restart and `kill -9`, host reboot with drift, console audit, limit, logout and idle, permissions, concurrency, interrupted create, capabilities with `vmm` unloaded, unit tests natively | Validated (2026-11-14, build 44a8784, after the nested-KVM workaround; `tests/integration/vm/results/step6-checks.txt`). Guest network isolation first failed because the lab firewall routed the guest VLAN to the SERVERS and MGMT VLANs; passed after the firewall fix. Not rerun since: later builds started VMs at the bhyve level only, with no console, guest boot or login inspected (on `hearst` f73f4fd and dd7a8b6 on 2026-11-22, `tests/integration/jails/results/m7c-validation.md` and `validation-2026-11-22.md`, and ce1d910 on 2026-11-23, recorded in `docs/backlog.md` only; on `smith` and `langrishe`, VMs with empty disks on 2026-11-22 and 23, `tests/integration/setup/results/lab-vm-validation-20261122.md`, `zvol-device-node-20261122.md`, `task-error-details-20261123.md`). No VM start on a build after ce1d910 is recorded |
 | Storage, phase 7a: inventory, snapshots (running and stopped), rollback with and without `destroy_newer`, linked clones booting with their own lease, disk add, grow, remove, directory pools with a FreeBSD guest installed on a file disk, `/metrics` against `zpool`, `zfs`, `df`, and `ps`, `storage_capacity`, `storage_locked` with an encrypted root and its key unloaded, the viewer refused every write, the clone note in the browser, `skepctl vm snapshot` | Validated (2026-11-14 and 15, see `tests/integration/storage`) |
 | Guest-port anti-spoofing (ADR 0011): module check, install before `addm` for jails and VMs, programs identical to the generated ones, every probe case for static, DHCP and VM ports, ordering, fail-open detection, reinstall, detach, three-in-a-row, agent restart, upgrade from b61e578, a real DHCP lease, VLAN filtering on both bridges | Validated (2026-11-22, `tests/integration/jails/results/m7c-validation.md`; the VM program's hostile-frame cases emulated on a hand-made epair). Reboot with `kld_list` (Decision 12 item 10): validated 2026-11-22 (`tests/integration/jails/results/validation-2026-11-22.md`) |
 | `skep-setup check` and `plan` against a real host (read-only, `hearst`) | Validated (2026-11-22, `tests/integration/setup/results/hearst-check-plan-20261122.txt`) |
-| The package (`pkg create`, the pre-install and pre-deinstall scripts, `PKG_UPGRADE`), `skep-setup apply`, `rollback`, `upgrade`, `remove`, `db backup` on live databases, the version handshake between deployed programs | **Pending FreeBSD validation** (needs the two lab VMs of ADR 0012) |
-| ZFS-root host | **Pending FreeBSD validation** (the lab VM is UFS-root) |
+| The package (`pkg create`, the pre-install and pre-deinstall scripts, `PKG_UPGRADE`), `skep-setup apply`, `rollback`, `upgrade`, `remove`, `db backup` on live databases, the version handshake between deployed programs (`503 agent_version_mismatch`) | Validated on `smith` (UFS root) and `langrishe` (ZFS root), 2026-11-22, builds e8836a8 to 67fa267 (`tests/integration/setup/results/lab-vm-validation-20261122.md`). pkg deletes the files even when the pre-deinstall script refuses; `skep-setup remove` is the guard. An install on hardware is pending |
+| Jail templates (7b): the pkgbase builder with the real host operations, through its test binary and through a deployed agent; the `dist` source | Validated: pkgbase on `hearst` (`tests/integration/jails/results/step6-build.txt`, `step6-deployed.txt`); on 2026-11-22 the `dist` source on `smith` and a pkgbase build through the installed agent on `langrishe` (`tests/integration/setup/results/lab-vm-validation-20261122.md`) |
+| Jails (7b, steps 7 to 9): lifecycle, the `jail.conf` baseline checked against the kernel, `/dev` allow-list, SSH key before the first start, VNET epairs with DHCP and static IPv4, RCTL limits, `refquota`, jail usage in `/metrics`, snapshots, rollback, clones; the web interface's Containers section | Validated on `hearst` (`tests/integration/jails/README.md`, the step 7 to 10 progress logs; the Containers section on 2026-11-21, section 26 of `step10-progress.md`). Since then: two jails starting at once with the same static address (`hearst`, dd7a8b6, `tests/integration/jails/results/validation-2026-11-22.md`); a host without RACCT (`langrishe`, eadd643, 2026-11-24, `racct-off-guest-20261124-langrishe.md`); the start-up sweeps' audit entries (`langrishe`, eadd643, `sweep-audit-entries-20261124-langrishe.md`) |
+| Jails: a start refused for an RCTL limit without RACCT; the refusal to clone a started static-address jail (ADR 0010 amendment ab); leftover devfs removal by the start and delete paths | **Pending FreeBSD validation** (unit-tested; for amendment ab the backlog notes a live check on `langrishe` at e05b380 that no results file records) |
+| ZFS-root host | Partly validated on `langrishe` (ZFS root): the package and `skep-setup` (2026-11-22), a pkgbase template build, jails without RACCT and the start-up sweeps (2026-11-24), and a VM with an empty disk started at the bhyve level (2026-11-22 and 23). A guest operating system, the storage checks of phase 7a and the services' tmpfs `/var/run` start are not validated on a ZFS-root host |
 | arm64 | Not a target yet |
 
 ## Known limitations
@@ -464,19 +474,14 @@ imported, both as an unprivileged user and as root.
 - The local node is the only node.
 - The node inventory (hardware discovery) is refreshed only at start, not
   periodically.
-- **Follow-up: the agent does not check its own files.** `skep-agent`
-  runs as root but starts even when its executable, its configuration
-  file, or a directory above either is writable by another user (the
-  lab's test installation under `/home/aba` was such a case until it moved
-  to the package layout on 2026-11-15). It should
-  refuse to start, naming the path, owner, and mode: owner uid 0, no
-  group or other write bit, for the file and every directory up to `/`;
-  a `-dev` build on Linux only warns. Whether `skep-api` checks its own
-  binary and `api.json` the same way is part of that change. Logged
-  2026-11-15, before phase 7b; `scripts/deploy-test.sh` already installs
-  root-owned files and warns about such parent directories.
+- **The agent checks its own files; `skep-api` does not.** As root on
+  FreeBSD, `skep-agent` refuses to start when its binary, configuration,
+  data or socket directory, or any parent, is not root-owned, is group-
+  or other-writable, or has a non-trivial ACL, and prints the fix; there
+  is no override (ADR 0004 amendment of 2026-11-23, `internal/startcheck`).
+  `skep-api` runs unprivileged and has no such check.
 - Resource monitoring keeps current values only; there is no history and
-  no export (Prometheus or otherwise) yet. Per-jail values come with 7b.
+  no export (Prometheus or otherwise) yet.
 - Retention does not shrink the database files: SQLite reuses freed pages,
   so a file stops growing. `VACUUM` is a manual step.
 - Archived audit entries are read on the host (`audit export`); the API
@@ -492,7 +497,7 @@ imported, both as an unprivileged user and as root.
   unloaded.
 - Discovery searches a fixed list of directories for binaries, not `$PATH`.
 - Nested bhyve under KVM with APIC virtual interrupt delivery enabled can
-  stop the whole host at a guest's first start (a KVM bug). Skep does not
-  detect it yet; the workaround is in the
-  [VM guide](../administration/virtual-machines.md). Follow-up: a startup
-  check that warns before a start.
+  stop the whole host at a guest's first start (a KVM bug). The agent
+  warns at start and reports a degraded `nested_interrupts` health check
+  when it sees this, but does not prevent a start; the workaround is in the
+  [VM guide](../administration/virtual-machines.md).

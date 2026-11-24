@@ -47,6 +47,22 @@ procedure, and results recorded as it describes are welcome.
   UFS and ZFS root, Intel VT-x nested under KVM). Bare metal, AMD-V hosts,
   real disks, SMT, `nvme`/`ahci-hd` disks beyond a boot and `e1000` NICs are
   unvalidated ([runbook](../../../tests/integration/bare-metal/README.md)).
+- **The full VM checks are from an earlier build.** Every check of ADR 0009
+  decision 11, including a guest operating system's install and boot to
+  its login prompt, passed on `hearst` on 2026-11-14 on build 44a8784
+  ([results](../../../tests/integration/vm/results/step6-checks.txt)).
+  Later builds started VMs at the bhyve level only, with nothing looked at
+  inside the guest: on `hearst` f73f4fd and dd7a8b6 on 2026-11-22
+  ([results](../../../tests/integration/jails/results/m7c-validation.md),
+  [results](../../../tests/integration/jails/results/validation-2026-11-22.md))
+  and ce1d910 on 2026-11-23 (recorded in the [backlog](../../backlog.md)
+  only); on `smith` and `langrishe`, VMs with empty disks on 2026-11-22
+  and 23 ([installer](../../../tests/integration/setup/results/lab-vm-validation-20261122.md),
+  [zvol nodes](../../../tests/integration/setup/results/zvol-device-node-20261122.md),
+  [c9ecac9](../../../tests/integration/setup/results/task-error-details-20261123.md)).
+  No VM start on a build after ce1d910, such as the 0.1 release build, is
+  recorded, and a guest operating system's boot has not been checked since
+  2026-11-14.
 - **Nested under KVM**, a guest's first start can stop the whole host unless
   `hw.vmm.vmx.cap.virtual_interrupt_delivery=0` is set before `vmm` loads.
   The agent logs a warning at start and reports a degraded `nested_interrupts`

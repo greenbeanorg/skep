@@ -10,8 +10,11 @@ The package and [`skep-setup`](skep-setup.md) (Milestone 10) automate
 steps 3, 4, 5 (`zfs_enable`), 6 (a new bridge only), 9, 10, 12 and 13's
 media directory, and check the rest; the package creates the account of
 step 7 and installs the files of step 8 ([packaging](packaging.md)). Both
-are **pending FreeBSD validation**: until they have run on the lab VMs,
-this manual procedure is the validated way to install Skep.
+ran on two lab VMs nested under KVM, `smith` (UFS root) and `langrishe`
+(ZFS root), on 2026-11-22
+([record](../../tests/integration/setup/results/lab-vm-validation-20261122.md));
+neither has run on bare metal. This page is the manual procedure they
+automate.
 
 It collects what is otherwise spread across
 [Running Skep as FreeBSD services](freebsd-service.md),
@@ -26,16 +29,17 @@ one is the order to do it in.
 
 Every step was done on the lab host `hearst` (FreeBSD 15.1-RELEASE-p7,
 amd64, UFS root, a pkgbase install, 4 vCPUs and 6 GiB RAM as a Proxmox VM
-with CPU type `host`) between Milestone 1 and Milestone 7c. The state of
+with CPU type `host`, so nested under KVM) between Milestone 1 and
+Milestone 7c. Nothing here has been validated on bare metal. The state of
 `hearst` on 2026-11-22 was checked read-only for this page.
 
 | Area | Status |
 |---|---|
-| UFS-root host, file-backed ZFS pool, pkgbase install | Validated on `hearst` |
-| ZFS-root host | **Pending FreeBSD validation**; nothing in Skep depends on the root file system type, but no ZFS-root host has run it |
-| A host installed from distribution sets (not pkgbase) | **Pending FreeBSD validation**: affects only the pkgbase template source (step 11) |
+| UFS-root host, file-backed ZFS pool, pkgbase install | Validated on `hearst` (a lab VM nested under KVM) |
+| ZFS-root host | Partly validated on `langrishe`, a ZFS-root pkgbase lab VM nested under KVM: the package, `skep-setup`, a pkgbase template build, jails and a VM start at the bhyve level ([record](../../tests/integration/setup/results/lab-vm-validation-20261122.md)); a guest operating system on a ZFS-root host is not validated |
+| A host installed from distribution sets (not pkgbase) | Partly validated on `smith`, a UFS-root lab VM nested under KVM: the package, `skep-setup` and the `dist` template source ([record](../../tests/integration/setup/results/lab-vm-validation-20261122.md)). The pkgbase template source on such a host was not run (step 11) |
 | Bare metal, AMD-V hosts | **Pending validation**; only nested Intel VT-x with EPT and unrestricted guest has run bhyve under Skep |
-| Persistent `kld_list` and bridge `vlanfilter` across a reboot | Validated on `hearst` 2026-11-22 ([results](../../tests/integration/jails/results/validation-2026-11-22.md)) |
+| Persistent `kld_list` and bridge `vlanfilter` across a reboot | Validated on `hearst` (nested under KVM) 2026-11-22 ([results](../../tests/integration/jails/results/validation-2026-11-22.md)) |
 
 ## What Skep never does to the host by itself
 

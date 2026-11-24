@@ -8,10 +8,13 @@ Skep runs as two rc.d services (ADR 0004, ADR 0006):
 | `skep_api` | `packaging/rc.d/skep_api` | `skep` (unprivileged) | TCP, `127.0.0.1:8443` by default |
 
 The package and [`skep-setup`](skep-setup.md) (Milestone 10,
-[ADR 0012](../decisions/0012-installer.md)) are built but pending FreeBSD
-validation, so the steps below are the manual ones;
+[ADR 0012](../decisions/0012-installer.md)) do these steps for you; they
+ran on two lab VMs nested under KVM on 2026-11-22
+([record](../../tests/integration/setup/results/lab-vm-validation-20261122.md)).
+The steps below are the manual ones;
 [Host requirements](host-requirements.md) puts every step of a new host
-in order. They were run on FreeBSD 15.1-RELEASE-p6, including an in-place
+in order. They were run on FreeBSD 15.1-RELEASE-p6 in a lab VM nested
+under KVM (`hearst`), not on bare metal, including an in-place
 upgrade of a Milestone 3 installation; the native test and its recorded
 result are in
 [tests/integration/rcd](../../tests/integration/rcd/README.md).
@@ -434,9 +437,14 @@ pw userdel skep             # also removes the skep group
 
 ## Limits
 
-- Validated on a UFS-root host only. A ZFS-root host is pending FreeBSD
-  validation. The audit archive and retention were also validated with
-  the data directory on a ZFS dataset.
+- The native rc.d harness ran on a UFS-root lab VM nested under KVM
+  only. On a ZFS-root lab VM (`langrishe`) the services were installed by
+  the package, enabled and started by `skep-setup apply`, and running
+  after a reboot
+  ([record](../../tests/integration/setup/results/lab-vm-validation-20261122.md)),
+  without the harness. The audit archive and retention were also validated
+  with the data directory on a ZFS dataset. Nothing here has run on bare
+  metal.
 - Logging to a file with rotation is not offered; use syslog and
   `newsyslog(8)`.
 - The account's UID and GID are fixed at 409 by ADR 0012 (the lowest pair
