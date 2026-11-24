@@ -675,7 +675,7 @@ func (s *Service) cloneOf(ctx context.Context, src models.Container, req models.
 	}
 	if sourceStatic && src.StartedOnce {
 		return c, &models.Error{Code: models.CodeContainerStarted,
-			Message: "the source jail has a static address and has started: a clone would hold the same address, and Skep does not write new addressing into a tree that has run code (decision 13), so this jail cannot be cloned",
+			Message: "the source jail has a static address and has started: a clone would hold the same address, and Skep does not write new addressing into a tree that has run code, so this jail cannot be cloned",
 			Details: map[string]any{"container_id": src.ID}}
 	}
 	if len(keep) > 0 {
