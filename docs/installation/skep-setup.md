@@ -123,10 +123,17 @@ example
 
 `vmm` reads its `hw.vmm.*` tunables from the kernel environment when it
 loads, and `kldload` does not read `loader.conf`. Setup therefore compares
-each `hw.vmm.*` line of `loader.conf`, `loader.conf.local` and `loader.conf.d`
-with `/bin/kenv -q NAME`. If one differs, is absent, or cannot be read, `vmm`
+each `hw.vmm.*` line of the loader's files with `/bin/kenv -q NAME`. The
+files are read in the loader's order: `loader.conf`, each file named by
+`loader_conf_files`, the `*.conf` files of `loader_conf_dirs`
+(`loader.conf.d`), then `local_loader_conf_files` (`loader.conf.local`);
+`product_vars` directories are not read. If one differs, is absent, or cannot be read, `vmm`
 is left out of the printed command and the warning says that loader tunables
 for vmm set since the last boot are not applied by kldload, so reboot.
+
+A `hw.vmm.*` variable in the kernel environment that no loader file sets
+any more gets its own warning: it applies until the next boot and is then
+lost.
 
 The warning does not change any exit code. Until the modules are loaded
 the agent's health can read `degraded`, and `upgrade` then exits 4
