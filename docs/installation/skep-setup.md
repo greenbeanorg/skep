@@ -359,7 +359,9 @@ agent's restart, when the agent did not answer on its socket within 200 s,
 or when its health (or reading it) was not `ok`. The agent failing to
 stop, or `skep_api` failing to stop, is exit 4 too, because the stop may
 have taken effect. After a failed `skep_api` stop the message says whether
-`skep_api` is running now and that `skep_agent` was not restarted; a
+`skep_api` was running when checked (a supervisor still holding the failed
+stop can stop it afterwards, so check again) and that `skep_agent` was not
+restarted; a
 `skep_api` that is down gets the usual start, and one still running is left
 alone. Find the cause, then run `skep-setup upgrade` again. The message
 starts with
