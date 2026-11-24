@@ -96,3 +96,38 @@ Andy's decision (not done; rewriting history is not approved).
 - `CLAUDE.md` and the results files describe the lab and the working
   method; decide whether they stay.
 - The trademark notices for FreeBSD® are in the README.
+
+## Refresh — 2026-11-24
+
+Everything since the scan above (2026-11-23 02:50Z), written unattended;
+as above, no value is reproduced (file, commit and kind only). Logs on
+merrick: `/home/aba/skep-test-logs/20261124T072543Z-overnight-job4-scan/`.
+
+**Scope.** The 34 commits on `main` after `683a860` (the last commit before
+the first scan) up to `a46d8ed`, and the original commits of every pull
+request from #55 on (`refs/pull/*/head`, 37 refs, fetched for the scan:
+148 commits not on `main` before `683a860`); the titles, bodies and
+comments of pull requests #71 to #91. Not covered, as before: issue
+bodies, Actions logs and artifacts.
+
+**Secret scan.** gitleaks v8.21.2, default rules, `--redact`: main range
+34 commits, pull request commits 148 commits — **no findings**. The
+second sweep (private keys, bearer tokens, JSON session tokens, AWS and
+GitHub tokens, `$argon2id$` hashes, `password = "…"` assignments, SSH
+public keys) over the lines those 150 commits add found only
+`docs/security/pre-publication-report-2026-11-23.md` (commits ce1d910128,
+d7d2b32bd0), whose `$argon2id$…` and `ssh-ed25519 AAAA…` are this
+report's own pattern descriptions. Nothing needs removing.
+
+**Pull request text.** 21 pull requests (#71–#91: titles and bodies), 38
+conversation comments, 0 review comments, 0 reviews; gitleaks, default
+rules, and the same patterns plus ordinary mailbox addresses: **no
+findings**.
+
+**Identities.** All 34 new `main` commits are authored by the project
+account's GitHub noreply address, with `noreply@github.com` as committer:
+**squash merges no longer use the ordinary mailbox address.** The 159
+pull request commits use the noreply address as author and committer.
+Co-author trailers name only `noreply@anthropic.com`. The 54 older merges
+still carry the mailbox address (unchanged; a history rewrite remains
+Andy's decision).
