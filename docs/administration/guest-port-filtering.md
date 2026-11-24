@@ -8,8 +8,10 @@ amendment y). The design is [ADR 0011](../decisions/0011-guest-port-anti-spoofin
 
 Status: built in Milestone 7c and validated on FreeBSD 15.1 (`hearst`,
 2026-11-22) as recorded in
-`tests/integration/jails/results/m7c-validation.md`. Pending: the reboot
-check with `kld_list`.
+`tests/integration/jails/results/m7c-validation.md`, and the reboot
+check with `kld_list` on 2026-11-22
+(`tests/integration/jails/results/validation-2026-11-22.md`). `hearst` is
+a lab VM nested under KVM; a physical uplink is not validated.
 
 ## What is enforced
 
