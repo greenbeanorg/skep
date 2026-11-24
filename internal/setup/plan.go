@@ -239,12 +239,16 @@ func hostPath(root, p string) string { return filepath.Join(root, strings.TrimPr
 
 // ValidateOptions checks the answers' syntax. Everything they name is
 // checked against the host by Compute.
+// ErrNoMgmt is returned by ValidateOptions when no management interface
+// is named.
+var ErrNoMgmt = errors.New("name the management interface (--mgmt): setup will not guess which interface carries management")
+
 func ValidateOptions(o Options) error {
 	if o.Root == "" {
 		return errors.New("root must not be empty")
 	}
 	if len(o.Mgmt) == 0 {
-		return errors.New("name the management interface (--mgmt): setup will not guess which interface carries management")
+		return ErrNoMgmt
 	}
 	for _, m := range o.Mgmt {
 		if !ifNameRE.MatchString(m) {

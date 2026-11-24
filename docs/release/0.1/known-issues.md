@@ -97,10 +97,11 @@ the source is linked.*
   its health answers 503 `unavailable`. With a session, the `agent` check says
   the socket is not answering and points at `daemon.log`, which holds the
   cause. After the fix the agent came back by itself within 5 s.
-- **`skep-setup check` reports a start-check refusal only when it is given
-  the host's answers** (for example `-mgmt`). Without them it exits 2 before
-  it reports the agent. Its exit code 1 also covers other items for the
-  operator, so read the printed "agent start check" line.
+- **`skep-setup check` without the host's answers** (for example no
+  `-mgmt`) prints the agent's state and start check, then exits 2 with the
+  usage error, so a refusal is visible but not in the exit code. With them,
+  its exit code 1 also covers other items for the operator, so read the
+  printed "agent start check" line.
 - **Recent agent audit entries are read on the host, and only while the
   agent runs.** Entries not yet sealed, such as the start-up sweep's, are
   read with `skep-agent audit export --unsealed` as root while the agent
