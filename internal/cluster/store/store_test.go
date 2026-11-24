@@ -225,3 +225,57 @@ func TestRootOwned(t *testing.T) {
 		t.Fatalf("RootOwned = %v, %v", got, err)
 	}
 }
+
+// A store whose machine stalled at an entry this build cannot apply keeps
+// that entry: no snapshot is taken past it, and a build that supports the
+// type applies it and everything after it when the store is opened again.
+func TestStalledEntryIsAppliedAfterAnUpgrade(t *testing.T) {
+	const future = "test.future"
+	dir, n := newCluster(t, "")
+	raw := []byte(`{"type":"` + future + `","version":1,"op_id":"op-future","actor":"system","origin":"` + nodeA + `","data":{}}`)
+	if err := n.raft.Apply(raw, applyTimeout).Error(); err != nil {
+		n.Close()
+		t.Fatal(err)
+	}
+	e, err := clusterstate.NewEntry(clusterstate.TypeMemberAddress, "op-after", clusterstate.ActorSystem, nodeA,
+		clusterstate.MemberAddress{NodeID: nodeA, Address: "192.0.2.7:8444"})
+	if err != nil {
+		n.Close()
+		t.Fatal(err)
+	}
+	if _, err := n.Apply(e); !errors.Is(err, clusterstate.ErrStalled) {
+		n.Close()
+		t.Fatalf("an entry after the stall: %v", err)
+	}
+	v := n.Machine().View()
+	if v.Stalled == nil {
+		n.Close()
+		t.Fatal("the machine did not stall")
+	}
+	stalledAt := v.Stalled.Index
+	if err := n.Snapshot(); err == nil {
+		n.Close()
+		t.Fatal("a snapshot was taken while the machine is stalled")
+	}
+	if err := n.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	clusterstate.Supported[future] = 1
+	t.Cleanup(func() { delete(clusterstate.Supported, future) })
+	n = openLeader(t, dir)
+	defer n.Close()
+	if err := n.Barrier(); err != nil {
+		t.Fatal(err)
+	}
+	v = n.Machine().View()
+	if v.Stalled != nil || v.AppliedIndex <= stalledAt {
+		t.Fatalf("after the upgrade: %+v (stalled at %d)", v, stalledAt)
+	}
+	if mem, _ := n.Machine().Member(nodeA); mem.Address != "192.0.2.7:8444" {
+		t.Fatalf("the entry after the stalled one was not applied: %+v", mem)
+	}
+	if err := n.Snapshot(); err != nil {
+		t.Fatalf("snapshot after the upgrade: %v", err)
+	}
+}

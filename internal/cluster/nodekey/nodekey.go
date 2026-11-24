@@ -108,6 +108,35 @@ func Create(dir, nodeID string, now time.Time) (*Key, error) {
 // anyone but its owner can read, and a certificate that does not belong to
 // the key.
 func Load(dir string) (*Key, error) {
+	k, err := loadKey(dir)
+	if err != nil {
+		return nil, err
+	}
+	if err := k.loadCertificate(); err != nil {
+		return nil, err
+	}
+	return k, nil
+}
+
+// LoadRepair is Load for the service's start: when the key is good but the
+// certificate is missing, empty, unreadable or not for that key, it issues
+// a new certificate with the same key, so the pin does not change. repaired
+// is then why; the caller logs it as a warning. A bad key is still an
+// error: a node key is never replaced here.
+func LoadRepair(dir, nodeID string, now time.Time) (k *Key, repaired error, err error) {
+	if k, err = loadKey(dir); err != nil {
+		return nil, nil, err
+	}
+	if repaired = k.loadCertificate(); repaired == nil {
+		return k, nil, nil
+	}
+	if err := k.issue(nodeID, now); err != nil {
+		return nil, nil, fmt.Errorf("%w (and issuing a new certificate failed: %w)", repaired, err)
+	}
+	return k, repaired, nil
+}
+
+func loadKey(dir string) (*Key, error) {
 	keyPath := filepath.Join(dir, KeyFile)
 	info, err := os.Lstat(keyPath)
 	if err != nil {
@@ -135,27 +164,29 @@ func Load(dir string) (*Key, error) {
 	if !ok || priv.Curve != elliptic.P256() {
 		return nil, fmt.Errorf("nodekey: %s is not an ECDSA P-256 key", keyPath)
 	}
-	k := &Key{dir: dir, key: priv}
+	return &Key{dir: dir, key: priv}, nil
+}
 
-	certPath := filepath.Join(dir, CertFile)
+func (k *Key) loadCertificate() error {
+	certPath := filepath.Join(k.dir, CertFile)
 	cb, err := os.ReadFile(certPath)
 	if err != nil {
-		return nil, fmt.Errorf("nodekey: %w", err)
+		return fmt.Errorf("nodekey: %w", err)
 	}
 	cblock, _ := pem.Decode(cb)
 	if cblock == nil || cblock.Type != "CERTIFICATE" {
-		return nil, fmt.Errorf("nodekey: %s holds no certificate", certPath)
+		return fmt.Errorf("nodekey: %s holds no certificate", certPath)
 	}
 	leaf, err := x509.ParseCertificate(cblock.Bytes)
 	if err != nil {
-		return nil, fmt.Errorf("nodekey: %s: %w", certPath, err)
+		return fmt.Errorf("nodekey: %s: %w", certPath, err)
 	}
 	pub, ok := leaf.PublicKey.(*ecdsa.PublicKey)
-	if !ok || !pub.Equal(&priv.PublicKey) {
-		return nil, fmt.Errorf("nodekey: %s does not belong to %s", certPath, keyPath)
+	if !ok || !pub.Equal(&k.key.PublicKey) {
+		return fmt.Errorf("nodekey: %s does not belong to %s", certPath, filepath.Join(k.dir, KeyFile))
 	}
 	k.set(leaf)
-	return k, nil
+	return nil
 }
 
 func (k *Key) set(leaf *x509.Certificate) {
@@ -190,16 +221,47 @@ func (k *Key) issue(nodeID string, now time.Time) error {
 		return fmt.Errorf("nodekey: %w", err)
 	}
 	certPath := filepath.Join(k.dir, CertFile)
-	tmp := certPath + ".tmp-" + strconv.Itoa(os.Getpid())
-	if err := os.WriteFile(tmp, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), certMode); err != nil {
-		return fmt.Errorf("nodekey: %w", err)
-	}
-	if err := os.Rename(tmp, certPath); err != nil {
-		_ = os.Remove(tmp)
+	if err := writeFileSynced(certPath, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), certMode); err != nil {
 		return fmt.Errorf("nodekey: %w", err)
 	}
 	k.set(leaf)
 	return nil
+}
+
+// writeFileSynced replaces path atomically: a temporary file in the same
+// directory, fsync, rename, fsync of the directory.
+func writeFileSynced(path string, data []byte, mode fs.FileMode) error {
+	tmp := path + ".tmp-" + strconv.Itoa(os.Getpid())
+	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, mode)
+	if err != nil {
+		return err
+	}
+	_, err = f.Write(data)
+	if err == nil {
+		err = f.Chmod(mode)
+	}
+	if err == nil {
+		err = f.Sync()
+	}
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err == nil {
+		err = os.Rename(tmp, path)
+	}
+	if err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	d, err := os.Open(filepath.Dir(path))
+	if err != nil {
+		return err
+	}
+	err = d.Sync()
+	if cerr := d.Close(); err == nil {
+		err = cerr
+	}
+	return err
 }
 
 // Pin returns the pin of the node key.

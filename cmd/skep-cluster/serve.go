@@ -57,9 +57,13 @@ func runServe(ctx context.Context, args []string, e env) error {
 	if api.UID == 0 {
 		return errors.New("the API account must not be root")
 	}
-	key, err := nodekey.Load(*dataDir)
+	key, repaired, err := nodekey.LoadRepair(*dataDir, cfg.NodeID, time.Now())
 	if err != nil {
 		return fmt.Errorf("%w (run \"skep-cluster init\" as root if this host was never initialised)", err)
+	}
+	if repaired != nil {
+		log.Warn("the node certificate could not be used; a new one was issued with the same key, the pin is unchanged",
+			"reason", repaired.Error(), "pin", key.Pin(), "not_after", key.NotAfter())
 	}
 	node, err := store.Open(store.Options{Dir: *dataDir, NodeID: cfg.NodeID, Logger: log})
 	if err != nil {

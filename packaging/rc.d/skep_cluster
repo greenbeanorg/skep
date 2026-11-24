@@ -21,9 +21,9 @@
 #   skep_cluster_bin="/usr/local/sbin/skep-cluster"
 #       The service binary.
 #   skep_cluster_runas="skep-cluster"
-#   skep_cluster_rungroup="skep-cluster"
-#       The account and group the service runs as. Both must exist; the
-#       package creates them (UID and GID 410) and this script never does.
+#       The account the service runs as, with that account's own group
+#       (daemon -u). It must exist; the package creates it (UID and GID
+#       410) and this script never does.
 #       It is not the skep account: skep-api must not be able to read the
 #       node key. The service refuses to run as root.
 #   skep_cluster_api_group="skep"
@@ -73,7 +73,6 @@ load_rc_config "${name}"
 : "${skep_cluster_enable:=NO}"
 : "${skep_cluster_bin:=/usr/local/sbin/skep-cluster}"
 : "${skep_cluster_runas:=skep-cluster}"
-: "${skep_cluster_rungroup:=skep-cluster}"
 : "${skep_cluster_api_group:=skep}"
 : "${skep_cluster_data_dir:=/var/db/skep/cluster}"
 : "${skep_cluster_run_dir:=/var/run/skep}"
@@ -130,9 +129,6 @@ skep_cluster_precmd()
 	fi
 	if [ "$(/usr/bin/id -u "${skep_cluster_runas}")" = "0" ]; then
 		err 1 "skep_cluster_runas must not be root: skep-cluster holds the node key and listens on the network"
-	fi
-	if ! /usr/sbin/pw groupshow "${skep_cluster_rungroup}" >/dev/null 2>&1; then
-		err 1 "group ${skep_cluster_rungroup} does not exist; the skep package creates it"
 	fi
 	if ! /usr/sbin/pw groupshow "${skep_cluster_api_group}" >/dev/null 2>&1; then
 		err 1 "group ${skep_cluster_api_group} does not exist; the skep package creates it"

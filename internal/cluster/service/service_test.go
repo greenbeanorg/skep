@@ -176,3 +176,17 @@ func TestListenerThatCannotBindIsUnhealthy(t *testing.T) {
 		t.Fatal("status says listening")
 	}
 }
+
+// Status carries the state machine's own applied index next to the
+// library's (ADR 0013 amendment 1).
+func TestStatusCarriesTheStateMachineIndex(t *testing.T) {
+	n, key := oneNode(t, "")
+	s := New(Options{Config: clusterconf.Config{NodeID: nodeA, NodeName: "smith"}, Key: key, Store: n, Interval: time.Hour})
+	st := s.Status(context.Background())
+	if want := n.Machine().View().AppliedIndex; st.StateMachine.AppliedIndex != want || want == 0 || st.StateMachine.Stalled != nil {
+		t.Fatalf("state machine status %+v, want applied %d", st.StateMachine, want)
+	}
+	if st.Raft.AppliedIndex < st.StateMachine.AppliedIndex {
+		t.Fatalf("library applied %d behind the machine's %d", st.Raft.AppliedIndex, st.StateMachine.AppliedIndex)
+	}
+}

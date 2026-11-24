@@ -49,7 +49,10 @@ func runStatus(ctx context.Context, args []string, e env) error {
 	fmt.Fprintf(e.stdout, "Cluster ID:    %s\n", st.ClusterID)
 	fmt.Fprintf(e.stdout, "Node key pin:  %s\n", st.Pin)
 	fmt.Fprintf(e.stdout, "Certificate:   valid until %s\n", st.CertificateNotAfter.Format(time.RFC3339))
-	fmt.Fprintf(e.stdout, "Raft:          %s, term %d, applied %d of %d\n", st.Raft.State, st.Raft.Term, st.Raft.AppliedIndex, st.Raft.LastIndex)
+	fmt.Fprintf(e.stdout, "Raft:          %s, term %d, applied %d of %d\n", st.Raft.State, st.Raft.Term, st.StateMachine.AppliedIndex, st.Raft.LastIndex)
+	if sm := st.StateMachine.Stalled; sm != nil {
+		fmt.Fprintf(e.stdout, "State machine: STOPPED at log index %d (applied up to %d): %s\n", sm.Index, st.StateMachine.AppliedIndex, sm.Reason)
+	}
 	switch {
 	case st.ListenAddress == "":
 		fmt.Fprintf(e.stdout, "Listener:      none (single host, no network port)\n")

@@ -201,7 +201,7 @@ func createCluster(ctx context.Context, dataDir string, cfg clusterconf.Config, 
 	if nodekey.Exists(dataDir) {
 		// An earlier init stopped after the key and before the
 		// store. The key is not replaced; its certificate is.
-		if key, err = nodekey.Load(dataDir); err != nil {
+		if key, _, err = nodekey.LoadRepair(dataDir, cfg.NodeID, now); err != nil {
 			return "", "", fmt.Errorf("%w (left by an interrupted init; remove %s and %s as root to start over)",
 				err, nodekey.KeyFile, nodekey.CertFile)
 		}

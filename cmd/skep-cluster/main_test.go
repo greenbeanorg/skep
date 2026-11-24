@@ -22,6 +22,7 @@ import (
 	"github.com/greenbeanorg/skep/internal/cluster/nodekey"
 	"github.com/greenbeanorg/skep/internal/cluster/store"
 	"github.com/greenbeanorg/skep/internal/sysaccount"
+	"github.com/greenbeanorg/skep/pkg/models"
 )
 
 const agentNode = "0b5e3a52-7f0e-4c58-9d0b-3f1d6f0a9c11"
@@ -335,9 +336,17 @@ func TestServeStatusAcrossRestart(t *testing.T) {
 	if _, err := os.Stat(socket); err == nil {
 		t.Error("the socket was left after the service stopped")
 	}
+	// A node.crt emptied while the service is stopped is issued again with
+	// the same key at the next start: same pin, same node ID.
+	if err := os.WriteFile(filepath.Join(w.dataDir, nodekey.CertFile), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
 	stop = serve()
 	second := read()
 	stop()
+	if k, err := nodekey.Load(w.dataDir); err != nil || k.Pin() != first.Pin {
+		t.Fatalf("node.crt after the start: %v", err)
+	}
 	if first.NodeID != agentNode || second.NodeID != first.NodeID || second.Pin != first.Pin || second.ClusterID != first.ClusterID {
 		t.Fatalf("identity changed across a restart:\n%+v\n%+v", first, second)
 	}
@@ -371,10 +380,32 @@ func (f *fakeService) start(t *testing.T) string {
 		defer f.mu.Unlock()
 		json.NewEncoder(w).Encode(f.status)
 	})
+	mux.HandleFunc(localapi.PathHealth, func(w http.ResponseWriter, _ *http.Request) {
+		json.NewEncoder(w).Encode(models.Health{Status: models.HealthOK})
+	})
 	srv := &http.Server{Handler: mux}
 	go srv.Serve(ln)
 	t.Cleanup(func() { srv.Close() })
 	return path
+}
+
+// status prints the state machine's applied index, not the library's, and
+// says so when the machine is stalled.
+func TestStatusPrintsTheStateMachine(t *testing.T) {
+	w := newWorld(t)
+	f := &fakeService{status: localapi.Status{
+		Raft:         store.Stats{State: "leader", Term: 2, LastIndex: 9, AppliedIndex: 9},
+		StateMachine: localapi.StateMachineStatus{AppliedIndex: 6, Stalled: &clusterstate.Stall{Index: 7, Reason: "entry type \"x\" is unknown to this build"}},
+	}}
+	if err := run(context.Background(), []string{"status", "-socket", f.start(t)}, w.env(os.Getuid())); err != nil {
+		t.Fatal(err)
+	}
+	out := w.out.String()
+	for _, want := range []string{"applied 6 of 9", "STOPPED at log index 7 (applied up to 6)", "unknown to this build"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("status output lacks %q:\n%s", want, out)
+		}
+	}
 }
 
 func (w *world) listen(euid int, socket string, extra ...string) error {

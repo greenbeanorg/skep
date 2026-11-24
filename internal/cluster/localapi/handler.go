@@ -61,11 +61,24 @@ type Status struct {
 	CertificateNotAfter time.Time `json:"certificate_not_after"`
 	// ListenAddress is the configured node-to-node address ("ip:port"),
 	// or "" on a single host. Listening says whether it is open.
-	ListenAddress string                `json:"listen_address"`
-	Listening     bool                  `json:"listening"`
-	Raft          store.Stats           `json:"raft"`
-	Members       []clusterstate.Member `json:"members"`
-	Build         string                `json:"build"`
+	ListenAddress string `json:"listen_address"`
+	Listening     bool   `json:"listening"`
+	// Raft is the library's view; its applied index counts entries a
+	// stalled state machine did not apply.
+	Raft store.Stats `json:"raft"`
+	// StateMachine is the replicated state machine's own applied index,
+	// the one catch-up and promotion use (ADR 0013 amendment 1).
+	StateMachine StateMachineStatus    `json:"state_machine"`
+	Members      []clusterstate.Member `json:"members"`
+	Build        string                `json:"build"`
+}
+
+// StateMachineStatus is the state machine's part of Status.
+type StateMachineStatus struct {
+	AppliedIndex uint64 `json:"applied_index"`
+	// Stalled is set when the machine stopped at an entry this build
+	// cannot apply.
+	Stalled *clusterstate.Stall `json:"stalled,omitempty"`
 }
 
 // RaftConfiguration is the answer of the raft-configuration operation.

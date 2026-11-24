@@ -171,3 +171,42 @@ func TestSnapshotRestore(t *testing.T) {
 		t.Fatal("a snapshot of an unknown format was restored")
 	}
 }
+
+// A stalled machine takes no snapshot, so the library never truncates the
+// log past the entry it stopped at.
+func TestStalledMachineRefusesASnapshot(t *testing.T) {
+	m := New()
+	m.Apply(1, initEntry(t, "op-init"))
+	m.Apply(2, []byte(`{"type":"user.create","version":1,"op_id":"x","actor":"a","origin":"n","data":{}}`))
+	if _, err := m.Snapshot(); !errors.Is(err, ErrSnapshotWhileStalled) {
+		t.Fatalf("snapshot of a stalled machine: %v", err)
+	}
+}
+
+// A snapshot written by the first 8a build may carry the stall; it is read
+// and ignored, so the restored machine applies again.
+func TestRestoreIgnoresAStallInAnOldSnapshot(t *testing.T) {
+	m := New()
+	m.Apply(1, initEntry(t, "op-init"))
+	b, err := m.Snapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(b, []byte("stalled")) {
+		t.Fatalf("a snapshot carries the stall: %s", b)
+	}
+	old := bytes.Replace(b, []byte(`"applied":1`), []byte(`"applied":1,"stalled":{"index":2,"reason":"old build"}`), 1)
+	if bytes.Equal(old, b) {
+		t.Fatal("test setup: no applied field to extend")
+	}
+	n := New()
+	if err := n.Restore(bytes.NewReader(old)); err != nil {
+		t.Fatal(err)
+	}
+	if v := n.View(); v.Stalled != nil || v.AppliedIndex != 1 {
+		t.Fatalf("restored view %+v", v)
+	}
+	if r := n.Apply(2, addressEntry(t, "op-addr", "10.0.0.1:8444")); r.Err != nil {
+		t.Fatalf("apply after the restore: %+v", r)
+	}
+}

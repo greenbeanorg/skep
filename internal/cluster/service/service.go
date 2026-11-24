@@ -288,6 +288,7 @@ func (s *Service) Status(context.Context) localapi.Status {
 		ListenAddress:       s.cfg.PeerAddress(),
 		Listening:           listening,
 		Raft:                s.store.Stats(),
+		StateMachine:        localapi.StateMachineStatus{AppliedIndex: view.AppliedIndex, Stalled: view.Stalled},
 		Members:             members,
 		Build:               v.Version + "+" + v.Commit,
 	}

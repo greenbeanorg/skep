@@ -57,7 +57,12 @@ already initialised, reads the node ID from the agent, creates the data
 directory for the service account when it is missing, and writes
 `cluster.json`. Then it gives up root for the service account
 (`internal/privdrop`) and, as that account, creates the key, the
-certificate and the store with this node as its only member. Root creates
+certificate and the store with this node as its only member. The
+certificate is written atomically (temporary file, `fsync`, `rename`,
+`fsync` of the directory). At every start, when `node.key` is good but
+`node.crt` is missing, empty, unreadable or not for that key, the service
+issues a new certificate with the same key and logs a warning; the pin
+does not change. A bad `node.key` is never replaced. Root creates
 nothing inside the data directory, and `init` checks at the end that no
 root-owned file is there.
 
@@ -96,8 +101,12 @@ but is not named gets `403 forbidden`.
 
 All three are reads. `status` returns the node ID and name, the cluster
 ID, the node key's pin, the certificate's expiry, the listener's state,
-the Raft state and the members: IDs, names, addresses and pins, all
-public within a cluster. `raft-configuration` is what `listen` checks;
+the Raft state, the state machine's own applied index (and where it
+stopped, if it did), and the members: IDs, names, addresses and pins, all
+public within a cluster. The library's applied index (`raft.applied_index`)
+also counts entries after a stall; the state machine's
+(`state_machine.applied_index`) is the one `skep-cluster status` prints
+and the one catch-up and promotion will use (ADR 0013 amendment 1). `raft-configuration` is what `listen` checks;
 `skep-api` has no use for it. The API is internal, like the agent's, and
 makes no compatibility promise.
 
@@ -135,7 +144,10 @@ port 8444 only (never a wildcard address).
 - **An entry this build cannot apply stops the state machine** (unknown
   type, a newer version, or data it cannot read). Nothing after it is
   applied, health reports it, and the listener accepts no key. It never
-  skips.
+  skips. **While it is stopped no snapshot is taken** (the state
+  machine refuses one), so the library never truncates the log past that
+  entry, and the stop is never written to a snapshot: a build that can
+  apply the entry applies it and everything after it at its next start.
 
 ## Health
 

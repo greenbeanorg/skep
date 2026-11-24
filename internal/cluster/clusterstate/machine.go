@@ -44,7 +44,9 @@ type View struct {
 	ClusterID string
 	// Members is sorted by ID.
 	Members []Member
-	// AppliedIndex is the index of the last entry the machine saw.
+	// AppliedIndex is the index of the last entry the machine applied
+	// (or refused, or found a duplicate). It is the machine's own, not the
+	// library's, which also counts entries after a stall.
 	AppliedIndex uint64
 	// Stalled is set when the machine met an entry it cannot apply.
 	Stalled *Stall
@@ -235,14 +237,27 @@ type snapshot struct {
 	Members   []Member          `json:"members"`
 	Ops       map[string]uint64 `json:"ops"`
 	Applied   uint64            `json:"applied"`
-	Stalled   *Stall            `json:"stalled,omitempty"`
+	// Stalled is read from snapshots written by the first 8a build and
+	// ignored; it is never written. A stall belongs to the running build,
+	// not to the state: a later build that can apply the entry must.
+	Stalled *Stall `json:"stalled,omitempty"`
 }
 
-// Snapshot returns the state encoded for a snapshot.
+// ErrSnapshotWhileStalled is returned by Snapshot on a stalled machine. The
+// library then takes no snapshot, so it never truncates the log past the
+// entry the machine stopped at, and a build that can apply it still finds
+// it and everything after it in the log.
+var ErrSnapshotWhileStalled = errors.New("clusterstate: no snapshot while the state machine is stopped at an entry it cannot apply")
+
+// Snapshot returns the state encoded for a snapshot. It refuses while the
+// machine is stalled.
 func (m *Machine) Snapshot() ([]byte, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	s := snapshot{Format: snapshotFormat, ClusterID: m.clusterID, Ops: maps.Clone(m.ops), Applied: m.applied, Stalled: m.stalled}
+	if m.stalled != nil {
+		return nil, fmt.Errorf("%w (index %d)", ErrSnapshotWhileStalled, m.stalled.Index)
+	}
+	s := snapshot{Format: snapshotFormat, ClusterID: m.clusterID, Ops: maps.Clone(m.ops), Applied: m.applied}
 	for _, id := range slices.Sorted(maps.Keys(m.members)) {
 		s.Members = append(s.Members, m.members[id])
 	}
@@ -269,6 +284,8 @@ func (m *Machine) Restore(r io.Reader) error {
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.clusterID, m.members, m.ops, m.applied, m.stalled = s.ClusterID, members, s.Ops, s.Applied, s.Stalled
+	// s.Stalled is ignored: this build applies again whatever stalled an
+	// earlier one, and stalls again by itself if it cannot.
+	m.clusterID, m.members, m.ops, m.applied, m.stalled = s.ClusterID, members, s.Ops, s.Applied, nil
 	return nil
 }

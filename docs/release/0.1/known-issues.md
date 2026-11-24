@@ -83,6 +83,13 @@ procedure, and results recorded as it describes are welcome.
   health reads `degraded`, and the first `skep-setup upgrade` exits 4
   (incomplete) on that health, naming the modules. `check`, `plan` and
   `apply` name them too.
+- **Fixed account numbers.** The package refuses to install on a host
+  where another account or group already holds UID or GID **409** (the
+  `skep` account) or, from the build that adds `skep-cluster`
+  (Milestone 8), **410** (`skep-cluster`). Neither number is registered in
+  the FreeBSD ports `UIDs`/`GIDs` files yet, and 409 is now listed there
+  for `emfor`. The numbers stay; registering them
+  comes with a port submission ([backlog](../../backlog.md)).
 - **Firmware.** The package depends on `edk2-bhyve`: install a local file
   with `pkg install ./skep-0.1.0.pkg`; `pkg add` refuses until the firmware
   is installed.
