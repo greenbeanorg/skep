@@ -2,12 +2,14 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -82,6 +84,9 @@ func (l *logBuffer) String() string {
 	return l.b.String()
 }
 
+// nextHarnessIP numbers the loopback addresses of harness nodes.
+var nextHarnessIP atomic.Uint32
+
 type harness struct {
 	t     *testing.T
 	nodes []*tnode
@@ -114,7 +119,11 @@ func (h *harness) node(name string) *tnode {
 	if err != nil {
 		h.t.Fatal(err)
 	}
-	ip := "127.0.88." + string(rune('0'+h.next))
+	// Each node of the package's tests has its own loopback address
+	// (127.89.x.y), so that a node of an earlier test that is still
+	// shutting down can never answer for a node of a later one.
+	seq := nextHarnessIP.Add(1)
+	ip := fmt.Sprintf("127.89.%d.%d", seq/250, seq%250+1)
 	h.next++
 	n := &tnode{name: name, id: id, dir: dir, key: key, clock: &clock{}, logs: &logBuffer{},
 		cfg: clusterconf.Config{NodeID: id, NodeName: name, ListenAddress: ip}}
