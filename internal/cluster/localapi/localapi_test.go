@@ -36,6 +36,10 @@ func (fakeBackend) Admit(_ context.Context, request, actor string) (AdmitResult,
 	return AdmitResult{OpID: actor}, nil
 }
 
+func (fakeBackend) Remove(_ context.Context, req RemoveRequest, actor string) (RemoveResult, error) {
+	return RemoveResult{Name: req.Name, OpID: actor}, nil
+}
+
 func (fakeBackend) Withdraw(_ context.Context, name, actor string) (WithdrawResult, error) {
 	return WithdrawResult{OpID: actor}, nil
 }
@@ -116,8 +120,9 @@ func TestOperationTable(t *testing.T) {
 		"raft-configuration": {true, false},
 		"admit":              {true, false},
 		"admit-withdraw":     {true, false},
+		"remove":             {true, false},
 	}
-	writes := map[string]bool{"admit": true, "admit-withdraw": true}
+	writes := map[string]bool{"admit": true, "admit-withdraw": true, "remove": true}
 	if len(Operations) != len(want) {
 		t.Fatalf("%d operations, want %d", len(Operations), len(want))
 	}

@@ -27,6 +27,7 @@ func runListen(ctx context.Context, args []string, e env) error {
 		socket     = flags.String("socket", clusterconf.DefaultSocket, "Unix socket of the running service")
 		account    = flags.String("account", clusterconf.Account, "the service account")
 		noRestart  = flags.Bool("no-restart", false, "write cluster.json and leave the restart of skep_cluster to the administrator")
+		none       = flags.Bool("none", false, "close the listener: only on a node that is alone in its cluster with nothing pending")
 	)
 	if err := flags.Parse(args); err != nil {
 		return err
@@ -36,6 +37,12 @@ func runListen(ctx context.Context, args []string, e env) error {
 	}
 	if e.euid != 0 {
 		return errNeedsRoot("listen")
+	}
+	if *none {
+		if *address != "" || *noRestart {
+			return errors.New("listen -none takes no -address and no -no-restart")
+		}
+		return runListenNone(ctx, e, *configPath, *dataDir, *socket, *account)
 	}
 	if *address == "" {
 		return errors.New("listen needs -address: there is no default address")

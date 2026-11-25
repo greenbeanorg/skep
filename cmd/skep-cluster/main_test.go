@@ -21,6 +21,7 @@ import (
 	"github.com/greenbeanorg/skep/internal/cluster/clusterconf"
 	"github.com/greenbeanorg/skep/internal/cluster/clusterstate"
 	"github.com/greenbeanorg/skep/internal/cluster/joincode"
+	"github.com/greenbeanorg/skep/internal/cluster/layout"
 	"github.com/greenbeanorg/skep/internal/cluster/localapi"
 	"github.com/greenbeanorg/skep/internal/cluster/nodekey"
 	"github.com/greenbeanorg/skep/internal/cluster/store"
@@ -213,7 +214,7 @@ func TestInitCreatesOneNodeClusterWithoutListener(t *testing.T) {
 		}
 	}
 	// The store holds one member: this node, with the key's pin.
-	n, err := store.Open(store.Options{Dir: w.dataDir, NodeID: agentNode})
+	n, err := store.Open(store.Options{Dir: layout.State(w.dataDir), NodeID: agentNode})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -559,7 +560,7 @@ func TestListenNeedsTheRunningService(t *testing.T) {
 
 func TestUnknownCommand(t *testing.T) {
 	w := newWorld(t)
-	for _, c := range []string{"recover", "leave", "remove"} {
+	for _, c := range []string{"recover", "rotate", "feature-level"} {
 		if err := run(context.Background(), []string{c}, w.env(0)); err == nil || !strings.Contains(err.Error(), "unknown command") {
 			t.Errorf("%s: %v", c, err)
 		}
@@ -775,7 +776,7 @@ func TestJoinThatFailsBeforeStep1PutsTheStateBack(t *testing.T) {
 	adm := testAdmission(t)
 	adm.For.Pin = key.Pin()
 	adm.Members[0].Address = "127.0.0.3:8444" // nobody listens there
-	before, _ := os.ReadFile(filepath.Join(w.dataDir, store.DBFile))
+	before, _ := os.ReadFile(filepath.Join(layout.State(w.dataDir), store.DBFile))
 	err = run(context.Background(), []string{"join", "-config", w.config, "-data-dir", w.dataDir, "-socket", g.path,
 		"-agent-socket", "/agent.sock", "-cluster-id", adm.ClusterID, mustAdmissionLine(t, adm)}, w.env(0))
 	if err == nil || !strings.Contains(err.Error(), "join failed") {
@@ -790,7 +791,7 @@ func TestJoinThatFailsBeforeStep1PutsTheStateBack(t *testing.T) {
 	if !strings.Contains(w.out.String(), "one-node cluster is back") {
 		t.Fatalf("output:\n%s", w.out.String())
 	}
-	after, err := os.ReadFile(filepath.Join(w.dataDir, store.DBFile))
+	after, err := os.ReadFile(filepath.Join(layout.State(w.dataDir), store.DBFile))
 	if err != nil || len(after) == 0 || len(before) == 0 {
 		t.Fatal("the store is not back in place")
 	}

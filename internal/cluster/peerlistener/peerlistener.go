@@ -40,6 +40,12 @@ type Options struct {
 	// applied (ADR 0013 B1). It is asked at every handshake and again by
 	// Revalidate.
 	Accept func(pin string) bool
+	// Keep reports whether an open connection of a key may stay open.
+	// Nil uses Accept. It is stricter than Accept for a member being
+	// removed: its key is still accepted in the handshake, but its
+	// connections are closed once the Raft configuration without it has
+	// taken effect (decision D11 of step 8b-2a).
+	Keep func(pin string) bool
 	// Handle serves an accepted connection. Nil closes it at once.
 	Handle func(conn *tls.Conn, pin string)
 	// Now defaults to time.Now.
@@ -157,10 +163,14 @@ func (l *Listener) Close() error {
 // expiry, it closes that key's open connections). It returns how many it
 // closed.
 func (l *Listener) Revalidate() int {
+	keep := l.opts.Keep
+	if keep == nil {
+		keep = l.opts.Accept
+	}
 	l.mu.Lock()
 	var drop []*tls.Conn
 	for c, pin := range l.conns {
-		if !l.opts.Accept(pin) {
+		if !keep(pin) {
 			drop = append(drop, c)
 		}
 	}

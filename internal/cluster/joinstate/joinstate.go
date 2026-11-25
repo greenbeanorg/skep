@@ -18,10 +18,11 @@ import (
 
 	"github.com/greenbeanorg/skep/internal/cluster/clusterstate"
 	"github.com/greenbeanorg/skep/internal/cluster/joincode"
+	"github.com/greenbeanorg/skep/internal/cluster/layout"
 )
 
 // FileName is the file's name in the data directory.
-const FileName = "join.json"
+const FileName = layout.JoinFile
 
 // Phases of a join.
 const (
@@ -35,8 +36,14 @@ const (
 	PhaseAccepted = "accepted"
 	// PhaseRefused: after an unknown outcome, a leader refused the
 	// repeated call. The service does not put the one-node state back by
-	// itself (ADR 0013 B1 step 3.7); health reports it.
+	// itself (ADR 0013 B1 step 3.7); health reports it. The node accepts
+	// no inbound key in this phase (decision D10 of step 8b-2a).
 	PhaseRefused = "refused"
+	// PhaseAbandoning: "skep-cluster join --abandon" has decided to put
+	// the one-node state back and is doing its file steps. The service
+	// refuses to start in this phase; running the command again finishes
+	// them without asking the members again (decision D9).
+	PhaseAbandoning = "abandoning"
 )
 
 // State is the file's content.
@@ -59,12 +66,18 @@ type State struct {
 
 const format = 1
 
-// Peers returns the nodes a joining node accepts and may dial: the
-// admission's members and the answer's, without itself.
+// Peers returns the nodes a joining node accepts and may dial, without
+// itself: the join call's answer once one has been accepted (it replaces
+// the admission's list, decision D10 of step 8b-2a), the admission's
+// members before.
 func (s State) Peers(self string) []joincode.Node {
 	seen := map[string]bool{}
 	var out []joincode.Node
-	for _, n := range append(append([]joincode.Node(nil), s.Admission.Members...), s.Answer...) {
+	list := s.Admission.Members
+	if len(s.Answer) > 0 {
+		list = s.Answer
+	}
+	for _, n := range list {
 		if n.NodeID == self || seen[n.NodeID] {
 			continue
 		}
@@ -76,7 +89,7 @@ func (s State) Peers(self string) []joincode.Node {
 
 func (s State) validate() error {
 	switch s.Phase {
-	case PhaseCalling, PhaseUnknown, PhaseAccepted, PhaseRefused:
+	case PhaseCalling, PhaseUnknown, PhaseAccepted, PhaseRefused, PhaseAbandoning:
 	default:
 		return fmt.Errorf("phase %q is unknown", s.Phase)
 	}
@@ -150,89 +163,72 @@ func Write(dir string, s State) error {
 		_ = os.Remove(tmp)
 		return err
 	}
-	return syncDir(dir)
+	return layout.SyncDir(dir)
 }
 
-// Remove deletes the file.
+// Remove deletes the file, then fsyncs dir.
 func Remove(dir string) error {
-	if err := os.Remove(filepath.Join(dir, FileName)); err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return err
-	}
-	return syncDir(dir)
+	return layout.RemoveFile(filepath.Join(dir, FileName))
 }
 
-func syncDir(dir string) error {
-	d, err := os.Open(dir)
-	if err != nil {
-		return err
+// AllNodes returns every node of the admission and of the stored answer,
+// without itself and without duplicates: the nodes "join --abandon" asks.
+func (s State) AllNodes(self string) []joincode.Node {
+	seen := map[string]bool{}
+	var out []joincode.Node
+	for _, n := range append(append([]joincode.Node(nil), s.Admission.Members...), s.Answer...) {
+		if n.NodeID == self || seen[n.NodeID] {
+			continue
+		}
+		seen[n.NodeID] = true
+		out = append(out, n)
 	}
-	err = d.Sync()
-	if cerr := d.Close(); err == nil {
-		err = cerr
-	}
-	return err
+	return out
 }
 
 // StandalonePrefix starts the name of a moved-aside one-node state.
-const StandalonePrefix = "standalone."
+const StandalonePrefix = layout.StandalonePrefix
 
-// MoveAside moves the named entries of dir (the one-node cluster's store,
-// snapshots and applied-membership file) into a new directory
-// standalone.<UTC time>/ inside dir, mode 0700, and returns its name.
-// Entries that do not exist are skipped.
-func MoveAside(dir string, names []string, utc string) (string, error) {
+// MoveAside moves the one-node state aside: one rename of state/ to a new
+// standalone.<UTC time> in dir, then an fsync of dir (decision D1 of step
+// 8b-2a). It returns the new name.
+func MoveAside(dir, utc string) (string, error) {
 	name := StandalonePrefix + utc
-	aside := filepath.Join(dir, name)
-	if err := os.Mkdir(aside, 0o700); err != nil {
+	if ok, err := layout.Exists(filepath.Join(dir, name)); err != nil || ok {
+		if err == nil {
+			err = fmt.Errorf("%s exists already", name)
+		}
 		return "", err
 	}
-	for _, n := range names {
-		if filepath.Base(n) != n {
-			return name, fmt.Errorf("%q is not a name", n)
-		}
-		err := os.Rename(filepath.Join(dir, n), filepath.Join(aside, n))
-		if err != nil && !errors.Is(err, fs.ErrNotExist) {
-			return name, err
-		}
+	if err := os.Rename(layout.State(dir), filepath.Join(dir, name)); err != nil {
+		return "", err
 	}
-	if err := syncDir(aside); err != nil {
-		return name, err
-	}
-	return name, syncDir(dir)
+	return name, layout.SyncDir(dir)
 }
 
-// PutBack moves the named entries from the moved-aside directory back into
-// dir and removes that directory. It refuses, changing nothing, when one of
-// them exists in dir already.
-func PutBack(dir, standalone string, names []string) error {
-	if filepath.Base(standalone) != standalone || len(standalone) <= len(StandalonePrefix) || standalone[:len(StandalonePrefix)] != StandalonePrefix {
+// PutBack puts a moved-aside state back: one rename of standalone to
+// state/, then an fsync of dir. It refuses, changing nothing, when state/
+// exists.
+func PutBack(dir, standalone string) error {
+	if !layout.IsStandaloneName(standalone) {
 		return fmt.Errorf("%q is not a moved-aside state", standalone)
 	}
-	aside := filepath.Join(dir, standalone)
-	for _, n := range names {
-		if _, err := os.Lstat(filepath.Join(dir, n)); err == nil {
-			return fmt.Errorf("%s exists in %s; the one-node state was not put back", n, dir)
+	if ok, err := layout.Exists(layout.State(dir)); err != nil || ok {
+		if err == nil {
+			err = fmt.Errorf("%s exists; the one-node state was not put back", layout.State(dir))
 		}
-	}
-	for _, n := range names {
-		err := os.Rename(filepath.Join(aside, n), filepath.Join(dir, n))
-		if err != nil && !errors.Is(err, fs.ErrNotExist) {
-			return err
-		}
-	}
-	if err := os.Remove(aside); err != nil {
 		return err
 	}
-	return syncDir(dir)
+	if err := os.Rename(filepath.Join(dir, standalone), layout.State(dir)); err != nil {
+		return err
+	}
+	return layout.SyncDir(dir)
 }
 
 // DeleteStandalone removes a moved-aside state for good.
 func DeleteStandalone(dir, standalone string) error {
-	if filepath.Base(standalone) != standalone || len(standalone) <= len(StandalonePrefix) || standalone[:len(StandalonePrefix)] != StandalonePrefix {
+	if !layout.IsStandaloneName(standalone) {
 		return fmt.Errorf("%q is not a moved-aside state", standalone)
 	}
-	if err := os.RemoveAll(filepath.Join(dir, standalone)); err != nil {
-		return err
-	}
-	return syncDir(dir)
+	return layout.RemoveAll(filepath.Join(dir, standalone))
 }

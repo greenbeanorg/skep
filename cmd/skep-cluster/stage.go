@@ -10,6 +10,7 @@ import (
 
 	"github.com/greenbeanorg/skep/internal/cluster/clusterconf"
 	"github.com/greenbeanorg/skep/internal/cluster/joincode"
+	"github.com/greenbeanorg/skep/internal/cluster/layout"
 	"github.com/greenbeanorg/skep/internal/cluster/nodekey"
 	"github.com/greenbeanorg/skep/internal/cluster/service"
 	"github.com/greenbeanorg/skep/internal/cluster/store"
@@ -22,7 +23,7 @@ func runStageCmd(ctx context.Context, args []string, e env) error {
 		return errors.New("the stage runs as the service account, never as root")
 	}
 	if len(args) == 0 {
-		return errors.New("stage: read or join")
+		return errors.New("stage: an action is required")
 	}
 	flags := flag.NewFlagSet("skep-cluster "+stageCommand, flag.ContinueOnError)
 	flags.SetOutput(e.stderr)
@@ -40,6 +41,20 @@ func runStageCmd(ctx context.Context, args []string, e env) error {
 		res = stageRead(*configPath, *dataDir)
 	case "join":
 		res = stageJoin(ctx, e, *configPath, *dataDir, *admission)
+	case "read-state":
+		res = stageReadState(*configPath, *dataDir)
+	case "wipe-info":
+		res = stageWipeInfo(*configPath, *dataDir, false)
+	case "wipe-info-files":
+		res = stageWipeInfo(*configPath, *dataDir, true)
+	case "wipe-begin":
+		res = stageWipeBegin(*dataDir)
+	case "wipe-finish":
+		res = stageWipeFinish(ctx, *configPath, *dataDir)
+	case "abandon":
+		res = stageAbandon(*configPath, *dataDir, false)
+	case "abandon-check":
+		res = stageAbandon(*configPath, *dataDir, true)
 	default:
 		return fmt.Errorf("stage: unknown action %q", args[0])
 	}
@@ -63,7 +78,10 @@ func readAlone(configPath, dataDir string) (clusterconf.Config, *nodekey.Key, in
 	if err != nil {
 		return cfg, nil, 0, false, err
 	}
-	servers, err := store.ReadServers(dataDir, cfg.NodeID)
+	if err := layout.CheckOldLayout(dataDir); err != nil {
+		return cfg, key, 0, false, err
+	}
+	servers, err := store.ReadServers(layout.State(dataDir), cfg.NodeID)
 	if err != nil {
 		return cfg, key, 0, false, err
 	}

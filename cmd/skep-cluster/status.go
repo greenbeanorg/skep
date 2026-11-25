@@ -46,6 +46,21 @@ func runStatus(ctx context.Context, args []string, e env) error {
 		fmt.Fprintln(e.stdout, string(b))
 		return nil
 	}
+	if r := st.Removed; r != nil {
+		fmt.Fprintf(e.stdout, "Node ID:       %s\n", termSafe(st.NodeID))
+		fmt.Fprintf(e.stdout, "Node name:     %s\n", termSafe(st.NodeName))
+		fmt.Fprintf(e.stdout, "Node key pin:  %s\n", termSafe(st.Pin))
+		fmt.Fprintf(e.stdout, "REMOVED:       from cluster %s, %s (%s)\n", termSafe(r.ClusterID), termSafe(r.How), termSafe(r.At))
+		fmt.Fprintf(e.stdout, "Raft:          shut; listener: none\n")
+		fmt.Fprintf(e.stdout, "Build:         %s\n", termSafe(st.Build))
+		if st.Join != nil {
+			fmt.Fprintf(e.stdout, "This node was joining: run \"skep-cluster join --abandon\" as root, which puts its one-node cluster back (after removing this node on a member, if that was not done).\n")
+		} else {
+			fmt.Fprintf(e.stdout, "Run \"skep-cluster leave --wipe\" as root (after removing this node on a member, if that was not done).\n")
+		}
+		printHealth(e, h)
+		return nil
+	}
 	fmt.Fprintf(e.stdout, "Node ID:       %s\n", termSafe(st.NodeID))
 	fmt.Fprintf(e.stdout, "Node name:     %s\n", termSafe(st.NodeName))
 	fmt.Fprintf(e.stdout, "Cluster ID:    %s\n", termSafe(st.ClusterID))
@@ -97,6 +112,12 @@ func runStatus(ctx context.Context, args []string, e env) error {
 			}
 		}
 		fmt.Fprintf(e.stdout, "  %s  %s  %s, %s  %s  %s\n", termSafe(m.Name), termSafe(m.ID), termSafe(m.State), role, termSafe(addr), termSafe(m.Pin))
+	}
+	for _, r := range st.Removals {
+		fmt.Fprintf(e.stdout, "Removal:       %s\n", termSafe(r))
+	}
+	if len(st.UnappliedRemoval) > 0 {
+		fmt.Fprintf(e.stdout, "Not yet applied the last removal: %s\n", termSafe(strings.Join(st.UnappliedRemoval, ", ")))
 	}
 	if len(st.Pendings) > 0 {
 		fmt.Fprintf(e.stdout, "Pending admissions (%d):\n", len(st.Pendings))
@@ -152,11 +173,13 @@ func runHealth(ctx context.Context, args []string, e env) error {
 	return nil
 }
 
-// termSafe replaces control characters (newlines too) with "?": for every
-// string from another node or the stage that a command prints.
+// termSafe replaces control characters (newlines too) and Unicode format
+// characters (category Cf: the direction overrides and isolates, zero-width
+// characters) with "?": for every string from another node or the stage
+// that a command prints.
 func termSafe(s string) string {
 	return strings.Map(func(r rune) rune {
-		if unicode.IsControl(r) {
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
 			return '?'
 		}
 		return r

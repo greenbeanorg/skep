@@ -19,63 +19,195 @@ type StatusAnswer struct {
 	Stalled      bool   `json:"stalled"`
 }
 
-// leaderStep is the leader's work, when it gains leadership and every
-// LeaderInterval (ADR 0013 B1, "Order and crash points"): propose the
-// expiry of due pending entries and finish the joins of members in state
-// "joining".
+// leaderStep is the leader's work (ADR 0013 B1, "Order and crash points";
+// decision D5 of step 8b-2a). It is the only place that changes the Raft
+// configuration (AddNonvoter, AddVoter, RemoveServer) or proposes the
+// leader's own membership entries, and it does so one step at a time:
+//   - whenever the Raft term differs from the term of the last successful
+//     barrier, it makes a barrier first (D5a), and does nothing else until
+//     one succeeds in the current term;
+//   - each round reads the state after that barrier and does at most one
+//     step (D5b); after a step the next round follows at the next tick,
+//     otherwise after LeaderInterval.
 func (s *Service) leaderStep(ctx context.Context) {
 	if s.isFrozen() {
 		return
 	}
 	st := s.getStore()
-	isLeader := st.IsLeader()
+	if !st.IsLeader() {
+		return
+	}
 	now := s.now()
-	// wasLeader is set only after a successful barrier (retried each round).
+	term := st.Term()
 	s.mu.Lock()
-	gained := isLeader && !s.wasLeader
-	if !isLeader {
-		s.wasLeader = false
-	}
-	due := isLeader && (gained || !now.Before(s.nextLeader))
-	if due {
-		s.nextLeader = now.Add(s.leaderInt)
-	}
+	needBarrier := term != s.barrierTerm
+	due := needBarrier || !now.Before(s.nextLeader)
+	hook := s.beforeBarrier
 	s.mu.Unlock()
 	if !due {
 		return
 	}
-	if gained {
+	if needBarrier {
+		if hook != nil {
+			hook()
+		}
 		// Act on everything committed before this term.
 		if err := st.Barrier(); err != nil {
-			s.log.Warn("leader: barrier failed; the work waits for the next round", "error", err)
+			s.log.Warn("leader: barrier failed; the work waits for the next round", "term", term, "error", err)
 			return
 		}
+		if st.Term() != term || !st.IsLeader() {
+			return // the term moved during the barrier: try again
+		}
 		s.mu.Lock()
-		s.wasLeader = true
+		s.barrierTerm = term
 		s.mu.Unlock()
-		s.log.Info("leader: this node is the leader; checking unfinished joins and due expiries")
+		s.log.Info("leader: this node is the leader; checking unfinished joins, removals and due expiries", "term", term)
 	}
+	did := s.leaderRound(ctx)
+	s.mu.Lock()
+	if did {
+		s.nextLeader = now // the next step at the next tick
+	} else {
+		s.nextLeader = now.Add(s.leaderInt)
+	}
+	s.mu.Unlock()
+}
+
+// leaderRound does at most one step and reports whether it did one.
+func (s *Service) leaderRound(ctx context.Context) bool {
+	if s.isFrozen() {
+		return false
+	}
+	st := s.getStore()
 	view := s.machine.View()
-	if view.Stalled != nil {
-		return
+	if view.Stalled != nil || view.ClusterID == "" {
+		return false
 	}
-	s.proposeExpiries(view)
-	servers, err := st.Servers()
+	servers, _, committed, err := st.Configuration()
 	if err != nil {
 		s.log.Warn("leader: cannot read the Raft configuration", "error", err)
-		return
+		return false
+	}
+	// A leader that is itself being removed hands leadership over first;
+	// the new leader does the removal (ADR 0013 B1 removal step 1, D6).
+	if self, ok := s.machine.Member(s.cfg.NodeID); ok && self.State == clusterstate.StateRemoving {
+		s.log.Info("leader: this node is being removed; handing the leadership over")
+		if err := st.TransferLeadership(); err != nil {
+			s.log.Warn("leader: handing the leadership over failed; retrying", "error", err)
+		}
+		return true
+	}
+	// A configuration this leader changed that has not committed yet (a
+	// change whose wait ran out): nothing else until it has (D5e).
+	if !committed {
+		return false
+	}
+	if store.Alone(servers, s.cfg.NodeID) && len(view.Members) == 1 && s.joinState() == nil {
+		if s.reconcileAddress() {
+			return true
+		}
+	} else {
+		s.reconcileAddress() // reports a clustered node's mismatch
+	}
+	if s.ghostSweep(view, servers) {
+		return true
+	}
+	if s.continueRemovals(ctx, view, servers) {
+		return true
+	}
+	if s.proposeExpiries(view) {
+		return true
 	}
 	for _, m := range view.Members {
 		if m.State != clusterstate.StateJoining {
 			continue
 		}
-		s.continueJoin(ctx, view, servers, m)
+		if s.continueJoin(ctx, view, servers, m) {
+			return true
+		}
 	}
+	return false
+}
+
+// ghostSweep removes a server of the Raft configuration that has no member
+// entry (decision D5f), one per round, and logs it. Nothing creates such a
+// server on purpose: a join writes the member entry before AddNonvoter,
+// and a removal removes the server before the member entry.
+func (s *Service) ghostSweep(view clusterstate.View, servers []store.Server) bool {
+	for _, sv := range servers {
+		if sv.ID == s.cfg.NodeID {
+			continue
+		}
+		if _, ok := memberOf(view, sv.ID); ok {
+			continue
+		}
+		if err := s.getStore().RemoveServer(sv.ID); err != nil {
+			s.log.Warn("cluster membership: removing a Raft server without a member entry failed; it will be tried again", "event", "ghost removal failed",
+				"node_id", sv.ID, "address", sv.Address, "voter", sv.Voter, "actor", clusterstate.ActorSystem, "origin", s.cfg.NodeID, "error", err.Error())
+			return true
+		}
+		s.log.Warn("cluster membership: a Raft server without a member entry was removed", "event", "ghost removed",
+			"node_id", sv.ID, "address", sv.Address, "voter", sv.Voter, "actor", clusterstate.ActorSystem, "origin", s.cfg.NodeID)
+		return true
+	}
+	return false
+}
+
+func memberOf(view clusterstate.View, id string) (clusterstate.Member, bool) {
+	for _, m := range view.Members {
+		if m.ID == id {
+			return m, true
+		}
+	}
+	return clusterstate.Member{}, false
+}
+
+// continueRemovals does the next removal step for one member in state
+// removing (ADR 0013 B1, removal; D5d, D5e): RemoveServer while it is a
+// server in the latest configuration, voter or not; the final entry once
+// the configuration without it is committed (the caller has checked that
+// the latest configuration is committed).
+func (s *Service) continueRemovals(ctx context.Context, view clusterstate.View, servers []store.Server) bool {
+	st := s.getStore()
+	for _, m := range view.Members {
+		if m.State != clusterstate.StateRemoving {
+			continue
+		}
+		if _, ok := findServer(servers, m.ID); ok {
+			err := st.RemoveServer(m.ID)
+			if err != nil {
+				s.log.Warn("leader: removal step 1 (RemoveServer) did not complete; the next round reads the configuration again", "node_id", m.ID, "error", err)
+				return true
+			}
+			s.log.Info("cluster membership: removed from the Raft configuration", "event", "server removed", "node_id", m.ID, "name", m.Name,
+				"actor", clusterstate.ActorSystem, "origin", s.cfg.NodeID)
+			s.removalStepDone(1, m.ID)
+			return true
+		}
+		opID := "removed:" + m.ID + ":" + strconv.FormatUint(m.JoinedIndex, 10)
+		e, err := clusterstate.NewEntry(clusterstate.TypeMemberRemoved, opID, clusterstate.ActorSystem, s.cfg.NodeID,
+			clusterstate.MemberRemoved{NodeID: m.ID})
+		if err == nil {
+			_, err = st.Apply(e)
+		}
+		if err != nil {
+			s.log.Warn("leader: removal step 2 failed; retrying", "node_id", m.ID, "error", err)
+			return true
+		}
+		if s.removalStepDone(2, m.ID) {
+			return true
+		}
+		s.notifyRemoved(ctx, view.ClusterID, m)
+		return true
+	}
+	return false
 }
 
 // proposeExpiries proposes one expiry entry per pending entry whose expiry
-// time the leader's clock has passed.
-func (s *Service) proposeExpiries(view clusterstate.View) {
+// time the leader's clock has passed, and reports whether it proposed one.
+func (s *Service) proposeExpiries(view clusterstate.View) bool {
+	did := false
 	now := s.now().Unix()
 	for _, p := range view.Pendings {
 		if now < p.ExpiresAt {
@@ -90,7 +222,9 @@ func (s *Service) proposeExpiries(view clusterstate.View) {
 		if err != nil {
 			s.log.Warn("leader: proposing a pending entry's expiry failed; retrying in the next round", "node_id", p.NodeID, "error", err)
 		}
+		did = true
 	}
+	return did
 }
 
 func findServer(servers []store.Server, id string) (store.Server, bool) {
@@ -102,8 +236,9 @@ func findServer(servers []store.Server, id string) (store.Server, bool) {
 	return store.Server{}, false
 }
 
-// continueJoin does the next join step for a member in state joining.
-func (s *Service) continueJoin(ctx context.Context, view clusterstate.View, servers []store.Server, m clusterstate.Member) {
+// continueJoin does the next join step for a member in state joining, one
+// step per call, and reports whether it did one (or tried and failed).
+func (s *Service) continueJoin(ctx context.Context, view clusterstate.View, servers []store.Server, m clusterstate.Member) bool {
 	st := s.getStore()
 	sv, ok := findServer(servers, m.ID)
 	switch {
@@ -111,28 +246,27 @@ func (s *Service) continueJoin(ctx context.Context, view clusterstate.View, serv
 		// Step 2.
 		if err := st.AddNonvoter(m.ID, m.Address); err != nil {
 			s.log.Warn("leader: join step 2 (add non-voter) failed; retrying", "node_id", m.ID, "error", err)
-			return
+			return true
 		}
 		s.log.Info("cluster membership: non-voter added", "event", "non-voter added", "node_id", m.ID, "name", m.Name,
 			"actor", clusterstate.ActorSystem, "op_id", m.JoinOp, "origin", s.cfg.NodeID)
 		s.joinStepDone(2, m.ID)
+		return true
 	case !sv.Voter:
 		// Step 3: caught up, and every member has applied step 1.
 		waits := s.promotionWaits(ctx, view, m)
 		s.setWaits(m.ID, waits)
 		if len(waits) > 0 {
-			return
+			return false
 		}
 		if err := st.AddVoter(m.ID, m.Address); err != nil {
 			s.log.Warn("leader: join step 3 (promotion) failed; retrying", "node_id", m.ID, "error", err)
-			return
+			return true
 		}
 		s.log.Info("cluster membership: promoted", "event", "promoted", "node_id", m.ID, "name", m.Name,
 			"actor", clusterstate.ActorSystem, "op_id", m.JoinOp, "origin", s.cfg.NodeID)
-		if s.joinStepDone(3, m.ID) {
-			return
-		}
-		fallthrough
+		s.joinStepDone(3, m.ID)
+		return true
 	default:
 		// Step 4.
 		opID := "promoted:" + m.ID + ":" + strconv.FormatUint(m.JoinedIndex, 10)
@@ -143,9 +277,10 @@ func (s *Service) continueJoin(ctx context.Context, view clusterstate.View, serv
 		}
 		if err != nil {
 			s.log.Warn("leader: join step 4 failed; retrying", "node_id", m.ID, "error", err)
-			return
+			return true
 		}
 		s.joinStepDone(4, m.ID)
+		return true
 	}
 }
 

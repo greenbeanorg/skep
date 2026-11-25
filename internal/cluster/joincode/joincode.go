@@ -114,7 +114,11 @@ func CheckNodes(nodes []Node) error {
 // state machine's CheckAddress does not, for the loopback tests).
 func CheckPorts(nodes ...Node) error {
 	for _, n := range nodes {
-		if ap, err := netip.ParseAddrPort(n.Address); err != nil || ap.Port() != clusterconf.Port {
+		ap, err := netip.ParseAddrPort(n.Address)
+		if err != nil {
+			return fmt.Errorf("address %q of %s is not ip:port", n.Address, n.Name)
+		}
+		if ap.Port() != clusterconf.Port {
 			return fmt.Errorf("address %q of %s: port %d is not skep-cluster's port %d", n.Address, n.Name, ap.Port(), clusterconf.Port)
 		}
 	}

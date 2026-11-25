@@ -378,7 +378,7 @@ func TestFailedAndUnknownJoins(t *testing.T) {
 	j := h.node("joiner")
 	h.start(j)
 	adm := h.admit(smith, j)
-	before, _ := os.ReadFile(filepath.Join(j.dir, store.DBFile))
+	before, _ := os.ReadFile(filepath.Join(j.state(), store.DBFile))
 	beforeID := ""
 	h.eventually("joiner's cluster ID", 10*time.Second, func() bool { beforeID = j.svc.machine.View().ClusterID; return beforeID != "" })
 	h.stop(j)
@@ -394,7 +394,7 @@ func TestFailedAndUnknownJoins(t *testing.T) {
 	if js, _ := joinstate.Read(j.dir); js != nil {
 		t.Fatal("join.json left after a join that failed before step 1")
 	}
-	after, _ := os.ReadFile(filepath.Join(j.dir, store.DBFile))
+	after, _ := os.ReadFile(filepath.Join(j.state(), store.DBFile))
 	if len(after) == 0 || len(before) == 0 {
 		t.Fatal("the one-node store is not back")
 	}
@@ -420,7 +420,7 @@ func TestFailedAndUnknownJoins(t *testing.T) {
 	if js == nil || js.Phase != joinstate.PhaseUnknown {
 		t.Fatalf("join.json %+v", js)
 	}
-	if _, err := os.Stat(filepath.Join(j.dir, store.DBFile)); err == nil {
+	if _, err := os.Stat(filepath.Join(j.state(), store.DBFile)); err == nil {
 		t.Fatal("the one-node store was put back after an unknown outcome")
 	}
 	if _, err := os.Stat(filepath.Join(j.dir, js.Standalone, store.DBFile)); err != nil {
@@ -477,7 +477,7 @@ func TestFullStopBeforeTheFirstSnapshot(t *testing.T) {
 	want := nodes[0].svc.machine.View().Members
 	for _, n := range nodes {
 		h.eventually(n.name+" file lists three", 10*time.Second, func() bool {
-			f, _ := membership.Read(n.dir)
+			f, _ := membership.Read(n.state())
 			return f != nil && len(f.Members) == 3
 		})
 	}
@@ -797,7 +797,7 @@ func TestJoinAnswerIsChecked(t *testing.T) {
 		if err != nil || js == nil || js.Phase != joinstate.PhaseUnknown || len(js.Answer) != 0 {
 			t.Fatalf("%s: join.json %+v %v", c.name, js, err)
 		}
-		if _, err := os.Stat(filepath.Join(j.dir, store.DBFile)); err == nil {
+		if _, err := os.Stat(filepath.Join(j.state(), store.DBFile)); err == nil {
 			t.Fatalf("%s: the one-node state was put back", c.name)
 		}
 		// The service repeats the call and checks the answer the same way.
@@ -854,7 +854,7 @@ func TestJoinStageCrashWindows(t *testing.T) {
 		if js, _ := joinstate.Read(j.dir); js != nil || len(aside) != 1 {
 			t.Fatalf("%s: join.json %+v, moved aside %v", point, js, aside)
 		}
-		if _, err := os.Stat(filepath.Join(j.dir, store.DBFile)); err == nil {
+		if _, err := os.Stat(filepath.Join(j.state(), store.DBFile)); err == nil {
 			t.Fatalf("%s: the store is in place", point)
 		}
 		discard := slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -864,10 +864,10 @@ func TestJoinStageCrashWindows(t *testing.T) {
 			if err := joinstate.Write(j.dir, joinstate.State{Phase: joinstate.PhaseCalling, OpID: newID(t), Admission: adm, Standalone: aside[0]}); err != nil {
 				t.Fatal(err)
 			}
-			if err := RecoverStandalone(j.dir, discard); err != nil {
+			if err := StartRule(j.dir, discard); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := os.Stat(filepath.Join(j.dir, store.DBFile)); err == nil || len(standalones(t, j.dir)) != 1 {
+			if _, err := os.Stat(filepath.Join(j.state(), store.DBFile)); err == nil || len(standalones(t, j.dir)) != 1 {
 				t.Fatal("the one-node state was put back while join.json was present")
 			}
 			if err := joinstate.Remove(j.dir); err != nil {
@@ -880,7 +880,7 @@ func TestJoinStageCrashWindows(t *testing.T) {
 			if err := os.Mkdir(extra, 0o700); err != nil {
 				t.Fatal(err)
 			}
-			err := RecoverStandalone(j.dir, discard)
+			err := StartRule(j.dir, discard)
 			if err == nil || !strings.Contains(err.Error(), aside[0]) || !strings.Contains(err.Error(), filepath.Base(extra)) {
 				t.Fatalf("two moved-aside states: %v", err)
 			}

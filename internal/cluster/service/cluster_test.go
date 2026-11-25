@@ -15,6 +15,7 @@ import (
 	"github.com/greenbeanorg/skep/internal/cluster/clusterstate"
 	"github.com/greenbeanorg/skep/internal/cluster/joincode"
 	"github.com/greenbeanorg/skep/internal/cluster/joinstate"
+	"github.com/greenbeanorg/skep/internal/cluster/layout"
 	"github.com/greenbeanorg/skep/internal/cluster/membership"
 	"github.com/greenbeanorg/skep/internal/cluster/nodekey"
 	"github.com/greenbeanorg/skep/internal/cluster/raftnet"
@@ -56,7 +57,11 @@ type tnode struct {
 	cancel context.CancelFunc
 	done   chan struct{}
 	hook   func(step int, id string) bool
+	rhook  func(step int, id string) bool
 }
+
+// state is the node's state directory.
+func (n *tnode) state() string { return layout.State(n.dir) }
 
 type logBuffer struct {
 	mu sync.Mutex
@@ -113,7 +118,7 @@ func (h *harness) node(name string) *tnode {
 		cfg: clusterconf.Config{NodeID: id, NodeName: name, ListenAddress: ip}}
 	// A one-node cluster, as "skep-cluster init -address" makes it.
 	clusterID, _ := ids.NewUUID()
-	opts := store.Options{Dir: dir, NodeID: id}
+	opts := store.Options{Dir: layout.State(dir), NodeID: id}
 	if err := store.Bootstrap(opts, n.cfg.PeerAddress()); err != nil {
 		h.t.Fatal(err)
 	}
@@ -142,10 +147,21 @@ func (h *harness) node(name string) *tnode {
 func (h *harness) start(n *tnode) {
 	h.t.Helper()
 	log := slog.New(slog.NewTextHandler(io.MultiWriter(n.logs, testWriter{h.t, n.name}), &slog.HandlerOptions{Level: slog.LevelInfo}))
-	if err := RecoverStandalone(n.dir, log); err != nil {
+	if err := StartRule(n.dir, log); err != nil {
 		h.t.Fatal(err)
 	}
-	writer, err := membership.NewWriter(n.dir)
+	// A removed node runs only its local socket, as serve does.
+	if rec, err := ReadRemoved(n.dir); err != nil {
+		h.t.Fatal(err)
+	} else if rec != nil {
+		svc := New(Options{Config: n.cfg, Key: n.key, DataDir: n.dir, Removed: rec, Now: n.clock.now, Logger: log,
+			Interval: 50 * time.Millisecond, LeaderInterval: 300 * time.Millisecond})
+		ctx, cancel := context.WithCancel(context.Background())
+		n.svc, n.st, n.cancel, n.done = svc, nil, cancel, make(chan struct{})
+		go func() { defer close(n.done); svc.Run(ctx) }()
+		return
+	}
+	writer, err := membership.NewWriter(n.state())
 	if err != nil {
 		h.t.Fatal(err)
 	}
@@ -161,12 +177,19 @@ func (h *harness) start(n *tnode) {
 	svc := New(Options{Config: n.cfg, Key: n.key, DataDir: n.dir, Machine: machine, Writer: writer, Join: js,
 		Now: n.clock.now, Logger: log, Interval: 50 * time.Millisecond, LeaderInterval: 300 * time.Millisecond})
 	svc.afterJoinStep = n.hook
+	svc.afterRemovalStep = n.rhook
 	machine.SetOnApplied(svc.OnApplied)
-	trans, err := raftnet.New(raftnet.Options{LocalAddress: n.cfg.PeerAddress(), Certificate: n.key.Certificate, Trust: svc, Peer: svc, Logger: log})
-	if err != nil {
-		h.t.Fatal(err)
+	opts := store.Options{Dir: n.state(), NodeID: n.id, Logger: log, Machine: machine, Empty: js != nil}
+	var trans *raftnet.Transport
+	if n.cfg.PeerAddress() != "" { // a wiped node has no address
+		var err error
+		trans, err = raftnet.New(raftnet.Options{LocalAddress: n.cfg.PeerAddress(), Certificate: n.key.Certificate, Trust: svc, Peer: svc, Logger: log})
+		if err != nil {
+			h.t.Fatal(err)
+		}
+		opts.Transport = trans
 	}
-	st, err := store.Open(store.Options{Dir: n.dir, NodeID: n.id, Logger: log, Machine: machine, Transport: trans, Empty: js != nil})
+	st, err := store.Open(opts)
 	if err != nil {
 		h.t.Fatal(err)
 	}
@@ -183,7 +206,9 @@ func (h *harness) stop(n *tnode) {
 	}
 	n.cancel()
 	<-n.done
-	_ = n.st.Close()
+	if n.st != nil {
+		_ = n.st.Close()
+	}
 	n.cancel, n.svc, n.st = nil, nil, nil
 }
 
@@ -243,7 +268,7 @@ func (h *harness) join(j *tnode, adm joincode.Admission) StageOutcome {
 
 func (h *harness) leader() *tnode {
 	for _, n := range h.nodes {
-		if n.svc != nil && n.st.IsLeader() {
+		if n.svc != nil && n.st != nil && !n.svc.isRemoved() && n.st.IsLeader() {
 			return n
 		}
 	}
@@ -318,11 +343,11 @@ func (h *harness) leaderOrFirst(nodes []*tnode) *tnode {
 
 func readMembershipFile(t *testing.T, n *tnode) (*membership.File, os.FileInfo) {
 	t.Helper()
-	f, err := membership.Read(n.dir)
+	f, err := membership.Read(n.state())
 	if err != nil {
 		t.Fatal(err)
 	}
-	info, err := os.Stat(filepath.Join(n.dir, membership.FileName))
+	info, err := os.Stat(filepath.Join(n.state(), membership.FileName))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -343,14 +368,14 @@ func TestJoinTwoNodes(t *testing.T) {
 			t.Fatalf("%s states", n.name)
 		}
 		h.eventually(n.name+" membership file names both members", 10*time.Second, func() bool {
-			f, _ := membership.Read(n.dir)
+			f, _ := membership.Read(n.state())
 			return f != nil && len(f.Members) == 2 && f.Members[0].State == clusterstate.StateMember && f.Members[1].State == clusterstate.StateMember
 		})
 		f, info := readMembershipFile(t, n)
 		if info.Mode().Perm() != 0o600 {
 			t.Errorf("%s membership.json mode %o", n.name, info.Mode().Perm())
 		}
-		raw, _ := os.ReadFile(filepath.Join(n.dir, membership.FileName))
+		raw, _ := os.ReadFile(filepath.Join(n.state(), membership.FileName))
 		if strings.Contains(string(raw), "pending") || strings.Contains(string(raw), "expires") {
 			t.Errorf("%s membership.json holds a pending entry: %s", n.name, raw)
 		}
@@ -387,7 +412,7 @@ func TestJoinTwoNodes(t *testing.T) {
 	// join-request and join refuse on a node whose configuration has two
 	// servers: the stage reads it from the store.
 	h.stop(smith)
-	servers, err := store.ReadServers(smith.dir, smith.id)
+	servers, err := store.ReadServers(smith.state(), smith.id)
 	if err != nil || len(servers) != 2 || store.Alone(servers, smith.id) {
 		t.Fatalf("offline read: %v %v", servers, err)
 	}
@@ -396,7 +421,7 @@ func TestJoinTwoNodes(t *testing.T) {
 	if out := StageJoin(context.Background(), smith.dir, smith.cfg, smith.key, adm, time.Now(), 0); out.Outcome != "not_alone" {
 		t.Fatalf("join on a node of two: %+v", out)
 	}
-	if _, err := os.Stat(filepath.Join(smith.dir, store.DBFile)); err != nil {
+	if _, err := os.Stat(filepath.Join(smith.state(), store.DBFile)); err != nil {
 		t.Fatal("the refused join moved the store")
 	}
 }

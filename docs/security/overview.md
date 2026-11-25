@@ -372,7 +372,7 @@ and the two rc.d services were validated on `hearst`, a lab VM nested
 under KVM, on 2026-11-12 (`tests/integration/peercred`,
 `tests/integration/rcd`).
 
-### skep-cluster and the cluster (Milestone 8, steps 8a and 8b-1)
+### skep-cluster and the cluster (Milestone 8, steps 8a, 8b-1 and 8b-2a)
 
 [ADR 0013](../decisions/0013-clustering.md) adds a third process,
 `skep-cluster`, with its own account (`skep-cluster`, UID/GID 410). What is
@@ -387,19 +387,28 @@ procedure in [Joining hosts into a cluster](../administration/cluster.md).
 - **The service never talks to the agent,** and the agent's allow-list
   (`root`, `skep`) does not admit its account. Only the root-run commands
   `init` (the node ID) and `join-request` / `join` (whether the host has
-  guests) read from the agent, as peer UID 0.
+  guests) read from the agent, as peer UID 0. `remove`, `leave --wipe`,
+  `join --abandon` and `listen -none` do not talk to the agent.
 - **No root-owned file in the data directory.** Root-run commands do
   their root work (reading the agent, writing `cluster.json`, stopping and
   starting the service) and start the same executable **as the service
   account** for anything inside the directory; each ends by checking that
   no file there belongs to root. Decisions with a root effect are not
-  taken on the running service's word: "is this node alone" is read from
-  the store with the service stopped.
+  taken on the running service's word: "is this node alone" (and for
+  `listen -none` "nothing pending") is read from the store with the
+  service stopped. `leave --wipe` and `join --abandon` stop the service
+  and do every file step as the service account; a marker (`wipe.json`)
+  or a phase (`abandoning` in `join.json`) written before the first step
+  makes the service refuse to start until the command has been run
+  again to the end.
 - **Its socket admits root and `skep` only,** by kernel peer credentials
   on top of file permissions, and each operation names which of the two
-  may call it. `admit` and `admit --withdraw` are root-only in this step.
+  may call it. `admit`, `admit --withdraw` and `remove` are root-only in
+  this step.
 - **A single host opens no cluster port.** Port 8444 opens only on a
-  listen address given by `listen`, `join-request` or `init -address`.
+  listen address given by `listen`, `join-request` or `init -address`,
+  and closes again with `listen -none` (only while the node is alone with
+  nothing pending) or `leave --wipe`.
 
 **Trust between nodes: pinned keys.** There is no cluster CA. Each node
 generates its own key; the replicated membership stores the SHA-256 of
@@ -432,8 +441,17 @@ pin.
   dials. Raft's inbound handler is Skep's own adaptation of the library's
   (the library's does not let the receiver check the sender); it is
   compared with upstream at every library update.
-- **A joining node trusts only its admission** (and the members the
-  cluster's answer adds) until it has applied a membership listing itself.
+- **A joining node trusts only its admission** until the cluster's
+  answer is accepted, then only the answer's members (the answer replaces
+  the admission's list), until it has applied a membership listing
+  itself; after a refusal that followed an unknown outcome it accepts no
+  inbound key at all. **What this leaves open:** until the joining node
+  has applied its own membership, it trusts the admission's or the
+  answer's pins as members without a Raft configuration check, so a
+  member removed after the admission was printed (or after the answer)
+  is still accepted by the joining node until the joining node applies
+  the removal. The admission is valid for 30 minutes and a removal
+  withdraws every pending admission, which bounds it.
 - **No member meets a leader it does not know**: a new node becomes a voter
   only when every member has applied the entry carrying its pin. The
   applied membership is kept on disk (`membership.json`), so this holds
@@ -463,14 +481,41 @@ cluster is **one trust domain for Skep-managed resources**:
   including `admit` from step 8c; it cannot vote, send Raft RPCs or change
   a pin.
 - After a node is compromised, every password should be changed, and the
-  node removed (removal is the next run). A member that was down during a
-  removal still pins the removed node until it catches up; the operator
-  rule is to wipe every member that was down at that time before it
-  returns (ADR 0013 amendment 1, point 6).
+  node removed (`skep-cluster remove NAME` on a member). Members refuse
+  its Raft RPCs and close its connections as soon as the configuration
+  without it reaches them (a heartbeat may still be accepted for at most
+  the 250 ms age of the heartbeat path's configuration copy), and refuse
+  its key in the handshake once its member entry is removed.
 
-**Not built yet:** removal, `leave --wipe`, key rotation, the cluster
-audit (membership events are log lines with actor, operation ID and
-origin), clock-offset health, replicated users, forwarding.
+**Removal and the stale-member risk (ADR 0013 B2, amendment 1 point 6,
+amendment 2).** A member that was down during a removal still pins the
+removed node until it catches up: a hostile removed node could reach it
+first with a forged log at a higher term, and that member could then win
+an election among the real members. Skep 0.2 does not prevent this. It
+**names such members**: health on every member (`removal_applied`) and
+the output of `remove` list the members that have not yet applied the
+last removal. **The operator rule:** after removing a node because it is
+compromised, wipe every member that was down at that time (`skep-cluster
+leave --wipe`) before it returns, and join it again. The removed node
+itself shuts its cluster connections when it learns of the removal (a
+member's notice, or its own log). A notice is not believed on the
+sender's word: the node probes, with its own key, every other node it
+accepts, the sender included, and acts on the notice only if at least
+one answers and none that answers accepts its key (three rounds, 2 s
+apart, then the notice is dropped). A compromised member can therefore
+make another node stop its cluster service only when every other node
+that node accepts refuses its key too or does not answer (for example
+while they are down or cut off from it); with any other member up that
+still accepts the key, the notice is dropped (within the trust domain
+stated above). `leave
+--wipe` gives the node a new key, so its old pin is never accepted again.
+A removal that would leave fewer answering voters than a majority is
+refused unless the administrator overrides it with the cluster ID typed
+back.
+
+**Not built yet:** key rotation, the cluster audit (membership events
+are log lines with actor, operation ID and origin), clock-offset health,
+a per-key connection limit, replicated users, forwarding.
 
 ## Host operations and confinement (Milestone 6)
 

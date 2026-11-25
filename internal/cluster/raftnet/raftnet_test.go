@@ -28,6 +28,7 @@ const (
 	idJoining = "2d7a5c74-9b2a-4e7a-9f2d-5b3f8b2c1e33"
 	idPending = "3e8b6d85-ac3b-4f8b-8a3e-6c4a9c3d2f44"
 	idOther   = "4f9c7e96-bd4c-4a9c-9b4f-7d5bad4e3a55"
+	idRemove  = "5a0d8fa7-ce5d-4bad-8c5a-8e6cbe5f4b66"
 )
 
 // fakeTrust is a membership: keys by pin, and the Raft servers.
@@ -117,9 +118,9 @@ func (l *lockedBuffer) String() string {
 func newRig(t *testing.T) *rig {
 	t.Helper()
 	r := &rig{server: newKey(t, idServer), keys: map[string]*nodekey.Key{}, got: make(chan raft.RPC, 16), logs: &lockedBuffer{},
-		address: map[string]string{idMember: "127.0.0.1:18001", idJoining: "127.0.0.1:18002", idPending: "127.0.0.1:18003"}}
-	r.trust = &fakeTrust{peers: map[string]Peer{}, servers: map[string]bool{idMember: true, idJoining: true}}
-	for id, kind := range map[string]Kind{idMember: KindMember, idJoining: KindJoining, idPending: KindPending} {
+		address: map[string]string{idMember: "127.0.0.1:18001", idJoining: "127.0.0.1:18002", idPending: "127.0.0.1:18003", idRemove: "127.0.0.1:18004"}}
+	r.trust = &fakeTrust{peers: map[string]Peer{}, servers: map[string]bool{idMember: true, idJoining: true, idRemove: true}}
+	for id, kind := range map[string]Kind{idMember: KindMember, idJoining: KindJoining, idPending: KindPending, idRemove: KindRemoving} {
 		k := newKey(t, id)
 		r.keys[id] = k
 		r.trust.peers[k.Pin()] = Peer{NodeID: id, Address: r.address[id], Pin: k.Pin(), Kind: kind}
@@ -351,7 +352,7 @@ func TestPeerOperationsFollowTheTable(t *testing.T) {
 		for _, k := range []struct {
 			id   string
 			kind Kind
-		}{{idMember, KindMember}, {idJoining, KindJoining}, {idPending, KindPending}} {
+		}{{idMember, KindMember}, {idJoining, KindJoining}, {idPending, KindPending}, {idRemove, KindRemoving}} {
 			c := Caller{NodeID: k.id, Certificate: r.keys[k.id].Certificate}
 			var out map[string]string
 			err := c.Call(context.Background(), r.addr, r.server.Pin(), op.Name, struct{}{}, &out)
@@ -369,7 +370,7 @@ func TestPeerOperationsFollowTheTable(t *testing.T) {
 	for _, k := range []struct {
 		id   string
 		kind Kind
-	}{{idMember, KindMember}, {idJoining, KindJoining}, {idPending, KindPending}} {
+	}{{idMember, KindMember}, {idJoining, KindJoining}, {idPending, KindPending}, {idRemove, KindRemoving}} {
 		err := sendRaft(r.keys[k.id].Certificate(), r.addr, r.server.Pin(), nil, rpcAppendEntries, rpcOf(rpcAppendEntries, header(k.id, r.address[k.id])))
 		if _, want := Allowed(OpRaft, k.kind); (err == nil) != want {
 			t.Errorf("raft by a %s key: %v", k.kind, err)
@@ -389,18 +390,20 @@ func TestPeerOperationsFollowTheTable(t *testing.T) {
 
 // The pinned table: a change to who may call what fails here.
 func TestOperationTable(t *testing.T) {
-	want := map[string][3]bool{ // pending, joining, member
-		OpRaft:     {false, true, true},
-		OpJoin:     {true, true, false},
-		OpStatus:   {false, true, true},
-		OpAdmit:    {false, false, true},
-		OpWithdraw: {false, false, true},
+	want := map[string][4]bool{ // pending, joining, member, removing
+		OpRaft:     {false, true, true, true},
+		OpJoin:     {true, true, false, false},
+		OpStatus:   {false, true, true, true},
+		OpAdmit:    {false, false, true, false},
+		OpWithdraw: {false, false, true, false},
+		OpRemove:   {false, false, true, false},
+		OpRemoved:  {false, false, true, false},
 	}
 	if len(Operations) != len(want) {
 		t.Fatalf("%d operations, want %d", len(Operations), len(want))
 	}
 	for _, op := range Operations {
-		if w, ok := want[op.Name]; !ok || w != [3]bool{op.Pending, op.Joining, op.Member} || op.RaftServer != (op.Name == OpRaft) {
+		if w, ok := want[op.Name]; !ok || w != [4]bool{op.Pending, op.Joining, op.Member, op.Removing} || op.RaftServer != (op.Name == OpRaft) {
 			t.Errorf("operation %+v is not in the reviewed table", op)
 		}
 	}

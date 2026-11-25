@@ -53,7 +53,7 @@ func (b *barrierStore) log() []string {
 func TestFailedBarrierIsRetriedBeforeLeaderWork(t *testing.T) {
 	h := newHarness(t)
 	tn := h.node("smith") // a one-node cluster with an address
-	n, err := store.Open(store.Options{Dir: tn.dir, NodeID: tn.id})
+	n, err := store.Open(store.Options{Dir: tn.state(), NodeID: tn.id})
 	if err != nil {
 		t.Fatal(err)
 	}
