@@ -32,6 +32,15 @@ full stop and an expiry. What the record lists as in-process only (crash
 points, a member down during a join, unknown outcomes, the file's fault
 cases) is tested on several nodes over real TLS on loopback, not on
 FreeBSD.
+Step 8b-2a on the same three (2026-11-25, builds `067a840` and `25d5fa2`,
+[record](../../tests/integration/cluster/results/8b2a-25d5fa2-20261125.md)):
+the hand move to `state/`, removal of a follower and of the leader, `leave
+--wipe`, `listen -none`, rejoining, a removal while a member is down
+(refused, then with the override waiting for the member and finishing
+1.7 s after its return), the refusals and a full stop. `join --abandon`'s
+success path, the leader stopped after each removal record, the D5 term
+case, the ghost sweep, D10, the heartbeat bound and every crash point are
+in-process only.
 
 ## What exists
 
