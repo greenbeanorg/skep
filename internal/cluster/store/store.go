@@ -533,6 +533,11 @@ func (n *Node) TransferLeadership(id, address string) error {
 	return nil
 }
 
+// LeaderCh delivers true when this node becomes the leader and false when
+// it stops being one (the library's channel, which keeps only the latest
+// value). The service is its only reader.
+func (n *Node) LeaderCh() <-chan bool { return n.raft.LeaderCh() }
+
 // Term returns the current Raft term.
 func (n *Node) Term() uint64 { return n.raft.CurrentTerm() }
 

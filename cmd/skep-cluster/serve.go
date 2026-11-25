@@ -144,6 +144,7 @@ func runServe(ctx context.Context, args []string, e env) error {
 	svc := service.New(service.Options{Config: cfg, Key: key, DataDir: *dataDir, Machine: machine, Writer: writer, Join: join, Logger: log,
 		Audit: alog, Rotation: rotation})
 	machine.SetOnApplied(svc.OnApplied)
+	machine.SetOnUsers(svc.OnUsersChanged)
 	var trans *raftnet.Transport
 	if addr := cfg.PeerAddress(); addr != "" {
 		// A node with a listen address runs Raft over TLS on 8444.

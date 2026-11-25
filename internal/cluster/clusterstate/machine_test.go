@@ -101,7 +101,7 @@ func TestEveryEntryCarriesTypeAndVersion(t *testing.T) {
 			t.Errorf("decoded %s", b)
 		}
 	}
-	if _, err := NewEntry("user.create", "a", "x", "n", nil); err == nil {
+	if _, err := NewEntry("guest.create", "a", "x", "n", nil); err == nil {
 		t.Error("NewEntry made an entry of an unknown type")
 	}
 }
@@ -140,7 +140,7 @@ func TestApplyInitAddressAndDuplicate(t *testing.T) {
 
 func TestUnknownEntryStopsTheMachine(t *testing.T) {
 	cases := map[string][]byte{
-		"unknown type":   []byte(`{"type":"user.create","version":1,"op_id":"x","actor":"a","origin":"n","data":{}}`),
+		"unknown type":   []byte(`{"type":"guest.create","version":1,"op_id":"x","actor":"a","origin":"n","data":{}}`),
 		"newer version":  []byte(`{"type":"member.address","version":2,"op_id":"x","actor":"a","origin":"n","data":{}}`),
 		"newer join":     []byte(`{"type":"member.join","version":2,"op_id":"x","actor":"a","origin":"n","data":{}}`),
 		"no type":        []byte(`{"version":1,"op_id":"x","actor":"a","origin":"n","data":{}}`),
@@ -445,7 +445,7 @@ func TestSnapshotRestore(t *testing.T) {
 	if r := n.Apply(4, joinEntry(t, "j", nodeB, pinB, 10)); !r.Duplicate {
 		t.Fatal("the restored machine applied an old operation again")
 	}
-	if err := n.Restore(bytes.NewReader([]byte(`{"format":5}`))); err == nil {
+	if err := n.Restore(bytes.NewReader([]byte(`{"format":6}`))); err == nil {
 		t.Fatal("a snapshot of an unknown format was restored")
 	}
 	// A restore whose file write fails changes nothing.
@@ -474,7 +474,7 @@ func TestRestoreFormat1(t *testing.T) {
 func TestStalledMachineRefusesASnapshot(t *testing.T) {
 	m := New()
 	m.Apply(1, initEntry(t, "op-init"))
-	m.Apply(2, []byte(`{"type":"user.create","version":1,"op_id":"x","actor":"a","origin":"n","data":{}}`))
+	m.Apply(2, []byte(`{"type":"guest.create","version":1,"op_id":"x","actor":"a","origin":"n","data":{}}`))
 	if _, err := m.Snapshot(); !errors.Is(err, ErrSnapshotWhileStalled) {
 		t.Fatalf("snapshot of a stalled machine: %v", err)
 	}

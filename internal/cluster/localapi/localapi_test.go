@@ -28,6 +28,12 @@ func (f fakeBackend) Health(context.Context) models.Health {
 	return h
 }
 func (fakeBackend) Status(context.Context) Status { return Status{NodeID: "n1", NodeName: "smith"} }
+func (fakeBackend) UsersRead(_ context.Context, after uint64, _ time.Duration) (UsersAnswer, error) {
+	return UsersAnswer{ClusterID: "c", UsersIndex: after + 1}, nil
+}
+func (fakeBackend) UsersWrite(_ context.Context, req UsersWriteRequest) (UsersWriteResult, error) {
+	return UsersWriteResult{Index: 7, Outcome: req.Actor}, nil
+}
 func (fakeBackend) RaftConfiguration(context.Context) (RaftConfiguration, error) {
 	return RaftConfiguration{Servers: []store.Server{{ID: "n1", Address: store.NoAddress, Voter: true}}}, nil
 }
@@ -131,8 +137,10 @@ func TestOperationTable(t *testing.T) {
 		"remove":             {true, false},
 		"key-rotate":         {true, false},
 		"key-abort":          {true, false},
+		"users-read":         {false, true},
+		"users-write":        {false, true},
 	}
-	writes := map[string]bool{"admit": true, "admit-withdraw": true, "remove": true, "key-rotate": true, "key-abort": true}
+	writes := map[string]bool{"admit": true, "admit-withdraw": true, "remove": true, "key-rotate": true, "key-abort": true, "users-write": true}
 	if len(Operations) != len(want) {
 		t.Fatalf("%d operations, want %d", len(Operations), len(want))
 	}

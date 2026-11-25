@@ -94,6 +94,11 @@ func (s *Service) HandlePeer(ctx context.Context, op string, from raftnet.Peer, 
 			return nil, &raftnet.PeerError{Code: raftnet.CodeUnavailable, Message: "this node was removed from the cluster"}
 		}
 		return s.handleRemove(ctx, from, body)
+	case raftnet.OpUsersWrite:
+		if s.isRemoved() {
+			return nil, &raftnet.PeerError{Code: raftnet.CodeUnavailable, Message: "this node was removed from the cluster"}
+		}
+		return s.handleUsersWrite(from, body)
 	case raftnet.OpRemoved:
 		n, err := decodeNotice(body)
 		if err != nil {
@@ -510,6 +515,9 @@ func (s *Service) toLeader(ctx context.Context, op string, in, out any) error {
 			status = http.StatusServiceUnavailable
 		case "rotation_in_progress", "no_rotation":
 			status = http.StatusConflict
+		}
+		if st, ok := userWriteStatus[pe.Code]; ok {
+			status = st
 		}
 		return &localapi.OpError{HTTPStatus: status, Code: pe.Code, Message: "the leader " + leader.Name + " answered: " + pe.Message}
 	}

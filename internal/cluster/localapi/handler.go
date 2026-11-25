@@ -11,6 +11,7 @@ import (
 
 	"github.com/greenbeanorg/skep/internal/cluster/clusterstate"
 	"github.com/greenbeanorg/skep/internal/cluster/store"
+	"github.com/greenbeanorg/skep/internal/cluster/userapi"
 	"github.com/greenbeanorg/skep/internal/httpkit"
 	"github.com/greenbeanorg/skep/pkg/models"
 )
@@ -30,6 +31,8 @@ const (
 	PathRemove            = Prefix + "/remove"
 	PathKeyRotate         = Prefix + "/key/rotate"
 	PathKeyAbort          = Prefix + "/key/abort"
+	PathUsersRead         = userapi.PathUsersRead
+	PathUsersWrite        = userapi.PathUsersWrite
 )
 
 // CodeForbidden is the error code for a caller an operation does not
@@ -68,6 +71,11 @@ var Operations = []Operation{
 	// arrives with forwarding, step 8e).
 	{Name: "key-rotate", Method: http.MethodPost, Path: PathKeyRotate, Root: true, API: false},
 	{Name: "key-abort", Method: http.MethodPost, Path: PathKeyAbort, Root: true, API: false},
+	// The replicated users (step 8c-1, D11): skep-api's read copy and
+	// its writes. Root has no use for them; "skep-api admin" runs as the
+	// API account.
+	{Name: "users-read", Method: http.MethodGet, Path: PathUsersRead, Root: false, API: true},
+	{Name: "users-write", Method: http.MethodPost, Path: PathUsersWrite, Root: false, API: true},
 }
 
 // RotateResult is the answer of key-rotate and key-abort.
@@ -276,6 +284,11 @@ type Backend interface {
 	Remove(ctx context.Context, req RemoveRequest, actor string) (RemoveResult, error)
 	Rotate(ctx context.Context, actor string) (RotateResult, error)
 	AbortRotation(ctx context.Context, actor string) (RotateResult, error)
+	// UsersRead waits up to wait for the users index to differ from
+	// after, then answers the users.
+	UsersRead(ctx context.Context, after uint64, wait time.Duration) (UsersAnswer, error)
+	// UsersWrite returns an *OpError for a refusal.
+	UsersWrite(ctx context.Context, req UsersWriteRequest) (UsersWriteResult, error)
 }
 
 // HandlerOptions configures the handler.
@@ -345,6 +358,23 @@ func NewHandler(b Backend, o HandlerOptions) http.Handler {
 			res, err := b.AbortRotation(r.Context(), actorOf(r))
 			writeResult(w, r, res, err)
 		},
+		PathUsersRead: func(w http.ResponseWriter, r *http.Request) {
+			after, wait, ok := usersReadQuery(r)
+			if !ok {
+				httpkit.WriteError(w, r, http.StatusBadRequest, "invalid_request", "after must be an index and wait a number of seconds from 0 to 5")
+				return
+			}
+			res, err := b.UsersRead(r.Context(), after, wait)
+			writeResult(w, r, res, err)
+		},
+		PathUsersWrite: func(w http.ResponseWriter, r *http.Request) {
+			var req UsersWriteRequest
+			if !decodeBody(w, r, &req) {
+				return
+			}
+			res, err := b.UsersWrite(r.Context(), req)
+			writeResult(w, r, res, err)
+		},
 		PathWithdraw: func(w http.ResponseWriter, r *http.Request) {
 			var req WithdrawRequest
 			if !decodeBody(w, r, &req) {
@@ -398,6 +428,9 @@ const (
 	RequestTimeout = 15 * time.Second
 	// RemoveTimeout is the limit of the remove operation.
 	RemoveTimeout = 60 * time.Second
+	// UsersReadTimeout is the limit of users-read: its longest wait and
+	// the time to answer.
+	UsersReadTimeout = MaxUsersWait + 5*time.Second
 	// WriteTimeout is the HTTP server's write limit; it must be above
 	// every operation's limit.
 	WriteTimeout = RemoveTimeout + 15*time.Second
@@ -407,8 +440,11 @@ func withTimeout(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 		limit := RequestTimeout
-		if r.URL.Path == PathRemove {
+		switch r.URL.Path {
+		case PathRemove:
 			limit = RemoveTimeout
+		case PathUsersRead:
+			limit = UsersReadTimeout
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), limit)
 		defer cancel()
