@@ -498,9 +498,16 @@ last removal. **The operator rule:** after removing a node because it is
 compromised, wipe every member that was down at that time (`skep-cluster
 leave --wipe`) before it returns, and join it again. The removed node
 itself shuts its cluster connections when it learns of the removal (a
-member's notice, or its own log); a notice from any member key it
-accepts is believed, so a compromised member can make another node stop
-its cluster service (within the trust domain stated above). `leave
+member's notice, or its own log). A notice is not believed on the
+sender's word: the node probes, with its own key, every other node it
+accepts, the sender included, and acts on the notice only if at least
+one answers and none that answers accepts its key (three rounds, 2 s
+apart, then the notice is dropped). A compromised member can therefore
+make another node stop its cluster service only when every other node
+that node accepts refuses its key too or does not answer (for example
+while they are down or cut off from it); with any other member up that
+still accepts the key, the notice is dropped (within the trust domain
+stated above). `leave
 --wipe` gives the node a new key, so its old pin is never accepted again.
 A removal that would leave fewer answering voters than a majority is
 refused unless the administrator overrides it with the cluster ID typed

@@ -11,8 +11,9 @@
   B13, each changed passage marked "Amended (amendment 1)". Its open
   question (what "has applied" means after a restart) was answered with
   option a: the durable applied-membership file.
-- **Amendment 2 (2026-11-25)** is **Proposed** (Andy accepts it by
-  approving the merge of the step 8b-2a PR). It is at the end of this
+- **Amendment 2 (2026-11-25)** is **Accepted** (Andy, 2026-11-25, by
+  approving the merge of the step 8b-2a PR, with the review's fixes
+  F1–F10 worked into it). It is at the end of this
   document and records what the build of removal, `leave --wipe`, `join
   --abandon` and `listen -none` changed or added to the accepted text;
   the passages it changes are marked "Amended (amendment 2)".
@@ -1753,14 +1754,15 @@ removing a node because it is compromised, wipe every member that was
 down at that time before it returns. Health on every member names the
 members that have not yet applied a removal.
 
-## Amendment 2 (2026-11-25, Proposed)
+## Amendment 2 (2026-11-25, Accepted)
 
 Written with the build of step 8b-2a (removal, `leave --wipe`, `join
 --abandon`, a way back to no listener, crash-safe file steps), from the
-fixed decisions D1–D14 the review chat gave that run. **Status:
-Proposed.** Andy accepts it by approving the merge of the step 8b-2a
-PR. It changes the accepted text only where it says so; the changed
-passages are marked "Amended (amendment 2)".
+fixed decisions D1–D14 the review chat gave that run, and the review's
+fixes F1–F10 of the same step. **Status: Accepted** (Andy, 2026-11-25,
+by approving the merge of the step 8b-2a PR). It changes the accepted
+text only where it says so; the changed passages are marked "Amended
+(amendment 2)".
 
 ### 1. One state directory, one rename (D1)
 
@@ -1820,6 +1822,11 @@ deletes it with a log line.
   cleared).
 - Applying the `removing` entry **withdraws every pending admission** in
   the same apply: an admission issued before a removal is void.
+- **No admission while a member is being removed** (F4): `pending.create`
+  is refused at apply, and `admit` is refused by the leader before it
+  proposes (`409 refused`, naming the member), while any member is in
+  state `removing`. An admission printed during a removal would list the
+  member being removed, and the joining node would accept that key.
 - Removal is refused when, without the member, fewer than a majority of
   the remaining voters answer a status round made at the request (the
   cluster would then accept no changes until they return). The override
@@ -1828,7 +1835,13 @@ deletes it with a log line.
 
 ### 5. `leave --wipe` (D8)
 
-Root, local; it stops the service itself and confirms the cluster ID. The
+Root, local; it confirms the cluster ID and stops the service itself.
+The cluster ID is read from the files (`wipe.json`, `state/removed.json`,
+`state/membership.json`, `join.json`) with the service running, and the
+confirmation is asked **before** the stop, so that a wrong or missing
+confirmation stops nothing (F2); the service is stopped first only when
+the store alone can tell the cluster ID, or for a resumed wipe. After
+the stop the ID is read again and must be the one confirmed. The
 result is a one-node cluster with a **new cluster ID and a new node
 key**, the same node ID, **no listen address and no open port**. It
 writes a marker (`wipe.json`) first and removes it last; while the
@@ -1840,7 +1853,13 @@ must also be removed on a member, with the command.
 ### 6. `join --abandon` (D9)
 
 Only with a `join.json`, root, local, the service stopped by the command.
-It asks every node of the admission **and of the stored join answer**.
+A first stage, as the service account with the service running, refuses
+without any stop (F2) when there is no `join.json`, when `join.json`
+names no `standalone.*` that exists (F3: the one-node state is gone,
+nothing is changed, and `leave --wipe` is the way out), or when a node
+accepts the key or none answers; only then is the service stopped and
+the stage run that decides. It asks every node of the admission **and
+of the stored join answer**.
 In TLS 1.3 the listener's first byte after the handshake (the accepted
 marker) is how "accepts this host's key" is known. It restores the
 one-node state only if at least one node answers and none accepts the
@@ -1866,25 +1885,47 @@ check as the admission's.
   heartbeat can still be accepted after the change took effect; the
   in-process test measures it.
 - A member sends the removed node a best-effort notice. A node learns it
-  was removed by that notice (from a key it accepts, naming it and its
-  cluster) or from its own log (its entry `removing` and itself absent
-  from its latest Raft configuration, or its entry gone). It writes that
-  down durably (`state/removed.json`), shuts its Raft instance and its
-  listener, keeps its local socket for `status` and `health` (critical,
-  naming the cluster and saying to run `leave --wipe`), and does the
-  same after a restart.
+  was removed from its own log (its entry `removing` and itself absent
+  from its latest Raft configuration, or its entry gone), or from that
+  notice **once checked** (F1): a notice from a key it accepts, naming it
+  and its cluster, only starts a check, off the RPC's goroutine and one
+  at a time. The node probes, with its own key, every other node it
+  accepts now (the members of its view; on a joining node, its
+  admission's or answer's nodes), the sender included, and believes the
+  notice only if at least one answers and none that answers accepts its
+  key; up to three rounds two seconds apart (the other members apply
+  the final entry a moment after the leader), then the notice is
+  dropped with a log line. One member key alone therefore cannot make a
+  node stop its cluster service while the other members still accept
+  it. The record says "notice from NAME, confirmed by N members refusing
+  this key". The node writes that down durably (`state/removed.json`),
+  shuts its Raft instance and its listener, keeps its local socket for
+  `status` and `health` (critical, naming the cluster and saying to run
+  `leave --wipe`, or `join --abandon` when it was joining, F7), and does
+  the same after a restart.
 
 ### 9. Health after a removal (D12)
 
 Every member's health names the members that have not yet applied the
-last removal (from a status round every node makes every 10 s and at
-once after a membership change), until all have. `skep-cluster remove`
-prints the same list and, when it is not empty, the operator rule of B2.
+last removal, until all have. A status round every node makes every 10 s
+and at once after a membership change (in its own goroutine, one at a
+time, so that it does not hold the once-a-second work, F6) asks each
+member for its applied index, and each node remembers, in memory, the
+highest index each member has ever answered with (F5). A member whose
+highest is at or past the last removal's index is not named, whether or
+not it answers now; a member this node has not heard from since it
+started is named "no answer since this node started", and one below the
+index "applied N, the removal is M". `skep-cluster remove` prints the
+same list and, when it is not empty, the operator rule of B2.
 
 ### 10. Back to no listener (D13)
 
-`skep-cluster listen -none` (root, local) is refused unless the node is
-alone in its cluster with nothing pending (read from the store with the
+`skep-cluster listen -none` (root, local) asks the running service's
+status first and refuses without a stop (F2) when it shows more than one
+member, a pending admission, a join in progress or a removed node
+(believing the socket for a refusal has no root effect). Otherwise, or
+when the socket does not answer, it is refused unless the node is alone
+in its cluster with nothing pending (read from the store with the
 service stopped); afterwards no port is open and `admit` is refused as
 on a fresh host.
 

@@ -180,9 +180,16 @@ On star, as root, before it can join a cluster again:
   listener, and `skep-cluster status` and `health` there say:
 
   ```
-  REMOVED:       from cluster ff71..., notice from smith.greenbean.org (e894...) (2026-11-25T03:10:11Z)
+  REMOVED:       from cluster ff71..., notice from smith.greenbean.org, confirmed by 2 members refusing this key (2026-11-25T03:10:11Z)
   Run "skep-cluster leave --wipe" as root (after removing this node on a member, if that was not done).
   ```
+
+  A notice is believed only after the node has checked it: it asks the
+  other members, with its own key, and acts only if at least one answers
+  and none still accepts the key (otherwise it drops the notice after
+  three tries, 2 s apart). A node that was joining is told to run
+  `skep-cluster join --abandon` instead, which puts its one-node cluster
+  back.
 
   Its guests keep running. It cannot join again until it is wiped.
 - **Refusals:** a name that is not a member (`not_found`); a member that is
@@ -208,8 +215,13 @@ On star, as root, before it can join a cluster again:
   the members that have not yet applied it:
 
   ```
-  Members that have not yet applied the removal: langrishe.greenbean.org (no answer).
+  Members that have not yet applied the removal: langrishe.greenbean.org (no answer since this node started).
   ```
+
+  A member is named as "no answer since this node started" or "applied
+  N, the removal is M". A member that has once answered with the
+  removal applied is not named again, even when it is down later (each
+  node remembers this until it restarts).
 
   **Rule:** if you removed the node because it is compromised, wipe every
   member that was down during the removal (`skep-cluster leave --wipe` on
@@ -217,7 +229,10 @@ On star, as root, before it can join a cluster again:
   caught up it still trusts the removed node's key (ADR 0013 amendment 1,
   point 6).
 - A pending admission is withdrawn when a removal starts: admit the host
-  again afterwards.
+  again afterwards. **No admission while a member is being removed:**
+  `admit` is refused (`refused`, naming the member being removed) until
+  the removal has finished, because the admission would list that member
+  and the joining host would accept its key.
 
 ## Wiping a node: leave --wipe
 
@@ -241,7 +256,9 @@ To join a cluster again: skep-cluster join-request -address ADDR
 ```
 
 Without a terminal give `-cluster-id ID` (the current cluster ID). The
-command stops and starts `skep_cluster` itself. It keeps the node ID and
+command asks for the confirmation **before** it stops `skep_cluster`, so a
+wrong or missing cluster ID stops nothing; it then stops and starts
+`skep_cluster` itself. It keeps the node ID and
 makes a **new key**, so the old pin is never valid again. If it is
 interrupted (a crash, a reboot), `skep_cluster` refuses to start until you
 run `skep-cluster leave --wipe` again; the second run finishes the wipe
@@ -277,7 +294,10 @@ then run "skep-cluster join --abandon" here again.
 
 or, when nobody answers, "Run it again when at least one member is
 reachable." On a host without a join in progress it refuses ("this host
-has no join in progress"). If it is interrupted after it decided,
+has no join in progress"). When `join.json` names no moved-aside one-node
+state that still exists, it refuses and changes nothing: the one-node
+state is gone, and `skep-cluster leave --wipe` is the way out. These
+refusals come before `skep_cluster` is stopped: it keeps running. If it is interrupted after it decided,
 `skep_cluster` refuses to start until you run it again; the second run
 finishes without asking the members.
 
@@ -294,7 +314,9 @@ To listen again: skep-cluster listen -address ADDR
 
 It is refused on a node that is not alone in its cluster, that has a
 pending admission (withdraw it first), that is joining, or that was
-removed. It stops and starts `skep_cluster`.
+removed; when the running service already shows that, the refusal comes
+without stopping `skep_cluster`. Otherwise it stops and starts
+`skep_cluster`.
 
 ## What you cannot do yet
 

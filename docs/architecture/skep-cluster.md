@@ -198,12 +198,18 @@ belongs to root.
   depends on the service's answers. `-allow-unanswered` needs the cluster
   ID typed back on `/dev/tty` or given as `-cluster-id`; the service
   checks it again.
-- **`leave --wipe`**, as root: loads `cluster.json`, stops `skep_cluster`;
-  the stage `wipe-info` (service account) reads the cluster ID from
-  `state/removed.json`, `state/membership.json`, `join.json` or the store,
-  and whether a wipe is under way; root asks for the cluster ID on
-  `/dev/tty` or checks `-cluster-id` (not when a wipe is under way); the
-  stage `wipe-begin` writes `wipe.json` (the new cluster ID, the old pin)
+- **`leave --wipe`**, as root: loads `cluster.json`; the stage
+  `wipe-info-files` (service account, the service still running) reads
+  the cluster ID from `wipe.json`, `state/removed.json`,
+  `state/membership.json` or `join.json`, and whether a wipe is under way;
+  root asks for the cluster ID on `/dev/tty` or checks `-cluster-id` (not
+  when a wipe is under way) **before any stop**, so a wrong or missing
+  confirmation stops nothing (F2). Only when the files do not tell the ID
+  (the store must), or for a resumed wipe, is `skep_cluster` stopped
+  first and the stage `wipe-info` (which also reads the store) asked
+  before the confirmation. Otherwise root stops `skep_cluster` after the
+  confirmation and `wipe-info` must give the same ID; the stage
+  `wipe-begin` writes `wipe.json` (the new cluster ID, the old pin)
   unless it exists; **root removes `listen_address` from `cluster.json`**;
   the stage `wipe-finish` deletes every `standalone.*`, then `join.json`,
   then `state/`, replaces the node key if it still has the old pin, makes
@@ -211,8 +217,14 @@ belongs to root.
   removes `wipe.json` last; root starts the service and runs the root-file
   check. Each step can be repeated, so the command run again after a crash
   finishes the wipe without asking.
-- **`join --abandon`**, as root: stops `skep_cluster`; the stage `abandon`
-  (service account, it holds the key) asks every node of the admission and
+- **`join --abandon`**, as root: first the stage `abandon-check`
+  (service account, the service still running, it writes nothing)
+  refuses without any stop (F2) when there is no `join.json`, when
+  `join.json` names no `standalone.*` that exists (F3: the one-node state
+  is gone; `leave --wipe` is the way out), or when a node accepts the key
+  or none answers. Only then root stops `skep_cluster`; the stage
+  `abandon` (service account, it holds the key) checks the moved-aside
+  state again and asks every node of the admission and
   of the stored join answer whether it accepts this host's key
   (`raftnet.ProbeKey`: a TCP connection and a handshake with that node's
   pin, then the listener's first byte: the accepted marker, or a refusal).
@@ -223,7 +235,11 @@ belongs to root.
   without asking again. Root starts the service and runs the root-file
   check; what it prints comes from the stage's outcome.
 - **`listen -none`**, as root: refused unless `cluster.json` has a listen
-  address; stops `skep_cluster`; the stage `read-state` rebuilds the state
+  address; asks the running service's status and refuses **without a
+  stop** (F2) when it shows more than one member, a pending admission, a
+  join in progress or a removed node (believing the socket for a refusal
+  has no root effect); when it shows the node alone with nothing pending,
+  or the socket does not answer, stops `skep_cluster`; the stage `read-state` rebuilds the state
   from the store with the service stopped (`store.ReadState`: snapshot
   plus every stored entry, valid on a node that is alone) and refuses
   unless the node is alone, the only member, nothing is pending, and it is
@@ -412,7 +428,7 @@ pool keeps 3 connections per peer.
 |---|---|---|
 | `cluster.init` | cluster ID, first member | creates the cluster, epoch 1 |
 | `member.address` | node ID, address | only while that node is the only member and nothing is pending |
-| `pending.create` | node ID, name, address, pin, `expires_at` (leader's clock + 30 min) | creates a pending entry |
+| `pending.create` | node ID, name, address, pin, `expires_at` (leader's clock + 30 min) | creates a pending entry; refused while any member is `removing` (F4: the admission would list the member being removed, and the joining node would accept its key) |
 | `pending.withdraw` | node ID, name | removes it |
 | `pending.expire` | node ID, `expires_at`, `at` (leader's clock) | removes it when `at` ≥ `expires_at` |
 | `member.join` (join step 1) | node ID, pin, `at` (leader's clock) | consumes the pending entry, creates the member entry in state `joining` with the entry's index (`joined_index`) and op ID |
@@ -540,20 +556,39 @@ directory, `fsync`, `rename`, `fsync` of the directory.
   (at most 250 ms old) bounds how long a removed node's heartbeat can
   still be accepted after that: the in-process test measured 15 ms on
   loopback (`TestRemovedHeartbeatBound`).
-- **The removed node** learns it from the notice (from a member key it
-  accepts, naming it and its cluster) or from its own log (its entry
-  `removing` and itself absent from its latest Raft configuration while
-  it is not the leader, or its entry gone once its state machine has
-  caught up). It writes `state/removed.json`, shuts its Raft instance and
-  its listener, and keeps its local socket: `status` says REMOVED, health
-  is critical (`removed`, naming the cluster and saying to run `leave
-  --wipe`), `admit` and `remove` answer `removed`. At every later start
-  it runs only its local socket.
+- **No admission during a removal** (F4): while any member is
+  `removing`, the leader refuses `admit` before it proposes (`409
+  refused`, naming the member), and `pending.create` is refused at apply.
+- **The removed node** learns it from its own log (its entry `removing`
+  and itself absent from its latest Raft configuration while it is not
+  the leader, or its entry gone once its state machine has caught up), or
+  from the notice **once checked** (F1). A notice from a member key it
+  accepts, naming it and its cluster, only starts a check in its own
+  goroutine (one at a time; a notice during a check is dropped): the node
+  probes with its own key (`raftnet.ProbeKey`) every other node it
+  accepts now (the members of its view; on a joining node the nodes of
+  its admission or answer), the sender included, and believes the notice
+  only if at least one answers and none that answers accepts its key. Up
+  to three rounds, 2 s apart (the other members apply the final entry a
+  moment after the leader), each probe bounded by 3 s; then the notice is
+  dropped with a log line. `how` in the record reads "notice from NAME,
+  confirmed by N members refusing this key". It writes
+  `state/removed.json`, shuts its Raft instance and its listener, and
+  keeps its local socket: `status` says REMOVED, health is critical
+  (`removed`, naming the cluster and saying to run `leave --wipe`, or
+  `join --abandon` when `join.json` exists, F7), `admit` and `remove`
+  answer `removed`. At every later start it runs only its local socket.
 - **Health after a removal** (D12): every node runs a status round every
-  10 s and at once after a membership change; health (`removal_applied`,
-  a warning) names the members whose state machine has not reached the
-  last `member.removed` entry (or did not answer), until all have, with
-  the operator rule. While a removal runs, `removal` (a warning) says what
+  10 s and at once after a membership change, in its own goroutine and
+  one at a time, so that a member that does not answer does not hold the
+  once-a-second work (F6). Each node remembers, in memory, the highest
+  applied index each member has ever answered with since it started
+  (F5). Health (`removal_applied`, a warning) names, until all have
+  applied it, with the operator rule: a member never heard from since
+  this node started ("no answer since this node started") and one whose
+  highest is below the last `member.removed` entry ("applied N, the
+  removal is M"); a member at or past it is not named, whether or not it
+  answers now. While a removal runs, `removal` (a warning) says what
   it waits for: the leader's `RemoveServer`, the configuration without
   the node to commit (naming the voters that do not answer), or the final
   entry.
@@ -616,7 +651,8 @@ None of these makes D3, D5, D6 or D11 unworkable. Two consequences are
 built in: a configuration change's wait is bounded by Skep (the library's
 has no timeout), and a removed follower learns of its removal from its own
 log (its entry `removing` and itself absent from its latest configuration)
-or from the member's notice, never from a commit.
+or from the member's notice once its own key is refused (F1), never from
+a commit.
 
 ## Comparing the adapted handler with upstream
 
