@@ -56,8 +56,9 @@ type Listener struct {
 	wg   sync.WaitGroup
 	sem  chan struct{}
 
-	mu    sync.Mutex
-	conns map[*tls.Conn]string
+	mu     sync.Mutex
+	conns  map[*tls.Conn]string
+	closed bool
 }
 
 // errNotPinned is the handshake failure for a key outside the membership.
@@ -139,6 +140,10 @@ func (l *Listener) Addr() net.Addr { return l.ln.Addr() }
 func (l *Listener) Close() error {
 	err := l.ln.Close()
 	l.mu.Lock()
+	// From here no connection is registered: one whose handshake ends
+	// after this point is closed at once (it would otherwise be served
+	// and keep Close waiting for as long as its peer keeps sending).
+	l.closed = true
 	for c := range l.conns {
 		_ = c.Close()
 	}
@@ -213,6 +218,11 @@ func (l *Listener) serve(c net.Conn) {
 	}
 	pin := nodekey.PinOfCertificate(tc.ConnectionState().PeerCertificates[0])
 	l.mu.Lock()
+	if l.closed {
+		l.mu.Unlock()
+		_ = tc.Close()
+		return
+	}
 	if len(l.conns) >= MaxConnections {
 		l.mu.Unlock()
 		l.opts.Logger.Warn("node listener: too many connections; closing", "remote", c.RemoteAddr().String())

@@ -279,7 +279,9 @@ func (h *harness) joined(j *tnode, limit time.Duration) {
 				return false
 			}
 		}
-		return true
+		// And the joiner has finished its own join (join.json gone),
+		// which it does on its next tick after it is a member.
+		return j.svc != nil && j.svc.joinState() == nil
 	})
 }
 

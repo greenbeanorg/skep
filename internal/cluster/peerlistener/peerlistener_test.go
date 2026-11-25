@@ -206,3 +206,59 @@ func TestRevalidateClosesConnectionsOfARemovedKey(t *testing.T) {
 		t.Fatal("the connection of a removed key is still open")
 	}
 }
+
+// Close does not wait for a connection whose handshake ends after Close
+// began: such a connection is closed, never served. Before the fix it was
+// served and Close waited for as long as its peer kept sending.
+func TestCloseRefusesALateHandshake(t *testing.T) {
+	now := time.Now()
+	server, member := newKey(t, now), newKey(t, now)
+	p := &pins{m: map[string]string{member.Pin(): "member-node"}}
+	inAccept := make(chan struct{})
+	release := make(chan struct{})
+	served := make(chan struct{}, 1)
+	l, err := Listen(Options{
+		Address:     netip.MustParseAddrPort("127.0.0.1:0"),
+		Certificate: server.Certificate,
+		// The pin check runs inside the handshake: hold it there until
+		// Close has started.
+		Accept: func(pin string) bool {
+			select {
+			case inAccept <- struct{}{}:
+				<-release
+			default:
+			}
+			return p.accept(pin)
+		},
+		Handle: func(c *tls.Conn, _ string) {
+			served <- struct{}{}
+			_, _ = c.Read(make([]byte, 1)) // a peer that never stops
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		c, err := tls.Dial("tcp", l.Addr().String(), &tls.Config{InsecureSkipVerify: true, Certificates: []tls.Certificate{*member.Certificate()}, MinVersion: tls.VersionTLS13}) // test client
+		if err == nil {
+			defer c.Close()
+			c.SetDeadline(time.Now().Add(10 * time.Second))
+			c.Read(make([]byte, 1))
+		}
+	}()
+	<-inAccept
+	done := make(chan struct{})
+	go func() { l.Close(); close(done) }()
+	time.Sleep(100 * time.Millisecond) // Close is now waiting for the handshake
+	close(release)
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Close waits for a connection whose handshake ended after it began")
+	}
+	select {
+	case <-served:
+		t.Fatal("a connection was served after Close")
+	default:
+	}
+}
