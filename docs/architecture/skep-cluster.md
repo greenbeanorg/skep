@@ -843,6 +843,16 @@ The format, the chain and the keys are in amendment 3, point 6.
   write, no create, no lock.
 - The membership log lines stay; the audit is the record.
 
+### A rejoining node (found on the lab)
+
+A joining node switches from its admission's or answer's keys to its
+state machine's membership only once that membership lists it **with its
+current key**, and its join ends only then (`Service.listsSelf`,
+`joinStep`). A node that was a member before meets its old entry, with its
+old pin, in the log's history; trusting that membership stopped a rejoin
+on the lab once other members had rotated their keys (record
+`8b2b-6a3268a-20261125.md`, case 9.7b).
+
 ### Library facts (checked for step 8b-2b)
 
 - `LeadershipTransferToServer` does not check the target's suffrage

@@ -2175,3 +2175,16 @@ and nothing written. The remove operation has its own 60 s limit.
 start has ended. `leave --wipe` works with an unreadable `node.key` (the
 marker records it and the key is always replaced).
 
+### 8. A rejoining node and its old member entry (found on the lab)
+
+**Amended (amendment 3): B1's "until it has applied a membership listing
+itself" means listing it with its current key.** A node that was a member
+of the same cluster before (removed, wiped, joined again with its node ID)
+receives the log's history, which lists it with its old pin; that
+membership is the cluster's past, and its pins for other members may have
+been rotated or wiped since. The joining node goes on accepting only its
+admission's or answer's nodes, and does not take its join as finished,
+until it applies the entry of this join (a wipe always makes a new key).
+Before this, the lab saw a rejoined node stop replicating at a historical
+membership whose leader pin had been rotated away.
+
