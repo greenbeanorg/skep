@@ -403,7 +403,7 @@ func (s *Service) joinStep(ctx context.Context) {
 // every node.
 func (s *Service) Admit(ctx context.Context, request, actor string) (localapi.AdmitResult, error) {
 	if s.isRemoved() {
-		return localapi.AdmitResult{}, removedError()
+		return localapi.AdmitResult{}, s.removedError()
 	}
 	if s.cfg.ListenAddress == "" {
 		return localapi.AdmitResult{}, &localapi.OpError{HTTPStatus: http.StatusConflict, Code: "no_listen_address",
@@ -431,7 +431,7 @@ func (s *Service) Admit(ctx context.Context, request, actor string) (localapi.Ad
 // Withdraw implements localapi.Backend: "skep-cluster admit --withdraw".
 func (s *Service) Withdraw(ctx context.Context, name, actor string) (localapi.WithdrawResult, error) {
 	if s.isRemoved() {
-		return localapi.WithdrawResult{}, removedError()
+		return localapi.WithdrawResult{}, s.removedError()
 	}
 	if !clusterstate.ValidName(name) {
 		return localapi.WithdrawResult{}, &localapi.OpError{HTTPStatus: http.StatusBadRequest, Code: "invalid_request", Message: "not a valid node name"}

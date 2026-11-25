@@ -156,7 +156,7 @@ func serveSocket(ctx context.Context, svc *service.Service, node *store.Node, so
 		ConnContext:       localapi.ConnContext,
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
-		WriteTimeout:      30 * time.Second,
+		WriteTimeout:      localapi.WriteTimeout,
 		IdleTimeout:       60 * time.Second,
 	}
 	v := version.Get()

@@ -346,6 +346,7 @@ func (s *Service) statusStep(ctx context.Context) {
 		s.answers = res
 		s.noteApplied(res)
 		s.statusBusy = false
+		s.firstRound = true
 		s.mu.Unlock()
 	}()
 }
@@ -388,6 +389,10 @@ func (s *Service) unappliedRemoval(view clusterstate.View) []string {
 		return nil
 	}
 	s.mu.Lock()
+	if !s.firstRound {
+		s.mu.Unlock()
+		return nil
+	}
 	answers := s.answers
 	highest := make(map[string]uint64, len(s.highest))
 	for id, h := range s.highest {
@@ -521,9 +526,16 @@ type forwardRemove struct {
 	ClusterID       string `json:"cluster_id,omitempty"`
 }
 
-func removedError() *localapi.OpError {
+// removedError is the refusal of an operation on a removed node. A node
+// that was joining (join.json exists) is told to abandon the join, which
+// puts its one-node cluster back, as health says.
+func (s *Service) removedError() *localapi.OpError {
+	next := "run \"skep-cluster leave --wipe\""
+	if s.joinState() != nil {
+		next = "run \"skep-cluster join --abandon\" (which puts this host's one-node cluster back)"
+	}
 	return &localapi.OpError{HTTPStatus: http.StatusConflict, Code: "removed",
-		Message: "this node was removed from its cluster; run \"skep-cluster leave --wipe\""}
+		Message: "this node was removed from its cluster; " + next}
 }
 
 // Remove implements localapi.Backend: "skep-cluster remove NAME", root
@@ -532,7 +544,7 @@ func removedError() *localapi.OpError {
 // (removing) is committed; the leader loop does the other two steps.
 func (s *Service) Remove(ctx context.Context, req localapi.RemoveRequest, actor string) (localapi.RemoveResult, error) {
 	if s.isRemoved() {
-		return localapi.RemoveResult{}, removedError()
+		return localapi.RemoveResult{}, s.removedError()
 	}
 	if !clusterstate.ValidName(req.Name) {
 		return localapi.RemoveResult{}, &localapi.OpError{HTTPStatus: http.StatusBadRequest, Code: "invalid_request", Message: "not a valid node name"}
@@ -643,11 +655,16 @@ func (s *Service) removeAsLeader(ctx context.Context, req forwardRemove, origin 
 	// D6: the leader is the node to remove: hand the leadership over
 	// first; the new leader does the removal.
 	if x.ID == s.cfg.NodeID {
-		if err := st.TransferLeadership(); err != nil {
+		target, ok := handoverTarget(view, servers, answers, s.cfg.NodeID)
+		if !ok {
+			return localapi.RemoveResult{}, &localapi.OpError{HTTPStatus: http.StatusServiceUnavailable, Code: "handover_failed",
+				Message: "this node is the leader and must hand the leadership over before it is removed, but no other voter in state member answered the status round; nothing was written"}
+		}
+		if err := st.TransferLeadership(target.ID, target.Address); err != nil {
 			return localapi.RemoveResult{}, &localapi.OpError{HTTPStatus: http.StatusServiceUnavailable, Code: "handover_failed",
 				Message: "this node is the leader and must hand the leadership over before it is removed, and the hand-over failed: " + err.Error() + "; nothing was written"}
 		}
-		s.log.Info("leader: leadership handed over before this node's removal")
+		s.log.Info("leader: leadership handed over before this node's removal", "to", target.ID)
 		deadline := time.Now().Add(10 * time.Second)
 		for {
 			id, _ := st.Leader()

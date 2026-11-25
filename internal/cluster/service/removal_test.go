@@ -560,72 +560,86 @@ func TestRemovedHeartbeatBound(t *testing.T) {
 // node ID, no address. The rerun after the last step is a no-op.
 func TestWipeCrashPoints(t *testing.T) {
 	points := []string{"", wipeStopAfterStandalone, wipeStopAfterJoin, wipeStopAfterState, wipeStopAfterKey, wipeStopAfterCluster}
-	for _, point := range points {
-		name := point
-		if name == "" {
-			name = "no crash"
-		}
-		t.Run(name, func(t *testing.T) {
-			h := newHarness(t)
-			n := h.node("smith")
-			h.start(n)
-			h.eventually("smith leads", 20*time.Second, func() bool { return n.svc.machine.View().ClusterID != "" })
-			oldCluster, oldPin := n.svc.machine.View().ClusterID, n.key.Pin()
-			h.stop(n)
-			// Leftovers a wipe deletes: a moved-aside state and join.json.
-			if err := os.Mkdir(filepath.Join(n.dir, "standalone.20260101T000000Z"), 0o700); err != nil {
-				t.Fatal(err)
+	for _, unreadable := range []bool{false, true} {
+		for _, point := range points {
+			name := point
+			if name == "" {
+				name = "no crash"
 			}
-			if err := os.WriteFile(filepath.Join(n.dir, joinstate.FileName), []byte("{}"), 0o600); err != nil {
-				t.Fatal(err)
+			if unreadable {
+				name += ", node.key unreadable"
 			}
-			id, resume, err := WipeInfo(n.dir, n.id)
-			if err != nil || id != oldCluster || resume {
-				t.Fatalf("wipe info: %s %v %v", id, resume, err)
-			}
-			m, err := WipeBegin(n.dir, time.Now())
-			if err != nil {
-				t.Fatal(err)
-			}
-			cfg := n.cfg
-			cfg.ListenAddress = "" // root's step between begin and finish
-			if point != "" {
-				_, _, err := wipeFinish(context.Background(), n.dir, cfg, time.Now(), func(p string) bool { return p == point })
-				if err != errStopped {
-					t.Fatalf("stop at %q: %v", point, err)
+			t.Run(name, func(t *testing.T) {
+				h := newHarness(t)
+				n := h.node("smith")
+				h.start(n)
+				h.eventually("smith leads", 20*time.Second, func() bool { return n.svc.machine.View().ClusterID != "" })
+				oldCluster, oldPin := n.svc.machine.View().ClusterID, n.key.Pin()
+				h.stop(n)
+				// Leftovers a wipe deletes: a moved-aside state and join.json.
+				if err := os.Mkdir(filepath.Join(n.dir, "standalone.20260101T000000Z"), 0o700); err != nil {
+					t.Fatal(err)
 				}
-				if err := StartRule(n.dir, discardLog()); err == nil || !strings.Contains(err.Error(), "leave --wipe") {
-					t.Fatalf("a start with the marker: %v", err)
+				if err := os.WriteFile(filepath.Join(n.dir, joinstate.FileName), []byte("{}"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				if unreadable {
+					// A key file anyone can read is refused by Load.
+					if err := os.Chmod(filepath.Join(n.dir, nodekey.KeyFile), 0o644); err != nil {
+						t.Fatal(err)
+					}
 				}
 				id, resume, err := WipeInfo(n.dir, n.id)
-				if err != nil || !resume || id != m.NewClusterID {
-					t.Fatalf("wipe info after the crash: %s %v %v", id, resume, err)
+				if err != nil || id != oldCluster || resume {
+					t.Fatalf("wipe info: %s %v %v", id, resume, err)
 				}
-				if again, err := WipeBegin(n.dir, time.Now()); err != nil || again.NewClusterID != m.NewClusterID {
-					t.Fatalf("a second begin: %+v %v", again, err)
+				m, err := WipeBegin(n.dir, time.Now())
+				if err != nil {
+					t.Fatal(err)
 				}
-			}
-			cid, pin, err := WipeFinish(context.Background(), n.dir, cfg, time.Now())
-			if err != nil || cid != m.NewClusterID || pin == oldPin {
-				t.Fatalf("finish: %s %s %v", cid, pin, err)
-			}
-			for _, left := range []string{layout.WipeMarker, joinstate.FileName, "standalone.20260101T000000Z"} {
-				if ok, _ := layout.Exists(filepath.Join(n.dir, left)); ok {
-					t.Fatalf("%s is left", left)
+				if m.KeyUnreadable != unreadable || (m.OldPin == "") != unreadable {
+					t.Fatalf("marker: %+v", m)
 				}
-			}
-			n.cfg = cfg
-			n.key = loadKey(t, n.dir)
-			h.start(n)
-			h.eventually("the new one-node cluster", 20*time.Second, func() bool { return n.st.IsLeader() && n.svc.machine.View().ClusterID == cid })
-			v := n.svc.machine.View()
-			if len(v.Members) != 1 || v.Members[0].ID != n.id || v.Members[0].Address != "" || v.Members[0].Pin != pin {
-				t.Fatalf("after the wipe: %+v", v)
-			}
-			if n.svc.Status(context.Background()).Listening {
-				t.Fatal("a listener after the wipe")
-			}
-		})
+				cfg := n.cfg
+				cfg.ListenAddress = "" // root's step between begin and finish
+				if point != "" {
+					_, _, err := wipeFinish(context.Background(), n.dir, cfg, time.Now(), func(p string) bool { return p == point })
+					if err != errStopped {
+						t.Fatalf("stop at %q: %v", point, err)
+					}
+					if err := StartRule(n.dir, discardLog()); err == nil || !strings.Contains(err.Error(), "leave --wipe") {
+						t.Fatalf("a start with the marker: %v", err)
+					}
+					id, resume, err := WipeInfo(n.dir, n.id)
+					if err != nil || !resume || id != m.NewClusterID {
+						t.Fatalf("wipe info after the crash: %s %v %v", id, resume, err)
+					}
+					if again, err := WipeBegin(n.dir, time.Now()); err != nil || again.NewClusterID != m.NewClusterID {
+						t.Fatalf("a second begin: %+v %v", again, err)
+					}
+				}
+				cid, pin, err := WipeFinish(context.Background(), n.dir, cfg, time.Now())
+				if err != nil || cid != m.NewClusterID || pin == oldPin {
+					t.Fatalf("finish: %s %s %v", cid, pin, err)
+				}
+				for _, left := range []string{layout.WipeMarker, joinstate.FileName, "standalone.20260101T000000Z"} {
+					if ok, _ := layout.Exists(filepath.Join(n.dir, left)); ok {
+						t.Fatalf("%s is left", left)
+					}
+				}
+				n.cfg = cfg
+				n.key = loadKey(t, n.dir)
+				h.start(n)
+				h.eventually("the new one-node cluster", 20*time.Second, func() bool { return n.st.IsLeader() && n.svc.machine.View().ClusterID == cid })
+				v := n.svc.machine.View()
+				if len(v.Members) != 1 || v.Members[0].ID != n.id || v.Members[0].Address != "" || v.Members[0].Pin != pin {
+					t.Fatalf("after the wipe: %+v", v)
+				}
+				if n.svc.Status(context.Background()).Listening {
+					t.Fatal("a listener after the wipe")
+				}
+			})
+		}
 	}
 }
 

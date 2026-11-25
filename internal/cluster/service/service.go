@@ -39,7 +39,7 @@ type Store interface {
 	AddNonvoter(id, address string) error
 	AddVoter(id, address string) error
 	RemoveServer(id string) error
-	TransferLeadership() error
+	TransferLeadership(id, address string) error
 	Term() uint64
 	Configuration() (servers []store.Server, index uint64, committed bool, err error)
 	IsServer(id string, cached bool, maxAge time.Duration) bool
@@ -123,6 +123,10 @@ type Service struct {
 	highest map[string]uint64
 	// statusBusy is set while a status round runs in its goroutine.
 	statusBusy bool
+	// firstRound is set once the first status round since this service
+	// started has ended; until then removal_applied says nothing (every
+	// member would read "no answer since this node started").
+	firstRound bool
 	// noticeBusy is set while a removed notice is being checked.
 	noticeBusy bool
 	// runCtx is Run's context, for work started outside the step loop.

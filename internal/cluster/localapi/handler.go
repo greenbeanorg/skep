@@ -307,10 +307,27 @@ func authorize(op Operation, apiUID uint32, log *slog.Logger, next http.HandlerF
 	}
 }
 
+// Time limits of one request. The remove operation has its own: it may
+// make a status round, hand the leadership over, wait for a new leader
+// and pass the removal on to it.
+const (
+	// RequestTimeout is the limit of every operation but remove.
+	RequestTimeout = 15 * time.Second
+	// RemoveTimeout is the limit of the remove operation.
+	RemoveTimeout = 60 * time.Second
+	// WriteTimeout is the HTTP server's write limit; it must be above
+	// every operation's limit.
+	WriteTimeout = RemoveTimeout + 15*time.Second
+)
+
 func withTimeout(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
-		ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+		limit := RequestTimeout
+		if r.URL.Path == PathRemove {
+			limit = RemoveTimeout
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), limit)
 		defer cancel()
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})

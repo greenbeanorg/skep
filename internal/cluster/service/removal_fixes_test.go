@@ -219,6 +219,10 @@ func TestRemovalAppliedIsRemembered(t *testing.T) {
 		{ID: c, Name: "c", State: clusterstate.StateMember},
 	}}
 	s.answers[a] = statusResult{err: context.DeadlineExceeded}
+	if got := s.unappliedRemoval(view); got != nil {
+		t.Fatalf("named before the first status round has ended: %v", got)
+	}
+	s.firstRound = true // the first status round since the start has ended
 	got := strings.Join(s.unappliedRemoval(view), "; ")
 	if got != "b (no answer since this node started); c (applied 5, the removal is 10)" {
 		t.Fatalf("named: %q", got)

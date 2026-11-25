@@ -23,7 +23,9 @@ type Client struct {
 // NewClient returns a client for the socket. It does not connect.
 func NewClient(socket string) *Client {
 	return &Client{http: &http.Client{
-		Timeout: 60 * time.Second,
+		// Above the longest operation's limit (RemoveTimeout), so that
+		// the service's answer arrives rather than a client timeout.
+		Timeout: WriteTimeout,
 		Transport: &http.Transport{
 			DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 				return (&net.Dialer{Timeout: 5 * time.Second}).DialContext(ctx, "unix", socket)

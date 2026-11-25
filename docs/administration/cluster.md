@@ -258,7 +258,10 @@ To join a cluster again: skep-cluster join-request -address ADDR
 Without a terminal give `-cluster-id ID` (the current cluster ID). The
 command asks for the confirmation **before** it stops `skep_cluster`, so a
 wrong or missing cluster ID stops nothing; it then stops and starts
-`skep_cluster` itself. It keeps the node ID and
+`skep_cluster` itself. The exception: when the files cannot tell the
+cluster ID (only the Raft store can), `skep_cluster` is stopped first, the ID
+is read from the store, and a wrong or missing confirmation then starts
+it again. It keeps the node ID and
 makes a **new key**, so the old pin is never valid again. If it is
 interrupted (a crash, a reboot), `skep_cluster` refuses to start until you
 run `skep-cluster leave --wipe` again; the second run finishes the wipe
