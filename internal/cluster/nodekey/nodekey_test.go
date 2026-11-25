@@ -192,3 +192,42 @@ func TestLoadRepairIssuesANewCertificate(t *testing.T) {
 		t.Fatal("LoadRepair accepted a bad key")
 	}
 }
+
+// Step 8b-2b: the next key of a rotation, its pin from the key file alone
+// (the same as the certificate's), and the in-place switch.
+func TestNextKeyAndAdopt(t *testing.T) {
+	dir := t.TempDir()
+	k, err := Create(dir, testID, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p, err := FilePin(dir, KeyFile); err != nil || p != k.Pin() {
+		t.Fatalf("file pin %s %v, certificate pin %s", p, err, k.Pin())
+	}
+	next, err := CreateNext(dir)
+	if err != nil || next == k.Pin() {
+		t.Fatalf("next %s %v", next, err)
+	}
+	if _, err := CreateNext(dir); err == nil {
+		t.Fatal("a second next key")
+	}
+	info, _ := os.Stat(filepath.Join(dir, NextKeyFile))
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("mode %o", info.Mode().Perm())
+	}
+	if p, _ := FilePin(dir, NextKeyFile); p != next {
+		t.Fatalf("next pin %s", p)
+	}
+	held := k.Certificate
+	if err := os.Rename(filepath.Join(dir, NextKeyFile), filepath.Join(dir, KeyFile)); err != nil {
+		t.Fatal(err)
+	}
+	nk, repaired, err := LoadRepair(dir, testID, time.Now())
+	if err != nil || repaired == nil || nk.Pin() != next {
+		t.Fatalf("after the rename: %v %v %s", repaired, err, nk.Pin())
+	}
+	k.Adopt(nk)
+	if k.Pin() != next || PinOfCertificate(held().Leaf) != next {
+		t.Fatal("the adopted key is not used through the held certificate function")
+	}
+}

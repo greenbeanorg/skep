@@ -399,6 +399,8 @@ func TestOperationTable(t *testing.T) {
 		OpRemove:   {false, false, true, false},
 		OpRemoved:  {false, false, true, false},
 		OpClock:    {false, true, true, true},
+		OpKeyAdd:   {false, false, true, false},
+		OpKeyAbort: {false, false, true, false},
 	}
 	if len(Operations) != len(want) {
 		t.Fatalf("%d operations, want %d", len(Operations), len(want))

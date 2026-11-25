@@ -222,12 +222,12 @@ func (s *Service) Rotate(ctx context.Context, actor string) (localapi.RotateResu
 	if s.joinState() != nil {
 		return localapi.RotateResult{}, rotationErr(http.StatusConflict, "joining", "this node is joining a cluster; rotate its key once it is a member")
 	}
-	if s.isFrozen() {
-		return localapi.RotateResult{}, rotationErr(http.StatusServiceUnavailable, "unavailable", "this node is stopping")
-	}
 	if r := s.rotationState(); r != nil {
 		return localapi.RotateResult{}, rotationErr(http.StatusConflict, "rotation_in_progress",
 			fmt.Sprintf("this node's key rotation is under way (phase %s, new pin %s)", r.Phase, r.NewPin))
+	}
+	if s.isFrozen() {
+		return localapi.RotateResult{}, rotationErr(http.StatusServiceUnavailable, "unavailable", "this node is stopping")
 	}
 	view := s.machine.View()
 	if view.Stalled != nil {
@@ -270,6 +270,10 @@ func (s *Service) Rotate(ctx context.Context, actor string) (localapi.RotateResu
 		_ = layout.RemoveFile(filepath.Join(s.dataDir, nodekey.NextKeyFile))
 		return localapi.RotateResult{}, err
 	}
+	// This request makes the first attempt; the step loop waits.
+	s.mu.Lock()
+	s.nextRotate = s.now().Add(rotateRetry)
+	s.mu.Unlock()
 	s.setRotation(&r)
 	s.event(audit.EventKeyRotation, map[string]string{"step": "started", "old_pin": r.OldPin, "new_pin": r.NewPin, "op_id": r.OpID, "actor": actor})
 	s.log.Info("key rotation: started", "old_pin", r.OldPin, "new_pin", r.NewPin, "op_id", r.OpID)
@@ -301,6 +305,13 @@ func (s *Service) AbortRotation(ctx context.Context, actor string) (localapi.Rot
 	if s.isRemoved() {
 		return localapi.RotateResult{}, s.removedError()
 	}
+	s.rotMu.Lock()
+	locked := true
+	defer func() {
+		if locked {
+			s.rotMu.Unlock()
+		}
+	}()
 	r := s.rotationState()
 	if r == nil {
 		return localapi.RotateResult{}, rotationErr(http.StatusConflict, "no_rotation", "this node has no key rotation under way (no rotate.json)")
@@ -310,6 +321,9 @@ func (s *Service) AbortRotation(ctx context.Context, actor string) (localapi.Rot
 	}
 	if r.Phase != PhaseAborting {
 		r.Phase = PhaseAborting
+		s.mu.Lock()
+		s.nextRotate = s.now().Add(rotateRetry)
+		s.mu.Unlock()
 		// From here on the switch (step 4) never runs.
 		if err := writeRotate(s.dataDir, *r); err != nil {
 			return localapi.RotateResult{}, err
@@ -321,6 +335,8 @@ func (s *Service) AbortRotation(ctx context.Context, actor string) (localapi.Rot
 			return localapi.RotateResult{}, errStopped
 		}
 	}
+	s.rotMu.Unlock()
+	locked = false
 	res := localapi.RotateResult{OldPin: r.OldPin, NewPin: r.NewPin, OpID: r.OpID, Phase: r.Phase}
 	if err := s.abortStep(ctx, *r, actor); err != nil {
 		res.Pending = "the leader was asked and no answer came; this node asks again every 10 s: " + err.Error()
@@ -458,11 +474,18 @@ func (s *Service) rotateStep(ctx context.Context) {
 		}
 		return
 	}
-	// Step 4: switch once every member has applied the add entry.
+	// Step 4: switch once every member has applied the add entry. The
+	// decision and the switch hold rotMu, as an abort's phase write does,
+	// so that a switch never follows an abort.
 	if s.key.Pin() == r.NewPin {
 		return
 	}
 	if waits := s.keyAddWaits(view, self); len(waits) > 0 {
+		return
+	}
+	s.rotMu.Lock()
+	defer s.rotMu.Unlock()
+	if cur := s.rotationState(); cur == nil || cur.Phase != PhaseRotating {
 		return
 	}
 	s.switchKey(*r)

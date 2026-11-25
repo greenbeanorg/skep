@@ -129,8 +129,10 @@ func TestOperationTable(t *testing.T) {
 		"admit":              {true, false},
 		"admit-withdraw":     {true, false},
 		"remove":             {true, false},
+		"key-rotate":         {true, false},
+		"key-abort":          {true, false},
 	}
-	writes := map[string]bool{"admit": true, "admit-withdraw": true, "remove": true}
+	writes := map[string]bool{"admit": true, "admit-withdraw": true, "remove": true, "key-rotate": true, "key-abort": true}
 	if len(Operations) != len(want) {
 		t.Fatalf("%d operations, want %d", len(Operations), len(want))
 	}

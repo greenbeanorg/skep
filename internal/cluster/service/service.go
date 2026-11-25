@@ -151,6 +151,9 @@ type Service struct {
 	nextRotate time.Time
 	// keyMu serialises the leader's handling of key-add and key-abort.
 	keyMu sync.Mutex
+	// rotMu serialises this node's switch decision with an abort's phase
+	// write (no network call is made under it).
+	rotMu sync.Mutex
 	// afterRotateStep is a test hook, called after each step of this
 	// node's rotation; returning true stops the node's rotation work
 	// there (a crash point).
