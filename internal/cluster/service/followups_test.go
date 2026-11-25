@@ -100,7 +100,10 @@ func TestRemovedJoiningNodeNamesAbandon(t *testing.T) {
 	}
 	s.join = &joinstate.State{}
 	for _, err := range []error{
-		func() error { _, err := s.Remove(context.Background(), localapi.RemoveRequest{Name: "y"}, "root"); return err }(),
+		func() error {
+			_, err := s.Remove(context.Background(), localapi.RemoveRequest{Name: "y"}, "root")
+			return err
+		}(),
 		func() error { _, err := s.Admit(context.Background(), "x", "root"); return err }(),
 		func() error { _, err := s.Withdraw(context.Background(), "y", "root"); return err }(),
 	} {
