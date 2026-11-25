@@ -2,8 +2,8 @@ package service
 
 import (
 	"github.com/greenbeanorg/skep/internal/cluster/clusterstate"
-	"github.com/greenbeanorg/skep/internal/cluster/peerlistener"
 	"github.com/greenbeanorg/skep/internal/cluster/joinstate"
+	"github.com/greenbeanorg/skep/internal/cluster/peerlistener"
 	"github.com/greenbeanorg/skep/internal/cluster/raftnet"
 )
 
