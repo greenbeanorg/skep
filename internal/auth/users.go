@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"time"
 
 	"github.com/greenbeanorg/skep/internal/audit"
 	"github.com/greenbeanorg/skep/internal/ids"
@@ -21,23 +20,24 @@ const (
 	ActionSessionRevoke = "session.revoke"
 )
 
-// Users manages accounts. Every change is written to the access audit log,
-// and every change that affects what a user may do ends that user's
-// sessions.
+// Users manages accounts. Every change is a user entry sent through the
+// cluster (step 8c-1), and every change is written to the access audit
+// log. The sessions a change ends are ended, and audited, by the read
+// copy's apply function when the change reaches it.
 type Users struct {
 	store  UserStore
+	writer UserWriter
 	hasher *Hasher
 	audit  AuditWriter
 	log    *slog.Logger
-	now    func() time.Time
 }
 
 // NewUsers returns the user service.
-func NewUsers(store UserStore, hasher *Hasher, auditLog AuditWriter, log *slog.Logger) *Users {
+func NewUsers(store UserStore, writer UserWriter, hasher *Hasher, auditLog AuditWriter, log *slog.Logger) *Users {
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Users{store: store, hasher: hasher, audit: auditLog, log: log, now: time.Now}
+	return &Users{store: store, writer: writer, hasher: hasher, audit: auditLog, log: log}
 }
 
 // NewUser describes an account to create.
@@ -60,20 +60,6 @@ func record(ctx context.Context, w AuditWriter, log *slog.Logger, actor Actor, e
 	}
 }
 
-// recordRevocations writes one audit entry per ended session, with its
-// kind, the address it was created from, and the cause.
-func recordRevocations(ctx context.Context, w AuditWriter, log *slog.Logger, actor Actor, user User, ended []EndedSession, cause string) {
-	for _, s := range ended {
-		record(ctx, w, log, actor, audit.AccessEntry{
-			Action: ActionSessionRevoke, ResourceType: "user", ResourceID: user.ID, Outcome: audit.Success,
-			Details: map[string]any{
-				"username": user.Username, "session_kind": string(s.Kind),
-				"session_source_ip": s.SourceIP, "cause": cause,
-			},
-		})
-	}
-}
-
 // Create adds a user.
 func (u *Users) Create(ctx context.Context, actor Actor, in NewUser) (User, error) {
 	if in.Username == ReservedUsername {
@@ -91,8 +77,8 @@ func (u *Users) Create(ctx context.Context, actor Actor, in NewUser) (User, erro
 	if in.RoleID == "" {
 		in.RoleID = RoleViewer
 	}
-	// Check the name before spending a hash on it. The store checks
-	// again, atomically.
+	// Check the name before spending a hash on it. The cluster's state
+	// machine checks again, on every node.
 	if _, err := u.store.UserByName(ctx, in.Username); err == nil {
 		return User{}, ErrUsernameTaken
 	} else if !errors.Is(err, models.ErrNotFound) {
@@ -106,10 +92,12 @@ func (u *Users) Create(ctx context.Context, actor Actor, in NewUser) (User, erro
 	if err != nil {
 		return User{}, fmt.Errorf("auth: generate user ID: %w", err)
 	}
-	user, err := u.store.CreateUser(ctx, NewUserRecord{
-		ID: id, Username: in.Username, DisplayName: in.DisplayName,
-		PasswordHash: hash, RoleID: in.RoleID, At: u.now().UTC(),
-	})
+	if err := u.writer.Write(ctx, UserWrite{Type: WriteCreate, Actor: actor, Data: map[string]any{
+		"id": id, "username": in.Username, "display_name": in.DisplayName, "password_hash": hash, "role_id": in.RoleID,
+	}}); err != nil {
+		return User{}, err
+	}
+	user, err := u.store.UserByID(ctx, id)
 	if err != nil {
 		return User{}, err
 	}
@@ -135,16 +123,14 @@ func (u *Users) SetPassword(ctx context.Context, actor Actor, userID, password s
 	if err != nil {
 		return err
 	}
-	ended, err := u.store.SetPassword(ctx, user.ID, hash, u.now().UTC())
-	if err != nil {
+	if err := u.writer.Write(ctx, UserWrite{Type: WritePassword, Actor: actor, Data: map[string]any{"id": user.ID, "password_hash": hash}}); err != nil {
 		return err
 	}
 	record(ctx, u.audit, u.log, actor, audit.AccessEntry{
 		Action: ActionPasswordSet, ResourceType: "user", ResourceID: user.ID, Outcome: audit.Success,
-		Details: map[string]any{"username": user.Username, "sessions_ended": len(ended)},
+		Details: map[string]any{"username": user.Username},
 	})
-	recordRevocations(ctx, u.audit, u.log, actor, user, ended, CausePasswordChange)
-	u.log.Info("password set", "user_id", user.ID, "username", user.Username, "by", actor.Name, "sessions_ended", len(ended))
+	u.log.Info("password set", "user_id", user.ID, "username", user.Username, "by", actor.Name)
 	return nil
 }
 
@@ -180,8 +166,25 @@ func (u *Users) Update(ctx context.Context, actor Actor, userID string, upd User
 			return User{}, err
 		}
 	}
-	user, changed, ended, err := u.store.UpdateUser(ctx, userID, upd, u.now().UTC())
+	cur, err := u.store.UserByID(ctx, userID)
 	if err != nil {
+		return User{}, err
+	}
+	var changed UserChange
+	data := map[string]any{"id": userID}
+	if upd.DisplayName != nil && *upd.DisplayName != cur.DisplayName {
+		changed.DisplayName, data["display_name"] = true, *upd.DisplayName
+	}
+	if upd.RoleID != nil && *upd.RoleID != cur.Role.ID {
+		changed.Role, data["role_id"] = true, *upd.RoleID
+	}
+	if upd.Disabled != nil && *upd.Disabled != cur.Disabled {
+		changed.Disabled, data["disabled"] = true, *upd.Disabled
+	}
+	if !changed.Any() {
+		return cur, nil
+	}
+	if err := u.writer.Write(ctx, UserWrite{Type: WriteUpdate, Actor: actor, Data: data}); err != nil {
 		if errors.Is(err, ErrLastAdmin) {
 			record(ctx, u.audit, u.log, actor, audit.AccessEntry{
 				Action: ActionUserUpdate, ResourceType: "user", ResourceID: userID, Outcome: audit.Denied,
@@ -190,8 +193,9 @@ func (u *Users) Update(ctx context.Context, actor Actor, userID string, upd User
 		}
 		return User{}, err
 	}
-	if !changed.Any() {
-		return user, nil
+	user, err := u.store.UserByID(ctx, userID)
+	if err != nil {
+		return User{}, err
 	}
 	details := map[string]any{"username": user.Username}
 	if changed.DisplayName {
@@ -206,21 +210,19 @@ func (u *Users) Update(ctx context.Context, actor Actor, userID string, upd User
 	record(ctx, u.audit, u.log, actor, audit.AccessEntry{
 		Action: ActionUserUpdate, ResourceType: "user", ResourceID: user.ID, Outcome: audit.Success, Details: details,
 	})
-	cause := CauseRoleChange
-	if changed.Disabled && user.Disabled {
-		cause = CauseUserDisabled
-	}
-	recordRevocations(ctx, u.audit, u.log, actor, user, ended, cause)
 	u.log.Info("user updated", "user_id", user.ID, "username", user.Username, "by", actor.Name,
-		"role_changed", changed.Role, "disabled_changed", changed.Disabled, "sessions_ended", len(ended))
+		"role_changed", changed.Role, "disabled_changed", changed.Disabled)
 	return user, nil
 }
 
 // Delete removes a user and ends its sessions. The only enabled
 // administrator cannot be deleted.
 func (u *Users) Delete(ctx context.Context, actor Actor, userID string) error {
-	user, ended, err := u.store.DeleteUser(ctx, userID)
+	user, err := u.store.UserByID(ctx, userID)
 	if err != nil {
+		return err
+	}
+	if err := u.writer.Write(ctx, UserWrite{Type: WriteDelete, Actor: actor, Data: map[string]any{"id": userID}}); err != nil {
 		if errors.Is(err, ErrLastAdmin) {
 			record(ctx, u.audit, u.log, actor, audit.AccessEntry{
 				Action: ActionUserDelete, ResourceType: "user", ResourceID: userID, Outcome: audit.Denied,
@@ -233,7 +235,9 @@ func (u *Users) Delete(ctx context.Context, actor Actor, userID string) error {
 		Action: ActionUserDelete, ResourceType: "user", ResourceID: user.ID, Outcome: audit.Success,
 		Details: map[string]any{"username": user.Username, "role": user.Role.Name},
 	})
-	recordRevocations(ctx, u.audit, u.log, actor, user, ended, CauseUserDeleted)
 	u.log.Info("user deleted", "user_id", user.ID, "username", user.Username, "by", actor.Name)
 	return nil
 }
+
+// Quorum reports whether user writes can be committed now.
+func (u *Users) Quorum() bool { return u.writer.Quorum() }

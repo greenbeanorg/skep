@@ -100,6 +100,12 @@ var Supported = map[string]int{
 	TypeMemberRemoved:   1,
 	TypeMemberKeyAdd:    1,
 	TypeMemberKeyDone:   1,
+	TypeUserCreate:      1,
+	TypeUserUpdate:      1,
+	TypeUserPassword:    1,
+	TypeUserRehash:      1,
+	TypeUserDelete:      1,
+	TypeUsersImport:     1,
 }
 
 // ActorSystem is the actor of entries no user asked for.

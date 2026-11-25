@@ -24,6 +24,7 @@ import (
 	"github.com/greenbeanorg/skep/internal/apidb"
 	"github.com/greenbeanorg/skep/internal/audit"
 	"github.com/greenbeanorg/skep/internal/auth"
+	"github.com/greenbeanorg/skep/internal/cluster/clustertest"
 	"github.com/greenbeanorg/skep/internal/console"
 	"github.com/greenbeanorg/skep/internal/database"
 	"github.com/greenbeanorg/skep/internal/hostops"
@@ -176,10 +177,12 @@ func newStack(t *testing.T) *stack {
 	if err != nil {
 		t.Fatal(err)
 	}
-	store := apidb.NewUserStore(s.apiDB)
-	users := auth.NewUsers(store, hasher, access, quiet())
+	// The users live in a real one-node skep-cluster (step 8c-1).
+	ustack := clustertest.Start(t).Users(t, s.apiDB)
+	store := ustack.Store
+	users := auth.NewUsers(store, ustack.Writer, hasher, access, quiet())
 	authn, err := auth.NewAuthenticator(auth.AuthenticatorOptions{
-		Users: store, Sessions: apidb.NewSessionStore(s.apiDB), Hasher: hasher, Audit: access,
+		Users: store, Writer: ustack.Writer, Sessions: apidb.NewSessionStore(s.apiDB), Hasher: hasher, Audit: access,
 		Throttle: auth.DefaultThrottleConfig(),
 		Session:  auth.SessionConfig{IdleTimeout: auth.DefaultIdleTimeout, AbsoluteTimeout: auth.DefaultAbsoluteTimeout},
 		Logger:   quiet(),

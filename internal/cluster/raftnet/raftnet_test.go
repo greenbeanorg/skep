@@ -391,16 +391,17 @@ func TestPeerOperationsFollowTheTable(t *testing.T) {
 // The pinned table: a change to who may call what fails here.
 func TestOperationTable(t *testing.T) {
 	want := map[string][4]bool{ // pending, joining, member, removing
-		OpRaft:     {false, true, true, true},
-		OpJoin:     {true, true, false, false},
-		OpStatus:   {false, true, true, true},
-		OpAdmit:    {false, false, true, false},
-		OpWithdraw: {false, false, true, false},
-		OpRemove:   {false, false, true, false},
-		OpRemoved:  {false, false, true, false},
-		OpClock:    {false, true, true, true},
-		OpKeyAdd:   {false, false, true, false},
-		OpKeyAbort: {false, false, true, false},
+		OpRaft:       {false, true, true, true},
+		OpJoin:       {true, true, false, false},
+		OpStatus:     {false, true, true, true},
+		OpAdmit:      {false, false, true, false},
+		OpWithdraw:   {false, false, true, false},
+		OpRemove:     {false, false, true, false},
+		OpRemoved:    {false, false, true, false},
+		OpClock:      {false, true, true, true},
+		OpKeyAdd:     {false, false, true, false},
+		OpKeyAbort:   {false, false, true, false},
+		OpUsersWrite: {false, false, true, false},
 	}
 	if len(Operations) != len(want) {
 		t.Fatalf("%d operations, want %d", len(Operations), len(want))

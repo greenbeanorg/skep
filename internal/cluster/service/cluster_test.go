@@ -216,6 +216,7 @@ func (h *harness) start(n *tnode) {
 	svc.afterJoinStep = n.hook
 	svc.afterRemovalStep = n.rhook
 	machine.SetOnApplied(svc.OnApplied)
+	machine.SetOnUsers(svc.OnUsersChanged)
 	opts := store.Options{Dir: n.state(), NodeID: n.id, Logger: log, Machine: machine, Empty: js != nil}
 	var trans *raftnet.Transport
 	if n.cfg.PeerAddress() != "" { // a wiped node has no address

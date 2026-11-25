@@ -164,7 +164,7 @@ func TestMigrateCreatesAgentSchema(t *testing.T) {
 
 func TestMigrateCreatesAPISchema(t *testing.T) {
 	got := tableNames(t, migratedAPIDB(t))
-	want := []string{"audit_log", "audit_segments", "roles", "schema_migrations", "sessions", "users"}
+	want := []string{"audit_log", "audit_segments", "cluster_copy", "roles", "schema_migrations", "sessions", "users"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Errorf("tables = %v\nwant     %v", got, want)
 	}

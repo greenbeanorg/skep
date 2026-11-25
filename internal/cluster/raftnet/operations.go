@@ -110,6 +110,9 @@ const (
 	// operation, not a field of status, so that a node of an older build
 	// answers status as before and its clock reads "not known".
 	OpClock = "clock"
+	// OpUsersWrite is a user entry passed by a member to the leader
+	// (step 8c-1, D11).
+	OpUsersWrite = "users-write"
 )
 
 // Operation says which kinds of key may call an operation.
@@ -149,6 +152,7 @@ var Operations = []Operation{
 	// On a joining node the admission's and the answer's keys are
 	// member keys, so a member can tell a joining node it was removed.
 	{Name: OpRemoved, Member: true},
+	{Name: OpUsersWrite, Member: true},
 }
 
 // Allowed reports whether a key of this kind may call the operation. An

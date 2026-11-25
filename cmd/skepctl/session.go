@@ -390,6 +390,10 @@ func cmdLogin(ctx context.Context, args []string, e env) error {
 	fmt.Fprintf(e.stdout, "Logged in to %s as %s (role %s).\n", server, res.User.Username, res.User.Role)
 	fmt.Fprintf(e.stdout, "The session ends at %s, or after %s without use.\n",
 		res.Session.ExpiresAt.Local().Format(time.RFC3339), idle)
+	if res.Session.Degraded {
+		// Step 8c-1 (D23): a login while skep-cluster has no quorum.
+		fmt.Fprintln(e.stdout, "The session is degraded: skep-cluster has no quorum, so it lasts at most one hour and user changes are refused.")
+	}
 	return nil
 }
 

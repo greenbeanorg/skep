@@ -24,11 +24,12 @@ func NewSessionStore(db *sql.DB) *SessionStore { return &SessionStore{db: db} }
 // CreateSession stores a new session.
 func (s *SessionStore) CreateSession(ctx context.Context, sess auth.Session) error {
 	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO sessions (token_hash, user_id, kind, created_at, last_seen_at, expires_at, source_ip, user_agent)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		INSERT INTO sessions (token_hash, user_id, kind, created_at, last_seen_at, expires_at, source_ip, user_agent,
+			credential_epoch, degraded)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		sess.TokenHash, sess.UserID, string(sess.Kind),
 		database.FormatTime(sess.CreatedAt), database.FormatTime(sess.LastSeenAt), database.FormatTime(sess.ExpiresAt),
-		nullable(sess.SourceIP), nullable(sess.UserAgent))
+		nullable(sess.SourceIP), nullable(sess.UserAgent), int64(sess.CredentialEpoch), boolInt(sess.Degraded))
 	if err != nil {
 		return fmt.Errorf("database: create session: %w", err)
 	}
@@ -42,18 +43,19 @@ func (s *SessionStore) SessionByHash(ctx context.Context, tokenHash string) (aut
 		kind                       string
 		created, lastSeen, expires string
 		ip, ua                     sql.NullString
+		degraded                   int
 	)
 	err := s.db.QueryRowContext(ctx, `
-		SELECT token_hash, user_id, kind, created_at, last_seen_at, expires_at, source_ip, user_agent
+		SELECT token_hash, user_id, kind, created_at, last_seen_at, expires_at, source_ip, user_agent, credential_epoch, degraded
 		FROM sessions WHERE token_hash = ?`, tokenHash).
-		Scan(&sess.TokenHash, &sess.UserID, &kind, &created, &lastSeen, &expires, &ip, &ua)
+		Scan(&sess.TokenHash, &sess.UserID, &kind, &created, &lastSeen, &expires, &ip, &ua, &sess.CredentialEpoch, &degraded)
 	if errors.Is(err, sql.ErrNoRows) {
 		return auth.Session{}, fmt.Errorf("session: %w", models.ErrNotFound)
 	}
 	if err != nil {
 		return auth.Session{}, fmt.Errorf("database: read session: %w", err)
 	}
-	sess.Kind, sess.SourceIP, sess.UserAgent = auth.SessionKind(kind), ip.String, ua.String
+	sess.Kind, sess.SourceIP, sess.UserAgent, sess.Degraded = auth.SessionKind(kind), ip.String, ua.String, degraded == 1
 	for _, f := range []struct {
 		src string
 		dst *time.Time

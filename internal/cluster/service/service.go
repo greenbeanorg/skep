@@ -47,6 +47,7 @@ type Store interface {
 	IsServer(id string, cached bool, maxAge time.Duration) bool
 	LibraryEntriesOnly(from, to uint64) bool
 	Barrier() error
+	LeaderCh() <-chan bool
 	Close() error
 }
 
@@ -187,8 +188,14 @@ type Service struct {
 	// afterRemovalStep is the same for removal steps 0, 1 and 2.
 	afterRemovalStep func(step int, nodeID string) bool
 	frozen           bool
-	// beforeBarrier is a test hook run before each barrier.
+	// beforeBarrier is a test hook run before each barrier of leaderStep.
 	beforeBarrier func()
+	// beforeStep is a test hook run at the start of each step.
+	beforeStep func()
+	// usersMu guards usersCh, closed and replaced whenever the users
+	// change (the users-read long poll waits on it).
+	usersMu sync.Mutex
+	usersCh chan struct{}
 }
 
 // joinStepDone runs the test hook and reports whether the node is frozen.
@@ -297,6 +304,9 @@ func (s *Service) Run(ctx context.Context) {
 	s.mu.Unlock()
 	t := time.NewTicker(s.every)
 	defer t.Stop()
+	if st := s.getStore(); st != nil && !s.isRemoved() {
+		go s.watchLeadership(ctx, st.LeaderCh())
+	}
 	for {
 		s.step(ctx)
 		select {
@@ -315,6 +325,12 @@ func (s *Service) Run(ctx context.Context) {
 }
 
 func (s *Service) step(ctx context.Context) {
+	s.mu.Lock()
+	hook := s.beforeStep
+	s.mu.Unlock()
+	if hook != nil {
+		hook()
+	}
 	if s.isRemoved() || s.getStore() == nil {
 		return
 	}

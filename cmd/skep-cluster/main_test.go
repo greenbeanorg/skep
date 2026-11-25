@@ -63,6 +63,10 @@ type world struct {
 	stages         [][]string
 	tty            io.ReadWriteCloser
 	onService      func(action string)
+	// importState and importErr are what the fake "admin list
+	// --import-state" answers ("done" when both are unset).
+	importState string
+	importErr   error
 }
 
 func newWorld(t *testing.T) *world {
@@ -132,6 +136,13 @@ func (w *world) env(euid int) env {
 			sub.stdout = &out
 			err := run(ctx, args, sub)
 			return out.Bytes(), err
+		},
+		hostUsers: func(context.Context) ([]string, error) { return []string{"andy admin", "vera viewer disabled"}, nil },
+		hostImportState: func(context.Context) (string, error) {
+			if w.importState == "" && w.importErr == nil {
+				return "done", nil
+			}
+			return w.importState, w.importErr
 		},
 		openTTY: func() (io.ReadWriteCloser, error) {
 			if w.tty == nil {
@@ -687,6 +698,29 @@ func TestJoinConfirmation(t *testing.T) {
 		if !strings.Contains(w.out.String(), want) {
 			t.Errorf("the confirmation does not show %q:\n%s", want, w.out.String())
 		}
+	}
+}
+
+// F5 of the 8c-1 review: a host whose import is pending is refused before
+// anything is changed; a state that cannot be read lets the join go on and
+// says so.
+func TestJoinRefusesAPendingImport(t *testing.T) {
+	adm := testAdmission(t)
+	line := mustAdmissionLine(t, adm)
+	w := newWorld(t)
+	clusterconf.Write(w.config, clusterconf.Config{NodeID: agentNode, NodeName: "smith", ListenAddress: "127.0.0.1"}, -1, -1)
+	w.importState = "pending"
+	err := run(context.Background(), []string{"join", "-config", w.config, "-data-dir", w.dataDir, "-cluster-id", adm.ClusterID, line}, w.env(0))
+	if err == nil || !strings.Contains(err.Error(), `run "skep-api admin import-users" first`) || len(w.serviceActions) != 0 || len(w.stages) != 0 {
+		t.Fatalf("pending: %v %v %v", err, w.serviceActions, w.stages)
+	}
+	w = newWorld(t)
+	clusterconf.Write(w.config, clusterconf.Config{NodeID: agentNode, NodeName: "smith", ListenAddress: "127.0.0.1"}, -1, -1)
+	w.importErr = errors.New("exit status 1")
+	w.tty = &fakeTTY{Reader: *strings.NewReader("no\n")}
+	err = run(context.Background(), []string{"join", "-config", w.config, "-data-dir", w.dataDir, line}, w.env(0))
+	if err == nil || !strings.Contains(err.Error(), "not confirmed") || !strings.Contains(w.out.String(), "could not be read (exit status 1); the join goes on") {
+		t.Fatalf("unreadable: %v\n%s", err, w.out.String())
 	}
 }
 

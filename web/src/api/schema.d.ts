@@ -2059,7 +2059,7 @@ export interface components {
                  *     by task submission, which is not exposed yet.
                  * @enum {string}
                  */
-                code: "invalid_request" | "not_found" | "method_not_allowed" | "internal_error" | "service_unavailable" | "agent_unavailable" | "agent_version_mismatch" | "unauthenticated" | "invalid_credentials" | "forbidden" | "rate_limited" | "setup_required" | "username_taken" | "last_admin" | "unknown_role" | "resource_busy" | "idempotency_key_conflict" | "not_cancellable" | "queue_full" | "shutting_down";
+                code: "invalid_request" | "not_found" | "method_not_allowed" | "internal_error" | "service_unavailable" | "agent_unavailable" | "agent_version_mismatch" | "unauthenticated" | "invalid_credentials" | "forbidden" | "rate_limited" | "setup_required" | "username_taken" | "last_admin" | "unknown_role" | "no_quorum" | "users_import_pending" | "too_many_users" | "resource_busy" | "idempotency_key_conflict" | "not_cancellable" | "queue_full" | "shutting_down";
                 /** @description Human-readable description. */
                 message: string;
                 request_id?: string;
@@ -2279,6 +2279,11 @@ export interface components {
                  * @description How long the session survives without use.
                  */
                 idle_timeout_seconds: number;
+                /**
+                 * @description True for a session created while `skep-cluster` had no
+                 *     quorum: it ends at most one hour after the login.
+                 */
+                degraded?: boolean;
             };
             /** @description The permission strings of the user's role. An asterisk means every permission. */
             permissions: string[];
@@ -2768,7 +2773,10 @@ export interface operations {
             429: components["responses"]["RateLimited"];
             /**
              * @description No administrator exists yet (`setup_required`). Create one on
-             *     the host with `skep-api admin create --username NAME`.
+             *     the host with `skep-api admin create --username NAME`. Or
+             *     `skep-cluster` has no quorum (`no_quorum`): only an enabled
+             *     administrator may log in then, with a degraded session, and
+             *     an empty copy of the users answers `no_quorum` for everyone.
              */
             503: {
                 headers: {

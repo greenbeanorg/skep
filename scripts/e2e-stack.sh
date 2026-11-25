@@ -2,9 +2,11 @@
 # Runs the stack the browser tests drive (ADR 0008, decision 8): a real
 # skep-api built with the web interface embedded, in front of the agent's
 # test build, which submits one cancellable test.sleep task at start so that
-# there is something to cancel. Everything lives in a temporary directory
-# that is removed when the script exits. An administrator is created with
-# the local command, as an operator would.
+# there is something to cancel, and a real one-node skep-cluster that holds
+# the users (ADR 0013 amendment 4), from skep-cluster's test build, which
+# can create its cluster without root (skep_testcluster). Everything lives
+# in a temporary directory that is removed when the script exits. An
+# administrator is created with the local command, as an operator would.
 #
 # Playwright starts this script (web/playwright.config.ts) and waits for
 # the health endpoint; scripts/web-e2e.sh starts Playwright. It is a development tool on a development machine
@@ -47,6 +49,15 @@ if [ ! -x "${bin}/skep-agent-testbuild" ] ||
 		-ldflags "-X github.com/greenbeanorg/skep/pkg/version.Version=${api_version} -X github.com/greenbeanorg/skep/pkg/version.Commit=${api_commit}" \
 		-o "${bin}/skep-agent-testbuild" ./cmd/skep-agent
 fi
+# skep-cluster's test build carries "test-init" (a one-node cluster
+# without root). It is never installed anywhere either.
+if [ ! -x "${bin}/skep-cluster-testbuild" ] ||
+	! "${bin}/skep-cluster-testbuild" version | grep -q "^skep-cluster ${api_version} (${api_commit},"; then
+	echo "e2e-stack: building ${bin}/skep-cluster-testbuild (${api_version}, commit ${api_commit})"
+	CGO_ENABLED=0 go build -trimpath -tags skep_testcluster \
+		-ldflags "-X github.com/greenbeanorg/skep/pkg/version.Version=${api_version} -X github.com/greenbeanorg/skep/pkg/version.Commit=${api_commit}" \
+		-o "${bin}/skep-cluster-testbuild" ./cmd/skep-cluster
+fi
 
 # A short directory: the socket path is limited to about 104 bytes.
 # scripts/web-e2e.sh passes its own (SKEP_E2E_DIR), with skep-api's key
@@ -61,10 +72,12 @@ else
 fi
 agent_pid=""
 api_pid=""
+cluster_pid=""
 cleanup() {
 	trap - INT TERM EXIT
 	[ -n "${api_pid}" ] && kill "${api_pid}" 2>/dev/null || true
 	[ -n "${agent_pid}" ] && kill "${agent_pid}" 2>/dev/null || true
+	[ -n "${cluster_pid}" ] && kill "${cluster_pid}" 2>/dev/null || true
 	wait 2>/dev/null || true
 	if [ -n "${own_dir}" ]; then rm -rf "${dir}"; fi
 }
@@ -85,13 +98,26 @@ EOF
 SKEP_TEST_SLEEP=8m "${bin}/skep-agent-testbuild" -dev -config "${dir}/agent.json" -data-dir "${dir}/agent" -log-level warn &
 agent_pid=$!
 
-printf '%s\n' "${password}" | "${bin}/skep-api" admin create --username andy --display-name "Andy Test" \
-	--password-stdin -dev -data-dir "${dir}/api" >/dev/null
+# The cluster runs as this user, which is also its API account here (on an
+# installed host they are skep-cluster and skep).
+csock="${dir}/cluster.sock"
+"${bin}/skep-cluster-testbuild" test-init -config "${dir}/cluster.json" -data-dir "${dir}/cluster" >/dev/null
+"${bin}/skep-cluster-testbuild" -config "${dir}/cluster.json" -data-dir "${dir}/cluster" -socket "${csock}" \
+	-api-account "$(id -un)" -log-level warn &
+cluster_pid=$!
+i=0
+while [ ! -S "${csock}" ] && [ "${i}" -lt 100 ]; do
+	sleep 0.1
+	i=$((i + 1))
+done
 
-"${bin}/skep-api" -dev -data-dir "${dir}/api" -agent-socket "${socket}" -listen "${listen}" -log-level warn &
+printf '%s\n' "${password}" | "${bin}/skep-api" admin create --username andy --display-name "Andy Test" \
+	--password-stdin -dev -data-dir "${dir}/api" -cluster-socket "${csock}" >/dev/null
+
+"${bin}/skep-api" -dev -data-dir "${dir}/api" -agent-socket "${socket}" -cluster-socket "${csock}" -listen "${listen}" -log-level warn &
 api_pid=$!
 echo "e2e-stack: skep-api on https://${listen}, state in ${dir}"
 
-while kill -0 "${agent_pid}" 2>/dev/null && kill -0 "${api_pid}" 2>/dev/null; do
+while kill -0 "${agent_pid}" 2>/dev/null && kill -0 "${api_pid}" 2>/dev/null && kill -0 "${cluster_pid}" 2>/dev/null; do
 	sleep 1
 done

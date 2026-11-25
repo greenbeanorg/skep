@@ -76,8 +76,8 @@ procedure, and results recorded as it describes are welcome.
   metric history in 0.1. **On `main` after 0.1 (Milestone 8, not
   released):** a host without VMs and jails can join another host's
   cluster (step 8b-1), and be removed, wiped (`leave --wipe`) or give up
-  a join (`join --abandon`) (step 8b-2a), as a preview: users and guests
-  are not shared, `admit` and `remove` are root-only on a member; step
+  a join (`join --abandon`) (step 8b-2a), as a preview: guests are not
+  shared, `admit` and `remove` are root-only on a member; step
   8b-2b adds node key rotation (`key rotate`, root, every node upgraded
   first), a cluster audit (`audit verify`) and a clock-offset check; with
   a member down a join and a key rotation wait, and a removal that leaves
@@ -86,6 +86,15 @@ procedure, and results recorded as it describes are welcome.
   8b-1 build is moved by hand)
   ([Joining hosts into a cluster](../../administration/cluster.md),
   [limits](../../architecture/skep-cluster.md#limits-of-8b-2a-and-8b-2b)).
+  Step 8c-1 moves the users into the cluster: `skep-api` then needs a
+  running `skep_cluster` with quorum for every user change, and only an
+  administrator may log in without it (degraded, at most one hour). **A
+  fresh install from `main` cannot log anyone in until step 8c-2** teaches
+  `skep-setup` to initialise and start `skep_cluster`; an upgraded host
+  imports its users with `skep-api admin import-users`
+  ([upgrading](../../installation/upgrading.md#to-step-8c-1-main-the-unreleased-cluster-preview-the-users-move-into-the-cluster)).
+  A cluster holds at most **2000 users**, and an import at most what fits
+  in one 192 KiB entry.
 
 ## Installation and upgrade
 

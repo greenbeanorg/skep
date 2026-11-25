@@ -40,7 +40,10 @@ type API struct {
 	// ListenAddress is the TCP address of the public API.
 	ListenAddress string `json:"listen_address"`
 	// AgentSocket is the Unix socket of the agent's internal API.
-	AgentSocket     string    `json:"agent_socket"`
+	AgentSocket string `json:"agent_socket"`
+	// ClusterSocket is skep-cluster's local socket: the replicated users
+	// (step 8c-1, D20).
+	ClusterSocket   string    `json:"cluster_socket"`
 	ReadTimeout     Duration  `json:"read_timeout"`
 	WriteTimeout    Duration  `json:"write_timeout"`
 	ShutdownTimeout Duration  `json:"shutdown_timeout"`
@@ -159,6 +162,7 @@ type APIOverrides struct {
 	DevMode       *bool
 	ListenAddress string
 	AgentSocket   string
+	ClusterSocket string
 	DataDir       string
 	LogLevel      string
 	LogFormat     string
@@ -227,6 +231,7 @@ func LoadAPI(opts APILoadOptions) (API, error) {
 	for value, dst := range map[*string]*string{
 		&o.ListenAddress: &cfg.ListenAddress,
 		&o.AgentSocket:   &cfg.AgentSocket,
+		&o.ClusterSocket: &cfg.ClusterSocket,
 		&o.DataDir:       &cfg.DataDir,
 		&o.LogLevel:      &cfg.Log.Level,
 		&o.LogFormat:     &cfg.Log.Format,
@@ -258,6 +263,9 @@ func (c *API) applyDefaults() {
 		if c.DevMode {
 			c.AgentSocket = filepath.Join(c.DataDir, filepath.FromSlash(DevSocketPath))
 		}
+	}
+	if c.ClusterSocket == "" {
+		c.ClusterSocket = DefaultClusterSocket
 	}
 	if c.ReadTimeout == 0 {
 		c.ReadTimeout = Duration(15 * time.Second)
@@ -333,6 +341,9 @@ func (c API) Validate() error {
 	}
 	if c.AgentSocket == "" {
 		add("agent_socket must not be empty")
+	}
+	if !filepath.IsAbs(c.ClusterSocket) {
+		add("cluster_socket must be an absolute path")
 	}
 	if err := c.validateListen(); err != nil {
 		errs = append(errs, err)

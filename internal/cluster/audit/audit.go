@@ -130,10 +130,21 @@ type Record struct {
 	Name    string   `json:"name,omitempty"`
 	Address string   `json:"address,omitempty"`
 	Pins    []string `json:"pins,omitempty"`
+	// The user a user entry names (step 8c-1, D10): its ID, username,
+	// role and disabled flag; for users.import the count and the
+	// usernames. Never a password hash. Omitted when empty, so every
+	// record an 8b-2b build wrote still verifies.
+	UserID       string   `json:"user_id,omitempty"`
+	Username     string   `json:"username,omitempty"`
+	Role         string   `json:"role,omitempty"`
+	UserDisabled bool     `json:"user_disabled,omitempty"`
+	Count        int      `json:"count,omitempty"`
+	Usernames    []string `json:"usernames,omitempty"`
 	// Outcome is applied, refused or duplicate; Reason is why it was
-	// refused.
+	// refused and Code the refusal's code, where it has one.
 	Outcome string `json:"outcome,omitempty"`
 	Reason  string `json:"reason,omitempty"`
+	Code    string `json:"code,omitempty"`
 	// Details are a local event's fields.
 	Details map[string]string `json:"details,omitempty"`
 
@@ -600,7 +611,9 @@ func (l *Log) AuditEntry(a clusterstate.AuditEntry) error {
 	}
 	return l.append(Record{Kind: KindEntry, Epoch: a.Epoch, Index: a.Index, EntryType: a.Type, EntryVersion: a.Version,
 		EntryTime: a.At, Actor: a.Actor, OpID: a.OpID, Origin: a.Origin, RequestID: a.RequestID,
-		NodeID: a.NodeID, Name: a.Name, Address: a.Address, Pins: a.Pins, Outcome: a.Outcome, Reason: a.Reason})
+		NodeID: a.NodeID, Name: a.Name, Address: a.Address, Pins: a.Pins, Outcome: a.Outcome, Reason: a.Reason,
+		UserID: a.UserID, Username: a.Username, Role: a.Role, UserDisabled: a.UserDisabled, Count: a.Count,
+		Usernames: a.Usernames, Code: a.Code})
 }
 
 // AuditSnapshot implements clusterstate.AuditWriter: a snapshot installed

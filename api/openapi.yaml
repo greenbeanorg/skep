@@ -48,6 +48,18 @@ info:
     answers `503 setup_required`. Logins are rate limited (`429
     rate_limited` with `Retry-After`); accounts are never locked.
 
+    **Users are the cluster's** (ADR 0013 amendment 4). Every node keeps a
+    read copy of the users that `skep-cluster` replicates, and every user
+    change goes through `skep-cluster`. Without quorum (`skep-cluster`
+    unreachable, no leader, or no answer for 15 s) a user change answers
+    `503 no_quorum` with `details.outcome` `not_written`, `unknown` or
+    `written_not_synced`; only an enabled administrator may log in, and
+    gets a **degraded** session (`session.degraded`) that ends at most one
+    hour after the login; any other user with the right password gets
+    `503 no_quorum`. On a host upgraded from 0.1 whose users have not been
+    imported (`skep-api admin import-users`), a user change answers
+    `503 users_import_pending`.
+
     **Authorization.** Every user has one role, and a role is a set of
     permission strings. Each endpoint requires one permission (listed in
     its description); anything not granted is denied with
@@ -250,7 +262,10 @@ paths:
         "503":
           description: |
             No administrator exists yet (`setup_required`). Create one on
-            the host with `skep-api admin create --username NAME`.
+            the host with `skep-api admin create --username NAME`. Or
+            `skep-cluster` has no quorum (`no_quorum`): only an enabled
+            administrator may log in then, with a degraded session, and
+            an empty copy of the users answers `no_quorum` for everyone.
           content:
             application/json:
               schema:
@@ -3495,6 +3510,9 @@ components:
                 - username_taken
                 - last_admin
                 - unknown_role
+                - no_quorum
+                - users_import_pending
+                - too_many_users
                 - resource_busy
                 - idempotency_key_conflict
                 - not_cancellable
@@ -3809,6 +3827,11 @@ components:
               type: integer
               format: int64
               description: How long the session survives without use.
+            degraded:
+              type: boolean
+              description: |
+                True for a session created while `skep-cluster` had no
+                quorum: it ends at most one hour after the login.
         permissions:
           type: array
           description: The permission strings of the user's role. An asterisk means every permission.

@@ -134,6 +134,16 @@ type AuditEntry struct {
 	Address string
 	Pins    []string
 	At      int64
+	// A user entry's user (D10 of step 8c-1): never a password hash.
+	// Code is a refusal's code.
+	UserID       string
+	Username     string
+	Role         string
+	UserDisabled bool
+	Code         string
+	// Count and Usernames describe users.import.
+	Count     int
+	Usernames []string
 }
 
 // AuditWriter makes a log entry's record durable before the machine
@@ -165,6 +175,9 @@ type Result struct {
 	Err error
 	// Entry is the decoded entry, when it could be decoded.
 	Entry Entry
+	// Index is the entry's log index; OpIndex is, for a duplicate, the
+	// index that applied the operation first.
+	Index, OpIndex uint64
 	// Events are the membership events the entry caused.
 	Events []Event
 }
@@ -184,11 +197,15 @@ type state struct {
 	pendings  map[string]Pending
 	// removedIndex is the index of the last member.removed entry.
 	removedIndex uint64
+	// users are the replicated users by ID (step 8c-1); usersIndex is
+	// the index of the last entry that changed them.
+	users      map[string]User
+	usersIndex uint64
 }
 
 func (s state) clone() state {
 	return state{clusterID: s.clusterID, epoch: s.epoch, members: maps.Clone(s.members), pendings: maps.Clone(s.pendings),
-		removedIndex: s.removedIndex}
+		removedIndex: s.removedIndex, users: maps.Clone(s.users), usersIndex: s.usersIndex}
 }
 
 func (s state) sortedMembers() []Member {
@@ -213,14 +230,20 @@ type Machine struct {
 	mu sync.RWMutex
 	st state
 	// ops holds the operation IDs applied so far, with the index that
-	// applied them.
+	// applied them; order lists them by that index, oldest first, and
+	// forgot is set once one was forgotten (D8 of step 8c-1).
 	ops       map[string]uint64
+	order     []opAt
+	forgot    bool
 	applied   uint64
 	memIndex  uint64
 	stalled   *Stall
 	writer    MembershipWriter
 	audit     AuditWriter
 	onApplied func()
+	// onUsers is called, without the lock, after an entry that changed
+	// the users and after a restore.
+	onUsers func()
 }
 
 // SetAuditWriter installs the cluster audit. It must be set before the
@@ -237,7 +260,12 @@ func auditOf(st state, e Entry, index uint64, outcome, reason string) AuditEntry
 	epoch := st.epoch
 	a := AuditEntry{Epoch: epoch, Index: index, Type: e.Type, Version: e.Version, OpID: e.OpID, Actor: e.Actor,
 		Origin: e.Origin, RequestID: e.RequestID, Outcome: outcome, Reason: reason}
-	a.NodeID, a.Name, a.Address, a.Pins, a.At = st.describe(e)
+	if IsUserType(e.Type) {
+		u := st.describeUser(e)
+		a.UserID, a.Username, a.Role, a.UserDisabled, a.At, a.Count, a.Usernames = u.UserID, u.Username, u.Role, u.UserDisabled, u.At, u.Count, u.Usernames
+	} else {
+		a.NodeID, a.Name, a.Address, a.Pins, a.At = st.describe(e)
+	}
 	if e.Type == TypeClusterInit && a.Epoch == 0 && outcome == "applied" {
 		a.Epoch = 1
 	}
@@ -246,7 +274,7 @@ func auditOf(st state, e Entry, index uint64, outcome, reason string) AuditEntry
 
 // New returns an empty machine.
 func New() *Machine {
-	return &Machine{st: state{members: map[string]Member{}, pendings: map[string]Pending{}}, ops: map[string]uint64{}}
+	return &Machine{st: state{members: map[string]Member{}, pendings: map[string]Pending{}, users: map[string]User{}}, ops: map[string]uint64{}}
 }
 
 // SetMembershipWriter installs the writer of the applied-membership file.
@@ -297,14 +325,15 @@ func (m *Machine) apply(index uint64, raw []byte) (Result, func()) {
 	if e.Version > max {
 		return stall(fmt.Sprintf("entry type %q has version %d; this build applies up to %d", e.Type, e.Version, max))
 	}
-	if _, done := m.ops[e.OpID]; done {
+	m.forget(index)
+	if first, done := m.ops[e.OpID]; done {
 		if m.audit != nil {
 			if aerr := m.audit.AuditEntry(auditOf(m.st, e, index, "duplicate", "")); aerr != nil {
 				return stall("cannot write the cluster audit: " + aerr.Error())
 			}
 		}
 		m.applied = index
-		return Result{Duplicate: true, Entry: e}, nil
+		return Result{Duplicate: true, Entry: e, Index: index, OpIndex: first}, nil
 	}
 	next := m.st.clone()
 	ch, err := next.apply(e, index)
@@ -315,12 +344,14 @@ func (m *Machine) apply(index uint64, raw []byte) (Result, func()) {
 	if err != nil {
 		// Refused: nothing changes, the same on every node.
 		if m.audit != nil {
-			if aerr := m.audit.AuditEntry(auditOf(m.st, e, index, "refused", err.Error())); aerr != nil {
+			a := auditOf(m.st, e, index, "refused", err.Error())
+			a.Code = RefusalCode(err)
+			if aerr := m.audit.AuditEntry(a); aerr != nil {
 				return stall("cannot write the cluster audit: " + aerr.Error())
 			}
 		}
 		m.applied = index
-		return Result{Err: fmt.Errorf("%w: %s", ErrRefused, err), Entry: e}, nil
+		return Result{Err: fmt.Errorf("%w: %w", ErrRefused, err), Entry: e, Index: index}, nil
 	}
 	if ch.membership && m.writer != nil {
 		rec := Membership{ClusterID: next.clusterID, Epoch: next.epoch, Index: index, Members: next.sortedMembers()}
@@ -341,6 +372,7 @@ func (m *Machine) apply(index uint64, raw []byte) (Result, func()) {
 	}
 	m.st = next
 	m.ops[e.OpID] = index
+	m.order = append(m.order, opAt{index: index, op: e.OpID})
 	m.applied = index
 	if ch.membership {
 		m.memIndex = index
@@ -349,13 +381,23 @@ func (m *Machine) apply(index uint64, raw []byte) (Result, func()) {
 	if ch.membership || ch.pending {
 		notify = m.onApplied
 	}
-	return Result{Entry: e, Events: ch.events}, notify
+	if ch.users && m.onUsers != nil {
+		f, n := notify, m.onUsers
+		notify = func() {
+			if f != nil {
+				f()
+			}
+			n()
+		}
+	}
+	return Result{Entry: e, Events: ch.events, Index: index}, notify
 }
 
 // change says what an applied entry changed.
 type change struct {
 	membership bool
 	pending    bool
+	users      bool
 	events     []Event
 }
 
@@ -430,6 +472,9 @@ func (s state) conflict(id, name, address, pin, skipPending string) error {
 func (s *state) apply(e Entry, index uint64) (change, error) {
 	if e.Type != TypeClusterInit && s.clusterID == "" {
 		return change{}, errors.New("the cluster does not exist yet")
+	}
+	if IsUserType(e.Type) {
+		return s.applyUser(e, index)
 	}
 	switch e.Type {
 	case TypeClusterInit:
@@ -743,8 +788,9 @@ func (m *Machine) AppliedIndex() (uint64, bool) {
 
 // snapshotFormat is the version of the snapshot encoding. Format 1 (step
 // 8a) has no pending entries and no epoch; format 2 (8b-1) no removal
-// index; format 3 (8b-2a) no next pin. All are still read.
-const snapshotFormat = 4
+// index; format 3 (8b-2a) no next pin; format 4 (8b-2b) no users and no
+// forgotten operation IDs. All are still read.
+const snapshotFormat = 5
 
 type snapshot struct {
 	Format          int               `json:"format"`
@@ -756,6 +802,11 @@ type snapshot struct {
 	Applied         uint64            `json:"applied"`
 	MembershipIndex uint64            `json:"membership_index,omitempty"`
 	RemovedIndex    uint64            `json:"removed_index,omitempty"`
+	// Format 5 (step 8c-1): the users, the users index, and whether an
+	// operation ID was forgotten.
+	Users      []User `json:"users,omitempty"`
+	UsersIndex uint64 `json:"users_index,omitempty"`
+	Forgot     bool   `json:"forgot,omitempty"`
 	// Stalled is read from snapshots written by the first 8a build and
 	// ignored; it is never written. A stall belongs to the running build,
 	// not to the state: a later build that can apply the entry must.
@@ -785,11 +836,17 @@ func (m *Machine) Snapshot() ([]byte, error) {
 	}
 	for _, mem := range m.st.members {
 		if mem.NextPin != "" {
-			format = snapshotFormat
+			format = 4
 		}
 	}
 	s := snapshot{Format: format, ClusterID: m.st.clusterID, Epoch: m.st.epoch, Ops: maps.Clone(m.ops),
 		Applied: m.applied, MembershipIndex: m.memIndex, RemovedIndex: m.st.removedIndex, Members: m.st.sortedMembers(), Pendings: m.st.sortedPendings()}
+	// Format 5 only once the state holds users or has forgotten an
+	// operation ID (D9 of step 8c-1), so that an 8b-2b build still reads
+	// a snapshot of a cluster without users.
+	if len(m.st.users) > 0 || m.st.usersIndex > 0 || m.forgot {
+		s.Format, s.Users, s.UsersIndex, s.Forgot = snapshotFormat, m.st.sortedUsers(), m.st.usersIndex, m.forgot
+	}
 	return json.Marshal(s)
 }
 
@@ -807,7 +864,11 @@ func (m *Machine) Restore(r io.Reader) error {
 	if s.Format < 1 || s.Format > snapshotFormat {
 		return fmt.Errorf("clusterstate: snapshot format %d is unknown to this build", s.Format)
 	}
-	st := state{clusterID: s.ClusterID, epoch: s.Epoch, members: map[string]Member{}, pendings: map[string]Pending{}, removedIndex: s.RemovedIndex}
+	st := state{clusterID: s.ClusterID, epoch: s.Epoch, members: map[string]Member{}, pendings: map[string]Pending{}, removedIndex: s.RemovedIndex,
+		users: map[string]User{}, usersIndex: s.UsersIndex}
+	for _, u := range s.Users {
+		st.users[u.ID] = u
+	}
 	if s.Format == 1 && st.clusterID != "" {
 		st.epoch = 1
 	}
@@ -844,10 +905,14 @@ func (m *Machine) Restore(r io.Reader) error {
 	// s.Stalled is ignored: this build applies again whatever stalled an
 	// earlier one, and stalls again by itself if it cannot.
 	m.st, m.ops, m.applied, m.memIndex, m.stalled = st, s.Ops, s.Applied, memIndex, nil
-	notify := m.onApplied
+	m.order, m.forgot = orderOf(s.Ops), s.Forgot
+	notify, users := m.onApplied, m.onUsers
 	m.mu.Unlock()
 	if notify != nil {
 		notify()
+	}
+	if users != nil {
+		users()
 	}
 	return nil
 }

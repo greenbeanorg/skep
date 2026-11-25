@@ -46,6 +46,37 @@ refuses rather than do that unless given `-force`; by hand, check
 `skepctl tasks list --status pending` and `--status running` (or the
 Tasks page) first, and stop `skep_api` before the agent.
 
+## To step 8c-1 (main, the unreleased cluster preview): the users move into the cluster
+
+From step 8c-1 the users are `skep-cluster`'s (ADR 0013 amendment 4).
+Migration `api/0006` keeps a host's own users and marks them
+**pending**: logins work as before, and every user change answers
+`503 users_import_pending` until the import below. `skep-api` reads the
+users from `skep-cluster`'s socket (`cluster_socket` in `api.json`,
+default `/var/run/skep-cluster/cluster.sock`), so `skep_cluster` must be
+running; `skep-setup upgrade` does not restart it yet (step 8c-2): run
+`service skep_cluster restart` by hand after each package upgrade.
+
+1. Upgrade **every** node of a cluster first, one at a time, and wait for
+   all voters and `health ok` after each. A `skep-cluster` of an earlier
+   build stops at the first user entry and must not meet one.
+2. On one node only: `skep-api admin import-users`. It sends this host's
+   users to the cluster in one entry (at most 192 KiB; 2000 users at
+   most) and records its operation ID first, so running it again after a
+   crash finishes the import. The sessions stay.
+3. On every other node: `skep-api admin import-users`. The cluster has
+   users already: the command lists this node's users and says the
+   cluster's replace them; run it again with `--yes` to accept. That
+   node's sessions end, and only the cluster's accounts exist on it.
+
+A host whose import is still pending cannot join a cluster:
+`skep-cluster join` refuses it until `skep-api admin import-users` has
+run there.
+
+Until step 8c-2, a fresh install from `main` cannot log anyone in: nothing
+starts `skep_cluster` for it, and without quorum an empty copy answers
+`no_quorum`.
+
 ## From b61e578 (Milestone 7b) to Milestone 7c (main at 578b7d8 or later)
 
 b61e578 is the build `hearst` runs as of 2026-11-22. Between it and

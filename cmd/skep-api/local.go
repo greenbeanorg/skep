@@ -25,6 +25,7 @@ type localFlags struct {
 	configPath *string
 	dataDir    *string
 	dev        *bool
+	cluster    *string
 }
 
 func newLocalFlags(name string, stderr io.Writer) *localFlags {
@@ -35,6 +36,7 @@ func newLocalFlags(name string, stderr io.Writer) *localFlags {
 		configPath: set.String("config", "", "path to the JSON configuration file (default "+config.DefaultAPIConfigPath+" if it exists)"),
 		dataDir:    set.String("data-dir", "", "state directory"),
 		dev:        set.Bool("dev", false, "development mode: use the local data directory"),
+		cluster:    set.String("cluster-socket", "", "Unix socket of skep-cluster (default "+config.DefaultClusterSocket+")"),
 	}
 }
 
@@ -48,7 +50,7 @@ func (f *localFlags) prepare(args []string, e env) (config.API, error) {
 	if f.set.NArg() > 0 {
 		return config.API{}, fmt.Errorf("unexpected argument %q", f.set.Arg(0))
 	}
-	overrides := config.APIOverrides{DataDir: *f.dataDir}
+	overrides := config.APIOverrides{DataDir: *f.dataDir, ClusterSocket: *f.cluster}
 	f.set.Visit(func(fl *flag.Flag) {
 		if fl.Name == "dev" {
 			overrides.DevMode = f.dev
