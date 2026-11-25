@@ -15,7 +15,7 @@ import (
 // HostProber reads the facts of this FreeBSD host with read-only
 // commands: freebsd-version, sysctl, ifconfig (addresses, and each
 // bridge's members and flags), zpool list, jls, a
-// listing of /dev/vmm, "service skep_agent|skep_api status", and
+// listing of /dev/vmm, "service skep_agent|skep_cluster|skep_api status", and
 // "kldstat -q -m" for each guest module. Facts.Kenv runs "/bin/kenv -q
 // NAME" when a caller asks for a loader tunable.
 type HostProber struct{}
@@ -72,7 +72,7 @@ func (HostProber) Probe(ctx context.Context) (Facts, error) {
 	f.Kenv = func(name string) (string, bool) { return readKenv(ctx, name) }
 	f.KenvNames = func() []string { return kenvNames(ctx) }
 	f.Running = map[string]bool{}
-	for _, svc := range []string{"skep_agent", "skep_api"} {
+	for _, svc := range []string{"skep_agent", "skep_cluster", "skep_api"} {
 		if _, err := output(ctx, cmdService, svc, "status"); err == nil {
 			f.Running[svc] = true
 		}

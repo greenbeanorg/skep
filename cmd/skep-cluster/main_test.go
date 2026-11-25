@@ -168,6 +168,43 @@ func (w *world) init(euid int, extra ...string) error {
 	return run(context.Background(), args, w.env(euid))
 }
 
+// D2 of step 8c-2: "init -check" says one word, asks no agent and writes
+// nothing; an initialised host says "initialised".
+func TestInitCheck(t *testing.T) {
+	w := newWorld(t)
+	if err := run(context.Background(), []string{"init", "-check", "-data-dir", w.dataDir, "-config", w.config}, w.env(1000)); err == nil || !strings.Contains(err.Error(), "root") {
+		t.Fatalf("as a user: %v", err)
+	}
+	if err := run(context.Background(), []string{"init", "-check", "-data-dir", w.dataDir, "-config", w.config}, w.env(0)); err != nil || w.out.String() != "not-initialised\n" {
+		t.Fatalf("fresh: %v %q", err, w.out.String())
+	}
+	if w.agentCalls != 0 || w.dropped {
+		t.Fatal("init -check asked the agent or gave up root")
+	}
+	if _, err := os.Stat(w.dataDir); err == nil {
+		t.Fatal("init -check created the data directory")
+	}
+	if _, err := os.Stat(w.config); err == nil {
+		t.Fatal("init -check wrote cluster.json")
+	}
+	if err := w.init(0); err != nil {
+		t.Fatal(err)
+	}
+	w.out.Reset()
+	if err := run(context.Background(), []string{"init", "-check", "-data-dir", w.dataDir, "-config", w.config}, w.env(0)); err != nil || w.out.String() != "initialised\n" {
+		t.Fatalf("initialised: %v %q", err, w.out.String())
+	}
+	// A data directory of another mode is an error (exit 1), not a word.
+	w2 := newWorld(t)
+	if err := os.MkdirAll(w2.dataDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	os.Chmod(w2.dataDir, 0o755)
+	if err := run(context.Background(), []string{"init", "-check", "-data-dir", w2.dataDir}, w2.env(0)); err == nil || !strings.Contains(err.Error(), "not 0700") {
+		t.Fatalf("mode: %v", err)
+	}
+}
+
 func TestInitNeedsRoot(t *testing.T) {
 	w := newWorld(t)
 	if err := w.init(1000); err == nil || !strings.Contains(err.Error(), "root") {
@@ -713,6 +750,14 @@ func TestJoinRefusesAPendingImport(t *testing.T) {
 	err := run(context.Background(), []string{"join", "-config", w.config, "-data-dir", w.dataDir, "-cluster-id", adm.ClusterID, line}, w.env(0))
 	if err == nil || !strings.Contains(err.Error(), `run "skep-api admin import-users" first`) || len(w.serviceActions) != 0 || len(w.stages) != 0 {
 		t.Fatalf("pending: %v %v %v", err, w.serviceActions, w.stages)
+	}
+	// D18 of step 8c-2: an api.db older than skep-api is refused too.
+	w = newWorld(t)
+	clusterconf.Write(w.config, clusterconf.Config{NodeID: agentNode, NodeName: "smith", ListenAddress: "127.0.0.1"}, -1, -1)
+	w.importState = "unmigrated"
+	err = run(context.Background(), []string{"join", "-config", w.config, "-data-dir", w.dataDir, "-cluster-id", adm.ClusterID, line}, w.env(0))
+	if err == nil || !strings.Contains(err.Error(), "run skep-setup upgrade first") || len(w.serviceActions) != 0 || len(w.stages) != 0 {
+		t.Fatalf("unmigrated: %v %v %v", err, w.serviceActions, w.stages)
 	}
 	w = newWorld(t)
 	clusterconf.Write(w.config, clusterconf.Config{NodeID: agentNode, NodeName: "smith", ListenAddress: "127.0.0.1"}, -1, -1)

@@ -34,6 +34,58 @@ type Applier struct {
 	// time.Sleep and DefaultAdminWait).
 	Sleep     func(time.Duration)
 	AdminWait time.Duration
+	// Cluster runs skep-cluster's commands (cluster-init, and the wait
+	// for a leader before the first administrator); Agent is the agent's
+	// socket, which cluster-init waits for. Nil Cluster skips the leader
+	// wait (tests of other actions).
+	Cluster Cluster
+	Agent   Agent
+	// AgentWait and LeaderWait bound those waits (defaults
+	// DefaultClusterAgentWait and DefaultLeaderWait).
+	AgentWait, LeaderWait time.Duration
+}
+
+// DefaultClusterAgentWait is how long cluster-init waits for the agent's
+// socket to answer (D7 of step 8c-2).
+const DefaultClusterAgentWait = 60 * time.Second
+
+// DefaultLeaderWait is how long apply waits for skep-cluster to show a
+// leader before it creates the first administrator (D8).
+const DefaultLeaderWait = 30 * time.Second
+
+func (a *Applier) sleep(d time.Duration) {
+	if a.Sleep != nil {
+		a.Sleep(d)
+		return
+	}
+	time.Sleep(d)
+}
+
+// clusterInit waits up to AgentWait for the agent's socket to answer, then
+// runs "skep-cluster init". A failure may have changed the host (the run
+// records it as uncertain); rollback never undoes it.
+func (a *Applier) clusterInit(ctx context.Context) error {
+	if a.Cluster == nil || a.Agent == nil {
+		return errors.New("skep-cluster cannot be run from here")
+	}
+	wait := a.AgentWait
+	if wait <= 0 {
+		wait = DefaultClusterAgentWait
+	}
+	for waited := time.Duration(0); ; waited += time.Second {
+		_, err := a.Agent.Health(ctx)
+		if err == nil {
+			break
+		}
+		if waited >= wait {
+			return fmt.Errorf("the agent did not answer on its socket within %s (skep-cluster init reads the node ID from it): %v", wait, err)
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		a.sleep(time.Second)
+	}
+	return markInterrupted(ctx, a.Cluster.Init(ctx))
 }
 
 // DefaultAdminWait is how long apply waits for skep_api's pid file and
@@ -321,6 +373,8 @@ func (a *Applier) do(ctx context.Context, act Action) (noop bool, err error) {
 		return false, a.removePath(act.File)
 	case ActPwDelete:
 		return false, a.pwDelete(ctx, act.Name)
+	case ActClusterInit:
+		return false, a.clusterInit(ctx)
 	}
 	return false, fmt.Errorf("unknown action %q", act.Type)
 }
@@ -385,6 +439,17 @@ func (a *Applier) adminCreate(ctx context.Context, username string) error {
 		}
 		sleep(time.Second)
 	}
+	// The administrator is written through skep-cluster (ADR 0013
+	// amendment 4): wait for its leader first (D8 of step 8c-2).
+	if a.Cluster != nil {
+		lw := a.LeaderWait
+		if lw <= 0 {
+			lw = DefaultLeaderWait
+		}
+		if _, err := waitForLeader(ctx, a.Cluster, lw, a.sleep); err != nil {
+			return fmt.Errorf("skep-cluster is not ready to write the administrator (it needs a leader and a running state machine; service skep_cluster status, skep-cluster status): %w", err)
+		}
+	}
 	svc, err := apiServiceArgs(a.Root)
 	if err != nil {
 		return err
@@ -419,20 +484,22 @@ func isRegular(path string) bool {
 }
 
 // removePath deletes Skep's own data only: something under /var/db/skep
-// other than setup's journals, or agent.json or api.json.
+// other than setup's journals, or agent.json, api.json or cluster.json.
+// os.RemoveAll unlinks a symbolic link inside the tree and never follows
+// it (facts F8 of step 8c-2).
 func (a *Applier) removePath(p string) error {
 	clean := filepath.Clean(p)
 	inData := strings.HasPrefix(clean, dataRoot+"/") && strings.Count(clean, "/") == strings.Count(dataRoot, "/")+1 &&
 		clean != dataRoot+"/setup"
-	if !inData && clean != agentJSONPath && clean != apiJSONPath {
+	if !inData && clean != agentJSONPath && clean != apiJSONPath && clean != clusterJSONPath {
 		return fmt.Errorf("refusing to delete %s: not Skep's data", p)
 	}
 	return os.RemoveAll(hostPath(a.Root, clean))
 }
 
-// pwDelete removes the skep user and its group.
+// pwDelete removes the skep or the skep-cluster user and its group.
 func (a *Applier) pwDelete(ctx context.Context, name string) error {
-	if name != skepAccount {
+	if name != skepAccount && name != clusterAccount {
 		return fmt.Errorf("refusing to delete the account %q", name)
 	}
 	pw := func(args ...string) Cmd {
@@ -918,6 +985,8 @@ func Rollback(root, id string, now time.Time) (RollbackReport, error) {
 	for i := len(j.Entries) - 1; i >= 0; i-- {
 		e := j.Entries[i]
 		switch {
+		case e.Action.Type == ActClusterInit && e.Error != "":
+			r.Kept = append(r.Kept, "skep-cluster init (failed, may have changed the host): rollback does not undo it (skep-setup remove -purge-data deletes the cluster)")
 		case !e.Done:
 		case e.Action.Type == ActMkdir:
 			if err := os.Remove(hostPath(root, e.Action.File)); err != nil {
@@ -934,7 +1003,9 @@ func Rollback(root, id string, now time.Time) (RollbackReport, error) {
 		case e.Action.Type == ActRemovePath && e.File == "":
 			r.Kept = append(r.Kept, e.Action.File+": deleted data cannot be restored")
 		case e.Action.Type == ActPwDelete:
-			r.Kept = append(r.Kept, "the skep account: rollback does not create it again (reinstall the package)")
+			r.Kept = append(r.Kept, "the "+e.Action.Name+" account: rollback does not create it again (reinstall the package)")
+		case e.Action.Type == ActClusterInit:
+			r.Kept = append(r.Kept, "skep-cluster init: rollback does not undo it (skep-setup remove -purge-data deletes the cluster)")
 		}
 	}
 	t := now.UTC()

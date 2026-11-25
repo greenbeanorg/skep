@@ -15,8 +15,10 @@ import (
 	"github.com/greenbeanorg/skep/internal/auth"
 	"github.com/greenbeanorg/skep/internal/cluster/clusterstate"
 	"github.com/greenbeanorg/skep/internal/cluster/userapi"
+	"github.com/greenbeanorg/skep/internal/database"
 	"github.com/greenbeanorg/skep/internal/ids"
 	"github.com/greenbeanorg/skep/internal/usercopy"
+	"github.com/greenbeanorg/skep/migrations"
 	"github.com/greenbeanorg/skep/pkg/models"
 )
 
@@ -183,6 +185,21 @@ func adminList(ctx context.Context, args []string, e env) error {
 	}
 	defer db.Close()
 	if *importState {
+		// D18 of step 8c-2: an api.db older than this build (before
+		// api/0006 a 0.1 host's users were not marked pending yet) is
+		// "unmigrated", so that the join refuses it instead of going on.
+		known, err := database.LoadMigrations(migrations.API())
+		if err != nil {
+			return err
+		}
+		have, err := database.SchemaVersion(ctx, db)
+		if err != nil {
+			return fmt.Errorf("read %s: %w", path, err)
+		}
+		if have < len(known) {
+			fmt.Fprintln(e.stdout, "unmigrated")
+			return nil
+		}
 		var state string
 		if err := db.QueryRowContext(ctx, `SELECT import_state FROM cluster_copy WHERE id = 1`).Scan(&state); err != nil {
 			return fmt.Errorf("read %s: %w", path, err)

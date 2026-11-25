@@ -57,12 +57,21 @@ func appendFile(t *testing.T, path, data string) {
 	}
 }
 
-// withSkep adds the skep account as the package's pre-install makes it.
+// withSkep adds the skep account as the package's pre-install makes it,
+// and the skep-cluster account (UID and GID 410) with it.
 func withSkep(t *testing.T, root, id string) string {
 	t.Helper()
 	appendFile(t, filepath.Join(root, "etc/passwd"), "skep:*:"+id+":"+id+":Skep service account:/nonexistent:/usr/sbin/nologin\n")
 	appendFile(t, filepath.Join(root, "etc/group"), "skep:*:"+id+":\n")
+	withClusterAccount(t, root)
 	return root
+}
+
+// withClusterAccount adds the skep-cluster account as the package makes it.
+func withClusterAccount(t *testing.T, root string) {
+	t.Helper()
+	appendFile(t, filepath.Join(root, "etc/passwd"), "skep-cluster:*:410:410:Skep cluster service:/nonexistent:/usr/sbin/nologin\n")
+	appendFile(t, filepath.Join(root, "etc/group"), "skep-cluster:*:410:\n")
 }
 
 // installFirmware puts the files of the edk2-bhyve package the agent needs
@@ -204,6 +213,7 @@ func TestPlanNoRACCT(t *testing.T) {
 
 func TestPlanHearst(t *testing.T) {
 	root := fixture(t, "hearst")
+	withClusterAccount(t, root)
 	f := facts()
 	f.Interfaces["vtnet0"] = []netip.Prefix{pfx("10.79.20.170/24")}
 	f.Interfaces["bridge0"] = nil

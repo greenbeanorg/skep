@@ -114,6 +114,7 @@ func runInit(ctx context.Context, args []string, e env) error {
 		dataDir     = flags.String("data-dir", clusterconf.DefaultDataDir, "directory of the node key and the cluster store")
 		agentSocket = flags.String("agent-socket", clusterconf.DefaultAgentSocket, "Unix socket of skep-agent")
 		account     = flags.String("account", clusterconf.Account, "the service account")
+		check       = flags.Bool("check", false, "only report whether this host is initialised (\"initialised\" or \"not-initialised\"); changes nothing and asks no agent")
 	)
 	if err := flags.Parse(args); err != nil {
 		return err
@@ -123,6 +124,9 @@ func runInit(ctx context.Context, args []string, e env) error {
 	}
 	if e.euid != 0 {
 		return errNeedsRoot("init")
+	}
+	if *check {
+		return initCheck(e, *dataDir, *account)
 	}
 
 	// Part 1, as root: everything that needs root, and nothing in the
@@ -195,5 +199,42 @@ func runInit(ctx context.Context, args []string, e env) error {
 		fmt.Fprintf(e.stdout, "  Listener:     %s, once the service runs\n", cfg.PeerAddress())
 	}
 	fmt.Fprintf(e.stdout, "Enable and start the service:\n  sysrc skep_cluster_enable=YES\n  service skep_cluster start\n")
+	return nil
+}
+
+// initCheck is "skep-cluster init -check" (D2 of step 8c-2): the checks of
+// init's first part that need no agent, and nothing else. It prints one
+// word, "initialised" (a store exists) or "not-initialised"; any error is
+// returned (exit 1). It writes nothing and creates nothing.
+func initCheck(e env, dataDir, account string) error {
+	if err := layout.CheckOldLayout(dataDir); err != nil {
+		return err
+	}
+	if store.Exists(layout.State(dataDir)) {
+		fmt.Fprintln(e.stdout, "initialised")
+		return nil
+	}
+	acct, err := e.lookup(account)
+	if err != nil {
+		return fmt.Errorf("the service account: %w (the skep package creates it)", err)
+	}
+	if acct.UID == 0 {
+		return errors.New("the service account must not be root")
+	}
+	switch info, err := os.Lstat(dataDir); {
+	case errors.Is(err, fs.ErrNotExist):
+	case err != nil:
+		return err
+	case !info.IsDir():
+		return fmt.Errorf("%s exists and is not a directory", dataDir)
+	default:
+		if owner, ok := e.owner(info); !ok || owner != acct.UID {
+			return fmt.Errorf("%s does not belong to the service account (uid %d)", dataDir, acct.UID)
+		}
+		if info.Mode().Perm() != 0o700 {
+			return fmt.Errorf("%s has mode %04o, not 0700", dataDir, info.Mode().Perm())
+		}
+	}
+	fmt.Fprintln(e.stdout, "not-initialised")
 	return nil
 }

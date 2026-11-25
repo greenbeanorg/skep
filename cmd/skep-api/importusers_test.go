@@ -387,3 +387,25 @@ func TestAdminListAndImportState(t *testing.T) {
 		t.Fatalf("import state after the import: %q %v", out, err)
 	}
 }
+
+// D18 of step 8c-2: an api.db older than this build answers "unmigrated",
+// read-only (it is not migrated by the reading).
+func TestImportStateUnmigrated(t *testing.T) {
+	node := clustertest.Start(t)
+	dataDir := t.TempDir()
+	base := []string{"-dev", "-config", configFor(t, node.Socket), "-data-dir", dataDir}
+	ctx := context.Background()
+	db, err := database.Open(ctx, filepath.Join(dataDir, "api", "api.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Migrate(ctx, db, migrationsBefore(t, 6)); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+	for range 2 {
+		if out, err := runCmd(t, append([]string{"admin", "list", "--import-state"}, base...)); err != nil || out != "unmigrated\n" {
+			t.Fatalf("schema 0005: %q %v", out, err)
+		}
+	}
+}

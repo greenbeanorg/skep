@@ -3,6 +3,7 @@ package setup
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -32,6 +33,17 @@ type upgradeHost struct {
 	noPIDFile map[string]bool
 	// on runs a hook after a command containing the key was recorded.
 	on map[string]func()
+	// The cluster: whether it is initialised, the build its status
+	// reports (the installed one once skep_cluster has started), and
+	// its view; the import state skep-api prints.
+	clusterInit  bool
+	clusterBuild string
+	view         ClusterView
+	importState  string
+	// importTo is the state "admin import-users" leaves; initErr fails
+	// "skep-cluster init".
+	importTo string
+	initErr  error
 }
 
 func (h *upgradeHost) Run(ctx context.Context, c Cmd) (string, error) {
@@ -58,13 +70,49 @@ func (h *upgradeHost) Run(ctx context.Context, c Cmd) (string, error) {
 		}
 	}
 	switch {
+	case strings.HasSuffix(c.Name, clusterBin):
+		switch strings.Join(c.Args, " ") {
+		case "version":
+			return h.builds[clusterBin] + "\n", nil
+		case "init -check":
+			return map[bool]string{true: "initialised\n", false: "not-initialised\n"}[h.clusterInit], nil
+		case "init":
+			if h.initErr != nil {
+				return "", h.initErr
+			}
+			h.clusterInit = true
+			return "This host is now a one-node cluster.\n", nil
+		case "status -json":
+			if _, err := os.Stat(hostPath(h.root, clusterPID)); err != nil {
+				return "", errors.New("skep-cluster is not reachable on its socket")
+			}
+			v := h.view
+			v.Build = h.clusterBuild
+			b, _ := json.Marshal(struct {
+				Status ClusterView       `json:"status"`
+				Health map[string]string `json:"health"`
+			}{v, map[string]string{"status": v.Health}})
+			return string(b), nil
+		}
+		return "", fmt.Errorf("fake skep-cluster: %v", c.Args)
+	case strings.HasSuffix(c.Name, apiBin) && len(c.Args) > 1 && c.Args[0] == "admin":
+		switch c.Args[1] {
+		case "list":
+			return h.importState + "\n", nil
+		case "import-users":
+			h.importState = h.importTo
+			return "This host's 2 users are now the cluster's (operation x).\n", nil
+		}
+		return "", fmt.Errorf("fake skep-api: %v", c.Args)
+	case c.Name == cmdSysrc:
+		return "", (&fakeRunner{}).sysrc(c.Args)
 	case len(c.Args) == 1 && c.Args[0] == "-version":
 		return h.builds[strings.TrimPrefix(c.Name, h.root)] + "\n", nil
 	case len(c.Args) > 1 && c.Args[0] == "db":
 		return filepath.Base(c.Name) + " db backup: done\n", nil
 	case c.Name == cmdService:
 		svc, verb := c.Args[0], c.Args[1]
-		pid := map[string]string{"skep_agent": agentPID, "skep_api": apiPID}[svc]
+		pid := map[string]string{"skep_agent": agentPID, "skep_api": apiPID, "skep_cluster": clusterPID}[svc]
 		switch verb {
 		case "status":
 			if _, err := os.Stat(hostPath(h.root, pid)); err != nil {
@@ -74,6 +122,9 @@ func (h *upgradeHost) Run(ctx context.Context, c Cmd) (string, error) {
 			os.Remove(hostPath(h.root, pid))
 		case "start":
 			h.nextPID++
+			if svc == "skep_cluster" {
+				h.clusterBuild = strings.Fields(h.builds[clusterBin])[1] + "+" + strings.Trim(strings.Fields(h.builds[clusterBin])[2], "(,")
+			}
 			if !h.noPIDFile[svc] {
 				os.MkdirAll(filepath.Dir(hostPath(h.root, pid)), 0o755)
 				os.WriteFile(hostPath(h.root, pid), []byte(fmt.Sprintf("%d\n", 1000+h.nextPID)), 0o644)
@@ -84,6 +135,9 @@ func (h *upgradeHost) Run(ctx context.Context, c Cmd) (string, error) {
 		svc := "skep_agent"
 		if b, _ := os.ReadFile(hostPath(h.root, apiPID)); strings.TrimSpace(string(b)) == pid {
 			svc = "skep_api"
+		}
+		if b, _ := os.ReadFile(hostPath(h.root, clusterPID)); strings.TrimSpace(string(b)) == pid {
+			svc = "skep_cluster"
 		}
 		return fmt.Sprintf("USER CMD PID FD MOUNT INUM MODE SZ|DV R/W\nroot %s %s text / %s -r-xr-xr-x 1234 r\nroot %s %s wd / 2 drwxr-xr-x 512 r\n",
 			svc, pid, h.textInode[svc], svc, pid), nil
@@ -131,23 +185,38 @@ func newUpgrade(t *testing.T) (*Upgrader, *upgradeHost) {
 		builds: map[string]string{
 			agentBin: "skep-agent 0.1.1 (commit abc1234, built 2026-11-22T16:00:00Z, go1.27.4 freebsd/amd64)",
 			apiBin:   "skep-api 0.1.1 (commit abc1234, built 2026-11-22T16:00:00Z, go1.27.4 freebsd/amd64)",
+			// "skep-cluster version" has its own shape (facts F3).
+			clusterBin: "skep-cluster 0.1.1 (abc1234, built 2026-11-22T16:00:00Z)",
 		},
-		textInode: map[string]string{"skep_agent": "11", "skep_api": "22"},
+		textInode: map[string]string{"skep_agent": "11", "skep_api": "22", "skep_cluster": "33"},
 		fail:      map[string]error{}, noPIDFile: map[string]bool{}, on: map[string]func(){},
+		// An upgraded 8c-1 host: initialised, enabled, running alone,
+		// its users imported.
+		clusterInit: true, clusterBuild: "0.1.0+dd7a8b6", view: aloneView(""), importState: "done", importTo: "done",
 	}
-	// Both services run, and the agent has its database.
-	for _, pid := range []string{agentPID, apiPID} {
+	// The three services run, and the agent has its database.
+	for _, pid := range []string{agentPID, apiPID, clusterPID} {
 		os.MkdirAll(filepath.Dir(hostPath(root, pid)), 0o755)
 		os.WriteFile(hostPath(root, pid), []byte("900\n"), 0o644)
 	}
+	for f, content := range map[string]string{
+		"etc/passwd":  "root:*:0:0::/root:/bin/sh\nskep:*:409:409::/nonexistent:/usr/sbin/nologin\nskep-cluster:*:410:410::/nonexistent:/usr/sbin/nologin\n",
+		"etc/group":   "wheel:*:0:root\nskep:*:409:\nskep-cluster:*:410:\n",
+		"etc/rc.conf": "skep_agent_enable=\"YES\"\nskep_cluster_enable=\"YES\"\nskep_api_enable=\"YES\"\n",
+	} {
+		os.MkdirAll(filepath.Dir(filepath.Join(root, f)), 0o755)
+		os.WriteFile(filepath.Join(root, f), []byte(content), 0o644)
+	}
 	setTasks(root)
 	n := 0
-	u := &Upgrader{Root: root, Runner: h, Prober: fakeProber{facts()},
+	running := facts()
+	running.Running = map[string]bool{"skep_agent": true, "skep_cluster": true, "skep_api": true}
+	u := &Upgrader{Root: root, Runner: h, Prober: fakeProber{running},
 		Agent: seqAgent{builds: []string{"0.1.0+dd7a8b6", "0.1.1+abc1234"}, n: &n, health: "ok"},
 		Now:   func() time.Time { return time.Date(2026, 11, 22, 17, 0, 0, 0, time.UTC) }, Self: newBuild,
 		Sleep: func(time.Duration) {}, PIDWait: 3 * time.Second,
 		Inode: func(p string) (uint64, error) {
-			return map[string]uint64{hostPath(root, agentBin): 11, hostPath(root, apiBin): 22}[p], nil
+			return map[string]uint64{hostPath(root, agentBin): 11, hostPath(root, apiBin): 22, hostPath(root, clusterBin): 33}[p], nil
 		}}
 	return u, h
 }
@@ -163,12 +232,17 @@ func TestUpgradeInOrder(t *testing.T) {
 	}
 	dir := "/var/db/skep/backup/0.1.0+dd7a8b6-20261122T170000Z"
 	want := []string{
-		agentBin + " -version", apiBin + " -version",
+		agentBin + " -version", apiBin + " -version", clusterBin + " version",
+		clusterBin + " init -check", clusterBin + " status -json",
 		"service skep_api status", "service skep_api stop",
 		agentBin + " db backup -dir " + dir + " -keep 3", apiBin + " db backup -dir " + dir + " -keep 3",
 		"service skep_agent status", "service skep_agent stop",
 		"service skep_agent start", "fstat -p 1001", agentBin + " -version",
-		"service skep_api start", "fstat -p 1002", apiBin + " -version",
+		// D11 step 6: skep_cluster before skep_api, verified, then a leader.
+		"service skep_cluster status", "service skep_cluster stop", "service skep_cluster start",
+		"fstat -p 1002", clusterBin + " version", clusterBin + " status -json",
+		"service skep_api start", "fstat -p 1003", apiBin + " -version",
+		apiBin + " admin list --import-state -data-dir /var/db/skep (as 409:409)",
 	}
 	if strings.Join(h.calls, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("commands:\n%s\nwant:\n%s", strings.Join(h.calls, "\n"), strings.Join(want, "\n"))
@@ -333,7 +407,7 @@ func TestUpgradeProceedsWhenTasksFinishWithinTheWait(t *testing.T) {
 	if sleeps != 3 {
 		t.Errorf("slept %d times, want 3", sleeps)
 	}
-	if got := strings.Join(serviceCalls(h), ", "); got != "service skep_api status, service skep_api stop, service skep_agent status, service skep_agent stop, service skep_agent start, service skep_api start" {
+	if got := strings.Join(serviceCalls(h), ", "); got != "service skep_api status, service skep_api stop, service skep_agent status, service skep_agent stop, service skep_agent start, service skep_cluster status, service skep_cluster stop, service skep_cluster start, service skep_api start" {
 		t.Fatalf("services: %s", got)
 	}
 }
@@ -349,7 +423,7 @@ func TestUpgradeForceInterruptsPendingAndRunning(t *testing.T) {
 	if !strings.Contains(out.String(), "--force: 1 task(s) pending and 1 running are interrupted by the agent restart and must be resubmitted") {
 		t.Fatalf("output:\n%s", out.String())
 	}
-	if got := strings.Join(serviceCalls(h), ", "); got != "service skep_api status, service skep_api stop, service skep_agent status, service skep_agent stop, service skep_agent start, service skep_api start" {
+	if got := strings.Join(serviceCalls(h), ", "); got != "service skep_api status, service skep_api stop, service skep_agent status, service skep_agent stop, service skep_agent start, service skep_cluster status, service skep_cluster stop, service skep_cluster start, service skep_api start" {
 		t.Fatalf("services: %s", got)
 	}
 }
@@ -506,7 +580,7 @@ func TestUpgradeIncomplete(t *testing.T) {
 	t.Run("API does not start after the agent restart", func(t *testing.T) {
 		u, h := newUpgrade(t)
 		h.fail["service skep_api start"] = errors.New("exit status 1")
-		check(t, u.Upgrade(context.Background()), "skep_agent runs 0.1.1+abc1234, but skep_api did not come up",
+		check(t, u.Upgrade(context.Background()), "skep_agent and skep_cluster run 0.1.1+abc1234, but skep_api did not come up",
 			"service skep_api start; upgrade need not run again")
 	})
 }
@@ -656,7 +730,7 @@ func TestUpgradeStoppedServicesAreNotStopped(t *testing.T) {
 	if err := u.Upgrade(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if got := strings.Join(serviceCalls(h), ", "); got != "service skep_api status, service skep_agent status, service skep_agent start, service skep_api start" {
+	if got := strings.Join(serviceCalls(h), ", "); got != "service skep_api status, service skep_agent status, service skep_agent start, service skep_cluster status, service skep_cluster stop, service skep_cluster start, service skep_api start" {
 		t.Fatalf("services: %s", got)
 	}
 	if !strings.Contains(out.String(), "skep_api is not running") || !strings.Contains(out.String(), "skep_agent is not running") {
@@ -679,7 +753,7 @@ func TestUpgradeCtrlCAfterTheAgentStopIsIgnored(t *testing.T) {
 			t.Fatalf("a command was cancelled: %v", h.calls)
 		}
 	}
-	if got := strings.Join(serviceCalls(h), ", "); !strings.HasSuffix(got, "service skep_agent stop, service skep_agent start, service skep_api start") {
+	if got := strings.Join(serviceCalls(h), ", "); !strings.HasSuffix(got, "service skep_agent stop, service skep_agent start, service skep_cluster status, service skep_cluster stop, service skep_cluster start, service skep_api start") {
 		t.Fatalf("services: %s", got)
 	}
 }

@@ -81,3 +81,45 @@ func reportAgent(root string, f setup.Facts, e env) []setup.Item {
 	fmt.Fprintln(e.stdout, "  agent start check: passed")
 	return nil
 }
+
+// reportCluster prints, as root on the real root, whether skep_cluster
+// runs, one line of its status, and the import state of the host's users
+// (D9 of step 8c-2). Every string from skep-cluster or skep-api is
+// cleaned. It returns the items the operator has to act on.
+func reportCluster(ctx context.Context, root string, f setup.Facts, e env) []setup.Item {
+	cl, why := e.clusterFor(root)
+	if cl == nil {
+		fmt.Fprintf(e.stdout, "  cluster: state not read (%s)\n", why)
+		return nil
+	}
+	if f.Running["skep_cluster"] {
+		fmt.Fprintln(e.stdout, "  cluster: skep_cluster running")
+		if v, err := cl.Status(ctx); err != nil {
+			fmt.Fprintf(e.stdout, "  cluster: status not read (%s)\n", setup.Clean(err.Error()))
+		} else {
+			fmt.Fprintf(e.stdout, "  cluster: %s\n", v.Summary())
+		}
+	} else {
+		fmt.Fprintln(e.stdout, "  cluster: skep_cluster not running; skep-api then has no quorum and lets only administrators log in, degraded")
+	}
+	im, why := e.importerFor(root)
+	if im == nil {
+		fmt.Fprintf(e.stdout, "  users: import state not read (%s)\n", why)
+		return nil
+	}
+	st, err := im.State(ctx)
+	switch {
+	case err != nil:
+		fmt.Fprintf(e.stdout, "  users: import state not read (%s)\n", setup.Clean(err.Error()))
+	case st == setup.ImportPending:
+		return []setup.Item{{Kind: setup.Manual, Area: "users", What: "import of this host's users: pending",
+			Detail: "user changes answer 503 users_import_pending until it is done; alone, skep-setup upgrade does it; in a cluster of several nodes follow docs/installation/upgrading.md",
+			Steps:  []string{setup.ImportCommand}}}
+	case st == setup.ImportUnmigrated:
+		return []setup.Item{{Kind: setup.Manual, Area: "users", What: "api.db is older than the installed skep-api",
+			Steps: []string{"skep-setup upgrade"}}}
+	default:
+		fmt.Fprintf(e.stdout, "  users: import state %s\n", st)
+	}
+	return nil
+}
