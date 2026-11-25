@@ -82,6 +82,8 @@ type Options struct {
 	// Audit is the node's cluster audit, open for writing; nil writes
 	// no local events (tests that do not look at it).
 	Audit *audit.Log
+	// Rotation is rotate.json as the start rule left it, or nil.
+	Rotation *RotateState
 	// Interval is how often the background work runs; default 1 s.
 	Interval time.Duration
 	// LeaderInterval defaults to LeaderInterval.
@@ -140,6 +142,19 @@ type Service struct {
 	// clockOp is the operation name of the clock request; a test sets an
 	// unknown one to get the answer a build without it gives.
 	clockOp string
+	// seen is, per node, the pin its last successful connection to or
+	// from this node used (D1).
+	seen map[string]pinSeen
+	// rotation is this node's own key rotation (rotate.json), or nil.
+	rotation *RotateState
+	// nextRotate is when the rotation step next asks the leader.
+	nextRotate time.Time
+	// keyMu serialises the leader's handling of key-add and key-abort.
+	keyMu sync.Mutex
+	// afterRotateStep is a test hook, called after each step of this
+	// node's rotation; returning true stops the node's rotation work
+	// there (a crash point).
+	afterRotateStep func(step string) bool
 	// noticeBusy is set while a removed notice is being checked.
 	noticeBusy bool
 	// runCtx is Run's context, for work started outside the step loop.
@@ -222,7 +237,7 @@ func New(o Options) *Service {
 	s := &Service{cfg: o.Config, key: o.Key, dataDir: o.DataDir, machine: o.Machine, writer: o.Writer,
 		now: o.Now, log: o.Logger, every: o.Interval, leaderInt: o.LeaderInterval, started: o.Now(),
 		join: o.Join, waits: map[string][]string{}, answers: map[string]statusResult{}, highest: map[string]uint64{}, removed: o.Removed,
-		clocks: map[string]clockSample{}, clockOp: raftnet.OpClock, audit: o.Audit}
+		clocks: map[string]clockSample{}, clockOp: raftnet.OpClock, audit: o.Audit, seen: map[string]pinSeen{}, rotation: o.Rotation}
 	s.caller = raftnet.Caller{NodeID: o.Config.NodeID, Certificate: s.certificate}
 	return s
 }
@@ -301,6 +316,7 @@ func (s *Service) step(ctx context.Context) {
 	s.waitsStep(ctx)
 	s.statusStep(ctx)
 	s.leaderStep(ctx)
+	s.rotateStep(ctx)
 	s.renew()
 }
 
@@ -403,7 +419,10 @@ func (s *Service) ensureListener() {
 	if err == nil {
 		var handle func(*tls.Conn, string)
 		if t != nil {
-			handle = t.Serve
+			handle = func(c *tls.Conn, pin string) {
+				s.sawPinOf(pin)
+				t.Serve(c, pin)
+			}
 		}
 		l, err = peerlistener.Listen(peerlistener.Options{
 			Address:     ap,
@@ -497,7 +516,7 @@ func (s *Service) Health(context.Context) models.Health {
 		switch {
 		case !ok:
 			problem = "this node (" + s.cfg.NodeID + ") has no member entry in the replicated state"
-		case mem.Pin != s.key.Pin():
+		case mem.Pin != s.key.Pin() && (mem.NextPin == "" || mem.NextPin != s.key.Pin()):
 			problem = "the node key on disk is not the one pinned in this node's member entry"
 		}
 	}
@@ -570,6 +589,14 @@ func (s *Service) Health(context.Context) models.Health {
 			refusedRounds, next)
 	}
 	h.Record("key_refused", false, problem)
+
+	// Key rotations in progress and what each waits for (D1 of step
+	// 8b-2b), on every member.
+	problem = ""
+	for _, p := range s.rotationProgress(view) {
+		problem = appendProblem(problem, p)
+	}
+	h.Record("key_rotation", false, problem)
 
 	// Clock offsets from this node's point of view (D3 of step 8b-2b).
 	problem, critical := s.clockProblem(view.Members)
@@ -655,6 +682,9 @@ func (s *Service) Status(context.Context) localapi.Status {
 		Removals:            s.removalProgress(view),
 		UnappliedRemoval:    s.unappliedRemoval(view),
 		Clocks:              s.clockStatus(view.Members),
+		Rotation:            s.rotationStatus(),
+		Rotations:           s.rotationProgress(view),
+		KeysSeen:            s.keysSeen(view),
 		Build:               v.Version + "+" + v.Commit,
 	}
 	if servers, err := st.Servers(); err == nil {

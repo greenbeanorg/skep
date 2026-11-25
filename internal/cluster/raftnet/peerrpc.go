@@ -221,18 +221,30 @@ type Caller struct {
 // the key), an *OutcomeUnknownError when the request was sent and no answer
 // came, and a *PeerError for an error answer.
 func (c Caller) Call(ctx context.Context, address, pin, op string, in, out any) error {
+	_, err := c.CallPins(ctx, address, []string{pin}, op, in, out)
+	return err
+}
+
+// CallPins is Call to a node whose key may have any of pins (a rotating
+// node, D1 of step 8b-2b). It returns the pin the node's key had, once the
+// connection was accepted.
+func (c Caller) CallPins(ctx context.Context, address string, pins []string, op string, in, out any) (string, error) {
 	timeout := dialTimeout
 	if dl, ok := ctx.Deadline(); ok && time.Until(dl) < timeout {
 		timeout = time.Until(dl)
 	}
-	tc, err := DialPinned(address, pin, c.Certificate, timeout)
+	tc, seen, err := DialPins(address, pins, c.Certificate, timeout)
 	if err != nil {
 		var he *HandshakeError
 		if errors.As(err, &he) {
-			return err
+			return "", err
 		}
-		return &HandshakeError{Address: address, Err: err}
+		return "", &HandshakeError{Address: address, Err: err}
 	}
+	return seen, c.exchange(ctx, tc, address, op, in, out)
+}
+
+func (c Caller) exchange(ctx context.Context, tc *tls.Conn, address, op string, in, out any) error {
 	defer tc.Close()
 	body, err := json.Marshal(in)
 	if err != nil {

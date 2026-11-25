@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"strings"
 	"sync"
 	"time"
 
@@ -263,7 +264,15 @@ func (s streamLayer) Dial(address raft.ServerAddress, timeout time.Duration) (ne
 	if timeout <= 0 || timeout > dialTimeout {
 		timeout = dialTimeout
 	}
-	return DialPinned(string(address), p.Pin, s.t.cert, timeout)
+	// Either pin of a rotating node (D1 of step 8b-2b); which one it
+	// used is reported.
+	c, seen, err := DialPins(string(address), p.Pins(), s.t.cert, timeout)
+	if err == nil {
+		if o, ok := s.t.trust.(PinObserver); ok {
+			o.SawPin(p.NodeID, seen)
+		}
+	}
+	return c, err
 }
 
 type addrString string
@@ -275,6 +284,13 @@ func (a addrString) String() string  { return string(a) }
 // node's certificate, and the server accepted only if its key has the
 // expected pin (and its certificate is in its validity period).
 func ClientTLSConfig(pin string, cert func() *tls.Certificate) *tls.Config {
+	return ClientTLSConfigPins([]string{pin}, cert, nil)
+}
+
+// ClientTLSConfigPins is ClientTLSConfig accepting any of pins (the two
+// pins of a rotating node); seen, when not nil, is set to the pin the
+// server's key had.
+func ClientTLSConfigPins(pins []string, cert func() *tls.Certificate, seen *string) *tls.Config {
 	return &tls.Config{
 		MinVersion: tls.VersionTLS13,
 		// No chain: the pin is the trust, checked in VerifyConnection.
@@ -299,10 +315,16 @@ func ClientTLSConfig(pin string, cert func() *tls.Certificate) *tls.Config {
 			if now := time.Now(); now.Before(leaf.NotBefore) || now.After(leaf.NotAfter) {
 				return errors.New("the server certificate is expired or not yet valid")
 			}
-			if got := nodekey.PinOfCertificate(leaf); got != pin {
-				return fmt.Errorf("the server's key has pin %s, expected %s", got, pin)
+			got := nodekey.PinOfCertificate(leaf)
+			for _, p := range pins {
+				if p != "" && got == p {
+					if seen != nil {
+						*seen = got
+					}
+					return nil
+				}
 			}
-			return nil
+			return fmt.Errorf("the server's key has pin %s, expected %s", got, strings.Join(pins, " or "))
 		},
 	}
 }
@@ -310,25 +332,38 @@ func ClientTLSConfig(pin string, cert func() *tls.Certificate) *tls.Config {
 // DialPinned connects to address and completes a TLS 1.3 handshake that
 // accepts only the given pin.
 func DialPinned(address, pin string, cert func() *tls.Certificate, timeout time.Duration) (*tls.Conn, error) {
+	c, _, err := DialPins(address, []string{pin}, cert, timeout)
+	return c, err
+}
+
+// DialPins is DialPinned accepting any of pins, and returning the pin the
+// server's key had.
+func DialPins(address string, pins []string, cert func() *tls.Certificate, timeout time.Duration) (*tls.Conn, string, error) {
+	tc, seen, err := dialPins(address, pins, cert, timeout)
+	return tc, seen, err
+}
+
+func dialPins(address string, pins []string, cert func() *tls.Certificate, timeout time.Duration) (*tls.Conn, string, error) {
+	var seen string
 	d := net.Dialer{Timeout: timeout}
 	raw, err := d.Dial("tcp", address)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
-	tc := tls.Client(raw, ClientTLSConfig(pin, cert))
+	tc := tls.Client(raw, ClientTLSConfigPins(pins, cert, &seen))
 	_ = tc.SetDeadline(time.Now().Add(timeout))
 	if err := tc.Handshake(); err != nil {
 		_ = tc.Close()
-		return nil, &HandshakeError{Address: address, Err: err}
+		return nil, "", &HandshakeError{Address: address, Err: err}
 	}
 	// In TLS 1.3 the listener checks this node's key after the client's
 	// handshake has finished; its marker says it accepted the key.
 	if err := confirmAccepted(tc, timeout); err != nil {
 		_ = tc.Close()
-		return nil, &HandshakeError{Address: address, Err: err, Answered: true}
+		return nil, "", &HandshakeError{Address: address, Err: err, Answered: true}
 	}
 	_ = tc.SetDeadline(time.Time{})
-	return tc, nil
+	return tc, seen, nil
 }
 
 // HandshakeError is a failed TLS handshake: nothing was sent.

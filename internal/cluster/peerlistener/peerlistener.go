@@ -217,6 +217,22 @@ func (l *Listener) Revalidate() int {
 	return len(drop)
 }
 
+// CloseAll closes every open connection and keeps listening: a node that
+// switched to a new key makes every peer handshake with it again (step
+// 8b-2b, D1).
+func (l *Listener) CloseAll() int {
+	l.mu.Lock()
+	var all []*tls.Conn
+	for c := range l.conns {
+		all = append(all, c)
+	}
+	l.mu.Unlock()
+	for _, c := range all {
+		_ = c.Close()
+	}
+	return len(all)
+}
+
 // Open returns the number of accepted connections open now.
 func (l *Listener) Open() int {
 	l.mu.Lock()

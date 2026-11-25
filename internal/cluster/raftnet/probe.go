@@ -76,12 +76,17 @@ const (
 // closed connection). The error says why for the results other than
 // accepted.
 func ProbeKey(address, serverPin string, cert func() *tls.Certificate, timeout time.Duration) (string, error) {
+	return ProbeKeyPins(address, []string{serverPin}, cert, timeout)
+}
+
+// ProbeKeyPins is ProbeKey for a node whose key may have any of pins.
+func ProbeKeyPins(address string, serverPins []string, cert func() *tls.Certificate, timeout time.Duration) (string, error) {
 	d := net.Dialer{Timeout: timeout}
 	raw, err := d.Dial("tcp", address)
 	if err != nil {
 		return ProbeNoAnswer, err
 	}
-	tc := tls.Client(raw, ClientTLSConfig(serverPin, cert))
+	tc := tls.Client(raw, ClientTLSConfigPins(serverPins, cert, nil))
 	defer tc.Close()
 	_ = tc.SetDeadline(time.Now().Add(timeout))
 	if err := tc.Handshake(); err != nil {

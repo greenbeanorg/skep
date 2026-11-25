@@ -124,6 +124,9 @@ func (s *Service) leaderRound(ctx context.Context) bool {
 	if s.continueRemovals(ctx, view, servers) {
 		return true
 	}
+	if s.proposeKeyDone(view) {
+		return true
+	}
 	if s.proposeExpiries(view) {
 		return true
 	}
@@ -406,11 +409,25 @@ func (s *Service) appliedOf(ctx context.Context, m clusterstate.Member) (uint64,
 	cctx, cancel := context.WithTimeout(ctx, statusTimeout)
 	defer cancel()
 	var ans StatusAnswer
-	if err := s.caller.Call(cctx, m.Address, m.Pin, raftnet.OpStatus, struct{}{}, &ans); err != nil {
+	if err := s.callMember(cctx, m, raftnet.OpStatus, struct{}{}, &ans); err != nil {
 		return 0, false, err
 	}
 	if ans.NodeID != m.ID {
 		return 0, false, fmt.Errorf("node at %s answered as %s", m.Address, ans.NodeID)
 	}
 	return ans.AppliedIndex, ans.Stalled, nil
+}
+
+// callMember makes a Skep RPC to a member, accepting either of its pins
+// (a rotating member, D1 of step 8b-2b), and notes which pin its key had.
+func (s *Service) callMember(ctx context.Context, m clusterstate.Member, op string, in, out any) error {
+	pins := []string{m.Pin}
+	if m.NextPin != "" {
+		pins = append(pins, m.NextPin)
+	}
+	seen, err := s.caller.CallPins(ctx, m.Address, pins, op, in, out)
+	if seen != "" {
+		s.SawPin(m.ID, seen)
+	}
+	return err
 }

@@ -66,9 +66,25 @@ func (s state) describe(e Entry) (nodeID, name, address string, pins []string, a
 		if decodeData(e.Data, &d) == nil {
 			fromMember(d.NodeID)
 		}
+	case TypeMemberKeyAdd:
+		var d MemberKeyAdd
+		if decodeData(e.Data, &d) == nil {
+			fromMember(d.NodeID)
+			pins, at = append(pins, d.NextPin), d.At
+		}
+	case TypeMemberKeyDone:
+		var d MemberKeyDone
+		if decodeData(e.Data, &d) == nil {
+			fromMember(d.NodeID)
+		}
 	}
 	return nodeID, name, address, pins, at
 }
 
 // memberPins returns a member's pins.
-func memberPins(m Member) []string { return []string{m.Pin} }
+func memberPins(m Member) []string {
+	if m.NextPin != "" {
+		return []string{m.Pin, m.NextPin}
+	}
+	return []string{m.Pin}
+}

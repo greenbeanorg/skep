@@ -146,6 +146,10 @@ func StartRule(dataDir string, log *slog.Logger) error {
 	if js != nil && js.Phase == joinstate.PhaseAbandoning {
 		return errors.New("refusing to start: \"skep-cluster join --abandon\" did not finish (join.json is in phase abandoning); run it again as root")
 	}
+	// A key rotation (D1 of step 8b-2b).
+	if err := RotateStartRule(dataDir, log.Warn); err != nil {
+		return err
+	}
 	if ok, err := layout.Exists(layout.State(dataDir)); err != nil || ok {
 		return err // present (nil): start normally
 	}

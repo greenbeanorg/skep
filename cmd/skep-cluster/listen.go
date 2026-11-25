@@ -42,6 +42,9 @@ func runListen(ctx context.Context, args []string, e env) error {
 		if *address != "" || *noRestart {
 			return errors.New("listen -none takes no -address and no -no-restart")
 		}
+		if err := refuseDuringRotation(*dataDir, "listen -none"); err != nil {
+			return err
+		}
 		return runListenNone(ctx, e, *configPath, *dataDir, *socket, *account)
 	}
 	if *address == "" {

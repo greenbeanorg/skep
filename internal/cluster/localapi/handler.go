@@ -28,6 +28,8 @@ const (
 	PathAdmit             = Prefix + "/admit"
 	PathWithdraw          = Prefix + "/admit/withdraw"
 	PathRemove            = Prefix + "/remove"
+	PathKeyRotate         = Prefix + "/key/rotate"
+	PathKeyAbort          = Prefix + "/key/abort"
 )
 
 // CodeForbidden is the error code for a caller an operation does not
@@ -61,6 +63,43 @@ var Operations = []Operation{
 	// Removing a member is root-only in step 8b-2a, like admit; skep-api
 	// gets it with cluster:manage in step 8c (decision D3).
 	{Name: "remove", Method: http.MethodPost, Path: PathRemove, Root: true, API: false},
+	// Rotating this node's key and aborting it: root only, local; no
+	// operation of skep-api changes a pin (step 8b-2b, D1; "--api"
+	// arrives with forwarding, step 8e).
+	{Name: "key-rotate", Method: http.MethodPost, Path: PathKeyRotate, Root: true, API: false},
+	{Name: "key-abort", Method: http.MethodPost, Path: PathKeyAbort, Root: true, API: false},
+}
+
+// RotateResult is the answer of key-rotate and key-abort.
+type RotateResult struct {
+	OldPin string `json:"old_pin"`
+	NewPin string `json:"new_pin"`
+	OpID   string `json:"op_id"`
+	Phase  string `json:"phase"`
+	// AddIndex is the index of the member.key_add entry, once the leader
+	// answered; Pending says why it is not known yet.
+	AddIndex uint64 `json:"add_index,omitempty"`
+	Pending  string `json:"pending,omitempty"`
+}
+
+// RotationStatus is this node's own key rotation in Status.
+type RotationStatus struct {
+	Phase   string `json:"phase"`
+	OldPin  string `json:"old_pin"`
+	NewPin  string `json:"new_pin"`
+	OpID    string `json:"op_id"`
+	Started string `json:"started"`
+	// Using is the pin of the key this node uses now.
+	Using string `json:"using"`
+}
+
+// KeySeen is the pin a member's last connection to or from this node
+// used.
+type KeySeen struct {
+	NodeID string    `json:"node_id"`
+	Name   string    `json:"name"`
+	Pin    string    `json:"pin"`
+	At     time.Time `json:"at"`
 }
 
 // AdmitRequest is the body of the admit operation.
@@ -182,7 +221,14 @@ type Status struct {
 	// Clocks is, per other member, its clock offset from this node's as
 	// the last status rounds measured it (D3 of step 8b-2b).
 	Clocks []ClockStatus `json:"clocks,omitempty"`
-	Build  string        `json:"build"`
+	// Rotation is this node's own key rotation, while one is under way.
+	Rotation *RotationStatus `json:"rotation,omitempty"`
+	// Rotations says, per member with a next pin, what its rotation
+	// waits for.
+	Rotations []string `json:"rotations,omitempty"`
+	// KeysSeen is, per other member, the pin it last used with this node.
+	KeysSeen []KeySeen `json:"keys_seen,omitempty"`
+	Build    string    `json:"build"`
 }
 
 // ClockStatus is one member's clock as this node measured it.
@@ -228,6 +274,8 @@ type Backend interface {
 	Admit(ctx context.Context, request, actor string) (AdmitResult, error)
 	Withdraw(ctx context.Context, name, actor string) (WithdrawResult, error)
 	Remove(ctx context.Context, req RemoveRequest, actor string) (RemoveResult, error)
+	Rotate(ctx context.Context, actor string) (RotateResult, error)
+	AbortRotation(ctx context.Context, actor string) (RotateResult, error)
 }
 
 // HandlerOptions configures the handler.
@@ -279,6 +327,22 @@ func NewHandler(b Backend, o HandlerOptions) http.Handler {
 				return
 			}
 			res, err := b.Remove(r.Context(), req, actorOf(r))
+			writeResult(w, r, res, err)
+		},
+		PathKeyRotate: func(w http.ResponseWriter, r *http.Request) {
+			var req struct{}
+			if !decodeBody(w, r, &req) {
+				return
+			}
+			res, err := b.Rotate(r.Context(), actorOf(r))
+			writeResult(w, r, res, err)
+		},
+		PathKeyAbort: func(w http.ResponseWriter, r *http.Request) {
+			var req struct{}
+			if !decodeBody(w, r, &req) {
+				return
+			}
+			res, err := b.AbortRotation(r.Context(), actorOf(r))
 			writeResult(w, r, res, err)
 		},
 		PathWithdraw: func(w http.ResponseWriter, r *http.Request) {

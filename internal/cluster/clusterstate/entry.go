@@ -70,6 +70,19 @@ const (
 	// TypeMemberRemoved is removal step 2: the member entry and its pins
 	// are removed, after the Raft configuration without it is committed.
 	TypeMemberRemoved = "member.removed"
+	// TypeMemberKeyAdd adds a second pin (next_pin) to a member: the
+	// rotation of its node key begins (step 8b-2b, D1). Both pins are
+	// accepted as that node.
+	TypeMemberKeyAdd = "member.key_add"
+	// TypeMemberKeyDone ends a rotation: keep "new" makes next_pin the
+	// pin, keep "old" drops next_pin.
+	TypeMemberKeyDone = "member.key_done"
+)
+
+// Key rotation outcomes of member.key_done.
+const (
+	KeepNew = "new"
+	KeepOld = "old"
 )
 
 // Supported is, per entry type, the highest version this build applies.
@@ -85,6 +98,8 @@ var Supported = map[string]int{
 	TypeMemberPromoted:  1,
 	TypeMemberRemoving:  1,
 	TypeMemberRemoved:   1,
+	TypeMemberKeyAdd:    1,
+	TypeMemberKeyDone:   1,
 }
 
 // ActorSystem is the actor of entries no user asked for.
@@ -169,6 +184,30 @@ type MemberRemoving struct {
 // "removing".
 type MemberRemoved struct {
 	NodeID string `json:"node_id"`
+}
+
+// MemberKeyAdd is the data of TypeMemberKeyAdd, version 1. The operation
+// ID is the envelope's (the rotating node's, the same on every retry); At
+// is the proposing leader's clock in Unix seconds.
+type MemberKeyAdd struct {
+	NodeID  string `json:"node_id"`
+	NextPin string `json:"next_pin"`
+	At      int64  `json:"at"`
+}
+
+// MemberKeyDone is the data of TypeMemberKeyDone, version 1. AddIndex is
+// the index of the member.key_add entry it ends, so that an entry of an
+// earlier rotation never ends a later one. The leader writes the
+// predictable operation ID keydone:<node ID>:<add index>:<new|old>.
+type MemberKeyDone struct {
+	NodeID   string `json:"node_id"`
+	Keep     string `json:"keep"`
+	AddIndex uint64 `json:"add_index"`
+}
+
+// KeyDoneOpID is the operation ID of a member.key_done entry.
+func KeyDoneOpID(nodeID string, addIndex uint64, keep string) string {
+	return fmt.Sprintf("keydone:%s:%d:%s", nodeID, addIndex, keep)
 }
 
 // NewEntry builds a version 1 entry of the given type.

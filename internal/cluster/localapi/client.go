@@ -123,6 +123,20 @@ func (c *Client) Remove(ctx context.Context, req RemoveRequest) (RemoveResult, e
 	return res, err
 }
 
+// RotateKey starts this node's key rotation (root only).
+func (c *Client) RotateKey(ctx context.Context) (RotateResult, error) {
+	var res RotateResult
+	err := c.post(ctx, PathKeyRotate, struct{}{}, &res)
+	return res, err
+}
+
+// AbortRotation aborts this node's key rotation (root only).
+func (c *Client) AbortRotation(ctx context.Context) (RotateResult, error) {
+	var res RotateResult
+	err := c.post(ctx, PathKeyAbort, struct{}{}, &res)
+	return res, err
+}
+
 // Health returns the service's health document. A 503 answer is a health
 // document too.
 func (c *Client) Health(ctx context.Context) (models.Health, error) {

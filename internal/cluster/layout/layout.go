@@ -14,6 +14,9 @@
 //	join.json                while joining (0600)
 //	standalone.<UTC time>/   a one-node state moved aside by a join (0700)
 //	wipe.json                while "leave --wipe" runs (0600)
+//	node.key.next            the next key while the node rotates (0600)
+//	rotate.json              while the node rotates its key (0600)
+//	audit/                   the node's cluster audit (0700)
 //
 // Moving a one-node state aside is one rename of state/ to
 // standalone.<UTC time>, and putting it back is one rename. Every rename,
@@ -46,6 +49,8 @@ const (
 	// RemovedFile, inside StateDir, records that this node was removed
 	// from its cluster.
 	RemovedFile = "removed.json"
+	// RotateFile records this node's key rotation (step 8b-2b, D1).
+	RotateFile = "rotate.json"
 	// DirMode is the mode of StateDir and of a standalone directory.
 	DirMode fs.FileMode = 0o700
 )

@@ -59,7 +59,7 @@ func (s *Service) sampleClock(ctx context.Context, m clusterstate.Member) clockS
 	op := s.clockOp
 	s.mu.Unlock()
 	t0 := s.now()
-	err := s.caller.Call(cctx, m.Address, m.Pin, op, struct{}{}, &ans)
+	err := s.callMember(cctx, m, op, struct{}{}, &ans)
 	t1 := s.now()
 	var pe *raftnet.PeerError
 	switch {

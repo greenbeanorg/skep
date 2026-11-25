@@ -300,6 +300,14 @@ func wipeFinish(ctx context.Context, dataDir string, cfg clusterconf.Config, now
 	if err := joinstate.Remove(dataDir); err != nil {
 		return "", "", err
 	}
+	// A key rotation's files go before state/ (step 8b-2b): the next key
+	// first, then the record.
+	if err := layout.RemoveFile(filepath.Join(dataDir, nodekey.NextKeyFile)); err != nil {
+		return "", "", err
+	}
+	if err := layout.RemoveFile(filepath.Join(dataDir, layout.RotateFile)); err != nil {
+		return "", "", err
+	}
 	if stopped(wipeStopAfterJoin) {
 		return "", "", errStopped
 	}

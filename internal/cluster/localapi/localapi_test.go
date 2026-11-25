@@ -40,6 +40,14 @@ func (fakeBackend) Remove(_ context.Context, req RemoveRequest, actor string) (R
 	return RemoveResult{Name: req.Name, OpID: actor}, nil
 }
 
+func (fakeBackend) Rotate(_ context.Context, actor string) (RotateResult, error) {
+	return RotateResult{OpID: actor}, nil
+}
+
+func (fakeBackend) AbortRotation(_ context.Context, actor string) (RotateResult, error) {
+	return RotateResult{OpID: actor}, nil
+}
+
 func (fakeBackend) Withdraw(_ context.Context, name, actor string) (WithdrawResult, error) {
 	return WithdrawResult{OpID: actor}, nil
 }

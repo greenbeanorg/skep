@@ -195,11 +195,15 @@ func (h *harness) start(n *tnode) {
 		}
 	}
 	n.alog = alog
+	rotation, err := ReadRotate(n.dir)
+	if err != nil {
+		h.t.Fatal(err)
+	}
 	machine := clusterstate.New()
 	machine.SetMembershipWriter(writer.Write)
 	machine.SetAuditWriter(alog)
 	svc := New(Options{Config: n.cfg, Key: n.key, DataDir: n.dir, Machine: machine, Writer: writer, Join: js,
-		Now: n.clock.now, Logger: log, Interval: 50 * time.Millisecond, LeaderInterval: 300 * time.Millisecond, Audit: alog})
+		Now: n.clock.now, Logger: log, Interval: 50 * time.Millisecond, LeaderInterval: 300 * time.Millisecond, Audit: alog, Rotation: rotation})
 	svc.afterJoinStep = n.hook
 	svc.afterRemovalStep = n.rhook
 	machine.SetOnApplied(svc.OnApplied)

@@ -134,10 +134,15 @@ func runServe(ctx context.Context, args []string, e env) error {
 			return fmt.Errorf("the cluster audit: %w", err)
 		}
 	}
+	rotation, err := service.ReadRotate(*dataDir)
+	if err != nil {
+		return fmt.Errorf("the key rotation record: %w", err)
+	}
 	machine := clusterstate.New()
 	machine.SetMembershipWriter(writer.Write)
 	machine.SetAuditWriter(alog)
-	svc := service.New(service.Options{Config: cfg, Key: key, DataDir: *dataDir, Machine: machine, Writer: writer, Join: join, Logger: log, Audit: alog})
+	svc := service.New(service.Options{Config: cfg, Key: key, DataDir: *dataDir, Machine: machine, Writer: writer, Join: join, Logger: log,
+		Audit: alog, Rotation: rotation})
 	machine.SetOnApplied(svc.OnApplied)
 	var trans *raftnet.Transport
 	if addr := cfg.PeerAddress(); addr != "" {

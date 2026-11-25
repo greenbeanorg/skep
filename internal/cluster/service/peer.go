@@ -56,6 +56,10 @@ func (s *Service) HandlePeer(ctx context.Context, op string, from raftnet.Peer, 
 	case raftnet.OpStatus:
 		applied, stalled := s.machine.AppliedIndex()
 		return StatusAnswer{NodeID: s.cfg.NodeID, AppliedIndex: applied, Stalled: stalled}, nil
+	case raftnet.OpKeyAdd:
+		return s.handleKeyAdd(from, body)
+	case raftnet.OpKeyAbort:
+		return s.handleKeyAbort(from, body)
 	case raftnet.OpClock:
 		return ClockAnswer{NodeID: s.cfg.NodeID, UnixMillis: s.now().UnixMilli()}, nil
 	case raftnet.OpJoin:
@@ -468,7 +472,7 @@ func (s *Service) toLeader(ctx context.Context, op string, in, out any) error {
 		return &localapi.OpError{HTTPStatus: http.StatusServiceUnavailable, Code: "no_leader",
 			Message: "the leader " + id + " is not a member this node knows; nothing was written"}
 	}
-	err := s.caller.Call(ctx, leader.Address, leader.Pin, op, in, out)
+	err := s.callMember(ctx, leader, op, in, out)
 	var pe *raftnet.PeerError
 	var ou *raftnet.OutcomeUnknownError
 	switch {
@@ -490,6 +494,8 @@ func (s *Service) toLeader(ctx context.Context, op string, in, out any) error {
 			status = http.StatusNotFound
 		case "handover_failed":
 			status = http.StatusServiceUnavailable
+		case "rotation_in_progress", "no_rotation":
+			status = http.StatusConflict
 		}
 		return &localapi.OpError{HTTPStatus: status, Code: pe.Code, Message: "the leader " + leader.Name + " answered: " + pe.Message}
 	}
@@ -527,6 +533,12 @@ func (s *Service) admitAsLeader(request, actor, origin, opID string) (localapi.A
 	for _, m := range s.machine.View().Members {
 		if m.State == clusterstate.StateRemoving {
 			return localapi.AdmitResult{}, refusedErr(fmt.Sprintf("%s is being removed; no admission until its removal has finished; nothing was written", m.Name))
+		}
+		// An admission carries one pin per node (also checked at
+		// apply; step 8b-2b, D1).
+		if m.NextPin != "" {
+			return localapi.AdmitResult{}, &localapi.OpError{HTTPStatus: http.StatusConflict, Code: "rotation_in_progress",
+				Message: fmt.Sprintf("member %s is rotating its key; no admission until the rotation has ended; nothing was written", m.Name)}
 		}
 	}
 	expires := s.now().Add(PendingLifetime).Unix()

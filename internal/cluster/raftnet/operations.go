@@ -54,7 +54,26 @@ type Peer struct {
 	Name    string
 	Address string
 	Pin     string
+	// NextPin is the pin of the node's next key while it rotates (step
+	// 8b-2b, D1): both pins are this node.
+	NextPin string
 	Kind    Kind
+}
+
+// Pins returns the peer's pins: its pin, and its next pin while it
+// rotates.
+func (p Peer) Pins() []string {
+	if p.NextPin != "" {
+		return []string{p.Pin, p.NextPin}
+	}
+	return []string{p.Pin}
+}
+
+// PinObserver is told which of a node's pins a connection to or from it
+// used (step 8b-2b, D1: the leader ends a rotation once it has seen the
+// node use its new key). Trust may implement it.
+type PinObserver interface {
+	SawPin(nodeID, pin string)
 }
 
 // Operation names.
@@ -76,6 +95,12 @@ const (
 	// OpRemoved is the best-effort notice a member sends a removed node
 	// (ADR 0013 B1, decision D11 of step 8b-2a).
 	OpRemoved = "removed"
+	// OpKeyAdd asks the leader to add the caller's next pin (key
+	// rotation, D1 of step 8b-2b); only for the caller's own node.
+	OpKeyAdd = "key-add"
+	// OpKeyAbort asks the leader to end the caller's rotation keeping
+	// its old key.
+	OpKeyAbort = "key-abort"
 	// OpClock answers the node's clock in Unix milliseconds, for the
 	// clock-offset health check (D3 of step 8b-2b). It is its own
 	// operation, not a field of status, so that a node of an older build
@@ -110,6 +135,10 @@ var Operations = []Operation{
 	{Name: OpStatus, Joining: true, Member: true, Removing: true},
 	// Every key that may call status may ask for the clock.
 	{Name: OpClock, Joining: true, Member: true, Removing: true},
+	// A member rotates its own key; the leader checks that the node is
+	// the key's.
+	{Name: OpKeyAdd, Member: true},
+	{Name: OpKeyAbort, Member: true},
 	{Name: OpAdmit, Member: true},
 	{Name: OpWithdraw, Member: true},
 	{Name: OpRemove, Member: true},

@@ -210,7 +210,7 @@ func (s *Service) notifyRemoved(ctx context.Context, clusterID string, m cluster
 	}
 	cctx, cancel := context.WithTimeout(ctx, statusTimeout)
 	defer cancel()
-	err := s.caller.Call(cctx, m.Address, m.Pin, raftnet.OpRemoved, RemovedNotice{ClusterID: clusterID, NodeID: m.ID}, nil)
+	err := s.callMember(cctx, m, raftnet.OpRemoved, RemovedNotice{ClusterID: clusterID, NodeID: m.ID}, nil)
 	if err != nil {
 		s.log.Info("the notice to the removed node was not delivered (best effort)", "node_id", m.ID, "address", m.Address, "error", err)
 		return
@@ -307,7 +307,7 @@ func (s *Service) probeOwnKey(from raftnet.Peer) (int, []string) {
 			continue
 		}
 		seen[p.NodeID] = true
-		switch res, _ := raftnet.ProbeKey(p.Address, p.Pin, s.certificate, noticeProbeTimeout); res {
+		switch res, _ := raftnet.ProbeKeyPins(p.Address, p.Pins(), s.certificate, noticeProbeTimeout); res {
 		case raftnet.ProbeRefused:
 			refused++
 		case raftnet.ProbeAccepted:

@@ -56,12 +56,12 @@ func (s *Service) acceptedNow() accepted {
 	if file != nil && view.AppliedIndex < file.Index {
 		a.source = "membership file"
 		for _, m := range file.Members {
-			a.peers = append(a.peers, raftnet.Peer{NodeID: m.ID, Name: m.Name, Address: m.Address, Pin: m.Pin, Kind: kindOf(m.State)})
+			a.peers = append(a.peers, raftnet.Peer{NodeID: m.ID, Name: m.Name, Address: m.Address, Pin: m.Pin, NextPin: m.NextPin, Kind: kindOf(m.State)})
 		}
 	} else {
 		a.source = "state machine"
 		for _, m := range view.Members {
-			a.peers = append(a.peers, raftnet.Peer{NodeID: m.ID, Name: m.Name, Address: m.Address, Pin: m.Pin, Kind: kindOf(m.State)})
+			a.peers = append(a.peers, raftnet.Peer{NodeID: m.ID, Name: m.Name, Address: m.Address, Pin: m.Pin, NextPin: m.NextPin, Kind: kindOf(m.State)})
 		}
 		now := s.now().Unix()
 		for _, p := range view.Pendings {
@@ -96,17 +96,36 @@ func listsNode(peers []raftnet.Peer, id string) bool {
 	return false
 }
 
-// ByPin implements raftnet.Trust.
+// ByPin implements raftnet.Trust. Either pin of a rotating member is that
+// member (D1 of step 8b-2b); the per-RPC check is otherwise unchanged.
 func (s *Service) ByPin(pin string) (raftnet.Peer, bool) {
 	if pin == "" {
 		return raftnet.Peer{}, false
 	}
 	for _, p := range s.acceptedNow().peers {
-		if p.Pin == pin {
+		if p.Pin == pin || (p.NextPin != "" && p.NextPin == pin) {
 			return p, true
 		}
 	}
 	return raftnet.Peer{}, false
+}
+
+// SawPin implements raftnet.PinObserver: which pin a node's last
+// successful connection to or from this node used.
+func (s *Service) SawPin(nodeID, pin string) {
+	if nodeID == "" || pin == "" {
+		return
+	}
+	s.mu.Lock()
+	s.seen[nodeID] = pinSeen{pin: pin, at: s.now()}
+	s.mu.Unlock()
+}
+
+// sawPinOf records the pin of an accepted inbound connection.
+func (s *Service) sawPinOf(pin string) {
+	if p, ok := s.ByPin(pin); ok && p.Kind != raftnet.KindPending {
+		s.SawPin(p.NodeID, pin)
+	}
 }
 
 // ByAddress implements raftnet.Trust: joining, member and removing keys
