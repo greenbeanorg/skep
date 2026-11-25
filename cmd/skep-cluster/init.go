@@ -18,11 +18,9 @@ import (
 
 	"github.com/greenbeanorg/skep/internal/agentproto"
 	"github.com/greenbeanorg/skep/internal/cluster/clusterconf"
-	"github.com/greenbeanorg/skep/internal/cluster/clusterstate"
 	"github.com/greenbeanorg/skep/internal/cluster/layout"
-	"github.com/greenbeanorg/skep/internal/cluster/nodekey"
+	"github.com/greenbeanorg/skep/internal/cluster/service"
 	"github.com/greenbeanorg/skep/internal/cluster/store"
-	"github.com/greenbeanorg/skep/internal/ids"
 )
 
 // initActor is the actor "skep-cluster init" names on the agent's socket.
@@ -175,7 +173,7 @@ func runInit(ctx context.Context, args []string, e env) error {
 	if err := e.drop(acct.UID, acct.GID); err != nil {
 		return fmt.Errorf("cannot give up root for the service account: %w", err)
 	}
-	clusterID, pin, err := createCluster(ctx, *dataDir, cfg, time.Now())
+	clusterID, pin, err := service.CreateCluster(ctx, *dataDir, cfg, "", time.Now())
 	if err != nil {
 		return err
 	}
@@ -195,62 +193,4 @@ func runInit(ctx context.Context, args []string, e env) error {
 	}
 	fmt.Fprintf(e.stdout, "Enable and start the service:\n  sysrc skep_cluster_enable=YES\n  service skep_cluster start\n")
 	return nil
-}
-
-// createCluster makes the node key (or takes the one an interrupted init
-// left) and a store with this node as the only member. It runs as the
-// service account.
-func createCluster(ctx context.Context, dataDir string, cfg clusterconf.Config, now time.Time) (clusterID, pin string, err error) {
-	var key *nodekey.Key
-	if nodekey.Exists(dataDir) {
-		// An earlier init stopped after the key and before the
-		// store. The key is not replaced; its certificate is.
-		if key, _, err = nodekey.LoadRepair(dataDir, cfg.NodeID, now); err != nil {
-			return "", "", fmt.Errorf("%w (left by an interrupted init; remove %s and %s as root to start over)",
-				err, nodekey.KeyFile, nodekey.CertFile)
-		}
-	} else if key, err = nodekey.Create(dataDir, cfg.NodeID, now); err != nil {
-		return "", "", err
-	}
-	if clusterID, err = ids.NewUUID(); err != nil {
-		return "", "", err
-	}
-	opID, err := ids.NewUUID()
-	if err != nil {
-		return "", "", err
-	}
-	entry, err := clusterstate.NewEntry(clusterstate.TypeClusterInit, opID, clusterstate.ActorSystem, cfg.NodeID,
-		clusterstate.ClusterInit{ClusterID: clusterID, Member: clusterstate.Member{
-			ID: cfg.NodeID, Name: cfg.NodeName, Address: cfg.PeerAddress(), Pin: key.Pin(), State: clusterstate.StateMember,
-		}})
-	if err != nil {
-		return "", "", err
-	}
-	opts := store.Options{Dir: layout.State(dataDir), NodeID: cfg.NodeID}
-	fail := func(err error) (string, string, error) {
-		// Leave no half-made store: the next init starts clean.
-		_ = layout.RemoveAll(layout.State(dataDir))
-		return "", "", err
-	}
-	if err := store.Bootstrap(opts, cfg.PeerAddress()); err != nil {
-		return fail(err)
-	}
-	node, err := store.Open(opts)
-	if err != nil {
-		return fail(err)
-	}
-	wctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-	if err := node.WaitLeader(wctx); err != nil {
-		node.Close()
-		return fail(err)
-	}
-	if _, err := node.Apply(entry); err != nil {
-		node.Close()
-		return fail(fmt.Errorf("writing the first entry: %w", err))
-	}
-	if err := node.Close(); err != nil {
-		return fail(err)
-	}
-	return clusterID, key.Pin(), nil
 }

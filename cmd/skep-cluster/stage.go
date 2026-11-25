@@ -23,7 +23,7 @@ func runStageCmd(ctx context.Context, args []string, e env) error {
 		return errors.New("the stage runs as the service account, never as root")
 	}
 	if len(args) == 0 {
-		return errors.New("stage: read or join")
+		return errors.New("stage: an action is required")
 	}
 	flags := flag.NewFlagSet("skep-cluster "+stageCommand, flag.ContinueOnError)
 	flags.SetOutput(e.stderr)
@@ -41,6 +41,16 @@ func runStageCmd(ctx context.Context, args []string, e env) error {
 		res = stageRead(*configPath, *dataDir)
 	case "join":
 		res = stageJoin(ctx, e, *configPath, *dataDir, *admission)
+	case "read-state":
+		res = stageReadState(*configPath, *dataDir)
+	case "wipe-info":
+		res = stageWipeInfo(*configPath, *dataDir)
+	case "wipe-begin":
+		res = stageWipeBegin(*dataDir)
+	case "wipe-finish":
+		res = stageWipeFinish(ctx, *configPath, *dataDir)
+	case "abandon":
+		res = stageAbandon(ctx, *configPath, *dataDir)
 	default:
 		return fmt.Errorf("stage: unknown action %q", args[0])
 	}

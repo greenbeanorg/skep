@@ -152,11 +152,13 @@ func runHealth(ctx context.Context, args []string, e env) error {
 	return nil
 }
 
-// termSafe replaces control characters (newlines too) with "?": for every
-// string from another node or the stage that a command prints.
+// termSafe replaces control characters (newlines too) and Unicode format
+// characters (category Cf: the direction overrides and isolates, zero-width
+// characters) with "?": for every string from another node or the stage
+// that a command prints.
 func termSafe(s string) string {
 	return strings.Map(func(r rune) rune {
-		if unicode.IsControl(r) {
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
 			return '?'
 		}
 		return r

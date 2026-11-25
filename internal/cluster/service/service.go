@@ -99,16 +99,16 @@ type Service struct {
 	started   time.Time
 	caller    raftnet.Caller
 
-	mu         sync.Mutex
-	store      Store
-	transport  *raftnet.Transport
-	join       *joinstate.State
-	listener   *peerlistener.Listener
-	listenErr  error
-	addrErr    error
-	renewErr   error
-	joinErr    error
-	lastRenew  time.Time
+	mu        sync.Mutex
+	store     Store
+	transport *raftnet.Transport
+	join      *joinstate.State
+	listener  *peerlistener.Listener
+	listenErr error
+	addrErr   error
+	renewErr  error
+	joinErr   error
+	lastRenew time.Time
 	// barrierTerm is the term of the last successful barrier; the leader
 	// repeats the barrier whenever the term differs (decision D5a).
 	barrierTerm uint64
@@ -122,8 +122,8 @@ type Service struct {
 	// standaloneChecked is set once the start's clean-up of a leftover
 	// moved-aside state has run (decision D2).
 	standaloneChecked bool
-	nextWaits  time.Time
-	nextJoin   time.Time
+	nextWaits         time.Time
+	nextJoin          time.Time
 	// waits names, per joining member, the members its promotion waits
 	// for, as this node last saw it.
 	waits map[string][]string

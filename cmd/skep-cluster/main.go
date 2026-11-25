@@ -11,12 +11,16 @@
 //	skep-cluster admit REQUEST               admit a host, print its admission (root)
 //	skep-cluster admit --withdraw NAME       withdraw a pending admission (root)
 //	skep-cluster join ADMISSION              join a cluster (root)
+//	skep-cluster join --abandon              give up a join past its point of no return (root)
+//	skep-cluster remove NAME                 remove a member (root)
+//	skep-cluster leave --wipe                make this node a new one-node cluster with a new key (root)
+//	skep-cluster listen -none                close the listener of a node that is alone (root)
 //	skep-cluster status [-json]              show the node and its cluster
 //	skep-cluster health                      show the service's health
 //	skep-cluster version
 //
 // Every host is a one-node cluster until it joins another (ADR 0013, step
-// 8b: only a host without guests joins; removal comes with the next run).
+// 8b: only a host without guests joins).
 package main
 
 import (
@@ -197,6 +201,10 @@ func run(ctx context.Context, args []string, e env) error {
 			return runAdmit(ctx, args[1:], e)
 		case "join":
 			return runJoin(ctx, args[1:], e)
+		case "remove":
+			return runRemove(ctx, args[1:], e)
+		case "leave":
+			return runLeave(ctx, args[1:], e)
 		case stageCommand:
 			return runStageCmd(ctx, args[1:], e)
 		case "status":
@@ -225,7 +233,11 @@ const usage = `usage:
   skep-cluster join-request -address ADDR                      print this host's join request; opens ADDR:8444 (root)
   skep-cluster admit REQUEST                                   admit a host; prints its admission (root, on a member)
   skep-cluster admit -withdraw NAME                            withdraw a pending admission (root, on a member)
+  skep-cluster listen -none                                    close the listener; only while alone with nothing pending (root)
   skep-cluster join [-cluster-id ID] ADMISSION                 join the cluster of an admission (root)
+  skep-cluster join --abandon                                  give up a join past its point of no return (root)
+  skep-cluster remove [-allow-unanswered [-cluster-id ID]] NAME  remove a member (root, on a member)
+  skep-cluster leave --wipe [-cluster-id ID]                   wipe: a new one-node cluster, new key, no listener (root)
   skep-cluster status [-json]                                  show the node and its cluster (root or skep)
   skep-cluster health                                          show the service's health (root or skep)
   skep-cluster version
