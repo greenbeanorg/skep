@@ -133,6 +133,7 @@ func (w *world) env(euid int) env {
 			err := run(ctx, args, sub)
 			return out.Bytes(), err
 		},
+		hostUsers: func(context.Context) ([]string, error) { return []string{"andy admin", "vera viewer disabled"}, nil },
 		openTTY: func() (io.ReadWriteCloser, error) {
 			if w.tty == nil {
 				return nil, errors.New("no terminal")

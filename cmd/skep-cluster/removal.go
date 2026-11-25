@@ -307,6 +307,9 @@ func runLeave(ctx context.Context, args []string, e env) error {
 	fmt.Fprintf(e.stdout, "  Cluster ID:   %s\n  Node key pin: %s (new)\n  Listener:     none (no network port)\n", termSafe(done.ClusterID), termSafe(done.Pin))
 	fmt.Fprintf(e.stdout, "If it has not been removed on a member of its old cluster yet, remove it there, as root:\n  skep-cluster remove %s\n", cfg.NodeName)
 	fmt.Fprintf(e.stdout, "To join a cluster again: skep-cluster join-request -address ADDR\n")
+	// D21 of step 8c-1: the new cluster has no users, and skep-api's copy
+	// follows it.
+	fmt.Fprintf(e.stdout, "This host has no users now: nobody can log in to skep-api until an administrator is created, as root:\n  skep-api admin create --username NAME\n")
 	return errors.Join(startErr, rootErr)
 }
 

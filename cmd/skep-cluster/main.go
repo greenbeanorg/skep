@@ -38,7 +38,11 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"strings"
 	"syscall"
+	"time"
+
+	"github.com/greenbeanorg/skep/internal/cluster/clusterconf"
 
 	"github.com/greenbeanorg/skep/internal/privdrop"
 	"github.com/greenbeanorg/skep/internal/sysaccount"
@@ -105,6 +109,9 @@ type env struct {
 	agentGuests func(ctx context.Context, socket string) (vms, jails int, err error)
 	// openTTY opens the controlling terminal.
 	openTTY func() (io.ReadWriteCloser, error)
+	// hostUsers lists the host's users from skep-api's api.db (one
+	// "name role" line each), read as the API account.
+	hostUsers func(ctx context.Context) ([]string, error)
 }
 
 func realEnv() env {
@@ -146,7 +153,42 @@ func realEnv() env {
 		openTTY: func() (io.ReadWriteCloser, error) {
 			return os.OpenFile("/dev/tty", os.O_RDWR, 0)
 		},
+		hostUsers: hostUsers,
 	}
+}
+
+// skepAPI is the installed skep-api; "admin list" reads api.db read-only.
+const skepAPI = "/usr/local/sbin/skep-api"
+
+// hostUsers runs "skep-api admin list" as the API account (the owner of
+// api.db, which the skep-cluster account cannot read), with a fixed
+// program, fixed arguments and a fixed environment. Its output is shown,
+// never followed.
+func hostUsers(ctx context.Context) ([]string, error) {
+	acct, err := sysaccount.Lookup(clusterconf.APIAccount)
+	if err != nil {
+		return nil, err
+	}
+	if acct.UID == 0 {
+		return nil, errors.New("the API account must not be root")
+	}
+	cctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(cctx, skepAPI, "admin", "list")
+	cmd.Env = []string{"PATH=/usr/bin:/bin:/usr/sbin:/sbin", "LC_ALL=C"}
+	cmd.Dir = "/"
+	cmd.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: acct.UID, Gid: acct.GID, Groups: []uint32{}}}
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("skep-api admin list: %w", err)
+	}
+	var lines []string
+	for _, l := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if l = strings.TrimSpace(l); l != "" && len(lines) < 2000 {
+			lines = append(lines, l)
+		}
+	}
+	return lines, nil
 }
 
 // runAsAccount runs this same executable, with a fixed environment, as the
@@ -218,6 +260,8 @@ func run(ctx context.Context, args []string, e env) error {
 			return runKey(ctx, args[1:], e)
 		case "health":
 			return runHealth(ctx, args[1:], e)
+		case "test-init":
+			return runTestInit(ctx, args[1:], e)
 		case "version":
 			v := version.Get()
 			fmt.Fprintf(e.stdout, "skep-cluster %s (%s, built %s)\n", v.Version, v.Commit, v.BuildDate)

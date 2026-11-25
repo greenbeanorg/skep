@@ -358,7 +358,25 @@ func printAdmission(w io.Writer, adm joincode.Admission) {
 	for _, m := range adm.Members {
 		fmt.Fprintf(w, "  %-20s %s  %s\n                       pin %s\n", m.Name, m.NodeID, m.Address, m.Pin)
 	}
-	fmt.Fprintf(w, "This host has no VMs and no jails. Its own one-node cluster is moved aside; its users are not changed in this build.\n")
+	fmt.Fprintf(w, "This host has no VMs and no jails. Its own one-node cluster is moved aside.\n")
+}
+
+// printHostUsers lists the host's own users (D21 of step 8c-1): the
+// cluster's users replace them once the join has finished.
+func printHostUsers(ctx context.Context, e env, w io.Writer) {
+	lines, err := e.hostUsers(ctx)
+	switch {
+	case err != nil:
+		fmt.Fprintf(w, "This host's users could not be read (%s); whatever they are, the cluster's users replace them.\n", termSafe(err.Error()))
+	case len(lines) == 0:
+		fmt.Fprintf(w, "This host has no users of its own; it takes the cluster's users.\n")
+	default:
+		fmt.Fprintf(w, "This host's users (name, role):\n")
+		for _, l := range lines {
+			fmt.Fprintf(w, "  %s\n", termSafe(l))
+		}
+		fmt.Fprintf(w, "The cluster's users replace them: these accounts exist here after the join only if the cluster has them, and every session on this host ends.\n")
+	}
 }
 
 // confirmJoin asks on the terminal, or checks -cluster-id (decision D4 of
@@ -441,6 +459,7 @@ func runJoin(ctx context.Context, args []string, e env) error {
 		return err
 	}
 	printAdmission(e.stdout, adm)
+	printHostUsers(ctx, e, e.stdout)
 	if err := confirmJoin(e, adm, *clusterID); err != nil {
 		return err
 	}
