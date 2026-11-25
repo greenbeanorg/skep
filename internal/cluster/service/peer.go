@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"time"
 
+	"github.com/greenbeanorg/skep/internal/cluster/audit"
 	"github.com/greenbeanorg/skep/internal/cluster/clusterstate"
 	"github.com/greenbeanorg/skep/internal/cluster/joincode"
 	"github.com/greenbeanorg/skep/internal/cluster/joinstate"
@@ -359,6 +360,7 @@ func (s *Service) joinStep(ctx context.Context) {
 		s.mu.Lock()
 		s.join = nil
 		s.mu.Unlock()
+		s.event(audit.EventJoined, map[string]string{"cluster_id": js.Admission.ClusterID})
 		s.log.Info("join finished: this node is a member; the admission's pins are dropped and the moved-aside state is deleted",
 			"cluster_id", js.Admission.ClusterID)
 		return

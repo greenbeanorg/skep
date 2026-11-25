@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/greenbeanorg/skep/internal/cluster/audit"
 	"github.com/greenbeanorg/skep/internal/cluster/clusterstate"
 	"github.com/greenbeanorg/skep/internal/cluster/joinstate"
 	"github.com/greenbeanorg/skep/internal/cluster/layout"
@@ -190,6 +191,7 @@ func (s *Service) enterRemoved(clusterID, how string) {
 	s.listener = nil
 	st := s.store
 	s.mu.Unlock()
+	s.event(audit.EventRemoved, map[string]string{"cluster_id": clusterID, "how": how})
 	s.log.Error("this node was removed from its cluster: its Raft instance and its listener are shut; run \"skep-cluster leave --wipe\"",
 		"cluster_id", clusterID, "how", how)
 	if l != nil {
@@ -290,6 +292,7 @@ func (s *Service) checkNotice(ctx context.Context, clusterID string, from raftne
 	}
 	s.log.Warn("a removed notice was dropped: no round had a node refuse this node's key with none accepting it",
 		"from", from.Name, "node_id", from.NodeID, "rounds", noticeRounds)
+	s.event(audit.EventNoticeDropped, map[string]string{"from": from.NodeID, "from_name": from.Name, "cluster_id": clusterID})
 }
 
 // probeOwnKey probes every node this node accepts now (not pending ones),

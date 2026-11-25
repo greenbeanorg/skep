@@ -122,7 +122,7 @@ func TestLeaveWipeRerunDoesNotAsk(t *testing.T) {
 	if err := w.init(0, "-address", "127.0.0.1"); err != nil {
 		t.Fatal(err)
 	}
-	m, err := service.WipeBegin(w.dataDir, time.Now())
+	m, err := service.WipeBegin(w.dataDir, "", time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}

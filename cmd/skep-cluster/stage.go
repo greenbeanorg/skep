@@ -48,7 +48,7 @@ func runStageCmd(ctx context.Context, args []string, e env) error {
 	case "wipe-info-files":
 		res = stageWipeInfo(*configPath, *dataDir, true)
 	case "wipe-begin":
-		res = stageWipeBegin(*dataDir)
+		res = stageWipeBegin(*configPath, *dataDir)
 	case "wipe-finish":
 		res = stageWipeFinish(ctx, *configPath, *dataDir)
 	case "abandon":

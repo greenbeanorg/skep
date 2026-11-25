@@ -548,8 +548,12 @@ func stageWipeInfo(configPath, dataDir string, filesOnly bool) stageResult {
 	return res
 }
 
-func stageWipeBegin(dataDir string) stageResult {
-	m, err := service.WipeBegin(dataDir, time.Now())
+func stageWipeBegin(configPath, dataDir string) stageResult {
+	cfg, err := clusterconf.Load(configPath)
+	if err != nil {
+		return fail(err.Error())
+	}
+	m, err := service.WipeBegin(dataDir, cfg.NodeID, time.Now())
 	if err != nil {
 		return fail(err.Error())
 	}

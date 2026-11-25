@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/greenbeanorg/skep/internal/cluster/audit"
 	"github.com/greenbeanorg/skep/internal/cluster/clusterconf"
 	"github.com/greenbeanorg/skep/internal/cluster/clusterstate"
 	"github.com/greenbeanorg/skep/internal/cluster/joinstate"
@@ -78,6 +79,9 @@ type Options struct {
 	Now func() time.Time
 	// Logger defaults to slog.Default().
 	Logger *slog.Logger
+	// Audit is the node's cluster audit, open for writing; nil writes
+	// no local events (tests that do not look at it).
+	Audit *audit.Log
 	// Interval is how often the background work runs; default 1 s.
 	Interval time.Duration
 	// LeaderInterval defaults to LeaderInterval.
@@ -98,6 +102,7 @@ type Service struct {
 	leaderInt time.Duration
 	started   time.Time
 	caller    raftnet.Caller
+	audit     *audit.Log
 
 	mu        sync.Mutex
 	store     Store
@@ -217,7 +222,7 @@ func New(o Options) *Service {
 	s := &Service{cfg: o.Config, key: o.Key, dataDir: o.DataDir, machine: o.Machine, writer: o.Writer,
 		now: o.Now, log: o.Logger, every: o.Interval, leaderInt: o.LeaderInterval, started: o.Now(),
 		join: o.Join, waits: map[string][]string{}, answers: map[string]statusResult{}, highest: map[string]uint64{}, removed: o.Removed,
-		clocks: map[string]clockSample{}, clockOp: raftnet.OpClock}
+		clocks: map[string]clockSample{}, clockOp: raftnet.OpClock, audit: o.Audit}
 	s.caller = raftnet.Caller{NodeID: o.Config.NodeID, Certificate: s.certificate}
 	return s
 }
@@ -361,6 +366,11 @@ func (s *Service) reconcileAddress() bool {
 		if opID, err = ids.NewUUID(); err == nil {
 			if changed, err = st.SetOwnAddress(want, opID); err == nil && changed {
 				s.log.Info("the node's address records were updated", "address", want)
+				if want == "" {
+					s.event(audit.EventListenCleared, nil)
+				} else {
+					s.event(audit.EventListenSet, map[string]string{"address": want})
+				}
 			}
 		}
 	}
@@ -672,4 +682,15 @@ func (s *Service) RaftConfiguration(context.Context) (localapi.RaftConfiguration
 		return localapi.RaftConfiguration{}, errors.New("the Raft configuration is empty")
 	}
 	return localapi.RaftConfiguration{Servers: servers}, nil
+}
+
+// event writes a local event to the cluster audit. The step it records has
+// already happened: a failed write is logged and changes nothing else.
+func (s *Service) event(kind string, details map[string]string) {
+	if s.audit == nil {
+		return
+	}
+	if err := s.audit.Event(kind, details); err != nil {
+		s.log.Error("cannot write a local event to the cluster audit", "kind", kind, "error", err)
+	}
 }

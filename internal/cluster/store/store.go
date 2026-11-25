@@ -746,6 +746,30 @@ func ReadState(dir, nodeID string) (clusterstate.View, []Server, error) {
 	return m.View(), servers, nil
 }
 
+// LastIndex returns the index of the last entry stored in the log in dir,
+// without starting a Raft node; 0 when dir holds no store. The service
+// reads it before it opens the store, when its cluster audit is empty: the
+// entries up to it are not audited (D4 of step 8b-2b).
+func LastIndex(dir string) (uint64, error) {
+	if !Exists(dir) {
+		return 0, nil
+	}
+	b, err := openBackends(dir, true)
+	if err != nil {
+		return 0, err
+	}
+	defer b.bolt.Close()
+	last, err := b.bolt.LastIndex()
+	if err != nil {
+		return 0, err
+	}
+	// A snapshot may cover more than the log holds.
+	if metas, err := b.snaps.List(); err == nil && len(metas) > 0 && metas[0].Index > last {
+		last = metas[0].Index
+	}
+	return last, nil
+}
+
 // ReadServers reads the Raft configuration from the store in dir without
 // starting a Raft node or opening a network port: the root-run commands use
 // it, through a process running as the service account, while the service

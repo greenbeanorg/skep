@@ -15,6 +15,7 @@
 //	skep-cluster remove NAME                 remove a member (root)
 //	skep-cluster leave --wipe                make this node a new one-node cluster with a new key (root)
 //	skep-cluster listen -none                close the listener of a node that is alone (root)
+//	skep-cluster audit verify [-dir DIR]     verify this node's cluster audit (root)
 //	skep-cluster status [-json]              show the node and its cluster
 //	skep-cluster health                      show the service's health
 //	skep-cluster version
@@ -209,6 +210,8 @@ func run(ctx context.Context, args []string, e env) error {
 			return runStageCmd(ctx, args[1:], e)
 		case "status":
 			return runStatus(ctx, args[1:], e)
+		case "audit":
+			return runAudit(ctx, args[1:], e)
 		case "health":
 			return runHealth(ctx, args[1:], e)
 		case "version":
@@ -238,6 +241,7 @@ const usage = `usage:
   skep-cluster join --abandon                                  give up a join past its point of no return (root)
   skep-cluster remove [-allow-unanswered [-cluster-id ID]] NAME  remove a member (root, on a member)
   skep-cluster leave --wipe [-cluster-id ID]                   wipe: a new one-node cluster, new key, no listener (root)
+  skep-cluster audit verify [-dir DIR]                         verify this node's cluster audit (root, read-only)
   skep-cluster status [-json]                                  show the node and its cluster (root or skep)
   skep-cluster health                                          show the service's health (root or skep)
   skep-cluster version

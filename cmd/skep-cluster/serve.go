@@ -10,6 +10,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/greenbeanorg/skep/internal/cluster/audit"
 	"github.com/greenbeanorg/skep/internal/cluster/clusterconf"
 	"github.com/greenbeanorg/skep/internal/cluster/clusterstate"
 	"github.com/greenbeanorg/skep/internal/cluster/joinstate"
@@ -109,9 +110,34 @@ func runServe(ctx context.Context, args []string, e env) error {
 			return fmt.Errorf("the join record: %w", err)
 		}
 	}
+	// The cluster audit (D4 of step 8b-2b), outside state/. This process
+	// is its only writer while it runs (the audit's lock). An empty audit
+	// starts with audit.started at the last index of the local log: the
+	// entries up to it are not audited.
+	alog, err := audit.Open(*dataDir, time.Now)
+	if err != nil {
+		return fmt.Errorf("the cluster audit: %w", err)
+	}
+	defer alog.Close()
+	if alog.Empty() {
+		last, err := store.LastIndex(stateDir)
+		if err != nil {
+			return fmt.Errorf("the cluster audit: reading the log's last index: %w", err)
+		}
+		var epoch uint64
+		if f := writer.Current(); f != nil {
+			epoch = f.Epoch
+		} else if last > 0 {
+			epoch = 1
+		}
+		if err := alog.Started(epoch, last); err != nil {
+			return fmt.Errorf("the cluster audit: %w", err)
+		}
+	}
 	machine := clusterstate.New()
 	machine.SetMembershipWriter(writer.Write)
-	svc := service.New(service.Options{Config: cfg, Key: key, DataDir: *dataDir, Machine: machine, Writer: writer, Join: join, Logger: log})
+	machine.SetAuditWriter(alog)
+	svc := service.New(service.Options{Config: cfg, Key: key, DataDir: *dataDir, Machine: machine, Writer: writer, Join: join, Logger: log, Audit: alog})
 	machine.SetOnApplied(svc.OnApplied)
 	var trans *raftnet.Transport
 	if addr := cfg.PeerAddress(); addr != "" {

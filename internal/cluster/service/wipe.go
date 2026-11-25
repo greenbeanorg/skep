@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/greenbeanorg/skep/internal/cluster/audit"
 	"github.com/greenbeanorg/skep/internal/cluster/clusterconf"
 	"github.com/greenbeanorg/skep/internal/cluster/clusterstate"
 	"github.com/greenbeanorg/skep/internal/cluster/joinstate"
@@ -113,6 +114,9 @@ type WipeMarker struct {
 	// can be repaired): every run of the wipe then replaces the key.
 	KeyUnreadable bool   `json:"key_unreadable,omitempty"`
 	Started       string `json:"started"`
+	// OldClusterID is the cluster ID before the wipe, for the audit
+	// (step 8b-2b); empty when no file or store could tell it.
+	OldClusterID string `json:"old_cluster_id,omitempty"`
 }
 
 const wipeFormat = 1
@@ -220,7 +224,7 @@ func wipeInfo(dataDir, nodeID string, filesOnly bool) (clusterID string, resume 
 // A node key that cannot be loaded does not stop the wipe: the marker then
 // has an empty old pin and says the key was unreadable, and WipeFinish
 // replaces the key.
-func WipeBegin(dataDir string, now time.Time) (WipeMarker, error) {
+func WipeBegin(dataDir, nodeID string, now time.Time) (WipeMarker, error) {
 	if m, err := ReadWipeMarker(dataDir); err != nil || m != nil {
 		if err != nil {
 			return WipeMarker{}, err
@@ -237,9 +241,14 @@ func WipeBegin(dataDir string, now time.Time) (WipeMarker, error) {
 	} else {
 		m.KeyUnreadable = true
 	}
+	if id, _, err := WipeInfo(dataDir, nodeID); err == nil {
+		m.OldClusterID = id
+	}
 	if err := writeFileAtomic(dataDir, layout.WipeMarker, m); err != nil {
 		return WipeMarker{}, err
 	}
+	stageEvent(dataDir, audit.EventWipeBegun, map[string]string{"old_cluster_id": m.OldClusterID, "new_cluster_id": m.NewClusterID,
+		"old_pin": m.OldPin, "key_unreadable": fmt.Sprint(m.KeyUnreadable)})
 	return m, nil
 }
 
@@ -344,5 +353,7 @@ func wipeFinish(ctx context.Context, dataDir string, cfg clusterconf.Config, now
 	if err := layout.RemoveFile(filepath.Join(dataDir, layout.WipeMarker)); err != nil {
 		return "", "", err
 	}
+	StageMark(dataDir, audit.EventWipeFinished, true, map[string]string{"old_cluster_id": m.OldClusterID, "new_cluster_id": clusterID,
+		"old_pin": m.OldPin, "new_pin": pin})
 	return clusterID, pin, nil
 }

@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/greenbeanorg/skep/internal/cluster/audit"
 	"github.com/greenbeanorg/skep/internal/cluster/clusterconf"
 	"github.com/greenbeanorg/skep/internal/cluster/clusterstate"
 	"github.com/greenbeanorg/skep/internal/cluster/joincode"
@@ -593,7 +594,7 @@ func TestWipeCrashPoints(t *testing.T) {
 				if err != nil || id != oldCluster || resume {
 					t.Fatalf("wipe info: %s %v %v", id, resume, err)
 				}
-				m, err := WipeBegin(n.dir, time.Now())
+				m, err := WipeBegin(n.dir, n.id, time.Now())
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -614,7 +615,7 @@ func TestWipeCrashPoints(t *testing.T) {
 					if err != nil || !resume || id != m.NewClusterID {
 						t.Fatalf("wipe info after the crash: %s %v %v", id, resume, err)
 					}
-					if again, err := WipeBegin(n.dir, time.Now()); err != nil || again.NewClusterID != m.NewClusterID {
+					if again, err := WipeBegin(n.dir, n.id, time.Now()); err != nil || again.NewClusterID != m.NewClusterID {
 						t.Fatalf("a second begin: %+v %v", again, err)
 					}
 				}
@@ -637,6 +638,17 @@ func TestWipeCrashPoints(t *testing.T) {
 				}
 				if n.svc.Status(context.Background()).Listening {
 					t.Fatal("a listener after the wipe")
+				}
+				// The wipe keeps the audit and continues its chain:
+				// the first record is still the first start's.
+				recs := records(t, n)
+				var kinds []string
+				for _, r := range recs {
+					kinds = append(kinds, r.Kind)
+				}
+				k := strings.Join(kinds, " ")
+				if recs[0].Kind != audit.KindStarted || !strings.Contains(k, audit.EventWipeBegun) || !strings.Contains(k, audit.EventWipeFinished) {
+					t.Fatalf("audit after the wipe: %s", k)
 				}
 			})
 		}

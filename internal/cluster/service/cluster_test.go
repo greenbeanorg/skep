@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/greenbeanorg/skep/internal/cluster/audit"
 	"github.com/greenbeanorg/skep/internal/cluster/clusterconf"
 	"github.com/greenbeanorg/skep/internal/cluster/clusterstate"
 	"github.com/greenbeanorg/skep/internal/cluster/joincode"
@@ -58,6 +59,7 @@ type tnode struct {
 	done   chan struct{}
 	hook   func(step int, id string) bool
 	rhook  func(step int, id string) bool
+	alog   *audit.Log
 }
 
 // state is the node's state directory.
@@ -172,10 +174,32 @@ func (h *harness) start(n *tnode) {
 	if js != nil && js.Phase == joinstate.PhaseCalling {
 		js.Phase = joinstate.PhaseUnknown
 	}
+	// The cluster audit, as serve opens it.
+	alog, err := audit.Open(n.dir, n.clock.now)
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	if alog.Empty() {
+		last, err := store.LastIndex(n.state())
+		if err != nil {
+			h.t.Fatal(err)
+		}
+		var epoch uint64
+		if f := writer.Current(); f != nil {
+			epoch = f.Epoch
+		} else if last > 0 {
+			epoch = 1
+		}
+		if err := alog.Started(epoch, last); err != nil {
+			h.t.Fatal(err)
+		}
+	}
+	n.alog = alog
 	machine := clusterstate.New()
 	machine.SetMembershipWriter(writer.Write)
+	machine.SetAuditWriter(alog)
 	svc := New(Options{Config: n.cfg, Key: n.key, DataDir: n.dir, Machine: machine, Writer: writer, Join: js,
-		Now: n.clock.now, Logger: log, Interval: 50 * time.Millisecond, LeaderInterval: 300 * time.Millisecond})
+		Now: n.clock.now, Logger: log, Interval: 50 * time.Millisecond, LeaderInterval: 300 * time.Millisecond, Audit: alog})
 	svc.afterJoinStep = n.hook
 	svc.afterRemovalStep = n.rhook
 	machine.SetOnApplied(svc.OnApplied)
@@ -209,7 +233,10 @@ func (h *harness) stop(n *tnode) {
 	if n.st != nil {
 		_ = n.st.Close()
 	}
-	n.cancel, n.svc, n.st = nil, nil, nil
+	if n.alog != nil {
+		_ = n.alog.Close()
+	}
+	n.cancel, n.svc, n.st, n.alog = nil, nil, nil, nil
 }
 
 type testWriter struct {
