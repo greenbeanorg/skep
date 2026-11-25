@@ -417,7 +417,8 @@ func (l *Log) append(r Record) error {
 		if err != nil {
 			return fmt.Errorf("audit: new segment: %w", err)
 		}
-		if _, err := f.Write(b); err == nil {
+		_, err = f.Write(b)
+		if err == nil {
 			err = f.Sync()
 		}
 		if err != nil {
