@@ -1,0 +1,44 @@
+#!/bin/bash
+# 8b-2a fix round lab (job 3): drive smith (S), langrishe (L) and star (T) from
+# merrick over ssh as aba (sudo on the VMs). The package stage (make stage,
+# dist/pkg), the FreeBSD cluster-probe and 8b2a-fix-lab-upgrade.sh are copied
+# to ~/skep-8b2a-fix on each VM first (deploy).
+# Usage: 8b2a-fix-lab.sh deploy | upgrade HOST | wait3 | wait2 A B | st HOST | hl HOST | pids | term HOST | rootcheck | sc HOST ARGS...
+set -u
+S=10.79.20.81; L=10.79.20.82; T=10.79.20.83
+SC=/usr/local/sbin/skep-cluster
+on() { local h=$1; shift; ssh -o BatchMode=yes -o ConnectTimeout=10 aba@$h "$@"; }
+h() { echo; echo "=== $(date -u +%H:%M:%SZ) $* ==="; }
+name() { case $1 in $S) echo smith;; $L) echo langrishe;; $T) echo star;; *) echo "$1";; esac; }
+pids() { for x in $S $L $T; do echo "$(name $x): $(on $x 'for s in skep-agent skep-api skep-cluster; do printf "%s=%s " $s "$(pgrep -x $s | tr "\n" " ")"; done; echo "vid=$(sysctl -n hw.vmm.vmx.cap.virtual_interrupt_delivery)"')"; done; }
+st() { on $1 "sudo $SC status"; }
+hl() { on $1 "sudo $SC health; echo health-exit=\$?"; }
+# healthyN HOSTS...: every given host shows N "member, voter" lines and health ok.
+healthyN() { local n=$1; shift; for x in "$@"; do local s; s=$(st $x) || return 1
+	[ "$(echo "$s" | grep -c 'member, voter')" = "$n" ] && echo "$s" | grep -q '^Health: *ok' || return 1; done; }
+waitN() { local n=$1; shift; local i=0; while [ $i -lt 180 ]; do healthyN $n "$@" && { echo "healthy ($n voters on $*) after ${i}s"; return 0; }; sleep 2; i=$((i+2)); done; echo "TIMEOUT: not healthy"; return 1; }
+
+case ${1:-} in
+deploy)
+	for x in $S $L $T; do
+		h "deploy to $(name $x)"
+		on $x 'rm -rf skep-8b2a-fix && mkdir -p skep-8b2a-fix'
+		tar -C dist -cf - pkg | on $x 'tar -C skep-8b2a-fix -xf -'
+		scp -q bin/freebsd-amd64-test/cluster-probe tests/integration/cluster/results/8b2a-fix-lab-upgrade.sh aba@$x:skep-8b2a-fix/
+		on $x 'ls skep-8b2a-fix; sha256 -q skep-8b2a-fix/pkg/stage/usr/local/sbin/skep-cluster'
+	done ;;
+upgrade)
+	x=$2; ck="-mgmt vtnet0"; [ "$x" = "$S" ] || ck="-mgmt vtnet0 -pool zroot -no-racct"
+	h "upgrade $(name $x)"
+	on $x "sh skep-8b2a-fix/8b2a-fix-lab-upgrade.sh skep-8b2a-fix $ck"
+	waitN 3 $S $L $T; pids ;;
+wait3) waitN 3 $S $L $T ;;
+wait2) waitN 2 "$2" "$3" ;;
+st) st "$2" ;;
+hl) hl "$2" ;;
+pids) pids ;;
+term) st "$2" | sed -n 's/^Raft: *//p' ;;
+rootcheck) for x in $S $L $T; do echo "$(name $x): root-owned [$(on $x 'sudo find /var/db/skep/cluster -user root | tr "\n" " "')]"; done ;;
+sc) x=$2; shift 2; h "$(name $x): skep-cluster $*"; on $x "sudo $SC $*"; echo "exit=$?" ;;
+*) echo "usage: $0 deploy | upgrade HOST | wait3 | wait2 A B | st HOST | hl HOST | pids | term HOST | rootcheck | sc HOST ARGS..." >&2; exit 2 ;;
+esac
