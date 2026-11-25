@@ -128,10 +128,20 @@ func toPeerError(err error) error {
 }
 
 // notLeader returns a not_leader answer naming the leader, when this node
-// is not the leader.
+// is not the leader, and "unavailable" while it is a leader whose barrier
+// of the current term has not yet succeeded (V2 of the 8b-2b review): its
+// view may lack entries committed in earlier terms, and a refusal computed
+// from it (a join's "no pending entry" or "expired", whose caller records
+// phase refused) could be taken as final. Every caller asks again.
 func (s *Service) notLeader() (*raftnet.PeerError, bool) {
 	st := s.getStore()
 	if st.IsLeader() {
+		s.mu.Lock()
+		ready := s.barrierTerm == st.Term()
+		s.mu.Unlock()
+		if !ready {
+			return &raftnet.PeerError{Code: raftnet.CodeUnavailable, Message: "this node has just become the leader and has not yet applied the earlier terms' entries; ask again"}, true
+		}
 		return nil, false
 	}
 	id, addr := st.Leader()

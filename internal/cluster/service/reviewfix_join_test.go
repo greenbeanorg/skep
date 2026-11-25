@@ -18,6 +18,7 @@ import (
 	"github.com/greenbeanorg/skep/internal/cluster/joinstate"
 	"github.com/greenbeanorg/skep/internal/cluster/layout"
 	"github.com/greenbeanorg/skep/internal/cluster/nodekey"
+	"github.com/greenbeanorg/skep/internal/cluster/raftnet"
 	"github.com/greenbeanorg/skep/internal/ids"
 )
 
@@ -304,4 +305,54 @@ func TestBrokenAuditDirectoryIsKept(t *testing.T) {
 	x.key = loadKey(t, x.dir)
 	h.start(x)
 	h.eventually("x leads its own cluster after the wipe", 20*time.Second, func() bool { return x.st != nil && x.st.IsLeader() })
+}
+
+// V1 of the 8b-2b review: both stages of join --abandon (CheckAbandon,
+// which runs while the service runs, and StageAbandon) count a member's
+// "cannot say" exactly as no answer: with one member answering cannot say
+// and the others down, both answer no_answer and nothing changes.
+func TestAbandonCountsCannotSayAsNoAnswer(t *testing.T) {
+	h := newHarness(t)
+	defer h.stopAll()
+	h.cluster("smith", "langrishe", "star")
+	down := follower(h)
+	h.stop(down) // wu stays a non-voter
+	j := h.node("wu")
+	h.start(j)
+	h.eventually("wu leads its one-node cluster", 20*time.Second, func() bool { return j.svc.machine.View().ClusterID != "" })
+	if out := h.join(j, h.admit(h.leader(), j)); out.Outcome != JoinAccepted {
+		t.Fatalf("join: %+v", out)
+	}
+	h.eventually("wu is a non-voter", 30*time.Second, func() bool {
+		servers, _ := h.leader().st.Servers()
+		_, ok := findServer(servers, j.id)
+		return ok
+	})
+	h.remove(h.leader(), j.name)
+	h.gone(j, 60*time.Second)
+	h.stop(j)
+	x := h.leader()
+	y := follower(h, j, x)
+	h.stop(y)
+	// x's machine looks behind its applied-membership file: it cannot say.
+	cur := x.svc.writer.Current()
+	if err := x.svc.writer.Write(clusterstate.Membership{ClusterID: cur.ClusterID, Epoch: cur.Epoch, Index: cur.Index + 1000,
+		Members: toMembers(cur.Members)}); err != nil {
+		t.Fatal(err)
+	}
+	if res, _ := raftnet.ProbeKey(x.cfg.PeerAddress(), x.key.Pin(), j.key.Certificate, 3*time.Second); res != raftnet.ProbeCannotSay {
+		t.Fatalf("setup: x answers %s", res)
+	}
+	before, _ := os.ReadFile(filepath.Join(j.dir, joinstate.FileName))
+	for name, stage := range map[string]func() AbandonOutcome{
+		"check": func() AbandonOutcome { return CheckAbandon(j.dir, j.cfg, j.key, 2*time.Second) },
+		"stage": func() AbandonOutcome { return StageAbandon(j.dir, j.cfg, j.key, 2*time.Second) },
+	} {
+		if out := stage(); out.Outcome != "no_answer" {
+			t.Fatalf("%s: %+v", name, out)
+		}
+		if after, _ := os.ReadFile(filepath.Join(j.dir, joinstate.FileName)); string(after) != string(before) {
+			t.Fatalf("%s changed join.json", name)
+		}
+	}
 }

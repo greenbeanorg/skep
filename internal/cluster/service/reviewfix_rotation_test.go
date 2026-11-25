@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -403,5 +404,112 @@ func TestRoundMembersFromTheFileKeepTheNextPin(t *testing.T) {
 	s := New(Options{Config: clusterconf.Config{NodeID: "00000000-0000-4000-8000-0000000000a1"}, Writer: w, Logger: discardLog()})
 	if m := s.roundMembers(); len(m) != 1 || m[0].NextPin != next {
 		t.Fatalf("round members: %+v", m)
+	}
+}
+
+// V2 of the 8b-2b review: a leader whose barrier of the current term has
+// not yet succeeded answers the peer operations (join, admit, withdraw,
+// remove, key-add, key-abort) with "unavailable", never with a refusal
+// computed from a view that may lack earlier terms' entries.
+func TestLeaderAnswersOnlyAfterTheTermBarrier(t *testing.T) {
+	h := newHarness(t)
+	defer h.stopAll()
+	h.cluster("smith", "langrishe")
+	l := h.leader()
+	x := follower(h)
+	entered, release := make(chan struct{}, 1), make(chan struct{})
+	l.svc.mu.Lock()
+	l.svc.beforeBarrier = func() {
+		select {
+		case entered <- struct{}{}:
+		default:
+		}
+		<-release
+	}
+	l.svc.barrierTerm = 0 // as at the start of a term
+	l.svc.mu.Unlock()
+	select {
+	case <-entered:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the leader did not start its barrier")
+	}
+	from := raftnet.Peer{NodeID: x.id, Name: x.name, Pin: x.key.Pin(), ConnPin: x.key.Pin(), Kind: raftnet.KindMember}
+	for op, body := range map[string]string{
+		raftnet.OpJoin:     `{"op_id":"00000000-0000-4000-8000-0000000000dd"}`,
+		raftnet.OpAdmit:    `{"request":"x","actor":"root","op_id":"op1"}`,
+		raftnet.OpWithdraw: `{"name":"wu","actor":"root","op_id":"op2"}`,
+		raftnet.OpRemove:   `{"name":"wu","actor":"root","op_id":"op3"}`,
+		raftnet.OpKeyAdd:   `{"op_id":"op4","next_pin":"sha256:` + strings.Repeat("e", 64) + `","actor":"root"}`,
+		raftnet.OpKeyAbort: `{"op_id":"op5","next_pin":"sha256:` + strings.Repeat("e", 64) + `","actor":"root"}`,
+	} {
+		_, err := l.svc.HandlePeer(context.Background(), op, from, []byte(body))
+		var pe *raftnet.PeerError
+		if !errors.As(err, &pe) || pe.Code != raftnet.CodeUnavailable || !strings.Contains(pe.Message, "just become the leader") {
+			t.Errorf("%s before the barrier: %v", op, err)
+		}
+	}
+	l.svc.mu.Lock()
+	l.svc.beforeBarrier = nil
+	l.svc.mu.Unlock()
+	close(release)
+	h.eventually("the leader answers after its barrier", 10*time.Second, func() bool { _, not := l.svc.notLeader(); return !not })
+}
+
+// V3 of the 8b-2b review: at the apply of member.key_done, a connection
+// accepted with the dropped pin is closed (well before the listener's
+// 5-minute idle limit), and the pin is refused in the next handshake.
+func TestKeyDoneClosesConnectionsOfTheDroppedPin(t *testing.T) {
+	h := newHarness(t)
+	defer h.stopAll()
+	h.cluster("smith", "langrishe", "star")
+	x := follower(h)
+	n := follower(h, x)
+	oldKey := loadKey(t, x.dir)
+	h.stop(n) // the rotation waits at the add
+	res, err := x.svc.Rotate(context.Background(), "root")
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.start(n)
+	h.eventually(n.name+" has the next pin", 20*time.Second, func() bool { _, next := pinOn(n, x); return next == res.NewPin })
+	// A connection to n with the old key, while both pins are accepted.
+	c, err := raftnet.DialPinned(n.cfg.PeerAddress(), n.key.Pin(), oldKey.Certificate, 3*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	closed := make(chan time.Time, 1)
+	early := make(chan string, 1)
+	svc := n.svc
+	go func() {
+		buf := make([]byte, 16)
+		for {
+			if _, err := c.Read(buf); err != nil {
+				// Closed only once n has dropped the old pin.
+				if m, ok := svc.machine.Member(x.id); !ok || m.Pin != res.NewPin || m.NextPin != "" {
+					early <- fmt.Sprintf("closed before keep new was applied: %+v %v", m, err)
+				}
+				closed <- time.Now()
+				return
+			}
+		}
+	}()
+	h.rotated(x, res.NewPin, 90*time.Second)
+	applied := time.Now() // n has applied keep new by now (rotated checks it)
+	select {
+	case at := <-closed:
+		select {
+		case msg := <-early:
+			t.Fatal(msg)
+		default:
+		}
+		if at.After(applied.Add(5 * time.Second)) {
+			t.Fatalf("closed %s after the apply", at.Sub(applied))
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the connection with the dropped pin is still open")
+	}
+	if r, _ := raftnet.ProbeKey(n.cfg.PeerAddress(), n.key.Pin(), oldKey.Certificate, 3*time.Second); r != raftnet.ProbeRefused {
+		t.Fatalf("the dropped pin in the next handshake: %s", r)
 	}
 }
