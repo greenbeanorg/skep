@@ -2,15 +2,18 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/greenbeanorg/skep/internal/cluster/audit"
 	"github.com/greenbeanorg/skep/internal/cluster/clusterconf"
 	"github.com/greenbeanorg/skep/internal/cluster/clusterstate"
 	"github.com/greenbeanorg/skep/internal/cluster/joincode"
@@ -58,6 +61,7 @@ type tnode struct {
 	done   chan struct{}
 	hook   func(step int, id string) bool
 	rhook  func(step int, id string) bool
+	alog   *audit.Log
 }
 
 // state is the node's state directory.
@@ -79,6 +83,9 @@ func (l *logBuffer) String() string {
 	defer l.mu.Unlock()
 	return l.b.String()
 }
+
+// nextHarnessIP numbers the loopback addresses of harness nodes.
+var nextHarnessIP atomic.Uint32
 
 type harness struct {
 	t     *testing.T
@@ -112,7 +119,11 @@ func (h *harness) node(name string) *tnode {
 	if err != nil {
 		h.t.Fatal(err)
 	}
-	ip := "127.0.88." + string(rune('0'+h.next))
+	// Each node of the package's tests has its own loopback address
+	// (127.89.x.y), so that a node of an earlier test that is still
+	// shutting down can never answer for a node of a later one.
+	seq := nextHarnessIP.Add(1)
+	ip := fmt.Sprintf("127.89.%d.%d", seq/250, seq%250+1)
 	h.next++
 	n := &tnode{name: name, id: id, dir: dir, key: key, clock: &clock{}, logs: &logBuffer{},
 		cfg: clusterconf.Config{NodeID: id, NodeName: name, ListenAddress: ip}}
@@ -172,10 +183,36 @@ func (h *harness) start(n *tnode) {
 	if js != nil && js.Phase == joinstate.PhaseCalling {
 		js.Phase = joinstate.PhaseUnknown
 	}
+	// The cluster audit, as serve opens it.
+	alog, err := audit.Open(n.dir, n.clock.now)
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	if alog.Empty() {
+		last, err := store.LastIndex(n.state())
+		if err != nil {
+			h.t.Fatal(err)
+		}
+		var epoch uint64
+		if f := writer.Current(); f != nil {
+			epoch = f.Epoch
+		} else if last > 0 {
+			epoch = 1
+		}
+		if err := alog.Started(epoch, last); err != nil {
+			h.t.Fatal(err)
+		}
+	}
+	n.alog = alog
+	rotation, err := ReadRotate(n.dir)
+	if err != nil {
+		h.t.Fatal(err)
+	}
 	machine := clusterstate.New()
 	machine.SetMembershipWriter(writer.Write)
+	machine.SetAuditWriter(alog)
 	svc := New(Options{Config: n.cfg, Key: n.key, DataDir: n.dir, Machine: machine, Writer: writer, Join: js,
-		Now: n.clock.now, Logger: log, Interval: 50 * time.Millisecond, LeaderInterval: 300 * time.Millisecond})
+		Now: n.clock.now, Logger: log, Interval: 50 * time.Millisecond, LeaderInterval: 300 * time.Millisecond, Audit: alog, Rotation: rotation})
 	svc.afterJoinStep = n.hook
 	svc.afterRemovalStep = n.rhook
 	machine.SetOnApplied(svc.OnApplied)
@@ -209,7 +246,10 @@ func (h *harness) stop(n *tnode) {
 	if n.st != nil {
 		_ = n.st.Close()
 	}
-	n.cancel, n.svc, n.st = nil, nil, nil
+	if n.alog != nil {
+		_ = n.alog.Close()
+	}
+	n.cancel, n.svc, n.st, n.alog = nil, nil, nil, nil
 }
 
 type testWriter struct {
@@ -327,7 +367,13 @@ func (h *harness) cluster(names ...string) []*tnode {
 			}
 			h.joined(n, 60*time.Second)
 		} else {
-			h.eventually(name+" leads its one-node cluster", 20*time.Second, func() bool { return n.st.IsLeader() })
+			// Leads, and its barrier of the term has succeeded: until
+			// then it answers peer operations "unavailable" (V2 of the
+			// 8b-2b review).
+			h.eventually(name+" leads its one-node cluster", 20*time.Second, func() bool {
+				_, notReady := n.svc.notLeader()
+				return n.st.IsLeader() && !notReady
+			})
 		}
 		out = append(out, n)
 	}

@@ -92,9 +92,17 @@ func (s *Service) leaderRound(ctx context.Context) bool {
 	// A leader that is itself being removed hands leadership over first;
 	// the new leader does the removal (ADR 0013 B1 removal step 1, D6).
 	if self, ok := s.machine.Member(s.cfg.NodeID); ok && self.State == clusterstate.StateRemoving {
-		s.log.Info("leader: this node is being removed; handing the leadership over")
-		if err := st.TransferLeadership(); err != nil {
-			s.log.Warn("leader: handing the leadership over failed; retrying", "error", err)
+		s.mu.Lock()
+		answers := s.answers
+		s.mu.Unlock()
+		target, ok := handoverTarget(view, servers, answers, s.cfg.NodeID)
+		if !ok {
+			s.log.Warn("leader: this node is being removed, and no voter in state member answered the last status round; the hand-over waits")
+			return false
+		}
+		s.log.Info("leader: this node is being removed; handing the leadership over", "to", target.ID)
+		if err := st.TransferLeadership(target.ID, target.Address); err != nil {
+			s.log.Warn("leader: handing the leadership over failed; retrying", "to", target.ID, "error", err)
 		}
 		return true
 	}
@@ -114,6 +122,9 @@ func (s *Service) leaderRound(ctx context.Context) bool {
 		return true
 	}
 	if s.continueRemovals(ctx, view, servers) {
+		return true
+	}
+	if s.proposeKeyDone(view) {
 		return true
 	}
 	if s.proposeExpiries(view) {
@@ -152,6 +163,34 @@ func (s *Service) ghostSweep(view clusterstate.View, servers []store.Server) boo
 		return true
 	}
 	return false
+}
+
+// handoverTarget picks the voter a leader hands the leadership to before
+// its own removal: a voter of the latest configuration other than this
+// node whose member entry is in state member (never removing, never
+// joining) and that answered the status round, with the highest applied
+// index; on a tie the lowest node ID. ok is false when there is none.
+func handoverTarget(view clusterstate.View, servers []store.Server, answers map[string]statusResult, self string) (store.Server, bool) {
+	var best store.Server
+	var bestApplied uint64
+	found := false
+	for _, sv := range servers {
+		if !sv.Voter || sv.ID == self {
+			continue
+		}
+		m, ok := memberOf(view, sv.ID)
+		if !ok || m.State != clusterstate.StateMember {
+			continue
+		}
+		r, ok := answers[sv.ID]
+		if !ok || r.err != nil || r.stalled {
+			continue
+		}
+		if !found || r.applied > bestApplied || (r.applied == bestApplied && sv.ID < best.ID) {
+			best, bestApplied, found = sv, r.applied, true
+		}
+	}
+	return best, found
 }
 
 func memberOf(view clusterstate.View, id string) (clusterstate.Member, bool) {
@@ -370,11 +409,25 @@ func (s *Service) appliedOf(ctx context.Context, m clusterstate.Member) (uint64,
 	cctx, cancel := context.WithTimeout(ctx, statusTimeout)
 	defer cancel()
 	var ans StatusAnswer
-	if err := s.caller.Call(cctx, m.Address, m.Pin, raftnet.OpStatus, struct{}{}, &ans); err != nil {
+	if err := s.callMember(cctx, m, raftnet.OpStatus, struct{}{}, &ans); err != nil {
 		return 0, false, err
 	}
 	if ans.NodeID != m.ID {
 		return 0, false, fmt.Errorf("node at %s answered as %s", m.Address, ans.NodeID)
 	}
 	return ans.AppliedIndex, ans.Stalled, nil
+}
+
+// callMember makes a Skep RPC to a member, accepting either of its pins
+// (a rotating member, D1 of step 8b-2b), and notes which pin its key had.
+func (s *Service) callMember(ctx context.Context, m clusterstate.Member, op string, in, out any) error {
+	pins := []string{m.Pin}
+	if m.NextPin != "" {
+		pins = append(pins, m.NextPin)
+	}
+	seen, err := s.caller.CallPins(ctx, m.Address, pins, op, in, out)
+	if seen != "" {
+		s.SawPin(m.ID, seen)
+	}
+	return err
 }

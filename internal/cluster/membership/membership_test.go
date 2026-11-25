@@ -94,7 +94,10 @@ func TestReadIsStrict(t *testing.T) {
 		"unknown field": `{"format":1,"cluster_id":"` + cid + `","epoch":1,"index":1,"members":[],"x":1}`,
 		"pending entry": `{"format":1,"cluster_id":"` + cid + `","epoch":1,"index":1,"members":[],"pendings":[]}`,
 		"bad pin":       `{"format":1,"cluster_id":"` + cid + `","epoch":1,"index":1,"members":[{"id":"` + idA + `","name":"a","address":"","pin":"x","state":"member"}]}`,
-		"bad format":    `{"format":2,"cluster_id":"` + cid + `","epoch":1,"index":1,"members":[]}`,
+		"bad format":    `{"format":3,"cluster_id":"` + cid + `","epoch":1,"index":1,"members":[]}`,
+		"2, no next":    `{"format":2,"cluster_id":"` + cid + `","epoch":1,"index":1,"members":[]}`,
+		"next in 1":     `{"format":1,"cluster_id":"` + cid + `","epoch":1,"index":1,"members":[{"id":"` + idA + `","name":"a","address":"","pin":"sha256:` + strings.Repeat("a", 64) + `","next_pin":"sha256:` + strings.Repeat("b", 64) + `","state":"member"}]}`,
+		"next = pin":    `{"format":2,"cluster_id":"` + cid + `","epoch":1,"index":1,"members":[{"id":"` + idA + `","name":"a","address":"","pin":"sha256:` + strings.Repeat("a", 64) + `","next_pin":"sha256:` + strings.Repeat("a", 64) + `","state":"member"}]}`,
 		"no index":      `{"format":1,"cluster_id":"` + cid + `","epoch":1,"index":0,"members":[]}`,
 		"too large":     strings.Repeat(" ", maxSize+1),
 	} {
@@ -103,5 +106,31 @@ func TestReadIsStrict(t *testing.T) {
 		if _, err := Read(dir); err == nil {
 			t.Errorf("%s: read", name)
 		}
+	}
+}
+
+// Step 8b-2b: a next pin is written in format 2, read back, and the file
+// goes back to format 1 once no member has one.
+func TestNextPinFormat(t *testing.T) {
+	dir := t.TempDir()
+	w, err := NewWriter(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pa, pb := "sha256:"+strings.Repeat("a", 64), "sha256:"+strings.Repeat("b", 64)
+	m := clusterstate.Membership{ClusterID: cid, Epoch: 1, Index: 5, Members: []clusterstate.Member{{ID: idA, Name: "a", Pin: pa, NextPin: pb, State: clusterstate.StateMember}}}
+	if err := w.Write(m); err != nil {
+		t.Fatal(err)
+	}
+	f, err := Read(dir)
+	if err != nil || f.Format != 2 || f.Members[0].NextPin != pb {
+		t.Fatalf("%+v %v", f, err)
+	}
+	m.Index, m.Members[0].Pin, m.Members[0].NextPin = 6, pb, ""
+	if err := w.Write(m); err != nil {
+		t.Fatal(err)
+	}
+	if f, err = Read(dir); err != nil || f.Format != 1 || f.Members[0].Pin != pb {
+		t.Fatalf("%+v %v", f, err)
 	}
 }

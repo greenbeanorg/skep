@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/greenbeanorg/skep/internal/cluster/audit"
 	"github.com/greenbeanorg/skep/internal/cluster/clusterstate"
 	"github.com/greenbeanorg/skep/internal/cluster/joinstate"
 	"github.com/greenbeanorg/skep/internal/cluster/layout"
@@ -190,6 +191,7 @@ func (s *Service) enterRemoved(clusterID, how string) {
 	s.listener = nil
 	st := s.store
 	s.mu.Unlock()
+	s.event(audit.EventRemoved, map[string]string{"cluster_id": clusterID, "how": how})
 	s.log.Error("this node was removed from its cluster: its Raft instance and its listener are shut; run \"skep-cluster leave --wipe\"",
 		"cluster_id", clusterID, "how", how)
 	if l != nil {
@@ -208,7 +210,7 @@ func (s *Service) notifyRemoved(ctx context.Context, clusterID string, m cluster
 	}
 	cctx, cancel := context.WithTimeout(ctx, statusTimeout)
 	defer cancel()
-	err := s.caller.Call(cctx, m.Address, m.Pin, raftnet.OpRemoved, RemovedNotice{ClusterID: clusterID, NodeID: m.ID}, nil)
+	err := s.callMember(cctx, m, raftnet.OpRemoved, RemovedNotice{ClusterID: clusterID, NodeID: m.ID}, nil)
 	if err != nil {
 		s.log.Info("the notice to the removed node was not delivered (best effort)", "node_id", m.ID, "address", m.Address, "error", err)
 		return
@@ -290,6 +292,7 @@ func (s *Service) checkNotice(ctx context.Context, clusterID string, from raftne
 	}
 	s.log.Warn("a removed notice was dropped: no round had a node refuse this node's key with none accepting it",
 		"from", from.Name, "node_id", from.NodeID, "rounds", noticeRounds)
+	s.event(audit.EventNoticeDropped, map[string]string{"from": from.NodeID, "from_name": from.Name, "cluster_id": clusterID})
 }
 
 // probeOwnKey probes every node this node accepts now (not pending ones),
@@ -304,7 +307,7 @@ func (s *Service) probeOwnKey(from raftnet.Peer) (int, []string) {
 			continue
 		}
 		seen[p.NodeID] = true
-		switch res, _ := raftnet.ProbeKey(p.Address, p.Pin, s.certificate, noticeProbeTimeout); res {
+		switch res, _ := raftnet.ProbeKeyPins(p.Address, p.Pins(), s.certificate, noticeProbeTimeout); res {
 		case raftnet.ProbeRefused:
 			refused++
 		case raftnet.ProbeAccepted:
@@ -320,6 +323,10 @@ type statusResult struct {
 	stalled bool
 	err     error
 	at      time.Time
+	// key is what the member's listener answered to this node's key
+	// (raftnet.KeyAnswer of the status call): accepted, refused, cannot
+	// say or no answer.
+	key string
 }
 
 // statusStep is the status round every node runs every LeaderInterval
@@ -339,15 +346,92 @@ func (s *Service) statusStep(ctx context.Context) {
 	s.mu.Unlock()
 	// In its own goroutine, so that the once-a-second work is not held
 	// for statusTimeout while a member does not answer.
-	members := s.machine.View().Members
+	members := s.roundMembers()
 	go func() {
 		res := s.statusRound(ctx, members)
+		clocks := s.clockRound(ctx, members, res)
 		s.mu.Lock()
 		s.answers = res
 		s.noteApplied(res)
+		s.noteKeyAnswers(res)
+		s.noteClocks(clocks)
 		s.statusBusy = false
+		s.firstRound = true
 		s.mu.Unlock()
 	}()
+}
+
+// roundMembers are the members a status round asks: the state machine's,
+// or, while it has none yet (a restart before the first entries are
+// applied), the applied-membership file's (D6 of step 8b-2b).
+func (s *Service) roundMembers() []clusterstate.Member {
+	members := s.machine.View().Members
+	if len(members) > 0 {
+		return members
+	}
+	if f := s.writer.Current(); f != nil {
+		for _, m := range f.Members {
+			members = append(members, clusterstate.Member{ID: m.ID, Name: m.Name, Address: m.Address, Pin: m.Pin, NextPin: m.NextPin, State: m.State})
+		}
+	}
+	return members
+}
+
+// keyRefusedRounds is how many consecutive status rounds must have a real
+// refusal of this node's key and no acceptance before health warns (D6).
+const keyRefusedRounds = 3
+
+// noteKeyAnswers counts the consecutive status rounds in which at least
+// one other member refused this node's key and none accepted it. A round
+// with nobody else to ask resets the count. s.mu is held.
+func (s *Service) noteKeyAnswers(res map[string]statusResult) {
+	refused, accepted := 0, 0
+	for id, r := range res {
+		if id == s.cfg.NodeID {
+			continue
+		}
+		switch r.key {
+		case raftnet.ProbeRefused:
+			refused++
+		case raftnet.ProbeAccepted:
+			accepted++
+		}
+	}
+	if refused > 0 && accepted == 0 {
+		s.keyRefused++
+	} else {
+		s.keyRefused = 0
+	}
+}
+
+// clockRound asks every member that answered the status round for its
+// clock, at once (D3). A member that did not answer status gets no sample
+// this round ("no answer").
+func (s *Service) clockRound(ctx context.Context, members []clusterstate.Member, res map[string]statusResult) map[string]clockSample {
+	out := map[string]clockSample{}
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	for _, m := range members {
+		if m.ID == s.cfg.NodeID {
+			continue
+		}
+		if r, ok := res[m.ID]; !ok || r.err != nil {
+			mu.Lock()
+			out[m.ID] = clockSample{unknown: "no answer"}
+			mu.Unlock()
+			continue
+		}
+		wg.Add(1)
+		go func(m clusterstate.Member) {
+			defer wg.Done()
+			c := s.sampleClock(ctx, m)
+			mu.Lock()
+			out[m.ID] = c
+			mu.Unlock()
+		}(m)
+	}
+	wg.Wait()
+	return out
 }
 
 // noteApplied keeps, per member, the highest applied index it has ever
@@ -370,8 +454,12 @@ func (s *Service) statusRound(ctx context.Context, members []clusterstate.Member
 		go func(m clusterstate.Member) {
 			defer wg.Done()
 			applied, stalled, err := s.appliedOf(ctx, m)
+			key := raftnet.KeyAnswer(err)
+			if err != nil && m.Address == "" {
+				key = raftnet.ProbeNoAnswer
+			}
 			mu.Lock()
-			out[m.ID] = statusResult{applied: applied, stalled: stalled, err: err, at: s.now()}
+			out[m.ID] = statusResult{applied: applied, stalled: stalled, err: err, at: s.now(), key: key}
 			mu.Unlock()
 		}(m)
 	}
@@ -388,6 +476,10 @@ func (s *Service) unappliedRemoval(view clusterstate.View) []string {
 		return nil
 	}
 	s.mu.Lock()
+	if !s.firstRound {
+		s.mu.Unlock()
+		return nil
+	}
 	answers := s.answers
 	highest := make(map[string]uint64, len(s.highest))
 	for id, h := range s.highest {
@@ -521,9 +613,16 @@ type forwardRemove struct {
 	ClusterID       string `json:"cluster_id,omitempty"`
 }
 
-func removedError() *localapi.OpError {
+// removedError is the refusal of an operation on a removed node. A node
+// that was joining (join.json exists) is told to abandon the join, which
+// puts its one-node cluster back, as health says.
+func (s *Service) removedError() *localapi.OpError {
+	next := "run \"skep-cluster leave --wipe\""
+	if s.joinState() != nil {
+		next = "run \"skep-cluster join --abandon\" (which puts this host's one-node cluster back)"
+	}
 	return &localapi.OpError{HTTPStatus: http.StatusConflict, Code: "removed",
-		Message: "this node was removed from its cluster; run \"skep-cluster leave --wipe\""}
+		Message: "this node was removed from its cluster; " + next}
 }
 
 // Remove implements localapi.Backend: "skep-cluster remove NAME", root
@@ -532,7 +631,7 @@ func removedError() *localapi.OpError {
 // (removing) is committed; the leader loop does the other two steps.
 func (s *Service) Remove(ctx context.Context, req localapi.RemoveRequest, actor string) (localapi.RemoveResult, error) {
 	if s.isRemoved() {
-		return localapi.RemoveResult{}, removedError()
+		return localapi.RemoveResult{}, s.removedError()
 	}
 	if !clusterstate.ValidName(req.Name) {
 		return localapi.RemoveResult{}, &localapi.OpError{HTTPStatus: http.StatusBadRequest, Code: "invalid_request", Message: "not a valid node name"}
@@ -643,11 +742,16 @@ func (s *Service) removeAsLeader(ctx context.Context, req forwardRemove, origin 
 	// D6: the leader is the node to remove: hand the leadership over
 	// first; the new leader does the removal.
 	if x.ID == s.cfg.NodeID {
-		if err := st.TransferLeadership(); err != nil {
+		target, ok := handoverTarget(view, servers, answers, s.cfg.NodeID)
+		if !ok {
+			return localapi.RemoveResult{}, &localapi.OpError{HTTPStatus: http.StatusServiceUnavailable, Code: "handover_failed",
+				Message: "this node is the leader and must hand the leadership over before it is removed, but no other voter in state member answered the status round; nothing was written"}
+		}
+		if err := st.TransferLeadership(target.ID, target.Address); err != nil {
 			return localapi.RemoveResult{}, &localapi.OpError{HTTPStatus: http.StatusServiceUnavailable, Code: "handover_failed",
 				Message: "this node is the leader and must hand the leadership over before it is removed, and the hand-over failed: " + err.Error() + "; nothing was written"}
 		}
-		s.log.Info("leader: leadership handed over before this node's removal")
+		s.log.Info("leader: leadership handed over before this node's removal", "to", target.ID)
 		deadline := time.Now().Add(10 * time.Second)
 		for {
 			id, _ := st.Leader()

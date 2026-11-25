@@ -13,9 +13,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/greenbeanorg/skep/internal/cluster/audit"
 	"github.com/greenbeanorg/skep/internal/cluster/clusterconf"
 	"github.com/greenbeanorg/skep/internal/cluster/clusterstate"
 	"github.com/greenbeanorg/skep/internal/cluster/joinstate"
+	"github.com/greenbeanorg/skep/internal/cluster/layout"
 	"github.com/greenbeanorg/skep/internal/cluster/localapi"
 	"github.com/greenbeanorg/skep/internal/cluster/membership"
 	"github.com/greenbeanorg/skep/internal/cluster/nodekey"
@@ -39,7 +41,7 @@ type Store interface {
 	AddNonvoter(id, address string) error
 	AddVoter(id, address string) error
 	RemoveServer(id string) error
-	TransferLeadership() error
+	TransferLeadership(id, address string) error
 	Term() uint64
 	Configuration() (servers []store.Server, index uint64, committed bool, err error)
 	IsServer(id string, cached bool, maxAge time.Duration) bool
@@ -78,6 +80,11 @@ type Options struct {
 	Now func() time.Time
 	// Logger defaults to slog.Default().
 	Logger *slog.Logger
+	// Audit is the node's cluster audit, open for writing; nil writes
+	// no local events (tests that do not look at it).
+	Audit *audit.Log
+	// Rotation is rotate.json as the start rule left it, or nil.
+	Rotation *RotateState
 	// Interval is how often the background work runs; default 1 s.
 	Interval time.Duration
 	// LeaderInterval defaults to LeaderInterval.
@@ -98,6 +105,7 @@ type Service struct {
 	leaderInt time.Duration
 	started   time.Time
 	caller    raftnet.Caller
+	audit     *audit.Log
 
 	mu        sync.Mutex
 	store     Store
@@ -123,6 +131,41 @@ type Service struct {
 	highest map[string]uint64
 	// statusBusy is set while a status round runs in its goroutine.
 	statusBusy bool
+	// firstRound is set once the first status round since this service
+	// started has ended; until then removal_applied says nothing (every
+	// member would read "no answer since this node started").
+	firstRound bool
+	// keyRefused counts the consecutive status rounds in which a member
+	// refused this node's key and none accepted it (D6 of step 8b-2b).
+	keyRefused int
+	// clocks is, per member, this node's last clock sample (D3).
+	clocks map[string]clockSample
+	// clockOp is the operation name of the clock request; a test sets an
+	// unknown one to get the answer a build without it gives.
+	clockOp string
+	// seen is, per node, the pin its last successful connection to or
+	// from this node used (D1).
+	seen map[string]pinSeen
+	// used is, per node, every pin seen on an accepted connection to or
+	// from it since this service started (F4 of the 8b-2b review): once a
+	// node has presented its new key, it has switched for good, whatever
+	// a later connection with the old key says.
+	used map[string]map[string]bool
+	// rotation is this node's own key rotation (rotate.json), or nil.
+	rotation *RotateState
+	// nextRotate is when the rotation step next asks the leader.
+	nextRotate time.Time
+	// keyMu serialises the leader's handling of key-add and key-abort.
+	keyMu sync.Mutex
+	// rotMu serialises this node's switch decision with an abort's phase
+	// write (no network call is made under it).
+	rotMu sync.Mutex
+	// afterRotateStep is a test hook, called after each step of this
+	// node's rotation; returning true stops the node's rotation work
+	// there (a crash point).
+	afterRotateStep func(step string) bool
+	// syncDir fsyncs a directory (layout.SyncDir; a test makes it fail).
+	syncDir func(dir string) error
 	// noticeBusy is set while a removed notice is being checked.
 	noticeBusy bool
 	// runCtx is Run's context, for work started outside the step loop.
@@ -204,7 +247,9 @@ func New(o Options) *Service {
 	}
 	s := &Service{cfg: o.Config, key: o.Key, dataDir: o.DataDir, machine: o.Machine, writer: o.Writer,
 		now: o.Now, log: o.Logger, every: o.Interval, leaderInt: o.LeaderInterval, started: o.Now(),
-		join: o.Join, waits: map[string][]string{}, answers: map[string]statusResult{}, highest: map[string]uint64{}, removed: o.Removed}
+		join: o.Join, waits: map[string][]string{}, answers: map[string]statusResult{}, highest: map[string]uint64{}, removed: o.Removed,
+		clocks: map[string]clockSample{}, clockOp: raftnet.OpClock, audit: o.Audit, seen: map[string]pinSeen{}, used: map[string]map[string]bool{}, rotation: o.Rotation,
+		syncDir: layout.SyncDir}
 	s.caller = raftnet.Caller{NodeID: o.Config.NodeID, Certificate: s.certificate}
 	return s
 }
@@ -283,6 +328,7 @@ func (s *Service) step(ctx context.Context) {
 	s.waitsStep(ctx)
 	s.statusStep(ctx)
 	s.leaderStep(ctx)
+	s.rotateStep(ctx)
 	s.renew()
 }
 
@@ -348,6 +394,11 @@ func (s *Service) reconcileAddress() bool {
 		if opID, err = ids.NewUUID(); err == nil {
 			if changed, err = st.SetOwnAddress(want, opID); err == nil && changed {
 				s.log.Info("the node's address records were updated", "address", want)
+				if want == "" {
+					s.event(audit.EventListenCleared, nil)
+				} else {
+					s.event(audit.EventListenSet, map[string]string{"address": want})
+				}
 			}
 		}
 	}
@@ -380,13 +431,18 @@ func (s *Service) ensureListener() {
 	if err == nil {
 		var handle func(*tls.Conn, string)
 		if t != nil {
-			handle = t.Serve
+			handle = func(c *tls.Conn, pin string) {
+				s.sawPinOf(pin)
+				t.Serve(c, pin)
+			}
 		}
 		l, err = peerlistener.Listen(peerlistener.Options{
 			Address:     ap,
 			Certificate: s.certificate,
 			Accept:      s.acceptPin,
 			Keep:        s.keepPin,
+			CannotSay:   s.cannotSay,
+			Group:       s.connGroup,
 			Handle:      handle,
 			Now:         s.now,
 			Logger:      s.log,
@@ -472,7 +528,7 @@ func (s *Service) Health(context.Context) models.Health {
 		switch {
 		case !ok:
 			problem = "this node (" + s.cfg.NodeID + ") has no member entry in the replicated state"
-		case mem.Pin != s.key.Pin():
+		case mem.Pin != s.key.Pin() && (mem.NextPin == "" || mem.NextPin != s.key.Pin()):
 			problem = "the node key on disk is not the one pinned in this node's member entry"
 		}
 	}
@@ -529,6 +585,34 @@ func (s *Service) Health(context.Context) models.Health {
 			". A member that was down while a compromised node was removed must be wiped (\"skep-cluster leave --wipe\") before it returns"
 	}
 	h.Record("removal_applied", false, problem)
+
+	// Every member that answers refuses this node's key (D6 of step
+	// 8b-2b): a warning only; the node never enters removed mode for it.
+	problem = ""
+	s.mu.Lock()
+	refusedRounds := s.keyRefused
+	s.mu.Unlock()
+	if refusedRounds >= keyRefusedRounds {
+		next := "\"skep-cluster leave --wipe\""
+		if js != nil {
+			next = "\"skep-cluster join --abandon\""
+		}
+		problem = fmt.Sprintf("every member that answers refuses this node's key (%d status rounds in a row); it was probably removed while it was down. Run %s as root",
+			refusedRounds, next)
+	}
+	h.Record("key_refused", false, problem)
+
+	// Key rotations in progress and what each waits for (D1 of step
+	// 8b-2b), on every member.
+	problem = ""
+	for _, p := range s.rotationProgress(view) {
+		problem = appendProblem(problem, p)
+	}
+	h.Record("key_rotation", false, problem)
+
+	// Clock offsets from this node's point of view (D3 of step 8b-2b).
+	problem, critical := s.clockProblem(view.Members)
+	h.Record("clock", critical, problem)
 
 	// This node's own join, while it is joining.
 	problem = ""
@@ -609,6 +693,10 @@ func (s *Service) Status(context.Context) localapi.Status {
 		AcceptedBy:          s.acceptedNow().source,
 		Removals:            s.removalProgress(view),
 		UnappliedRemoval:    s.unappliedRemoval(view),
+		Clocks:              s.clockStatus(view.Members),
+		Rotation:            s.rotationStatus(),
+		Rotations:           s.rotationProgress(view),
+		KeysSeen:            s.keysSeen(view),
 		Build:               v.Version + "+" + v.Commit,
 	}
 	if servers, err := st.Servers(); err == nil {
@@ -636,4 +724,15 @@ func (s *Service) RaftConfiguration(context.Context) (localapi.RaftConfiguration
 		return localapi.RaftConfiguration{}, errors.New("the Raft configuration is empty")
 	}
 	return localapi.RaftConfiguration{Servers: servers}, nil
+}
+
+// event writes a local event to the cluster audit. The step it records has
+// already happened: a failed write is logged and changes nothing else.
+func (s *Service) event(kind string, details map[string]string) {
+	if s.audit == nil {
+		return
+	}
+	if err := s.audit.Event(kind, details); err != nil {
+		s.log.Error("cannot write a local event to the cluster audit", "kind", kind, "error", err)
+	}
 }

@@ -207,6 +207,9 @@ func runJoinRequest(ctx context.Context, args []string, e env) error {
 	if e.euid != 0 {
 		return errNeedsRoot("join-request")
 	}
+	if err := refuseDuringRotation(*dataDir, "join-request"); err != nil {
+		return err
+	}
 	if *address == "" {
 		return errors.New("join-request needs -address: there is no default address")
 	}
@@ -404,6 +407,9 @@ func runJoin(ctx context.Context, args []string, e env) error {
 	}
 	if e.euid != 0 {
 		return errNeedsRoot("join")
+	}
+	if err := refuseDuringRotation(*dataDir, "join"); err != nil {
+		return err
 	}
 	if flags.NArg() != 1 {
 		return errors.New("join needs the admission line that \"skep-cluster admit\" printed, as one argument")

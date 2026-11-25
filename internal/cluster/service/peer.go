@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"time"
 
+	"github.com/greenbeanorg/skep/internal/cluster/audit"
 	"github.com/greenbeanorg/skep/internal/cluster/clusterstate"
 	"github.com/greenbeanorg/skep/internal/cluster/joincode"
 	"github.com/greenbeanorg/skep/internal/cluster/joinstate"
@@ -55,6 +56,12 @@ func (s *Service) HandlePeer(ctx context.Context, op string, from raftnet.Peer, 
 	case raftnet.OpStatus:
 		applied, stalled := s.machine.AppliedIndex()
 		return StatusAnswer{NodeID: s.cfg.NodeID, AppliedIndex: applied, Stalled: stalled}, nil
+	case raftnet.OpKeyAdd:
+		return s.handleKeyAdd(from, body)
+	case raftnet.OpKeyAbort:
+		return s.handleKeyAbort(from, body)
+	case raftnet.OpClock:
+		return ClockAnswer{NodeID: s.cfg.NodeID, UnixMillis: s.now().UnixMilli()}, nil
 	case raftnet.OpJoin:
 		var req JoinRequest
 		// The operation ID must be a lower-case UUID (a node ID's form).
@@ -121,10 +128,20 @@ func toPeerError(err error) error {
 }
 
 // notLeader returns a not_leader answer naming the leader, when this node
-// is not the leader.
+// is not the leader, and "unavailable" while it is a leader whose barrier
+// of the current term has not yet succeeded (V2 of the 8b-2b review): its
+// view may lack entries committed in earlier terms, and a refusal computed
+// from it (a join's "no pending entry" or "expired", whose caller records
+// phase refused) could be taken as final. Every caller asks again.
 func (s *Service) notLeader() (*raftnet.PeerError, bool) {
 	st := s.getStore()
 	if st.IsLeader() {
+		s.mu.Lock()
+		ready := s.barrierTerm == st.Term()
+		s.mu.Unlock()
+		if !ready {
+			return &raftnet.PeerError{Code: raftnet.CodeUnavailable, Message: "this node has just become the leader and has not yet applied the earlier terms' entries; ask again"}, true
+		}
 		return nil, false
 	}
 	id, addr := st.Leader()
@@ -345,7 +362,11 @@ func (s *Service) joinStep(ctx context.Context) {
 	if js == nil {
 		return
 	}
-	if mem, ok := s.machine.Member(s.cfg.NodeID); ok && mem.State == clusterstate.StateMember && s.acceptedNow().source == "state machine" {
+	// This join's member entry (its member.join operation ID, with the
+	// current key), promoted; an older entry of the same node ID in the
+	// log's history is not this join's (F1 of the 8b-2b review).
+	if mem, ok := s.machine.Member(s.cfg.NodeID); ok && mem.State == clusterstate.StateMember &&
+		s.acceptedNow().source == "state machine" && s.listsSelf([]clusterstate.Member{mem}, js) {
 		if err := joinstate.DeleteStandalone(s.dataDir, js.Standalone); err != nil {
 			s.log.Error("join finished, but the moved-aside one-node state could not be deleted", "error", err)
 			return
@@ -357,6 +378,7 @@ func (s *Service) joinStep(ctx context.Context) {
 		s.mu.Lock()
 		s.join = nil
 		s.mu.Unlock()
+		s.event(audit.EventJoined, map[string]string{"cluster_id": js.Admission.ClusterID})
 		s.log.Info("join finished: this node is a member; the admission's pins are dropped and the moved-aside state is deleted",
 			"cluster_id", js.Admission.ClusterID)
 		return
@@ -403,7 +425,7 @@ func (s *Service) joinStep(ctx context.Context) {
 // every node.
 func (s *Service) Admit(ctx context.Context, request, actor string) (localapi.AdmitResult, error) {
 	if s.isRemoved() {
-		return localapi.AdmitResult{}, removedError()
+		return localapi.AdmitResult{}, s.removedError()
 	}
 	if s.cfg.ListenAddress == "" {
 		return localapi.AdmitResult{}, &localapi.OpError{HTTPStatus: http.StatusConflict, Code: "no_listen_address",
@@ -431,7 +453,7 @@ func (s *Service) Admit(ctx context.Context, request, actor string) (localapi.Ad
 // Withdraw implements localapi.Backend: "skep-cluster admit --withdraw".
 func (s *Service) Withdraw(ctx context.Context, name, actor string) (localapi.WithdrawResult, error) {
 	if s.isRemoved() {
-		return localapi.WithdrawResult{}, removedError()
+		return localapi.WithdrawResult{}, s.removedError()
 	}
 	if !clusterstate.ValidName(name) {
 		return localapi.WithdrawResult{}, &localapi.OpError{HTTPStatus: http.StatusBadRequest, Code: "invalid_request", Message: "not a valid node name"}
@@ -464,7 +486,7 @@ func (s *Service) toLeader(ctx context.Context, op string, in, out any) error {
 		return &localapi.OpError{HTTPStatus: http.StatusServiceUnavailable, Code: "no_leader",
 			Message: "the leader " + id + " is not a member this node knows; nothing was written"}
 	}
-	err := s.caller.Call(ctx, leader.Address, leader.Pin, op, in, out)
+	err := s.callMember(ctx, leader, op, in, out)
 	var pe *raftnet.PeerError
 	var ou *raftnet.OutcomeUnknownError
 	switch {
@@ -486,6 +508,8 @@ func (s *Service) toLeader(ctx context.Context, op string, in, out any) error {
 			status = http.StatusNotFound
 		case "handover_failed":
 			status = http.StatusServiceUnavailable
+		case "rotation_in_progress", "no_rotation":
+			status = http.StatusConflict
 		}
 		return &localapi.OpError{HTTPStatus: status, Code: pe.Code, Message: "the leader " + leader.Name + " answered: " + pe.Message}
 	}
@@ -523,6 +547,12 @@ func (s *Service) admitAsLeader(request, actor, origin, opID string) (localapi.A
 	for _, m := range s.machine.View().Members {
 		if m.State == clusterstate.StateRemoving {
 			return localapi.AdmitResult{}, refusedErr(fmt.Sprintf("%s is being removed; no admission until its removal has finished; nothing was written", m.Name))
+		}
+		// An admission carries one pin per node (also checked at
+		// apply; step 8b-2b, D1).
+		if m.NextPin != "" {
+			return localapi.AdmitResult{}, &localapi.OpError{HTTPStatus: http.StatusConflict, Code: "rotation_in_progress",
+				Message: fmt.Sprintf("member %s is rotating its key; no admission until the rotation has ended; nothing was written", m.Name)}
 		}
 	}
 	expires := s.now().Add(PendingLifetime).Unix()

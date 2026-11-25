@@ -26,6 +26,11 @@ const (
 	// client could not tell a refused key from an accepted one before it
 	// sent something.
 	acceptedMarker byte = 0x01
+	// cannotSayMarker is the byte a listener sends, then closes, when it
+	// does not accept the key and cannot say whether it would (step
+	// 8b-2b, D2; peerlistener.CannotSay). Every dialler treats it as a
+	// failed connection; ProbeKey reports ProbeCannotSay.
+	cannotSayMarker byte = 0x02
 	// maxPeerMessage bounds a Skep RPC request or answer.
 	maxPeerMessage = 256 << 10
 	// PeerTimeout bounds one Skep RPC, the join call's write through the
@@ -163,6 +168,7 @@ func (t *Transport) servePeerRPC(conn net.Conn, r *bufio.Reader, pin string) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), PeerTimeout-2*time.Second)
 	defer cancel()
+	p.ConnPin = pin
 	out, err := t.peer.HandlePeer(ctx, req.Op, p, req.Body)
 	if err != nil {
 		var pe *PeerError
@@ -181,6 +187,11 @@ func (t *Transport) servePeerRPC(conn net.Conn, r *bufio.Reader, pin string) {
 	answer(peerResponse{OK: true, Body: body})
 }
 
+// ErrCannotSay is the error of a connection whose listener answered that
+// it cannot say whether it accepts this node's key (D2).
+var ErrCannotSay = errors.New("the node cannot say now whether it accepts this key (its state machine is stopped or behind, " +
+	"its join was refused, or the key is over its connection limit)")
+
 // confirmAccepted reads the listener's accepted marker. Until it has come,
 // nothing is sent.
 func confirmAccepted(tc *tls.Conn, timeout time.Duration) error {
@@ -188,6 +199,9 @@ func confirmAccepted(tc *tls.Conn, timeout time.Duration) error {
 	var b [1]byte
 	if _, err := io.ReadFull(tc, b[:]); err != nil {
 		return err
+	}
+	if b[0] == cannotSayMarker {
+		return ErrCannotSay
 	}
 	if b[0] != acceptedMarker {
 		return fmt.Errorf("unexpected first byte %#x from the listener", b[0])
@@ -208,18 +222,30 @@ type Caller struct {
 // the key), an *OutcomeUnknownError when the request was sent and no answer
 // came, and a *PeerError for an error answer.
 func (c Caller) Call(ctx context.Context, address, pin, op string, in, out any) error {
+	_, err := c.CallPins(ctx, address, []string{pin}, op, in, out)
+	return err
+}
+
+// CallPins is Call to a node whose key may have any of pins (a rotating
+// node, D1 of step 8b-2b). It returns the pin the node's key had, once the
+// connection was accepted.
+func (c Caller) CallPins(ctx context.Context, address string, pins []string, op string, in, out any) (string, error) {
 	timeout := dialTimeout
 	if dl, ok := ctx.Deadline(); ok && time.Until(dl) < timeout {
 		timeout = time.Until(dl)
 	}
-	tc, err := DialPinned(address, pin, c.Certificate, timeout)
+	tc, seen, err := DialPins(address, pins, c.Certificate, timeout)
 	if err != nil {
 		var he *HandshakeError
 		if errors.As(err, &he) {
-			return err
+			return "", err
 		}
-		return &HandshakeError{Address: address, Err: err}
+		return "", &HandshakeError{Address: address, Err: err}
 	}
+	return seen, c.exchange(ctx, tc, address, op, in, out)
+}
+
+func (c Caller) exchange(ctx context.Context, tc *tls.Conn, address, op string, in, out any) error {
 	defer tc.Close()
 	body, err := json.Marshal(in)
 	if err != nil {

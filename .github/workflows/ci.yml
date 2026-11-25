@@ -44,15 +44,17 @@ jobs:
       - name: Vet (FreeBSD amd64)
         run: GOOS=freebsd GOARCH=amd64 go vet ./...
 
+      # The multi-node tests of internal/cluster/service run longer than
+      # go test's default limit of 10 minutes per package.
       - name: Test
-        run: go test -race -count=1 ./...
+        run: go test -race -count=1 -timeout 30m ./...
 
       # The test-only task types are compiled only with this tag and never
       # ship; they still have to build and pass.
       - name: Test (test-only task types)
         run: |
           go vet -tags skep_testtasks ./cmd/...
-          go test -race -count=1 -tags skep_testtasks ./cmd/...
+          go test -race -count=1 -timeout 30m -tags skep_testtasks ./cmd/...
 
       # Without the web interface (build tag skep_webui): the Go build must
       # not need Node.js. The "release" job builds the binaries with it.

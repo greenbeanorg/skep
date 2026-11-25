@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/greenbeanorg/skep/internal/agentproto"
+	"github.com/greenbeanorg/skep/internal/cluster/audit"
 	"github.com/greenbeanorg/skep/internal/cluster/clusterconf"
 	"github.com/greenbeanorg/skep/internal/cluster/layout"
 	"github.com/greenbeanorg/skep/internal/cluster/service"
@@ -177,6 +178,8 @@ func runInit(ctx context.Context, args []string, e env) error {
 	if err != nil {
 		return err
 	}
+	// The node's cluster audit begins here (D4 of step 8b-2b).
+	service.StageMark(*dataDir, audit.EventInit, true, map[string]string{"cluster_id": clusterID, "pin": pin, "name": cfg.NodeName, "address": cfg.PeerAddress()})
 	if rootOwned, err := store.RootOwned(*dataDir, e.owner); err != nil {
 		return err
 	} else if len(rootOwned) > 0 {

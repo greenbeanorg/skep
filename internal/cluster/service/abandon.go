@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/greenbeanorg/skep/internal/cluster/audit"
 	"github.com/greenbeanorg/skep/internal/cluster/clusterconf"
 	"github.com/greenbeanorg/skep/internal/cluster/joinstate"
 	"github.com/greenbeanorg/skep/internal/cluster/layout"
@@ -164,5 +165,6 @@ func stageAbandon(dataDir string, cfg clusterconf.Config, key *nodekey.Key, time
 		return AbandonOutcome{Outcome: "error", Message: "removing join.json failed: " + err.Error() + "; run the command again", Probes: out.Probes}
 	}
 	out.Outcome = "restored"
+	StageMark(dataDir, audit.EventJoinAbandoned, true, map[string]string{"cluster_id": js.Admission.ClusterID, "standalone": js.Standalone})
 	return out
 }

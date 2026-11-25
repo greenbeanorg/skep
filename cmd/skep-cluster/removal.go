@@ -258,7 +258,11 @@ func runLeave(ctx context.Context, args []string, e env) error {
 		fmt.Fprintf(e.stdout, "A wipe of this node was begun and did not finish; finishing it (new cluster %s).\n", termSafe(info.ClusterID))
 	} else {
 		fmt.Fprintf(e.stdout, "This wipes the cluster state of this node (%s, node ID %s):\n", cfg.NodeName, cfg.NodeID)
-		fmt.Fprintf(e.stdout, "  cluster %s, node key pin %s\n", termSafe(info.ClusterID), termSafe(info.Pin))
+		pin := termSafe(info.Pin)
+		if pin == "" {
+			pin = "none (node.key cannot be loaded; the wipe replaces it)"
+		}
+		fmt.Fprintf(e.stdout, "  cluster %s, node key pin %s\n", termSafe(info.ClusterID), pin)
 		fmt.Fprintf(e.stdout, "It becomes a one-node cluster with a new cluster ID and a new node key, and no listener.\n")
 		if err := confirmClusterID(e, "Wipe this node's cluster state?", info.ClusterID, *clusterID); err != nil {
 			if !stopped {
@@ -525,9 +529,14 @@ func stageWipeInfo(configPath, dataDir string, filesOnly bool) stageResult {
 	if err != nil {
 		return fail(err.Error())
 	}
-	id, resume, err := service.WipeInfo(dataDir, cfg.NodeID)
+	// Either the files or the store, never both: the store's lock is
+	// held by a running service, and opening it would wait for it.
+	var id string
+	var resume bool
 	if filesOnly {
 		id, resume, err = service.WipeInfoFiles(dataDir)
+	} else {
+		id, resume, err = service.WipeInfo(dataDir, cfg.NodeID)
 	}
 	if err != nil {
 		return fail(err.Error())
@@ -539,8 +548,12 @@ func stageWipeInfo(configPath, dataDir string, filesOnly bool) stageResult {
 	return res
 }
 
-func stageWipeBegin(dataDir string) stageResult {
-	m, err := service.WipeBegin(dataDir, time.Now())
+func stageWipeBegin(configPath, dataDir string) stageResult {
+	cfg, err := clusterconf.Load(configPath)
+	if err != nil {
+		return fail(err.Error())
+	}
+	m, err := service.WipeBegin(dataDir, cfg.NodeID, time.Now())
 	if err != nil {
 		return fail(err.Error())
 	}

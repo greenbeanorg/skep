@@ -78,6 +78,11 @@ type Options struct {
 	Empty bool
 	// Machine is the state machine to feed. Nil makes a new one.
 	Machine *clusterstate.Machine
+	// Quiet discards the library's own log lines. A command that opens a
+	// store for a moment (init, the last step of "leave --wipe") sets it,
+	// so that the library's start-up warnings do not reach the terminal;
+	// errors still come back as errors.
+	Quiet bool
 }
 
 // SnapshotThreshold is the library's default snapshot threshold, which
@@ -123,7 +128,7 @@ type backends struct {
 	snaps *raft.FileSnapshotStore
 }
 
-func openBackends(dir string) (*backends, error) {
+func openBackends(dir string, quiet bool) (*backends, error) {
 	bolt, err := raftboltdb.New(raftboltdb.Options{
 		Path:        filepath.Join(dir, DBFile),
 		BoltOptions: &bbolt.Options{Timeout: openTimeout},
@@ -131,7 +136,7 @@ func openBackends(dir string) (*backends, error) {
 	if err != nil {
 		return nil, fmt.Errorf("store: open %s (is skep-cluster already running?): %w", filepath.Join(dir, DBFile), err)
 	}
-	snaps, err := raft.NewFileSnapshotStoreWithLogger(dir, retainSnapshots, raftLogger())
+	snaps, err := raft.NewFileSnapshotStoreWithLogger(dir, retainSnapshots, raftLogger(quiet))
 	if err != nil {
 		bolt.Close()
 		return nil, fmt.Errorf("store: snapshots: %w", err)
@@ -140,15 +145,18 @@ func openBackends(dir string) (*backends, error) {
 }
 
 // raftLogger sends the library's warnings and errors to stderr as JSON
-// lines, next to the service's own log.
-func raftLogger() hclog.Logger {
+// lines, next to the service's own log; quiet discards them.
+func raftLogger(quiet bool) hclog.Logger {
+	if quiet {
+		return hclog.NewNullLogger()
+	}
 	return hclog.New(&hclog.LoggerOptions{Name: "raft", Level: hclog.Warn, Output: os.Stderr, JSONFormat: true})
 }
 
-func raftConfig(nodeID string) *raft.Config {
+func raftConfig(nodeID string, quiet bool) *raft.Config {
 	c := raft.DefaultConfig() // library defaults, pre-vote on (ADR 0013 B11)
 	c.LocalID = raft.ServerID(nodeID)
-	c.Logger = raftLogger()
+	c.Logger = raftLogger(quiet)
 	return c
 }
 
@@ -162,7 +170,7 @@ func Bootstrap(o Options, peerAddress string) error {
 	if err := makeDir(o.Dir); err != nil {
 		return fmt.Errorf("store: create %s: %w", o.Dir, err)
 	}
-	b, err := openBackends(o.Dir)
+	b, err := openBackends(o.Dir, o.Quiet)
 	if err != nil {
 		return err
 	}
@@ -171,7 +179,7 @@ func Bootstrap(o Options, peerAddress string) error {
 	_, trans := raft.NewInmemTransport(addr)
 	defer trans.Close()
 	cfg := raft.Configuration{Servers: []raft.Server{{Suffrage: raft.Voter, ID: raft.ServerID(o.NodeID), Address: addr}}}
-	if err := raft.BootstrapCluster(raftConfig(o.NodeID), b.bolt, b.bolt, b.snaps, trans, cfg); err != nil {
+	if err := raft.BootstrapCluster(raftConfig(o.NodeID, o.Quiet), b.bolt, b.bolt, b.snaps, trans, cfg); err != nil {
 		return fmt.Errorf("store: bootstrap: %w", err)
 	}
 	return nil
@@ -210,7 +218,7 @@ func Open(o Options) (*Node, error) {
 			return nil, fmt.Errorf("store: create %s: %w", o.Dir, err)
 		}
 	}
-	b, err := openBackends(o.Dir)
+	b, err := openBackends(o.Dir, o.Quiet)
 	if err != nil {
 		return nil, err
 	}
@@ -225,7 +233,7 @@ func Open(o Options) (*Node, error) {
 		// anything.
 		_, trans = raft.NewInmemTransport(raft.ServerAddress("local-" + o.NodeID))
 	}
-	r, err := raft.NewRaft(raftConfig(o.NodeID), &fsm{machine: machine, log: o.Logger}, b.bolt, b.bolt, b.snaps, trans)
+	r, err := raft.NewRaft(raftConfig(o.NodeID, o.Quiet), &fsm{machine: machine, log: o.Logger}, b.bolt, b.bolt, b.snaps, trans)
 	if err != nil {
 		closeTransport(trans)
 		b.bolt.Close()
@@ -510,11 +518,13 @@ func (n *Node) RemoveServer(id string) error {
 	return err
 }
 
-// TransferLeadership hands the leadership to another voter (decision D6:
+// TransferLeadership hands the leadership to the given voter (decision D6:
 // a leader asked to remove itself, or a leader that finds itself
-// removing). nil means this node is no longer the leader.
-func (n *Node) TransferLeadership() error {
-	if err := n.raft.LeadershipTransfer().Error(); err != nil {
+// removing). The caller picks the target: hashicorp/raft v1.8.0 does not
+// check a named target's suffrage (raft.go leaderLoop). nil means this
+// node is no longer the leader.
+func (n *Node) TransferLeadership(id, address string) error {
+	if err := n.raft.LeadershipTransferToServer(raft.ServerID(id), raft.ServerAddress(address)).Error(); err != nil {
 		return err
 	}
 	if n.IsLeader() {
@@ -690,7 +700,7 @@ func ReadState(dir, nodeID string) (clusterstate.View, []Server, error) {
 	if !Alone(servers, nodeID) {
 		return clusterstate.View{}, servers, fmt.Errorf("store: the Raft configuration has %d servers; the state is read offline only on a node that is alone", len(servers))
 	}
-	b, err := openBackends(dir)
+	b, err := openBackends(dir, true)
 	if err != nil {
 		return clusterstate.View{}, servers, err
 	}
@@ -736,6 +746,30 @@ func ReadState(dir, nodeID string) (clusterstate.View, []Server, error) {
 	return m.View(), servers, nil
 }
 
+// LastIndex returns the index of the last entry stored in the log in dir,
+// without starting a Raft node; 0 when dir holds no store. The service
+// reads it before it opens the store, when its cluster audit is empty: the
+// entries up to it are not audited (D4 of step 8b-2b).
+func LastIndex(dir string) (uint64, error) {
+	if !Exists(dir) {
+		return 0, nil
+	}
+	b, err := openBackends(dir, true)
+	if err != nil {
+		return 0, err
+	}
+	defer b.bolt.Close()
+	last, err := b.bolt.LastIndex()
+	if err != nil {
+		return 0, err
+	}
+	// A snapshot may cover more than the log holds.
+	if metas, err := b.snaps.List(); err == nil && len(metas) > 0 && metas[0].Index > last {
+		last = metas[0].Index
+	}
+	return last, nil
+}
+
 // ReadServers reads the Raft configuration from the store in dir without
 // starting a Raft node or opening a network port: the root-run commands use
 // it, through a process running as the service account, while the service
@@ -744,14 +778,14 @@ func ReadServers(dir, nodeID string) ([]Server, error) {
 	if !Exists(dir) {
 		return nil, fmt.Errorf("%s: %w", dir, ErrNotInitialised)
 	}
-	b, err := openBackends(dir)
+	b, err := openBackends(dir, true)
 	if err != nil {
 		return nil, err
 	}
 	defer b.bolt.Close()
 	_, trans := raft.NewInmemTransport(raft.ServerAddress("offline-" + nodeID))
 	defer trans.Close()
-	conf, err := raft.GetConfiguration(raftConfig(nodeID), &fsm{machine: clusterstate.New()}, b.bolt, b.bolt, b.snaps, trans)
+	conf, err := raft.GetConfiguration(raftConfig(nodeID, true), &fsm{machine: clusterstate.New()}, b.bolt, b.bolt, b.snaps, trans)
 	if err != nil {
 		return nil, fmt.Errorf("store: read the raft configuration: %w", err)
 	}

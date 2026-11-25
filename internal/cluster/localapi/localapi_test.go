@@ -40,6 +40,14 @@ func (fakeBackend) Remove(_ context.Context, req RemoveRequest, actor string) (R
 	return RemoveResult{Name: req.Name, OpID: actor}, nil
 }
 
+func (fakeBackend) Rotate(_ context.Context, actor string) (RotateResult, error) {
+	return RotateResult{OpID: actor}, nil
+}
+
+func (fakeBackend) AbortRotation(_ context.Context, actor string) (RotateResult, error) {
+	return RotateResult{OpID: actor}, nil
+}
+
 func (fakeBackend) Withdraw(_ context.Context, name, actor string) (WithdrawResult, error) {
 	return WithdrawResult{OpID: actor}, nil
 }
@@ -121,8 +129,10 @@ func TestOperationTable(t *testing.T) {
 		"admit":              {true, false},
 		"admit-withdraw":     {true, false},
 		"remove":             {true, false},
+		"key-rotate":         {true, false},
+		"key-abort":          {true, false},
 	}
-	writes := map[string]bool{"admit": true, "admit-withdraw": true, "remove": true}
+	writes := map[string]bool{"admit": true, "admit-withdraw": true, "remove": true, "key-rotate": true, "key-abort": true}
 	if len(Operations) != len(want) {
 		t.Fatalf("%d operations, want %d", len(Operations), len(want))
 	}
@@ -266,5 +276,39 @@ func TestAdmitActorAndStrictBody(t *testing.T) {
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("unknown field: %d", rec.Code)
+	}
+}
+
+// deadlineBackend reports the time limit its operations got, as the
+// remove operation's error message.
+type deadlineBackend struct{ fakeBackend }
+
+func (deadlineBackend) Remove(ctx context.Context, _ RemoveRequest, _ string) (RemoveResult, error) {
+	dl, _ := ctx.Deadline()
+	return RemoveResult{OpID: time.Until(dl).Round(time.Second).String()}, nil
+}
+
+func (deadlineBackend) Admit(ctx context.Context, _, _ string) (AdmitResult, error) {
+	dl, _ := ctx.Deadline()
+	return AdmitResult{OpID: time.Until(dl).Round(time.Second).String()}, nil
+}
+
+// Step 8b-2b job 2c: the remove operation has its own limit of 60 s; every
+// other operation keeps 15 s, and the server's write limit and the client's
+// limit are above both.
+func TestRemoveHasItsOwnTimeLimit(t *testing.T) {
+	h := NewHandler(deadlineBackend{}, HandlerOptions{APIUID: apiUID})
+	root := &peercred.Cred{UID: 0}
+	for path, want := range map[string]string{PathRemove: "1m0s", PathAdmit: "15s"} {
+		rec := call(h, http.MethodPost, path, root)
+		var res struct {
+			OpID string `json:"op_id"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &res); err != nil || res.OpID != want {
+			t.Errorf("%s: limit %q (%v), want %s", path, res.OpID, err, want)
+		}
+	}
+	if WriteTimeout <= RemoveTimeout || NewClient("/nonexistent").http.Timeout < WriteTimeout {
+		t.Fatalf("write limit %s, client limit %s, remove limit %s", WriteTimeout, NewClient("/x").http.Timeout, RemoveTimeout)
 	}
 }

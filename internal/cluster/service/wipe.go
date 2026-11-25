@@ -6,12 +6,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strconv"
 	"time"
 
+	"github.com/greenbeanorg/skep/internal/cluster/audit"
 	"github.com/greenbeanorg/skep/internal/cluster/clusterconf"
 	"github.com/greenbeanorg/skep/internal/cluster/clusterstate"
 	"github.com/greenbeanorg/skep/internal/cluster/joinstate"
@@ -54,7 +57,9 @@ func CreateCluster(ctx context.Context, dataDir string, cfg clusterconf.Config, 
 		return "", "", err
 	}
 	stateDir := layout.State(dataDir)
-	opts := store.Options{Dir: stateDir, NodeID: cfg.NodeID}
+	// Only commands run this (init, the last step of a wipe): the
+	// library's start-up lines must not reach the terminal.
+	opts := store.Options{Dir: stateDir, NodeID: cfg.NodeID, Quiet: true, Logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
 	fail := func(err error) (string, string, error) {
 		// Leave no half-made store: the next attempt starts clean.
 		_ = layout.RemoveAll(stateDir)
@@ -101,9 +106,17 @@ type WipeMarker struct {
 	// same on every run of the command.
 	NewClusterID string `json:"new_cluster_id"`
 	// OldPin is the pin of the key before the wipe; the wipe replaces a
-	// key with this pin and keeps any other (one it made itself).
-	OldPin  string `json:"old_pin"`
-	Started string `json:"started"`
+	// key with this pin and keeps any other (one it made itself). It is
+	// empty when KeyUnreadable is set.
+	OldPin string `json:"old_pin"`
+	// KeyUnreadable is set when node.key could not be loaded when the
+	// wipe began (missing, wrong mode, not a key, no certificate that
+	// can be repaired): every run of the wipe then replaces the key.
+	KeyUnreadable bool   `json:"key_unreadable,omitempty"`
+	Started       string `json:"started"`
+	// OldClusterID is the cluster ID before the wipe, for the audit
+	// (step 8b-2b); empty when no file or store could tell it.
+	OldClusterID string `json:"old_cluster_id,omitempty"`
 }
 
 const wipeFormat = 1
@@ -124,7 +137,8 @@ func ReadWipeMarker(dataDir string) (*WipeMarker, error) {
 	if err := dec.Decode(&m); err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
-	if m.Format != wipeFormat || !clusterstate.ValidNodeID(m.NewClusterID) || !clusterstate.ValidPin(m.OldPin) {
+	pinOK := clusterstate.ValidPin(m.OldPin) && !m.KeyUnreadable || m.OldPin == "" && m.KeyUnreadable
+	if m.Format != wipeFormat || !clusterstate.ValidNodeID(m.NewClusterID) || !pinOK {
 		return nil, fmt.Errorf("%s: not a valid wipe marker", path)
 	}
 	return &m, nil
@@ -207,25 +221,34 @@ func wipeInfo(dataDir, nodeID string, filesOnly bool) (clusterID string, resume 
 
 // WipeBegin writes the marker when it is missing (a new cluster ID and the
 // key's pin now) and returns it; with a marker present it returns that one.
-func WipeBegin(dataDir string, now time.Time) (WipeMarker, error) {
+// A node key that cannot be loaded does not stop the wipe: the marker then
+// has an empty old pin and says the key was unreadable, and WipeFinish
+// replaces the key.
+func WipeBegin(dataDir, nodeID string, now time.Time) (WipeMarker, error) {
 	if m, err := ReadWipeMarker(dataDir); err != nil || m != nil {
 		if err != nil {
 			return WipeMarker{}, err
 		}
 		return *m, nil
 	}
-	key, err := nodekey.Load(dataDir)
-	if err != nil {
-		return WipeMarker{}, err
-	}
 	id, err := ids.NewUUID()
 	if err != nil {
 		return WipeMarker{}, err
 	}
-	m := WipeMarker{Format: wipeFormat, NewClusterID: id, OldPin: key.Pin(), Started: now.UTC().Format(time.RFC3339)}
+	m := WipeMarker{Format: wipeFormat, NewClusterID: id, Started: now.UTC().Format(time.RFC3339)}
+	if key, err := nodekey.Load(dataDir); err == nil {
+		m.OldPin = key.Pin()
+	} else {
+		m.KeyUnreadable = true
+	}
+	if id, _, err := WipeInfo(dataDir, nodeID); err == nil {
+		m.OldClusterID = id
+	}
 	if err := writeFileAtomic(dataDir, layout.WipeMarker, m); err != nil {
 		return WipeMarker{}, err
 	}
+	stageEvent(dataDir, audit.EventWipeBegun, map[string]string{"old_cluster_id": m.OldClusterID, "new_cluster_id": m.NewClusterID,
+		"old_pin": m.OldPin, "key_unreadable": fmt.Sprint(m.KeyUnreadable)})
 	return m, nil
 }
 
@@ -277,6 +300,14 @@ func wipeFinish(ctx context.Context, dataDir string, cfg clusterconf.Config, now
 	if err := joinstate.Remove(dataDir); err != nil {
 		return "", "", err
 	}
+	// A key rotation's files go before state/ (step 8b-2b): the next key
+	// first, then the record.
+	if err := layout.RemoveFile(filepath.Join(dataDir, nodekey.NextKeyFile)); err != nil {
+		return "", "", err
+	}
+	if err := layout.RemoveFile(filepath.Join(dataDir, layout.RotateFile)); err != nil {
+		return "", "", err
+	}
 	if stopped(wipeStopAfterJoin) {
 		return "", "", errStopped
 	}
@@ -289,7 +320,7 @@ func wipeFinish(ctx context.Context, dataDir string, cfg clusterconf.Config, now
 	// A new key, unless the one on disk is already not the old one (made
 	// by an earlier run of this wipe).
 	replace := true
-	if nodekey.Exists(dataDir) {
+	if nodekey.Exists(dataDir) && !m.KeyUnreadable {
 		if k, err := nodekey.Load(dataDir); err == nil && k.Pin() != m.OldPin {
 			replace = false
 		} else if err != nil {
@@ -330,5 +361,7 @@ func wipeFinish(ctx context.Context, dataDir string, cfg clusterconf.Config, now
 	if err := layout.RemoveFile(filepath.Join(dataDir, layout.WipeMarker)); err != nil {
 		return "", "", err
 	}
+	StageMark(dataDir, audit.EventWipeFinished, true, map[string]string{"old_cluster_id": m.OldClusterID, "new_cluster_id": clusterID,
+		"old_pin": m.OldPin, "new_pin": pin})
 	return clusterID, pin, nil
 }

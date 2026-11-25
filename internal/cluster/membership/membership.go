@@ -33,8 +33,13 @@ const Mode fs.FileMode = 0o600
 // maxSize bounds the file read at start.
 const maxSize = 1 << 20
 
-// format is the version of the file's encoding.
-const format = 1
+// format is the version of the file's encoding: 1, and 2 (step 8b-2b)
+// only while a member has a next pin, so that the file stays readable by
+// an earlier build otherwise. Both are read.
+const (
+	format1 = 1
+	format2 = 2
+)
 
 // Member is one member entry as the file holds it: ID, name, address, both
 // pins and the state.
@@ -43,6 +48,7 @@ type Member struct {
 	Name    string `json:"name"`
 	Address string `json:"address"`
 	Pin     string `json:"pin"`
+	NextPin string `json:"next_pin,omitempty"`
 	APIPin  string `json:"api_pin,omitempty"`
 	State   string `json:"state"`
 }
@@ -63,9 +69,12 @@ func (f File) less(epoch, index uint64) bool {
 
 // FromMembership converts an applied membership.
 func FromMembership(m clusterstate.Membership) File {
-	f := File{Format: format, ClusterID: m.ClusterID, Epoch: m.Epoch, Index: m.Index, Members: []Member{}}
+	f := File{Format: format1, ClusterID: m.ClusterID, Epoch: m.Epoch, Index: m.Index, Members: []Member{}}
 	for _, mem := range m.Members {
-		f.Members = append(f.Members, Member{ID: mem.ID, Name: mem.Name, Address: mem.Address, Pin: mem.Pin, APIPin: mem.APIPin, State: mem.State})
+		f.Members = append(f.Members, Member{ID: mem.ID, Name: mem.Name, Address: mem.Address, Pin: mem.Pin, NextPin: mem.NextPin, APIPin: mem.APIPin, State: mem.State})
+		if mem.NextPin != "" {
+			f.Format = format2
+		}
 	}
 	return f
 }
@@ -105,13 +114,14 @@ func Read(dir string) (*File, error) {
 }
 
 func (f File) validate() error {
-	if f.Format != format {
+	if f.Format != format1 && f.Format != format2 {
 		return fmt.Errorf("format %d is unknown to this build", f.Format)
 	}
 	if !clusterstate.ValidNodeID(f.ClusterID) || f.Epoch == 0 || f.Index == 0 {
 		return errors.New("cluster ID, epoch or index missing")
 	}
 	seen := map[string]bool{}
+	next := false
 	for _, m := range f.Members {
 		if !clusterstate.ValidNodeID(m.ID) || !clusterstate.ValidPin(m.Pin) || seen[m.ID] || seen[m.Pin] {
 			return fmt.Errorf("member %q is not valid or duplicated", m.ID)
@@ -129,6 +139,16 @@ func (f File) validate() error {
 			seen["addr:"+m.Address] = true
 		}
 		seen[m.ID], seen[m.Pin] = true, true
+		if m.NextPin != "" {
+			if f.Format != format2 || !clusterstate.ValidPin(m.NextPin) || seen[m.NextPin] {
+				return fmt.Errorf("member %s has a next pin that is not valid or duplicated", m.ID)
+			}
+			seen[m.NextPin] = true
+			next = true
+		}
+	}
+	if f.Format == format2 && !next {
+		return errors.New("format 2 without a next pin")
 	}
 	return nil
 }

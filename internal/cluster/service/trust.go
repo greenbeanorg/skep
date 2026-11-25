@@ -3,6 +3,7 @@ package service
 import (
 	"github.com/greenbeanorg/skep/internal/cluster/clusterstate"
 	"github.com/greenbeanorg/skep/internal/cluster/joinstate"
+	"github.com/greenbeanorg/skep/internal/cluster/peerlistener"
 	"github.com/greenbeanorg/skep/internal/cluster/raftnet"
 )
 
@@ -55,12 +56,12 @@ func (s *Service) acceptedNow() accepted {
 	if file != nil && view.AppliedIndex < file.Index {
 		a.source = "membership file"
 		for _, m := range file.Members {
-			a.peers = append(a.peers, raftnet.Peer{NodeID: m.ID, Name: m.Name, Address: m.Address, Pin: m.Pin, Kind: kindOf(m.State)})
+			a.peers = append(a.peers, raftnet.Peer{NodeID: m.ID, Name: m.Name, Address: m.Address, Pin: m.Pin, NextPin: m.NextPin, Kind: kindOf(m.State)})
 		}
 	} else {
 		a.source = "state machine"
 		for _, m := range view.Members {
-			a.peers = append(a.peers, raftnet.Peer{NodeID: m.ID, Name: m.Name, Address: m.Address, Pin: m.Pin, Kind: kindOf(m.State)})
+			a.peers = append(a.peers, raftnet.Peer{NodeID: m.ID, Name: m.Name, Address: m.Address, Pin: m.Pin, NextPin: m.NextPin, Kind: kindOf(m.State)})
 		}
 		now := s.now().Unix()
 		for _, p := range view.Pendings {
@@ -71,7 +72,7 @@ func (s *Service) acceptedNow() accepted {
 			}
 		}
 	}
-	if js := s.joinState(); js != nil && !listsNode(a.peers, s.cfg.NodeID) {
+	if js := s.joinState(); js != nil && !(a.source == "state machine" && s.listsSelf(view.Members, js)) {
 		if js.Phase == joinstate.PhaseRefused {
 			return accepted{admission: true, source: "none (the join was refused)"}
 		}
@@ -86,6 +87,30 @@ func (s *Service) acceptedNow() accepted {
 	return a
 }
 
+// listsSelf reports whether the state machine's members list this node
+// for this join (F1 of the 8b-2b review): a member entry for this node
+// whose join_op is this join's member.join operation ID and whose pin or
+// next pin is the current key. A joining node that was a member of the
+// same cluster before (removed, abandoned or wiped, joined again with its
+// node ID, possibly with the same key) meets its older member entries in
+// the log's history; that membership is the cluster's past (other
+// members' pins in it may have been rotated or wiped since), so the node
+// goes on accepting its admission's or answer's nodes until it applies
+// this join's entry. While the machine is behind the applied-membership
+// file, the node is not listed (the file has no join_op).
+func (s *Service) listsSelf(members []clusterstate.Member, js *joinstate.State) bool {
+	if s.key == nil || js == nil || js.OpID == "" {
+		return false
+	}
+	pin, op := s.key.Pin(), joinOpID(s.cfg.NodeID, js.OpID)
+	for _, m := range members {
+		if m.ID == s.cfg.NodeID && m.JoinOp == op && (m.Pin == pin || (m.NextPin != "" && m.NextPin == pin)) {
+			return true
+		}
+	}
+	return false
+}
+
 func listsNode(peers []raftnet.Peer, id string) bool {
 	for _, p := range peers {
 		if p.NodeID == id && p.Kind != raftnet.KindPending {
@@ -95,17 +120,41 @@ func listsNode(peers []raftnet.Peer, id string) bool {
 	return false
 }
 
-// ByPin implements raftnet.Trust.
+// ByPin implements raftnet.Trust. Either pin of a rotating member is that
+// member (D1 of step 8b-2b); the per-RPC check is otherwise unchanged.
 func (s *Service) ByPin(pin string) (raftnet.Peer, bool) {
 	if pin == "" {
 		return raftnet.Peer{}, false
 	}
 	for _, p := range s.acceptedNow().peers {
-		if p.Pin == pin {
+		if p.Pin == pin || (p.NextPin != "" && p.NextPin == pin) {
 			return p, true
 		}
 	}
 	return raftnet.Peer{}, false
+}
+
+// SawPin implements raftnet.PinObserver: which pin a node's last
+// successful connection to or from this node used (for status), and every
+// pin it has used since this service started (for the end of a rotation).
+func (s *Service) SawPin(nodeID, pin string) {
+	if nodeID == "" || pin == "" {
+		return
+	}
+	s.mu.Lock()
+	s.seen[nodeID] = pinSeen{pin: pin, at: s.now()}
+	if s.used[nodeID] == nil {
+		s.used[nodeID] = map[string]bool{}
+	}
+	s.used[nodeID][pin] = true
+	s.mu.Unlock()
+}
+
+// sawPinOf records the pin of an accepted inbound connection.
+func (s *Service) sawPinOf(pin string) {
+	if p, ok := s.ByPin(pin); ok && p.Kind != raftnet.KindPending {
+		s.SawPin(p.NodeID, pin)
+	}
 }
 
 // ByAddress implements raftnet.Trust: joining, member and removing keys
@@ -144,4 +193,42 @@ func (s *Service) RaftServer(nodeID string, heartbeat bool) bool {
 func (s *Service) acceptPin(pin string) bool {
 	_, ok := s.ByPin(pin)
 	return ok
+}
+
+// cannotSay is the listener's "cannot say" rule (D2 of step 8b-2b): this
+// node cannot say whether it would accept a key it does not accept now
+// while its state machine is stopped, while the machine has not reached
+// the applied-membership file's index, or while it is a joining node
+// whose join was refused. A key over its connection limit gets the same
+// answer from the listener itself.
+func (s *Service) cannotSay() bool {
+	if s.machine == nil || s.isRemoved() {
+		return false
+	}
+	view := s.machine.View()
+	if view.Stalled != nil {
+		return true
+	}
+	if file := s.writer.Current(); file != nil && view.AppliedIndex < file.Index {
+		return true
+	}
+	if js := s.joinState(); js != nil && js.Phase == joinstate.PhaseRefused {
+		return true
+	}
+	return false
+}
+
+// connGroup is the listener's per-node limit (D5 of step 8b-2b): a member,
+// joining or removing key counts by its node ID (both pins of a rotating
+// node are one node), with MaxPerNode; a pending key by itself, with
+// MaxPerPending.
+func (s *Service) connGroup(pin string) (string, int) {
+	p, ok := s.ByPin(pin)
+	if !ok {
+		return "key:" + pin, peerlistener.MaxPerPending
+	}
+	if p.Kind == raftnet.KindPending {
+		return "pending:" + pin, peerlistener.MaxPerPending
+	}
+	return "node:" + p.NodeID, peerlistener.MaxPerNode
 }

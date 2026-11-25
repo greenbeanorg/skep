@@ -30,6 +30,10 @@ const (
 	// KeyFile and CertFile are the file names in the data directory.
 	KeyFile  = "node.key"
 	CertFile = "node.crt"
+	// NextKeyFile is the next key while the node rotates its key (step
+	// 8b-2b, D1): written before the rotation is asked for, renamed to
+	// KeyFile when the node switches.
+	NextKeyFile = "node.key.next"
 	// Validity is the certificate's lifetime, as skep-api's.
 	Validity = 397 * 24 * time.Hour
 	// RenewBefore is how long before expiry the certificate is renewed.
@@ -66,6 +70,67 @@ func Exists(dir string) bool {
 // is already there: a node's key is replaced only by an explicit rotation
 // or a wipe, never by accident.
 func Create(dir, nodeID string, now time.Time) (*Key, error) {
+	priv, err := writeNewKey(dir, KeyFile)
+	if err != nil {
+		return nil, err
+	}
+	keyPath := filepath.Join(dir, KeyFile)
+	k := &Key{dir: dir, key: priv}
+	if err := k.issue(nodeID, now); err != nil {
+		_ = os.Remove(keyPath)
+		return nil, err
+	}
+	return k, nil
+}
+
+// CreateNext generates the next key of a rotation in NextKeyFile (0600,
+// fsync, fsync of dir) and returns its pin. It refuses when the file
+// exists. No certificate is issued until the node switches to it.
+func CreateNext(dir string) (string, error) {
+	priv, err := writeNewKey(dir, NextKeyFile)
+	if err != nil {
+		return "", err
+	}
+	if err := syncDir(dir); err != nil {
+		_ = os.Remove(filepath.Join(dir, NextKeyFile))
+		return "", fmt.Errorf("nodekey: %w", err)
+	}
+	return pinOfPublic(&priv.PublicKey)
+}
+
+// FilePin returns the pin of the private key in dir/name, without a
+// certificate (the start rule of a rotation reads node.key with it).
+func FilePin(dir, name string) (string, error) {
+	k, err := loadKeyFile(dir, name)
+	if err != nil {
+		return "", err
+	}
+	return pinOfPublic(&k.key.PublicKey)
+}
+
+func pinOfPublic(pub *ecdsa.PublicKey) (string, error) {
+	der, err := x509.MarshalPKIXPublicKey(pub)
+	if err != nil {
+		return "", fmt.Errorf("nodekey: %w", err)
+	}
+	sum := sha256.Sum256(der)
+	return "sha256:" + hex.EncodeToString(sum[:]), nil
+}
+
+func syncDir(dir string) error {
+	d, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	err = d.Sync()
+	if cerr := d.Close(); err == nil {
+		err = cerr
+	}
+	return err
+}
+
+// writeNewKey generates a key and writes it to dir/name with O_EXCL.
+func writeNewKey(dir, name string) (*ecdsa.PrivateKey, error) {
 	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		return nil, fmt.Errorf("nodekey: generate: %w", err)
@@ -74,7 +139,7 @@ func Create(dir, nodeID string, now time.Time) (*Key, error) {
 	if err != nil {
 		return nil, fmt.Errorf("nodekey: %w", err)
 	}
-	keyPath := filepath.Join(dir, KeyFile)
+	keyPath := filepath.Join(dir, name)
 	f, err := os.OpenFile(keyPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, keyMode)
 	if err != nil {
 		if errors.Is(err, fs.ErrExist) {
@@ -96,12 +161,7 @@ func Create(dir, nodeID string, now time.Time) (*Key, error) {
 		_ = os.Remove(keyPath)
 		return nil, fmt.Errorf("nodekey: write %s: %w", keyPath, werr)
 	}
-	k := &Key{dir: dir, key: priv}
-	if err := k.issue(nodeID, now); err != nil {
-		_ = os.Remove(keyPath)
-		return nil, err
-	}
-	return k, nil
+	return priv, nil
 }
 
 // Load reads the key and certificate from dir. It refuses a key file that
@@ -136,8 +196,10 @@ func LoadRepair(dir, nodeID string, now time.Time) (k *Key, repaired error, err 
 	return k, repaired, nil
 }
 
-func loadKey(dir string) (*Key, error) {
-	keyPath := filepath.Join(dir, KeyFile)
+func loadKey(dir string) (*Key, error) { return loadKeyFile(dir, KeyFile) }
+
+func loadKeyFile(dir, name string) (*Key, error) {
+	keyPath := filepath.Join(dir, name)
 	info, err := os.Lstat(keyPath)
 	if err != nil {
 		return nil, fmt.Errorf("nodekey: %w", err)
@@ -182,7 +244,7 @@ func (k *Key) loadCertificate() error {
 		return fmt.Errorf("nodekey: %s: %w", certPath, err)
 	}
 	pub, ok := leaf.PublicKey.(*ecdsa.PublicKey)
-	if !ok || !pub.Equal(&k.key.PublicKey) {
+	if !ok || !pub.Equal(&k.priv().PublicKey) {
 		return fmt.Errorf("nodekey: %s does not belong to %s", certPath, filepath.Join(k.dir, KeyFile))
 	}
 	k.set(leaf)
@@ -195,6 +257,24 @@ func (k *Key) set(leaf *x509.Certificate) {
 	k.leaf = leaf
 	k.pin = PinOfCertificate(leaf)
 	k.tls = &tls.Certificate{Certificate: [][]byte{leaf.Raw}, PrivateKey: k.key, Leaf: leaf}
+}
+
+func (k *Key) priv() *ecdsa.PrivateKey {
+	k.mu.RLock()
+	defer k.mu.RUnlock()
+	return k.key
+}
+
+// Adopt makes k the key o holds, in place, so that everything that holds
+// k (the listener, the diallers, the transport) uses the new key from its
+// next handshake on (the switch of a key rotation, D1 of step 8b-2b).
+func (k *Key) Adopt(o *Key) {
+	o.mu.RLock()
+	key, leaf, pin, tc := o.key, o.leaf, o.pin, o.tls
+	o.mu.RUnlock()
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	k.key, k.leaf, k.pin, k.tls = key, leaf, pin, tc
 }
 
 // issue self-signs a certificate for the key and stores it.
@@ -212,7 +292,8 @@ func (k *Key) issue(nodeID string, now time.Time) error {
 		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth},
 		BasicConstraintsValid: true,
 	}
-	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &k.key.PublicKey, k.key)
+	priv := k.priv()
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &priv.PublicKey, priv)
 	if err != nil {
 		return fmt.Errorf("nodekey: sign: %w", err)
 	}

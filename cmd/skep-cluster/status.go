@@ -11,6 +11,7 @@ import (
 	"unicode"
 
 	"github.com/greenbeanorg/skep/internal/cluster/clusterconf"
+	"github.com/greenbeanorg/skep/internal/cluster/clusterstate"
 	"github.com/greenbeanorg/skep/internal/cluster/localapi"
 	"github.com/greenbeanorg/skep/pkg/models"
 )
@@ -112,12 +113,44 @@ func runStatus(ctx context.Context, args []string, e env) error {
 			}
 		}
 		fmt.Fprintf(e.stdout, "  %s  %s  %s, %s  %s  %s\n", termSafe(m.Name), termSafe(m.ID), termSafe(m.State), role, termSafe(addr), termSafe(m.Pin))
+		if m.NextPin != "" {
+			using := "not seen yet"
+			if m.ID == st.NodeID {
+				using = "this node uses " + keyName(st.Pin, m)
+			}
+			for _, k := range st.KeysSeen {
+				if k.NodeID == m.ID {
+					using = "last seen using " + keyName(k.Pin, m)
+				}
+			}
+			fmt.Fprintf(e.stdout, "      next pin %s (rotating; %s)\n", termSafe(m.NextPin), using)
+		}
+	}
+	if r := st.Rotation; r != nil {
+		fmt.Fprintf(e.stdout, "Key rotation:  %s, old pin %s, new pin %s, using %s\n", termSafe(r.Phase), termSafe(r.OldPin), termSafe(r.NewPin), termSafe(r.Using))
+	}
+	for _, r := range st.Rotations {
+		fmt.Fprintf(e.stdout, "Rotation:      %s\n", termSafe(r))
 	}
 	for _, r := range st.Removals {
 		fmt.Fprintf(e.stdout, "Removal:       %s\n", termSafe(r))
 	}
 	if len(st.UnappliedRemoval) > 0 {
 		fmt.Fprintf(e.stdout, "Not yet applied the last removal: %s\n", termSafe(strings.Join(st.UnappliedRemoval, ", ")))
+	}
+	if len(st.Clocks) > 0 {
+		fmt.Fprintf(e.stdout, "Clocks (offset from this node, ± half the round trip):\n")
+		for _, c := range st.Clocks {
+			if !c.Known {
+				fmt.Fprintf(e.stdout, "  %s  not known (%s)\n", termSafe(c.Name), termSafe(c.Note))
+				continue
+			}
+			line := fmt.Sprintf("  %s  %+.3f s  ±%.3f s  round trip %d ms", termSafe(c.Name), float64(c.OffsetMillis)/1000, float64(c.UncertaintyMillis)/1000, c.RoundTripMillis)
+			if c.Note != "" {
+				line += "  (last attempt: " + termSafe(c.Note) + ")"
+			}
+			fmt.Fprintln(e.stdout, line)
+		}
 	}
 	if len(st.Pendings) > 0 {
 		fmt.Fprintf(e.stdout, "Pending admissions (%d):\n", len(st.Pendings))
@@ -193,4 +226,15 @@ func termSafeLines(s string) string {
 		lines[i] = termSafe(lines[i])
 	}
 	return strings.Join(lines, "\n")
+}
+
+// keyName says whether pin is a rotating member's old or new key.
+func keyName(pin string, m clusterstate.Member) string {
+	switch pin {
+	case m.Pin:
+		return "the old key"
+	case m.NextPin:
+		return "the new key"
+	}
+	return "another key (" + termSafe(pin) + ")"
 }

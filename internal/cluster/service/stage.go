@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/greenbeanorg/skep/internal/cluster/audit"
 	"github.com/greenbeanorg/skep/internal/cluster/clusterconf"
 	"github.com/greenbeanorg/skep/internal/cluster/joincode"
 	"github.com/greenbeanorg/skep/internal/cluster/joinstate"
@@ -68,6 +69,8 @@ func stageJoin(ctx context.Context, dataDir string, cfg clusterconf.Config, key 
 	if err != nil {
 		return StageOutcome{Outcome: "error", Message: "moving the one-node state aside failed: " + err.Error() + "; " + startRuleSays(dataDir)}
 	}
+	StageMark(dataDir, audit.EventJoinMovedAside, false, map[string]string{"node_id": cfg.NodeID, "join_op": joinOpID(cfg.NodeID, opID),
+		"cluster_id": adm.ClusterID, "standalone": standalone})
 	if stopped(stopAfterMoveAside) {
 		return StageOutcome{Outcome: "stopped", Standalone: standalone}
 	}
@@ -143,6 +146,10 @@ func StartRule(dataDir string, log *slog.Logger) error {
 	}
 	if js != nil && js.Phase == joinstate.PhaseAbandoning {
 		return errors.New("refusing to start: \"skep-cluster join --abandon\" did not finish (join.json is in phase abandoning); run it again as root")
+	}
+	// A key rotation (D1 of step 8b-2b).
+	if err := RotateStartRule(dataDir, log.Warn); err != nil {
+		return err
 	}
 	if ok, err := layout.Exists(layout.State(dataDir)); err != nil || ok {
 		return err // present (nil): start normally

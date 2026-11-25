@@ -33,6 +33,12 @@ type Member struct {
 	Address string `json:"address"`
 	// Pin is the pin of the node key.
 	Pin string `json:"pin"`
+	// NextPin is the pin of the node's next key while it rotates (step
+	// 8b-2b, D1); both pins are accepted as this node.
+	NextPin string `json:"next_pin,omitempty"`
+	// KeyAddIndex is the index of the member.key_add entry that set
+	// NextPin; 0 without one.
+	KeyAddIndex uint64 `json:"key_add_index,omitempty"`
 	// APIPin is the pin of skep-api's node-to-node key. Empty until
 	// step 8e creates that key.
 	APIPin string `json:"api_pin,omitempty"`
@@ -105,6 +111,40 @@ type Membership struct {
 // reports the entry that changed it as applied. An error stops the machine
 // at that entry.
 type MembershipWriter func(Membership) error
+
+// AuditEntry is what the cluster audit records of one log entry this
+// machine handled (D4 of step 8b-2b): applied, refused at apply, or a
+// duplicate of an operation applied before.
+type AuditEntry struct {
+	Epoch, Index uint64
+	Type         string
+	Version      int
+	OpID         string
+	Actor        string
+	Origin       string
+	RequestID    string
+	// Outcome is "applied", "refused" or "duplicate"; Reason says why an
+	// entry was refused.
+	Outcome string
+	Reason  string
+	// NodeID, Name, Address and Pins are what the entry names; At is its
+	// own time (Unix seconds) where it has one.
+	NodeID  string
+	Name    string
+	Address string
+	Pins    []string
+	At      int64
+}
+
+// AuditWriter makes a log entry's record durable before the machine
+// reports the entry as applied, and marks a snapshot installed past the
+// audited index. An error stops the machine at that entry, as a failed
+// write of the applied-membership file does.
+type AuditWriter interface {
+	AuditEntry(AuditEntry) error
+	// AuditSnapshot gets the snapshot's member entries.
+	AuditSnapshot(epoch, index uint64, members []Member) error
+}
 
 // Event is a membership event of an applied entry, for the log line every
 // node writes (ADR 0013 B10; the cluster audit is the next run).
@@ -179,7 +219,29 @@ type Machine struct {
 	memIndex  uint64
 	stalled   *Stall
 	writer    MembershipWriter
+	audit     AuditWriter
 	onApplied func()
+}
+
+// SetAuditWriter installs the cluster audit. It must be set before the
+// first Apply or Restore.
+func (m *Machine) SetAuditWriter(w AuditWriter) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.audit = w
+}
+
+// auditOf describes entry e at index for the audit, by the state before
+// it was applied (st) and after (next, nil when nothing changed).
+func auditOf(st state, e Entry, index uint64, outcome, reason string) AuditEntry {
+	epoch := st.epoch
+	a := AuditEntry{Epoch: epoch, Index: index, Type: e.Type, Version: e.Version, OpID: e.OpID, Actor: e.Actor,
+		Origin: e.Origin, RequestID: e.RequestID, Outcome: outcome, Reason: reason}
+	a.NodeID, a.Name, a.Address, a.Pins, a.At = st.describe(e)
+	if e.Type == TypeClusterInit && a.Epoch == 0 && outcome == "applied" {
+		a.Epoch = 1
+	}
+	return a
 }
 
 // New returns an empty machine.
@@ -236,6 +298,11 @@ func (m *Machine) apply(index uint64, raw []byte) (Result, func()) {
 		return stall(fmt.Sprintf("entry type %q has version %d; this build applies up to %d", e.Type, e.Version, max))
 	}
 	if _, done := m.ops[e.OpID]; done {
+		if m.audit != nil {
+			if aerr := m.audit.AuditEntry(auditOf(m.st, e, index, "duplicate", "")); aerr != nil {
+				return stall("cannot write the cluster audit: " + aerr.Error())
+			}
+		}
 		m.applied = index
 		return Result{Duplicate: true, Entry: e}, nil
 	}
@@ -247,6 +314,11 @@ func (m *Machine) apply(index uint64, raw []byte) (Result, func()) {
 	}
 	if err != nil {
 		// Refused: nothing changes, the same on every node.
+		if m.audit != nil {
+			if aerr := m.audit.AuditEntry(auditOf(m.st, e, index, "refused", err.Error())); aerr != nil {
+				return stall("cannot write the cluster audit: " + aerr.Error())
+			}
+		}
 		m.applied = index
 		return Result{Err: fmt.Errorf("%w: %s", ErrRefused, err), Entry: e}, nil
 	}
@@ -256,6 +328,15 @@ func (m *Machine) apply(index uint64, raw []byte) (Result, func()) {
 			// The entry is not applied and not reported as applied
 			// (ADR 0013 amendment 1, point 5).
 			return stall("cannot write the applied-membership file: " + werr.Error())
+		}
+	}
+	if m.audit != nil {
+		a := auditOf(m.st, e, index, "applied", "")
+		a.Epoch = next.epoch
+		if aerr := m.audit.AuditEntry(a); aerr != nil {
+			// The record is written before the index is reported as
+			// applied, next to the applied-membership file's rule.
+			return stall("cannot write the cluster audit: " + aerr.Error())
 		}
 	}
 	m.st = next
@@ -324,7 +405,7 @@ func (s state) conflict(id, name, address, pin, skipPending string) error {
 			return fmt.Errorf("the name %s belongs to member %s", name, mem.ID)
 		case address != "" && mem.Address == address:
 			return fmt.Errorf("the address %s belongs to member %s", address, mem.Name)
-		case mem.Pin == pin:
+		case mem.Pin == pin || (mem.NextPin != "" && mem.NextPin == pin):
 			return fmt.Errorf("the pin %s belongs to member %s", pin, mem.Name)
 		}
 	}
@@ -405,6 +486,13 @@ func (s *state) apply(e Entry, index uint64) (change, error) {
 			return change{}, errors.New("a pending entry needs an expiry time")
 		}
 		for _, mem := range s.sortedMembers() {
+			// An admission and the join answer carry one pin per
+			// node, and their formats do not change: no admission
+			// while a member rotates its key (step 8b-2b, D1;
+			// amendment 3, B5).
+			if mem.NextPin != "" {
+				return change{}, fmt.Errorf("member %s is rotating its key: no admission until the rotation has finished", mem.Name)
+			}
 			// An admission lists every member, the one being removed
 			// too, and the joining node would accept that key.
 			if mem.State == StateRemoving {
@@ -544,9 +632,70 @@ func (s *state) apply(e Entry, index uint64) (change, error) {
 		if mem.State != StateRemoving {
 			return change{}, fmt.Errorf("member %s is in state %s, not removing", mem.Name, mem.State)
 		}
+		// Both pins of the node go with its entry.
 		delete(s.members, d.NodeID)
 		s.removedIndex = index
 		return change{membership: true, events: []Event{{Kind: "member removed", NodeID: mem.ID, Name: mem.Name}}}, nil
+
+	case TypeMemberKeyAdd:
+		var d MemberKeyAdd
+		if err := decodeOrStall(e, &d); err != nil {
+			return change{}, err
+		}
+		mem, ok := s.members[d.NodeID]
+		if !ok {
+			return change{}, fmt.Errorf("node %s is not a member", d.NodeID)
+		}
+		if mem.State != StateMember {
+			return change{}, fmt.Errorf("member %s is in state %s, not member", mem.Name, mem.State)
+		}
+		if !ValidPin(d.NextPin) {
+			return change{}, fmt.Errorf("next pin %q is not a key pin", d.NextPin)
+		}
+		for _, other := range s.sortedMembers() {
+			switch {
+			case other.NextPin != "":
+				return change{}, fmt.Errorf("member %s is rotating its key: one rotation in the cluster at a time", other.Name)
+			case other.State == StateJoining:
+				return change{}, fmt.Errorf("member %s is joining: no key rotation until that join has finished", other.Name)
+			case other.Pin == d.NextPin:
+				return change{}, fmt.Errorf("the pin %s belongs to member %s", d.NextPin, other.Name)
+			}
+		}
+		if len(s.pendings) != 0 {
+			return change{}, errors.New("an admission is pending: no key rotation until it is used, withdrawn or expired")
+		}
+		mem.NextPin, mem.KeyAddIndex = d.NextPin, index
+		s.members[d.NodeID] = mem
+		return change{membership: true, events: []Event{{Kind: "member key rotation started", NodeID: mem.ID, Name: mem.Name}}}, nil
+
+	case TypeMemberKeyDone:
+		var d MemberKeyDone
+		if err := decodeOrStall(e, &d); err != nil {
+			return change{}, err
+		}
+		mem, ok := s.members[d.NodeID]
+		if !ok {
+			return change{}, fmt.Errorf("node %s is not a member", d.NodeID)
+		}
+		if mem.NextPin == "" {
+			return change{}, fmt.Errorf("member %s is not rotating its key", mem.Name)
+		}
+		if d.AddIndex != mem.KeyAddIndex {
+			return change{}, fmt.Errorf("the rotation of member %s began at index %d, not %d", mem.Name, mem.KeyAddIndex, d.AddIndex)
+		}
+		kind := ""
+		switch d.Keep {
+		case KeepNew:
+			mem.Pin, kind = mem.NextPin, "member key rotated"
+		case KeepOld:
+			kind = "member key rotation aborted"
+		default:
+			return change{}, fmt.Errorf("keep %q is neither %q nor %q", d.Keep, KeepNew, KeepOld)
+		}
+		mem.NextPin, mem.KeyAddIndex = "", 0
+		s.members[d.NodeID] = mem
+		return change{membership: true, events: []Event{{Kind: kind, NodeID: mem.ID, Name: mem.Name}}}, nil
 	}
 	// A type a build declares in Supported without a case here changes
 	// nothing (as in step 8a); TestEveryTypeHasAnApplyStep keeps every
@@ -575,6 +724,15 @@ func (m *Machine) Member(id string) (Member, bool) {
 	return mem, ok
 }
 
+// OpIndex returns the index that applied an operation ID, and whether one
+// did (a refused entry applies nothing).
+func (m *Machine) OpIndex(opID string) (uint64, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	i, ok := m.ops[opID]
+	return i, ok
+}
+
 // AppliedIndex returns the machine's own applied index and whether it is
 // stalled.
 func (m *Machine) AppliedIndex() (uint64, bool) {
@@ -585,8 +743,8 @@ func (m *Machine) AppliedIndex() (uint64, bool) {
 
 // snapshotFormat is the version of the snapshot encoding. Format 1 (step
 // 8a) has no pending entries and no epoch; format 2 (8b-1) no removal
-// index. Both are still read.
-const snapshotFormat = 3
+// index; format 3 (8b-2a) no next pin. All are still read.
+const snapshotFormat = 4
 
 type snapshot struct {
 	Format          int               `json:"format"`
@@ -619,10 +777,16 @@ func (m *Machine) Snapshot() ([]byte, error) {
 		return nil, fmt.Errorf("%w (index %d)", ErrSnapshotWhileStalled, m.stalled.Index)
 	}
 	// Format 2 while no member was ever removed, so that a build of 8b-1
-	// in a cluster being upgraded can still read a snapshot sent to it.
-	format := snapshotFormat
+	// in a cluster being upgraded can still read a snapshot sent to it;
+	// format 4 only while a member has a next pin (step 8b-2b).
+	format := 3
 	if m.st.removedIndex == 0 {
 		format = 2
+	}
+	for _, mem := range m.st.members {
+		if mem.NextPin != "" {
+			format = snapshotFormat
+		}
 	}
 	s := snapshot{Format: format, ClusterID: m.st.clusterID, Epoch: m.st.epoch, Ops: maps.Clone(m.ops),
 		Applied: m.applied, MembershipIndex: m.memIndex, RemovedIndex: m.st.removedIndex, Members: m.st.sortedMembers(), Pendings: m.st.sortedPendings()}
@@ -669,6 +833,12 @@ func (m *Machine) Restore(r io.Reader) error {
 		if err := m.writer(rec); err != nil {
 			m.mu.Unlock()
 			return fmt.Errorf("clusterstate: restore: cannot write the applied-membership file: %w", err)
+		}
+	}
+	if m.audit != nil && st.clusterID != "" {
+		if err := m.audit.AuditSnapshot(st.epoch, s.Applied, st.sortedMembers()); err != nil {
+			m.mu.Unlock()
+			return fmt.Errorf("clusterstate: restore: cannot write the cluster audit: %w", err)
 		}
 	}
 	// s.Stalled is ignored: this build applies again whatever stalled an
