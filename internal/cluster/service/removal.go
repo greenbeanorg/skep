@@ -416,7 +416,9 @@ func (s *Service) clockRound(ctx context.Context, members []clusterstate.Member,
 			continue
 		}
 		if r, ok := res[m.ID]; !ok || r.err != nil {
+			mu.Lock()
 			out[m.ID] = clockSample{unknown: "no answer"}
+			mu.Unlock()
 			continue
 		}
 		wg.Add(1)
