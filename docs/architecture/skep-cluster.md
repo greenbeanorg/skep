@@ -21,10 +21,13 @@ rotate --abort`), the **cannot-say byte** after the handshake, a
 **per-node connection limit**, **clock-offset health**, the **cluster
 audit** with `audit verify`, and the `key_refused` warning (see
 [Step 8b-2b](#step-8b-2b-key-rotation-cannot-say-limits-clock-audit)).
-**Not built yet**: joining a host with guests (8d), replicated users
-(8c), forwarding (8e). `skep-api`, `skep-agent`
-and `skep-setup` do not use `skep-cluster` yet and are unchanged; the
-public API is unchanged.
+**Step 8c-1** (replicated users) puts the users in the log: `skep-api`
+keeps a read copy of them in `api.db` and sends every user change through
+`skep-cluster` (see [Step 8c-1](#step-8c-1-users-in-the-replicated-log)).
+**Not built yet**: `skep-setup` initialising and starting `skep_cluster`,
+and admit, withdraw and remove in the public API (8c-2); joining a host
+with guests (8d); forwarding (8e). `skep-agent` does not use
+`skep-cluster`.
 
 **Validated on FreeBSD:** step 8a on `smith` (2026-11-24, build `67396a5`,
 [record](../../tests/integration/cluster/results/8a-67396a5-20261124-smith.md)).
@@ -905,11 +908,84 @@ applies it, so the race is tested on the decision itself
   log is shorter than the snapshot threshold; hence the join's skip in the
   audit.
 
+## Step 8c-1: users in the replicated log
+
+ADR 0013 amendment 4 (Proposed); facts in
+[0013-evidence/8c1-facts-20261125.md](../decisions/0013-evidence/8c1-facts-20261125.md).
+
+**Entries.** `user.create`, `user.update`, `user.password`, `user.rehash`,
+`user.delete` and `users.import`, version 1. The state machine checks
+every value and is the only authority: the ID a lower-case UUID, the
+username rule of `internal/auth` (a test keeps them equal), a display name
+of at most 128 characters without control characters, one of the three
+built-in role IDs (roles are not replicated), an `$argon2id$` hash of at
+most 512 bytes, unique usernames, at most 2000 users, and never an entry
+that leaves no enabled administrator (`last_admin`). A refusal carries a
+code (`username_taken`, `last_admin`, `unknown_role`, `not_found`,
+`users_exist`, `hash_changed`, `too_many_users`, `invalid`). Each user has
+a credential epoch, raised by a password change, a role change and a
+change of the disabled flag. Times are the proposing leader's, except an
+import's users' own. Applied operation IDs are forgotten 100000 indexes
+after the entry that applied them, decided from the index alone.
+Snapshot format 5 (users, users index, "forgot") is written only once
+the state holds a user or forgot an ID. **An 8b-2b build stalls at the
+first user entry: every node is upgraded before the first user write.**
+
+**Socket operations** (`users-read`, `users-write`, the API account only).
+`users-read` is a long poll: with `after` (a users index) and `wait` (at
+most 5 s) it answers once the users index differs, or when the wait ends,
+with the cluster ID, the users index, the users with their hashes and
+epochs, and whether a leader is known, the machine is stalled, the node is
+joining or removed. A joining or removed node answers no users.
+`users-write` takes one entry (type, operation ID, actor, request ID,
+data); the service builds it (origin this node, the leader's time). A
+member that is not the leader passes it on as the peer operation
+`users-write`, which the leader answers only after its barrier of the
+current term. The answer is the entry's index (the first one, for a
+duplicate) and the user without its hash.
+
+**`skep-api`'s copy.** The `users` table of `api.db` is the copy, with
+the cluster ID it belongs to and its users index (table `cluster_copy`).
+A long poll applies each answer from a node with quorum in one
+transaction (`apidb.ApplyAnswer`, the only writer of the replicated
+columns): it adopts the first cluster, replaces the users and deletes
+every session for another cluster ID, never goes back to a lower users
+index for the same cluster, and ends every session of a user whose epoch
+changed or who is gone, each audited as `session.revoke` by `system`. A
+session is valid only while its epoch equals its user's. A write waits up
+to 10 s for the copy to reach its index, repeating with the same
+operation ID while the outcome is unknown.
+
+**Without quorum** (the socket unreachable, no answer for 15 s, no
+leader, stalled, joining or removed): user writes answer `503 no_quorum`
+with `details.outcome`; the password is checked first, then an enabled
+administrator gets a degraded session of at most one hour and anyone else
+`503 no_quorum`; an empty copy answers `no_quorum`, not `setup_required`.
+The hash upgrade at login is a `user.rehash` with a 2 s limit, not sent
+without quorum. `skep-api`'s health has the non-critical check
+`cluster_users`.
+
+**Import.** Migration `api/0006` marks a host that had users `pending`:
+logins use its own rows, user writes answer `503 users_import_pending`.
+`skep-api admin import-users` records an operation ID, sends one
+`users.import` (at most 192 KiB), and repeats it while the outcome is
+unknown; a cluster that has users refuses it (`users_exist`), and with
+`--yes` the host takes the cluster's users (`superseded`).
+
+**Leader barrier (D12).** A new leader makes its barrier and first round
+as soon as the library reports the leadership, not at the next tick.
+
+**Tests use a real `skep-cluster`**: package `clustertest` runs a one-node
+cluster in the test's process, and the browser test's stack runs the
+`skep_testcluster` build, whose `test-init` creates a cluster without
+root (never in a shipped build).
+
 ## Limits of 8b-2a and 8b-2b
 
 - Only a host **without VMs or jails** joins, and only a one-node host
-  (`join-request` and `join` refuse otherwise). The host's users are not
-  replaced (8c) and no drain is taken (8d). `remove` has no
+  (`join-request` and `join` refuse otherwise). Since step 8c-1 the
+  cluster's users replace the host's (the join's confirmation lists
+  them); no drain is taken (8d). `remove` has no
   `--forget-guests` and no guest refusal (8d; the entry's guest list is
   always empty).
 - A key rotation waits for every member: a member that stays down blocks

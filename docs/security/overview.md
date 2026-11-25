@@ -471,15 +471,23 @@ cluster is **one trust domain for Skep-managed resources**:
   jails on **every** node, including reading and changing the guests'
   disks through ordinary Skep operations, and attacking every user's
   password hash offline (Argon2id slows this down; it does not stop it for
-  weak passwords). In this step the replicated store holds only the
-  membership: such a node can admit hosts of its own and vote.
+  weak passwords). Since step 8c-1 the replicated store holds the
+  membership and the users with their Argon2id hashes: such a node can
+  admit hosts of its own, vote, create an administrator, and read every
+  user's hash.
 - It **cannot** get a root shell or run commands on another node, touch
   anything outside another node's local allow-lists in `agent.json`, cut
   another node's management interface, or erase another node's logs.
 - **A compromised `skep-api`** (not root) will be able to act as any user
-  on every node and make every replicated write the socket offers to it,
-  including `admit` from step 8c; it cannot vote, send Raft RPCs or change
-  a pin.
+  on every node and make every replicated write the socket offers to it:
+  since step 8c-1 every user write (`users-write`) and the users with
+  their hashes (`users-read`), and `admit` from step 8c-2; it cannot vote,
+  send Raft RPCs or change a pin. The state machine still checks every
+  user entry (the last administrator, the built-in roles, the hash's
+  form) on every node.
+- **No password hash leaves the two stores** (`api.db` and the cluster
+  store): no cluster audit record, access audit entry, log line or error
+  text carries one (step 8c-1, D10; tested).
 - After a node is compromised, every password should be changed, and the
   node removed (`skep-cluster remove NAME` on a member). Members refuse
   its Raft RPCs and close its connections as soon as the configuration

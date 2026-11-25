@@ -156,6 +156,13 @@ either command.
 the host, ending its sessions. Neither touches the only enabled
 administrator.
 
+Since step 8c-1 (unreleased) the users are `skep-cluster`'s: these
+commands write through its socket (`cluster_socket` in `api.json`,
+default `/var/run/skep-cluster/cluster.sock`) and need `skep_cluster`
+running with quorum; without it they answer `no_quorum` and change
+nothing. A host upgraded from 0.1 runs `skep-api admin import-users` once
+(see [cluster administration](../administration/cluster.md#users-in-a-cluster-step-8c-1)).
+
 `skep-api admin exists --username NAME` says whether a user exists. It
 opens `api.db` read-only and only if it exists: it never creates the
 database or its directory and never migrates the schema. Exit status 0:
