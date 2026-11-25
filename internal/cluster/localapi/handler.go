@@ -1,7 +1,10 @@
 package localapi
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"time"
@@ -22,6 +25,8 @@ const (
 	PathHealth            = Prefix + "/health"
 	PathStatus            = Prefix + "/status"
 	PathRaftConfiguration = Prefix + "/raft/configuration"
+	PathAdmit             = Prefix + "/admit"
+	PathWithdraw          = Prefix + "/admit/withdraw"
 )
 
 // CodeForbidden is the error code for a caller an operation does not
@@ -39,14 +44,65 @@ type Operation struct {
 	API  bool
 }
 
-// Operations is the whole local API of step 8a. Every operation is a
-// read. The documentation's table is checked against this list.
+// Operations is the whole local API. The documentation's table is checked
+// against this list.
 var Operations = []Operation{
 	{Name: "health", Method: http.MethodGet, Path: PathHealth, Root: true, API: true},
 	{Name: "status", Method: http.MethodGet, Path: PathStatus, Root: true, API: true},
 	// The Raft configuration is what "skep-cluster listen" (root)
 	// checks before it changes anything. skep-api has no use for it.
 	{Name: "raft-configuration", Method: http.MethodGet, Path: PathRaftConfiguration, Root: true, API: false},
+	// Admitting a host and withdrawing an admission are root-only in
+	// step 8b; skep-api gets them, with cluster:manage, in step 8c
+	// (ADR 0013 B2).
+	{Name: "admit", Method: http.MethodPost, Path: PathAdmit, Root: true, API: false},
+	{Name: "admit-withdraw", Method: http.MethodPost, Path: PathWithdraw, Root: true, API: false},
+}
+
+// AdmitRequest is the body of the admit operation.
+type AdmitRequest struct {
+	// Request is the line "skep-cluster join-request" printed.
+	Request string `json:"request"`
+}
+
+// AdmitResult is the answer of the admit operation.
+type AdmitResult struct {
+	// Admission is the line to paste into "skep-cluster join".
+	Admission string `json:"admission"`
+	ClusterID string `json:"cluster_id"`
+	NodeID    string `json:"node_id"`
+	Name      string `json:"name"`
+	Pin       string `json:"pin"`
+	ExpiresAt int64  `json:"expires_at"`
+	OpID      string `json:"op_id"`
+}
+
+// WithdrawRequest is the body of the admit-withdraw operation.
+type WithdrawRequest struct {
+	Name string `json:"name"`
+}
+
+// WithdrawResult is its answer.
+type WithdrawResult struct {
+	NodeID string `json:"node_id"`
+	Name   string `json:"name"`
+	OpID   string `json:"op_id"`
+}
+
+// OpError is an error answer of an operation that changes something.
+type OpError struct {
+	HTTPStatus int
+	Code       string
+	Message    string
+}
+
+func (e *OpError) Error() string { return e.Code + ": " + e.Message }
+
+// JoinStatus is a joining node's part of Status.
+type JoinStatus struct {
+	Phase     string `json:"phase"`
+	ClusterID string `json:"cluster_id"`
+	Message   string `json:"message,omitempty"`
 }
 
 // Status is the answer of the status operation. Everything in it is
@@ -70,7 +126,17 @@ type Status struct {
 	// the one catch-up and promotion use (ADR 0013 amendment 1).
 	StateMachine StateMachineStatus    `json:"state_machine"`
 	Members      []clusterstate.Member `json:"members"`
-	Build        string                `json:"build"`
+	// Pendings are the admitted hosts that have not joined.
+	Pendings []clusterstate.Pending `json:"pendings"`
+	// Servers is the latest Raft configuration.
+	Servers []store.Server `json:"servers,omitempty"`
+	// AcceptedBy says where the keys the listener accepts come from:
+	// "state machine", "membership file" (after a restart, until the
+	// machine has caught up), "admission" (joining) or "none".
+	AcceptedBy string `json:"accepted_by"`
+	// Join is set while this node is joining.
+	Join  *JoinStatus `json:"join,omitempty"`
+	Build string      `json:"build"`
 }
 
 // StateMachineStatus is the state machine's part of Status.
@@ -79,6 +145,11 @@ type StateMachineStatus struct {
 	// Stalled is set when the machine stopped at an entry this build
 	// cannot apply.
 	Stalled *clusterstate.Stall `json:"stalled,omitempty"`
+	// UpToDate is true when the machine is not stopped, the library has
+	// applied the commit index, and every entry between the machine's
+	// index and the library's is one of the library's own (no-op,
+	// configuration change): "applied 7 of 10" is then no lag.
+	UpToDate bool `json:"up_to_date"`
 }
 
 // RaftConfiguration is the answer of the raft-configuration operation.
@@ -91,6 +162,9 @@ type Backend interface {
 	Health(ctx context.Context) models.Health
 	Status(ctx context.Context) Status
 	RaftConfiguration(ctx context.Context) (RaftConfiguration, error)
+	// Admit and Withdraw return an *OpError for a refusal.
+	Admit(ctx context.Context, request, actor string) (AdmitResult, error)
+	Withdraw(ctx context.Context, name, actor string) (WithdrawResult, error)
 }
 
 // HandlerOptions configures the handler.
@@ -127,6 +201,22 @@ func NewHandler(b Backend, o HandlerOptions) http.Handler {
 				return
 			}
 			httpkit.WriteJSON(w, r, http.StatusOK, c)
+		},
+		PathAdmit: func(w http.ResponseWriter, r *http.Request) {
+			var req AdmitRequest
+			if !decodeBody(w, r, &req) {
+				return
+			}
+			res, err := b.Admit(r.Context(), req.Request, actorOf(r))
+			writeResult(w, r, res, err)
+		},
+		PathWithdraw: func(w http.ResponseWriter, r *http.Request) {
+			var req WithdrawRequest
+			if !decodeBody(w, r, &req) {
+				return
+			}
+			res, err := b.Withdraw(r.Context(), req.Name, actorOf(r))
+			writeResult(w, r, res, err)
 		},
 	}
 	mux := http.NewServeMux()
@@ -172,4 +262,41 @@ func withTimeout(next http.Handler) http.Handler {
 		defer cancel()
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
+}
+
+// actorOf names the caller of an operation that changes something: the
+// kernel-verified peer UID on this node.
+func actorOf(r *http.Request) string {
+	if peer, ok := PeerFrom(r.Context()); ok && peer.UID == 0 {
+		return "root"
+	}
+	return "unknown"
+}
+
+func decodeBody(w http.ResponseWriter, r *http.Request, v any) bool {
+	var buf bytes.Buffer
+	if _, err := buf.ReadFrom(r.Body); err != nil {
+		httpkit.WriteError(w, r, http.StatusBadRequest, "invalid_request", "cannot read the request body")
+		return false
+	}
+	dec := json.NewDecoder(&buf)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(v); err != nil || dec.More() {
+		httpkit.WriteError(w, r, http.StatusBadRequest, "invalid_request", "the request body is not valid JSON for this operation")
+		return false
+	}
+	return true
+}
+
+func writeResult(w http.ResponseWriter, r *http.Request, res any, err error) {
+	if err == nil {
+		httpkit.WriteJSON(w, r, http.StatusOK, res)
+		return
+	}
+	var oe *OpError
+	if errors.As(err, &oe) {
+		httpkit.WriteError(w, r, oe.HTTPStatus, oe.Code, oe.Message)
+		return
+	}
+	httpkit.WriteError(w, r, http.StatusInternalServerError, "internal_error", err.Error())
 }

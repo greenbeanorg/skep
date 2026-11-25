@@ -306,6 +306,10 @@ skepctl and skep-setup as built for release (FreeBSD amd64, with the web
 interface embedded). The modules under the Mozilla Public License 2.0
 (linked into skep-cluster) are used unmodified; their source code is
 published by their authors at the module path and version named here.
+One Skep file, internal/cluster/raftnet/net_handler.go, is adapted from
+net_transport.go of github.com/hashicorp/raft v1.8.0; it is under the
+Mozilla Public License 2.0, says so in its header, and its source is
+published with Skep's own.
 Part 2 lists the npm packages whose code is in the web interface that
 skep-api serves.
 

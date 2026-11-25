@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -31,10 +32,22 @@ func (fakeBackend) RaftConfiguration(context.Context) (RaftConfiguration, error)
 	return RaftConfiguration{Servers: []store.Server{{ID: "n1", Address: store.NoAddress, Voter: true}}}, nil
 }
 
+func (fakeBackend) Admit(_ context.Context, request, actor string) (AdmitResult, error) {
+	return AdmitResult{OpID: actor}, nil
+}
+
+func (fakeBackend) Withdraw(_ context.Context, name, actor string) (WithdrawResult, error) {
+	return WithdrawResult{OpID: actor}, nil
+}
+
 const apiUID = 409
 
 func call(h http.Handler, method, path string, peer *peercred.Cred) *httptest.ResponseRecorder {
-	req := httptest.NewRequest(method, path, nil)
+	var body io.Reader
+	if method == http.MethodPost {
+		body = strings.NewReader("{}")
+	}
+	req := httptest.NewRequest(method, path, body)
 	if peer != nil {
 		req = req.WithContext(WithPeer(req.Context(), *peer))
 	}
@@ -82,27 +95,39 @@ func TestEveryOperationAdmitsOnlyItsCallers(t *testing.T) {
 		if rec := call(h, op.Method, op.Path, nil); rec.Code != http.StatusForbidden {
 			t.Errorf("%s without a peer: %d", op.Name, rec.Code)
 		}
-		// Every operation of 8a is a read.
-		if rec := call(h, http.MethodPost, op.Path, &peercred.Cred{UID: 0}); rec.Code != http.StatusMethodNotAllowed {
-			t.Errorf("%s by POST: %d", op.Name, rec.Code)
+		// Only the operation's own method answers.
+		other := http.MethodPost
+		if op.Method == http.MethodPost {
+			other = http.MethodGet
+		}
+		if rec := call(h, other, op.Path, &peercred.Cred{UID: 0}); rec.Code != http.StatusMethodNotAllowed {
+			t.Errorf("%s by %s: %d", op.Name, other, rec.Code)
 		}
 	}
 }
 
-// The table of 8a, pinned: a change to who may call what fails here and
-// must be made on purpose.
+// The table, pinned: a change to who may call what fails here and must be
+// made on purpose. admit and admit-withdraw are root-only in step 8b
+// (decision D2 of the 8b-1 run).
 func TestOperationTable(t *testing.T) {
 	want := map[string][2]bool{ // root, skep
 		"health":             {true, true},
 		"status":             {true, true},
 		"raft-configuration": {true, false},
+		"admit":              {true, false},
+		"admit-withdraw":     {true, false},
 	}
+	writes := map[string]bool{"admit": true, "admit-withdraw": true}
 	if len(Operations) != len(want) {
 		t.Fatalf("%d operations, want %d", len(Operations), len(want))
 	}
 	for _, op := range Operations {
 		w, ok := want[op.Name]
-		if !ok || w != [2]bool{op.Root, op.API} || op.Method != http.MethodGet {
+		method := http.MethodGet
+		if writes[op.Name] {
+			method = http.MethodPost
+		}
+		if !ok || w != [2]bool{op.Root, op.API} || op.Method != method {
 			t.Errorf("operation %+v is not in the reviewed table", op)
 		}
 	}
@@ -120,7 +145,7 @@ func TestAPIAccountThatIsRootIsNotTheAPI(t *testing.T) {
 func TestUnknownPathAndUnhealthy(t *testing.T) {
 	h := NewHandler(fakeBackend{health: "no leader"}, HandlerOptions{APIUID: apiUID})
 	root := &peercred.Cred{UID: 0}
-	if rec := call(h, http.MethodGet, Prefix+"/join", root); rec.Code != http.StatusNotFound {
+	if rec := call(h, http.MethodGet, Prefix+"/nothing", root); rec.Code != http.StatusNotFound {
 		t.Fatalf("unknown path: %d", rec.Code)
 	}
 	if rec := call(h, http.MethodGet, PathHealth, root); rec.Code != http.StatusServiceUnavailable {
@@ -218,5 +243,23 @@ func TestDocumentedOperationTable(t *testing.T) {
 		if !strings.Contains(string(b), row) {
 			t.Errorf("docs/architecture/skep-cluster.md lacks the row %q", row)
 		}
+	}
+}
+
+// The actor of a write is the kernel-verified peer, and a body with an
+// unknown field is refused.
+func TestAdmitActorAndStrictBody(t *testing.T) {
+	h := NewHandler(fakeBackend{}, HandlerOptions{APIUID: apiUID})
+	rec := call(h, http.MethodPost, PathAdmit, &peercred.Cred{UID: 0})
+	var res AdmitResult
+	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &res) != nil || res.OpID != "root" {
+		t.Fatalf("admit as root: %d %s", rec.Code, rec.Body)
+	}
+	req := httptest.NewRequest(http.MethodPost, PathAdmit, strings.NewReader(`{"request":"x","extra":1}`))
+	req = req.WithContext(WithPeer(req.Context(), peercred.Cred{UID: 0}))
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("unknown field: %d", rec.Code)
 	}
 }

@@ -21,12 +21,14 @@ under BSD-2-Clause. No GPL, LGPL or AGPL code is linked or bundled.
 their own table below. This was decided in
 [ADR 0013](decisions/0013-clustering.md) B11. MPL-2.0 is a file-level
 copyleft: it covers those modules' own files and not Skep's. Skep uses
-them **unmodified**, so what it owes is the license text (in
+those modules **unmodified**, so what it owes is the license text (in
 `THIRD_PARTY_NOTICES`) and a pointer to their source, which is their
-module path and version. If Skep ever changes one of those files, or
-adapts one (ADR 0013 plans to adapt the library's inbound RPC handler in
-step 8b), that file stays under MPL-2.0, must say so, and its source must
-be published with the release.
+module path and version. **One file is adapted** (since step 8b-1,
+2026-11-24): `internal/cluster/raftnet/net_handler.go`, Skep's inbound
+Raft RPC handler adapted from `net_transport.go` of `hashicorp/raft`
+v1.8.0 (ADR 0013 B1). It stays under MPL-2.0, says so in its header, and
+its source is published with Skep's (this repository); the rest of Skep is
+not affected (MPL-2.0 is file-level).
 
 The MPL-2.0 npm packages, and the Python-2.0 and CC-BY-4.0 packages in the
 list further down, are build or test tools that are not distributed.

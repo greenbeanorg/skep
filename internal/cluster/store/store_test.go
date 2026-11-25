@@ -15,8 +15,9 @@ import (
 )
 
 const (
-	nodeA = "0b5e3a52-7f0e-4c58-9d0b-3f1d6f0a9c11"
-	pinA  = "sha256:aa"
+	nodeA       = "0b5e3a52-7f0e-4c58-9d0b-3f1d6f0a9c11"
+	testCluster = "7d1c2a9e-1b0f-4f3e-9a51-2c6b8e0d4f10"
+	pinA        = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 )
 
 func openLeader(t *testing.T, dir string) *Node {
@@ -42,7 +43,7 @@ func newCluster(t *testing.T, peerAddress string) (string, *Node) {
 	}
 	n := openLeader(t, dir)
 	e, err := clusterstate.NewEntry(clusterstate.TypeClusterInit, "op-init", clusterstate.ActorSystem, nodeA,
-		clusterstate.ClusterInit{ClusterID: "c1", Member: clusterstate.Member{
+		clusterstate.ClusterInit{ClusterID: testCluster, Member: clusterstate.Member{
 			ID: nodeA, Name: "smith", Address: peerAddress, Pin: pinA, State: clusterstate.StateMember}})
 	if err != nil {
 		t.Fatal(err)
@@ -86,7 +87,7 @@ func TestBootstrapOneNodeAndRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	v := n.Machine().View()
-	if v.ClusterID != "c1" || len(v.Members) != 1 || v.Members[0].Pin != pinA || v.Members[0].ID != nodeA {
+	if v.ClusterID != testCluster || len(v.Members) != 1 || v.Members[0].Pin != pinA || v.Members[0].ID != nodeA {
 		t.Fatalf("state after a restart: %+v", v)
 	}
 	// The store file is private to its owner.

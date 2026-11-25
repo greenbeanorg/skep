@@ -47,8 +47,9 @@ service skep_cluster start
 skep-cluster status
 ```
 
-It opens no network port unless `skep-cluster listen -address <addr>` is
-run. What it does, its files and its socket are in
+It opens no network port unless `skep-cluster listen -address <addr>` or
+`skep-cluster join-request -address <addr>` is run ([joining hosts into a
+cluster](../administration/cluster.md)). What it does, its files and its socket are in
 [skep-cluster](../architecture/skep-cluster.md). After a package upgrade,
 restart it by hand: `skep-setup upgrade` does not know it yet.
 

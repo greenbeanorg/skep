@@ -1,6 +1,7 @@
 package localapi
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -22,7 +23,7 @@ type Client struct {
 // NewClient returns a client for the socket. It does not connect.
 func NewClient(socket string) *Client {
 	return &Client{http: &http.Client{
-		Timeout: 20 * time.Second,
+		Timeout: 60 * time.Second,
 		Transport: &http.Transport{
 			DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 				return (&net.Dialer{Timeout: 5 * time.Second}).DialContext(ctx, "unix", socket)
@@ -71,6 +72,47 @@ func (c *Client) get(ctx context.Context, path string, okStatus func(int) bool, 
 }
 
 func is200(s int) bool { return s == http.StatusOK }
+
+func (c *Client) post(ctx context.Context, path string, in, out any) error {
+	body, err := json.Marshal(in)
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://skep-cluster"+path, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return fmt.Errorf("%w: %v", ErrUnavailable, err)
+	}
+	defer resp.Body.Close()
+	b, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	if err != nil {
+		return fmt.Errorf("%w: %v", ErrUnavailable, err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		var e models.ErrorResponse
+		_ = json.Unmarshal(b, &e)
+		return &StatusError{HTTPStatus: resp.StatusCode, Code: e.Error.Code, Message: e.Error.Message}
+	}
+	return json.Unmarshal(b, out)
+}
+
+// Admit admits a host by its request line (root only).
+func (c *Client) Admit(ctx context.Context, request string) (AdmitResult, error) {
+	var res AdmitResult
+	err := c.post(ctx, PathAdmit, AdmitRequest{Request: request}, &res)
+	return res, err
+}
+
+// Withdraw withdraws a pending admission by the host's name (root only).
+func (c *Client) Withdraw(ctx context.Context, name string) (WithdrawResult, error) {
+	var res WithdrawResult
+	err := c.post(ctx, PathWithdraw, WithdrawRequest{Name: name}, &res)
+	return res, err
+}
 
 // Health returns the service's health document. A 503 answer is a health
 // document too.

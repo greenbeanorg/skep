@@ -5,13 +5,18 @@
 // Without a command it runs the service. The commands are local, for the
 // host's administrator:
 //
-//	skep-cluster init [-address ADDR]   create a one-node cluster (root)
-//	skep-cluster listen -address ADDR   open the node-to-node listener (root)
-//	skep-cluster status [-json]         show the node and its cluster
-//	skep-cluster health                 show the service's health
+//	skep-cluster init [-address ADDR]        create a one-node cluster (root)
+//	skep-cluster listen -address ADDR        open the node-to-node listener (root)
+//	skep-cluster join-request -address ADDR  print this host's join request (root)
+//	skep-cluster admit REQUEST               admit a host, print its admission (root)
+//	skep-cluster admit --withdraw NAME       withdraw a pending admission (root)
+//	skep-cluster join ADMISSION              join a cluster (root)
+//	skep-cluster status [-json]              show the node and its cluster
+//	skep-cluster health                      show the service's health
 //	skep-cluster version
 //
-// Step 8a: every host is a one-node cluster. Joining comes with step 8b.
+// Every host is a one-node cluster until it joins another (ADR 0013, step
+// 8b: only a host without guests joins; removal comes with the next run).
 package main
 
 import (
@@ -42,13 +47,13 @@ func main() {
 	case err == nil:
 	case errors.As(err, &exitErr):
 		if exitErr.msg != "" {
-			fmt.Fprintln(os.Stderr, "skep-cluster:", exitErr.msg)
+			fmt.Fprintln(os.Stderr, "skep-cluster:", termSafeLines(exitErr.msg))
 		}
 		os.Exit(exitErr.code)
 	case errors.Is(err, flag.ErrHelp):
 		os.Exit(2)
 	default:
-		fmt.Fprintln(os.Stderr, "skep-cluster:", err)
+		fmt.Fprintln(os.Stderr, "skep-cluster:", termSafeLines(err.Error()))
 		os.Exit(1)
 	}
 }
@@ -84,6 +89,15 @@ type env struct {
 	configOwner func(accountGID uint32) (uid, gid int)
 	// restartService restarts the skep_cluster service.
 	restartService func(ctx context.Context) error
+	// serviceCtl runs "service skep_cluster stop" or "start".
+	serviceCtl func(ctx context.Context, action string) error
+	// runAsAccount runs this program with args as the given user and
+	// group (no supplementary groups) and returns its stdout.
+	runAsAccount func(ctx context.Context, uid, gid uint32, args []string) ([]byte, error)
+	// agentGuests counts the host's VMs and jails from skep-agent.
+	agentGuests func(ctx context.Context, socket string) (vms, jails int, err error)
+	// openTTY opens the controlling terminal.
+	openTTY func() (io.ReadWriteCloser, error)
 }
 
 func realEnv() env {
@@ -111,7 +125,41 @@ func realEnv() env {
 			cmd.Stdout, cmd.Stderr = os.Stderr, os.Stderr
 			return cmd.Run()
 		},
+		serviceCtl: func(ctx context.Context, action string) error {
+			if action != "stop" && action != "start" {
+				return fmt.Errorf("unknown service action %q", action)
+			}
+			// A fixed program and fixed arguments.
+			cmd := exec.CommandContext(ctx, "/usr/sbin/service", "skep_cluster", action)
+			cmd.Stdout, cmd.Stderr = os.Stderr, os.Stderr
+			return cmd.Run()
+		},
+		runAsAccount: runAsAccount,
+		agentGuests:  agentGuests,
+		openTTY: func() (io.ReadWriteCloser, error) {
+			return os.OpenFile("/dev/tty", os.O_RDWR, 0)
+		},
 	}
+}
+
+// runAsAccount runs this same executable, with a fixed environment, as the
+// service account. Its arguments come from the root-run command, which
+// validated them; the admission line is passed as one argument, never
+// through a shell.
+func runAsAccount(ctx context.Context, uid, gid uint32, args []string) ([]byte, error) {
+	if uid == 0 {
+		return nil, errors.New("refusing to run the stage as root")
+	}
+	self, err := os.Executable()
+	if err != nil {
+		return nil, err
+	}
+	cmd := exec.CommandContext(ctx, self, args...)
+	cmd.Env = []string{"PATH=/usr/bin:/bin:/usr/sbin:/sbin", "LC_ALL=C"}
+	cmd.Dir = "/"
+	cmd.Stderr = os.Stderr
+	cmd.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: uid, Gid: gid, Groups: []uint32{}}}
+	return cmd.Output()
 }
 
 func interfaceAddrs() ([]netip.Addr, error) {
@@ -143,6 +191,14 @@ func run(ctx context.Context, args []string, e env) error {
 			return runInit(ctx, args[1:], e)
 		case "listen":
 			return runListen(ctx, args[1:], e)
+		case "join-request":
+			return runJoinRequest(ctx, args[1:], e)
+		case "admit":
+			return runAdmit(ctx, args[1:], e)
+		case "join":
+			return runJoin(ctx, args[1:], e)
+		case stageCommand:
+			return runStageCmd(ctx, args[1:], e)
 		case "status":
 			return runStatus(ctx, args[1:], e)
 		case "health":
@@ -166,6 +222,10 @@ const usage = `usage:
   skep-cluster [-config FILE] [-data-dir DIR] [-socket PATH]   run the service (as the skep-cluster account)
   skep-cluster init [-address ADDR] [-name NAME]               create a one-node cluster (root)
   skep-cluster listen -address ADDR                            open the node-to-node listener on ADDR:8444 (root)
+  skep-cluster join-request -address ADDR                      print this host's join request; opens ADDR:8444 (root)
+  skep-cluster admit REQUEST                                   admit a host; prints its admission (root, on a member)
+  skep-cluster admit -withdraw NAME                            withdraw a pending admission (root, on a member)
+  skep-cluster join [-cluster-id ID] ADMISSION                 join the cluster of an admission (root)
   skep-cluster status [-json]                                  show the node and its cluster (root or skep)
   skep-cluster health                                          show the service's health (root or skep)
   skep-cluster version

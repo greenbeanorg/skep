@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"io/fs"
 	"net"
 	"net/http"
@@ -15,9 +16,11 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode"
 
 	"github.com/greenbeanorg/skep/internal/cluster/clusterconf"
 	"github.com/greenbeanorg/skep/internal/cluster/clusterstate"
+	"github.com/greenbeanorg/skep/internal/cluster/joincode"
 	"github.com/greenbeanorg/skep/internal/cluster/localapi"
 	"github.com/greenbeanorg/skep/internal/cluster/nodekey"
 	"github.com/greenbeanorg/skep/internal/cluster/store"
@@ -50,6 +53,15 @@ type world struct {
 	onRestart   func()
 	agentErr    error
 	agentID     string
+	// guests is what the fake agent's lists hold; guestErr fails them.
+	vms, jails int
+	guestErr   error
+	// serviceActions records "stop" and "start"; stages records the
+	// stage commands run as the service account.
+	serviceActions []string
+	stages         [][]string
+	tty            io.ReadWriteCloser
+	onService      func(action string)
 }
 
 func newWorld(t *testing.T) *world {
@@ -95,6 +107,36 @@ func (w *world) env(euid int) env {
 			w.agentCalls++
 			w.agentSocket = socket
 			return w.agentID, w.agentErr
+		},
+		agentGuests: func(context.Context, string) (int, int, error) {
+			w.mu.Lock()
+			defer w.mu.Unlock()
+			return w.vms, w.jails, w.guestErr
+		},
+		serviceCtl: func(_ context.Context, action string) error {
+			w.mu.Lock()
+			defer w.mu.Unlock()
+			w.serviceActions = append(w.serviceActions, action)
+			if w.onService != nil {
+				w.onService(action)
+			}
+			return nil
+		},
+		runAsAccount: func(ctx context.Context, uid, _ uint32, args []string) ([]byte, error) {
+			w.mu.Lock()
+			w.stages = append(w.stages, args)
+			w.mu.Unlock()
+			var out bytes.Buffer
+			sub := w.env(int(uid))
+			sub.stdout = &out
+			err := run(ctx, args, sub)
+			return out.Bytes(), err
+		},
+		openTTY: func() (io.ReadWriteCloser, error) {
+			if w.tty == nil {
+				return nil, errors.New("no terminal")
+			}
+			return w.tty, nil
 		},
 		restartService: func(context.Context) error {
 			w.mu.Lock()
@@ -401,15 +443,39 @@ func TestStatusPrintsTheStateMachine(t *testing.T) {
 		t.Fatal(err)
 	}
 	out := w.out.String()
-	for _, want := range []string{"applied 6 of 9", "STOPPED at log index 7 (applied up to 6)", "unknown to this build"} {
+	for _, want := range []string{"STOPPED at log index 7 (applied up to 6)", "unknown to this build"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("status output lacks %q:\n%s", want, out)
 		}
 	}
 }
 
+// "applied 7 of 10" with only the library's own entries in between is
+// shown as up to date, not as a lag (D6 of the 8b-1 run).
+func TestStatusDoesNotShowLibraryEntriesAsLag(t *testing.T) {
+	for _, c := range []struct {
+		upToDate bool
+		want     string
+	}{
+		{true, "up to date, last Skep entry 7 (entries 8-10 are Raft's own)"},
+		{false, "applied 7, catching up (Raft applied 10, commit 10)"},
+	} {
+		w := newWorld(t)
+		f := &fakeService{status: localapi.Status{
+			Raft:         store.Stats{State: "leader", Term: 2, LastIndex: 10, CommitIndex: 10, AppliedIndex: 10},
+			StateMachine: localapi.StateMachineStatus{AppliedIndex: 7, UpToDate: c.upToDate},
+		}}
+		if err := run(context.Background(), []string{"status", "-socket", f.start(t)}, w.env(os.Getuid())); err != nil {
+			t.Fatal(err)
+		}
+		if out := w.out.String(); !strings.Contains(out, c.want) || strings.Contains(out, "applied 7 of 10") {
+			t.Errorf("status output lacks %q:\n%s", c.want, out)
+		}
+	}
+}
+
 func (w *world) listen(euid int, socket string, extra ...string) error {
-	args := append([]string{"listen", "-config", w.config, "-socket", socket}, extra...)
+	args := append([]string{"listen", "-config", w.config, "-data-dir", w.dataDir, "-socket", socket}, extra...)
 	return run(context.Background(), args, w.env(euid))
 }
 
@@ -493,7 +559,7 @@ func TestListenNeedsTheRunningService(t *testing.T) {
 
 func TestUnknownCommand(t *testing.T) {
 	w := newWorld(t)
-	for _, c := range []string{"join", "admit", "join-request", "recover"} {
+	for _, c := range []string{"recover", "leave", "remove"} {
 		if err := run(context.Background(), []string{c}, w.env(0)); err == nil || !strings.Contains(err.Error(), "unknown command") {
 			t.Errorf("%s: %v", c, err)
 		}
@@ -524,5 +590,343 @@ func TestAgentNodeIDReadsTheSystemOperation(t *testing.T) {
 	}
 	if _, err := agentNodeID(context.Background(), filepath.Join(t.TempDir(), "none.sock")); err == nil {
 		t.Fatal("no error without an agent")
+	}
+}
+
+// join-request and join refuse a host with a guest, or whose agent does
+// not answer, before they stop anything (decision D1 of the 8b-1 run).
+func TestJoinCommandsRefuseAHostWithGuests(t *testing.T) {
+	adm := testAdmission(t)
+	for _, c := range []struct {
+		name       string
+		vms, jails int
+		err        error
+	}{{"a VM", 1, 0, nil}, {"a jail", 0, 1, nil}, {"no agent", 0, 0, errors.New("connection refused")}} {
+		for _, cmd := range [][]string{
+			{"join-request", "-address", "127.0.0.1"},
+			{"join", "-cluster-id", adm.ClusterID, mustAdmissionLine(t, adm)},
+		} {
+			w := newWorld(t)
+			clusterconf.Write(w.config, clusterconf.Config{NodeID: agentNode, NodeName: "smith", ListenAddress: "127.0.0.1"}, -1, -1)
+			w.vms, w.jails, w.guestErr = c.vms, c.jails, c.err
+			args := append(append([]string{cmd[0]}, "-config", w.config, "-data-dir", w.dataDir, "-socket", filepath.Join(w.dir, "none.sock")), cmd[1:]...)
+			err := run(context.Background(), args, w.env(0))
+			if err == nil || !strings.Contains(err.Error(), "refused") {
+				t.Errorf("%s with %s: %v", cmd[0], c.name, err)
+			}
+			if len(w.serviceActions) != 0 || len(w.stages) != 0 {
+				t.Errorf("%s with %s: the service was touched: %v %v", cmd[0], c.name, w.serviceActions, w.stages)
+			}
+		}
+	}
+}
+
+func testAdmission(t *testing.T) joincode.Admission {
+	return joincode.Admission{
+		ClusterID: "7d1c2a9e-1b0f-4f3e-9a51-2c6b8e0d4f10",
+		For:       joincode.Node{NodeID: agentNode, Name: "smith", Address: "127.0.0.1:8444", Pin: "sha256:" + strings.Repeat("a", 64)},
+		Members:   []joincode.Node{{NodeID: "1c6f4b63-8a1f-4d69-8e1c-4a2e7a1b0d22", Name: "langrishe", Address: "10.79.20.82:8444", Pin: "sha256:" + strings.Repeat("b", 64)}},
+		ExpiresAt: 1,
+	}
+}
+
+func mustAdmissionLine(t *testing.T, a joincode.Admission) string {
+	l, err := joincode.EncodeAdmission(a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return l
+}
+
+type fakeTTY struct {
+	strings.Reader
+	bytes.Buffer
+}
+
+func (f *fakeTTY) Read(p []byte) (int, error)  { return f.Reader.Read(p) }
+func (f *fakeTTY) Write(p []byte) (int, error) { return f.Buffer.Write(p) }
+func (f *fakeTTY) Close() error                { return nil }
+
+// join confirms on the terminal, or with -cluster-id equal to the
+// admission's; without either it refuses, and there is no -yes (D4).
+func TestJoinConfirmation(t *testing.T) {
+	adm := testAdmission(t)
+	line := mustAdmissionLine(t, adm)
+	for _, c := range []struct {
+		name  string
+		args  []string
+		tty   string
+		ok    bool
+		cause string
+	}{
+		{"no terminal, no -cluster-id", nil, "", false, "-cluster-id"},
+		{"wrong -cluster-id", []string{"-cluster-id", "11111111-2222-4333-8444-555555555555"}, "", false, "not the admission's cluster"},
+		{"terminal says no", nil, "no\n", false, "not confirmed"},
+		{"-yes does not exist", []string{"-yes"}, "", false, "not defined"},
+	} {
+		w := newWorld(t)
+		clusterconf.Write(w.config, clusterconf.Config{NodeID: agentNode, NodeName: "smith", ListenAddress: "127.0.0.1"}, -1, -1)
+		if c.tty != "" {
+			w.tty = &fakeTTY{Reader: *strings.NewReader(c.tty)}
+		}
+		args := append(append([]string{"join", "-config", w.config, "-data-dir", w.dataDir, "-socket", filepath.Join(w.dir, "none.sock")}, c.args...), line)
+		err := run(context.Background(), args, w.env(0))
+		if err == nil || !strings.Contains(err.Error()+w.errOut.String(), c.cause) {
+			t.Errorf("%s: %v", c.name, err)
+		}
+		if len(w.serviceActions) != 0 {
+			t.Errorf("%s: the service was stopped before the confirmation", c.name)
+		}
+	}
+	// The cluster ID and every member are printed before the question.
+	w := newWorld(t)
+	clusterconf.Write(w.config, clusterconf.Config{NodeID: agentNode, NodeName: "smith", ListenAddress: "127.0.0.1"}, -1, -1)
+	run(context.Background(), []string{"join", "-config", w.config, "-data-dir", w.dataDir, line}, w.env(0))
+	for _, want := range []string{adm.ClusterID, "langrishe", "10.79.20.82:8444", adm.Members[0].Pin} {
+		if !strings.Contains(w.out.String(), want) {
+			t.Errorf("the confirmation does not show %q:\n%s", want, w.out.String())
+		}
+	}
+}
+
+// An admission for another host, a request pasted as an admission, and a
+// damaged line are refused before anything happens.
+func TestJoinRefusesAWrongAdmission(t *testing.T) {
+	adm := testAdmission(t)
+	other := adm
+	other.For.NodeID = "2d7a5c74-9b2a-4e7a-9f2d-5b3f8b2c1e33"
+	good := mustAdmissionLine(t, adm)
+	req, _ := joincode.EncodeRequest(joincode.Request{Node: adm.For})
+	for name, line := range map[string]string{
+		"for another host": mustAdmissionLine(t, other),
+		"a request":        req,
+		"damaged":          good[:len(good)-30] + "x" + good[len(good)-29:],
+		"truncated":        good[:len(good)/2],
+	} {
+		w := newWorld(t)
+		clusterconf.Write(w.config, clusterconf.Config{NodeID: agentNode, NodeName: "smith", ListenAddress: "127.0.0.1"}, -1, -1)
+		err := run(context.Background(), []string{"join", "-config", w.config, "-data-dir", w.dataDir, "-cluster-id", adm.ClusterID, line}, w.env(0))
+		if err == nil || len(w.serviceActions) != 0 || w.agentCalls != 0 {
+			t.Errorf("%s: %v (service %v)", name, err, w.serviceActions)
+		}
+	}
+	// Not root: refused before anything.
+	w := newWorld(t)
+	for _, cmd := range [][]string{{"join", good}, {"join-request", "-address", "127.0.0.1"}, {"admit", "x"}, {"admit", "-withdraw", "x"}} {
+		if err := run(context.Background(), cmd, w.env(1000)); err == nil || !strings.Contains(err.Error(), "root") {
+			t.Errorf("%v as a user: %v", cmd, err)
+		}
+	}
+	// The stage never runs as root.
+	if err := run(context.Background(), []string{stageCommand, "read"}, w.env(0)); err == nil || !strings.Contains(err.Error(), "never as root") {
+		t.Errorf("stage as root: %v", err)
+	}
+}
+
+// toggled is a fake skep_cluster that "service stop" and "start" switch off
+// and on, answering status on its socket while on.
+type toggled struct {
+	t    *testing.T
+	path string
+	f    *fakeService
+	srv  *http.Server
+}
+
+func (g *toggled) set(action string) {
+	switch action {
+	case "stop":
+		if g.srv != nil {
+			g.srv.Close()
+			g.srv = nil
+			os.Remove(g.path)
+		}
+	case "start":
+		ln, err := net.Listen("unix", g.path)
+		if err != nil {
+			g.t.Fatal(err)
+		}
+		mux := http.NewServeMux()
+		mux.HandleFunc(localapi.PathStatus, func(w http.ResponseWriter, _ *http.Request) { json.NewEncoder(w).Encode(g.f.status) })
+		mux.HandleFunc(localapi.PathHealth, func(w http.ResponseWriter, _ *http.Request) {
+			json.NewEncoder(w).Encode(models.Health{Status: models.HealthOK})
+		})
+		g.srv = &http.Server{Handler: mux}
+		go g.srv.Serve(ln)
+	}
+}
+
+// The root-run join with a real one-node store: the service is stopped,
+// the stage runs as the service account, every handshake fails (the
+// member's pin is wrong), the one-node state is put back, the service is
+// started again, and nothing in the data directory belongs to root.
+func TestJoinThatFailsBeforeStep1PutsTheStateBack(t *testing.T) {
+	w := newWorld(t)
+	if err := w.init(0, "-address", "127.0.0.1"); err != nil {
+		t.Fatal(err)
+	}
+	key, err := nodekey.Load(w.dataDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	g := &toggled{t: t, path: filepath.Join(w.dir, "c.sock"), f: &fakeService{}}
+	g.set("start")
+	t.Cleanup(func() { g.set("stop") })
+	w.onService = g.set
+	adm := testAdmission(t)
+	adm.For.Pin = key.Pin()
+	adm.Members[0].Address = "127.0.0.3:8444" // nobody listens there
+	before, _ := os.ReadFile(filepath.Join(w.dataDir, store.DBFile))
+	err = run(context.Background(), []string{"join", "-config", w.config, "-data-dir", w.dataDir, "-socket", g.path,
+		"-agent-socket", "/agent.sock", "-cluster-id", adm.ClusterID, mustAdmissionLine(t, adm)}, w.env(0))
+	if err == nil || !strings.Contains(err.Error(), "join failed") {
+		t.Fatalf("join: %v\n%s", err, w.out.String())
+	}
+	if got := strings.Join(w.serviceActions, ","); got != "stop,start" {
+		t.Fatalf("service actions %s", got)
+	}
+	if len(w.stages) != 1 || w.stages[0][0] != stageCommand || w.stages[0][1] != "join" {
+		t.Fatalf("stages %v", w.stages)
+	}
+	if !strings.Contains(w.out.String(), "one-node cluster is back") {
+		t.Fatalf("output:\n%s", w.out.String())
+	}
+	after, err := os.ReadFile(filepath.Join(w.dataDir, store.DBFile))
+	if err != nil || len(after) == 0 || len(before) == 0 {
+		t.Fatal("the store is not back in place")
+	}
+	entries, _ := os.ReadDir(w.dataDir)
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), "standalone.") || e.Name() == "join.json" {
+			t.Fatalf("%s left behind", e.Name())
+		}
+	}
+}
+
+// hasControl reports a control character other than a line break.
+func hasControl(s string) bool {
+	for _, r := range s {
+		if r != '\n' && unicode.IsControl(r) {
+			return true
+		}
+	}
+	return false
+}
+
+const evil = "\x1b]0;owned\x07\x1b[2J\u009b31m\r"
+
+func TestTermSafe(t *testing.T) {
+	if got := termSafe("a" + evil + "b\nc\x7f"); hasControl(got) || strings.Contains(got, "\n") || !strings.HasPrefix(got, "a?]0;owned??[2J?31m?b?c?") {
+		t.Fatalf("termSafe: %q", got)
+	}
+	if got := termSafeLines("one\x1b\ntwo"); got != "one?\ntwo" {
+		t.Fatalf("termSafeLines: %q", got)
+	}
+}
+
+// status prints names, messages and health errors from other nodes with
+// their control characters replaced.
+func TestStatusReplacesControlCharacters(t *testing.T) {
+	w := newWorld(t)
+	f := &fakeService{status: localapi.Status{NodeID: agentNode, NodeName: "smith" + evil, ClusterID: "c" + evil, Pin: "p" + evil,
+		Build: "b" + evil, AcceptedBy: "state machine" + evil, ListenAddress: "127.0.0.1:8444", Listening: true,
+		Join:     &localapi.JoinStatus{Phase: "refused" + evil, ClusterID: "c", Message: "m" + evil},
+		Members:  []clusterstate.Member{{ID: "i" + evil, Name: "n" + evil, Address: "a" + evil, Pin: "p" + evil, State: "member" + evil}},
+		Pendings: []clusterstate.Pending{{NodeID: "i" + evil, Name: "n" + evil, Address: "a" + evil, Pin: "p" + evil, ExpiresAt: 1}}}}
+	if err := run(context.Background(), []string{"status", "-socket", f.start(t)}, w.env(os.Getuid())); err != nil {
+		t.Fatal(err)
+	}
+	if hasControl(w.out.String()) || !strings.Contains(w.out.String(), "smith?]0;owned") {
+		t.Fatalf("status output carries control characters:\n%q", w.out.String())
+	}
+}
+
+// join and join-request print the stage's messages and attempts, and
+// admit the answer passed from the leader, with control characters
+// replaced.
+func TestJoinCommandsReplaceControlCharacters(t *testing.T) {
+	stageSays := func(w *world, e *env, res stageResult) {
+		e.runAsAccount = func(context.Context, uint32, uint32, []string) ([]byte, error) {
+			b, _ := json.Marshal(res)
+			return b, nil
+		}
+	}
+	// join: a refusal with attempts and a message from other nodes.
+	w := newWorld(t)
+	clusterconf.Write(w.config, clusterconf.Config{NodeID: agentNode, NodeName: "smith", ListenAddress: "127.0.0.1"}, -1, -1)
+	g := &toggled{t: t, path: filepath.Join(w.dir, "c.sock"), f: &fakeService{}}
+	g.set("start")
+	t.Cleanup(func() { g.set("stop") })
+	w.onService = g.set
+	adm := testAdmission(t)
+	e := w.env(0)
+	stageSays(w, &e, stageResult{Outcome: "refused", Message: "leader: no" + evil, Attempts: []string{"langrishe: " + evil}, Pin: "p" + evil})
+	err := run(context.Background(), []string{"join", "-config", w.config, "-data-dir", w.dataDir, "-socket", g.path,
+		"-cluster-id", adm.ClusterID, mustAdmissionLine(t, adm)}, e)
+	if err == nil || hasControl(err.Error()) || hasControl(w.out.String()) || !strings.Contains(w.out.String(), "langrishe: ?]0;owned") {
+		t.Fatalf("join: %q\n%q", err, w.out.String())
+	}
+	// join-request: the stage's refusal.
+	w = newWorld(t)
+	clusterconf.Write(w.config, clusterconf.Config{NodeID: agentNode, NodeName: "smith"}, -1, -1)
+	g2 := &toggled{t: t, path: filepath.Join(w.dir, "c.sock"), f: &fakeService{}}
+	g2.set("start")
+	t.Cleanup(func() { g2.set("stop") })
+	w.onService = g2.set
+	e = w.env(0)
+	stageSays(w, &e, stageResult{Outcome: "not_alone", Message: "two servers" + evil})
+	err = run(context.Background(), []string{"join-request", "-address", "127.0.0.1", "-config", w.config, "-data-dir", w.dataDir, "-socket", g2.path}, e)
+	if err == nil || hasControl(err.Error()) || !strings.Contains(err.Error(), "two servers?") {
+		t.Fatalf("join-request: %q", err)
+	}
+	// admit: the leader's answer.
+	w = newWorld(t)
+	path := filepath.Join(t.TempDir(), "a.sock")
+	ln, lerr := net.Listen("unix", path)
+	if lerr != nil {
+		t.Fatal(lerr)
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc(localapi.PathAdmit, func(rw http.ResponseWriter, _ *http.Request) {
+		json.NewEncoder(rw).Encode(localapi.AdmitResult{Admission: "skep-admission:1:" + evil, OpID: "op" + evil, ExpiresAt: 1})
+	})
+	srv := &http.Server{Handler: mux}
+	go srv.Serve(ln)
+	t.Cleanup(func() { srv.Close() })
+	req, _ := joincode.EncodeRequest(joincode.Request{Node: adm.For})
+	if err := run(context.Background(), []string{"admit", "-socket", path, "-data-dir", w.dataDir, req}, w.env(0)); err != nil {
+		t.Fatal(err)
+	}
+	if hasControl(w.out.String()) || !strings.Contains(w.out.String(), "op?]0;owned") {
+		t.Fatalf("admit output carries control characters:\n%q", w.out.String())
+	}
+}
+
+// admit and join refuse an address whose port is not 8444, before anything
+// is sent or changed.
+func TestAdmitAndJoinRefuseAnotherPort(t *testing.T) {
+	adm := testAdmission(t)
+	w := newWorld(t)
+	other := adm.For
+	other.Address = "127.0.0.1:9444"
+	req, _ := joincode.EncodeRequest(joincode.Request{Node: other})
+	err := run(context.Background(), []string{"admit", "-socket", filepath.Join(w.dir, "none.sock"), "-data-dir", w.dataDir, req}, w.env(0))
+	if err == nil || !strings.Contains(err.Error(), "port 9444") {
+		t.Fatalf("admit of port 9444: %v", err)
+	}
+	for name, a := range map[string]joincode.Admission{
+		"the admitted node": func() joincode.Admission { x := adm; x.For.Address = "127.0.0.1:9444"; return x }(),
+		"a member": func() joincode.Admission {
+			x := adm
+			x.Members = []joincode.Node{adm.Members[0]}
+			x.Members[0].Address = "10.79.20.82:9444"
+			return x
+		}(),
+	} {
+		w := newWorld(t)
+		clusterconf.Write(w.config, clusterconf.Config{NodeID: agentNode, NodeName: "smith", ListenAddress: "127.0.0.1"}, -1, -1)
+		err := run(context.Background(), []string{"join", "-config", w.config, "-data-dir", w.dataDir, "-cluster-id", adm.ClusterID, mustAdmissionLine(t, a)}, w.env(0))
+		if err == nil || !strings.Contains(err.Error(), "port 9444") || len(w.serviceActions) != 0 || len(w.stages) != 0 {
+			t.Errorf("join with %s on port 9444: %v (service %v)", name, err, w.serviceActions)
+		}
 	}
 }

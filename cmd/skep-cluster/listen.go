@@ -14,15 +14,16 @@ import (
 
 // runListen is "skep-cluster listen -address ADDR" (ADR 0013 B1): on the
 // founding node, before its first admit, it gives the one-node cluster a
-// node-to-node address. In step 8a it writes cluster.json and restarts
-// skep_cluster; skep-api's node-to-node listener (api.json, port 8445)
-// comes with step 8e.
+// node-to-node address. It writes cluster.json and restarts skep_cluster;
+// skep-api's node-to-node listener (api.json, port 8445) comes with step
+// 8e.
 func runListen(ctx context.Context, args []string, e env) error {
 	flags := flag.NewFlagSet("skep-cluster listen", flag.ContinueOnError)
 	flags.SetOutput(e.stderr)
 	var (
 		address    = flags.String("address", "", "the management address to listen on (required)")
 		configPath = flags.String("config", clusterconf.DefaultPath, "path to cluster.json")
+		dataDir    = flags.String("data-dir", clusterconf.DefaultDataDir, "directory of the node key and the cluster store")
 		socket     = flags.String("socket", clusterconf.DefaultSocket, "Unix socket of the running service")
 		account    = flags.String("account", clusterconf.Account, "the service account")
 		noRestart  = flags.Bool("no-restart", false, "write cluster.json and leave the restart of skep_cluster to the administrator")
@@ -75,7 +76,7 @@ func runListen(ctx context.Context, args []string, e env) error {
 	fmt.Fprintf(e.stdout, "Wrote listen_address %s to %s.\n", cfg.ListenAddress, *configPath)
 	if *noRestart {
 		fmt.Fprintf(e.stdout, "Restart the service to open %s:\n  service skep_cluster restart\n", cfg.PeerAddress())
-		return nil
+		return checkNoRootFiles(e, *dataDir)
 	}
 	if err := e.restartService(ctx); err != nil {
 		return fmt.Errorf("cluster.json is written, but restarting skep_cluster failed: %w", err)
@@ -95,7 +96,7 @@ func runListen(ctx context.Context, args []string, e env) error {
 			last = "the member entry does not carry the address yet"
 		default:
 			fmt.Fprintf(e.stdout, "skep-cluster listens on %s (TLS 1.3, pinned keys only).\n", cfg.PeerAddress())
-			return nil
+			return checkNoRootFiles(e, *dataDir)
 		}
 		if time.Now().After(deadline) {
 			return fmt.Errorf("skep_cluster was restarted, but after 30 s %s; see \"skep-cluster health\"", last)

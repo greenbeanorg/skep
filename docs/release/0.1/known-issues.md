@@ -73,7 +73,15 @@ procedure, and results recorded as it describes are welcome.
   health check when it sees this, but does not prevent it
   ([VM guide](../../administration/virtual-machines.md)).
 - No clustering, HA, backup, network management, graphical consoles or
-  metric history.
+  metric history in 0.1. **On `main` after 0.1 (Milestone 8, not
+  released):** a host without VMs and jails can join another host's
+  cluster (step 8b-1), as a preview: a joined host cannot leave or be
+  removed yet, a join past its point of no return cannot be given up,
+  users and guests are not shared, `admit` is root-only on a member, there
+  is no cluster audit (membership events are log lines) and no clock-offset
+  check; with a member down a join waits. Test clusters are reset by hand
+  ([Joining hosts into a cluster](../../administration/cluster.md),
+  [limits](../../architecture/skep-cluster.md#limits-of-8b-1)).
 
 ## Installation and upgrade
 

@@ -2,8 +2,13 @@
 // log entries that change it (ADR 0013 A7, B5). It knows nothing about
 // Raft: the store package feeds it committed entries in order.
 //
-// Step 8a has the cluster ID and the membership, with this node as the
-// only member.
+// It holds the cluster ID, the membership (member entries in state
+// "joining" or "member") and the pending entries of admitted hosts that
+// have not joined yet (ADR 0013 B1, step 8b).
+//
+// Applying an entry is deterministic: it reads no clock, no file and does
+// not depend on map order. Every time an entry needs is carried in the
+// entry, written there by the leader that proposed it.
 package clusterstate
 
 import (
@@ -37,21 +42,41 @@ type Entry struct {
 	Data json.RawMessage `json:"data"`
 }
 
-// Entry types of step 8a.
+// Entry types.
 const (
 	// TypeClusterInit creates the cluster: its ID and its first member.
 	TypeClusterInit = "cluster.init"
-	// TypeMemberAddress changes a member's address. In 8a only a
-	// one-node cluster changes its own ("skep-cluster listen").
+	// TypeMemberAddress changes a member's address. Only a one-node
+	// cluster changes its own ("skep-cluster listen").
 	TypeMemberAddress = "member.address"
+	// TypePendingCreate admits a host: a pending entry with its ID, name,
+	// address and pin, and an expiry time ("skep-cluster admit").
+	TypePendingCreate = "pending.create"
+	// TypePendingWithdraw removes a pending entry before it is used
+	// ("skep-cluster admit --withdraw").
+	TypePendingWithdraw = "pending.withdraw"
+	// TypePendingExpire removes a pending entry whose expiry time has
+	// passed by the clock of the leader that proposed it.
+	TypePendingExpire = "pending.expire"
+	// TypeMemberJoin is join step 1: it consumes the pending entry and
+	// creates the member entry in state "joining".
+	TypeMemberJoin = "member.join"
+	// TypeMemberPromoted is join step 4: the member's state becomes
+	// "member" once it is a voter.
+	TypeMemberPromoted = "member.promoted"
 )
 
 // Supported is, per entry type, the highest version this build applies.
 // Until the feature-level operation exists (step 8g) every build writes
 // version 1 of each type.
 var Supported = map[string]int{
-	TypeClusterInit:   1,
-	TypeMemberAddress: 1,
+	TypeClusterInit:     1,
+	TypeMemberAddress:   1,
+	TypePendingCreate:   1,
+	TypePendingWithdraw: 1,
+	TypePendingExpire:   1,
+	TypeMemberJoin:      1,
+	TypeMemberPromoted:  1,
 }
 
 // ActorSystem is the actor of entries no user asked for.
@@ -69,6 +94,54 @@ type ClusterInit struct {
 type MemberAddress struct {
 	NodeID  string `json:"node_id"`
 	Address string `json:"address"`
+}
+
+// PendingCreate is the data of TypePendingCreate, version 1. ExpiresAt is
+// the proposing leader's clock plus the pending lifetime, in Unix seconds.
+// Step 8b-1 carries no API pin (skep-api's node-to-node key comes with step
+// 8e).
+type PendingCreate struct {
+	NodeID    string `json:"node_id"`
+	Name      string `json:"name"`
+	Address   string `json:"address"`
+	Pin       string `json:"pin"`
+	ExpiresAt int64  `json:"expires_at"`
+}
+
+// PendingWithdraw is the data of TypePendingWithdraw, version 1. Both the
+// ID and the name must match the pending entry.
+type PendingWithdraw struct {
+	NodeID string `json:"node_id"`
+	Name   string `json:"name"`
+}
+
+// PendingExpire is the data of TypePendingExpire, version 1. ExpiresAt
+// names the pending entry it removes (a newer pending entry for the same
+// ID has another expiry); At is the proposing leader's clock, which must
+// have reached ExpiresAt.
+type PendingExpire struct {
+	NodeID    string `json:"node_id"`
+	ExpiresAt int64  `json:"expires_at"`
+	At        int64  `json:"at"`
+}
+
+// MemberJoin is the data of TypeMemberJoin, version 1 (join step 1). At is
+// the proposing leader's clock: the pending entry must not have expired by
+// then.
+//
+// Step 8d adds the joining host's guest list (ID, name, kind) as version 2
+// of this type, so the name check and the inventory write stay in this one
+// entry (ADR 0013 B3); version 1 means "no guests", which is all a host
+// may have in step 8b.
+type MemberJoin struct {
+	NodeID string `json:"node_id"`
+	Pin    string `json:"pin"`
+	At     int64  `json:"at"`
+}
+
+// MemberPromoted is the data of TypeMemberPromoted, version 1 (join step 4).
+type MemberPromoted struct {
+	NodeID string `json:"node_id"`
 }
 
 // NewEntry builds a version 1 entry of the given type.
@@ -120,6 +193,9 @@ func Decode(b []byte) (Entry, error) {
 	if err := dec.Decode(&e); err != nil {
 		return Entry{}, fmt.Errorf("clusterstate: decode entry: %w", err)
 	}
+	if dec.More() {
+		return Entry{}, errors.New("clusterstate: decode entry: more than one JSON value")
+	}
 	if err := e.validate(); err != nil {
 		return Entry{}, err
 	}
@@ -130,5 +206,11 @@ func Decode(b []byte) (Entry, error) {
 func decodeData(raw json.RawMessage, v any) error {
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.DisallowUnknownFields()
-	return dec.Decode(v)
+	if err := dec.Decode(v); err != nil {
+		return err
+	}
+	if dec.More() {
+		return errors.New("more than one JSON value")
+	}
+	return nil
 }

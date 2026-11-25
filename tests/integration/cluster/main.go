@@ -8,11 +8,29 @@
 //	cluster-probe tls -addr IP:8444 -version 1.2|1.3
 //	    one TLS handshake with a key made for this run, which no
 //	    membership pins; prints whether the listener refused it
+//	cluster-probe keygen -dir DIR -name NAME -address IP:8444
+//	    makes a node key in DIR (a new directory) and prints a join
+//	    request for it, to be admitted and then used by "rpc"
+//	cluster-probe rpc -addr IP:8444 -server-pin PIN -key-dir DIR
+//	                  -claim-id ID [-claim-addr IP:PORT] -op raft|status
+//	    one RPC with the key in DIR (the probe's own from keygen, or a
+//	    member's data directory, read only), claiming the given node
+//	    ID; prints ACCEPTED or REFUSED and why. "raft" is a heartbeat
+//	    (AppendEntries), "status" Skep's status RPC
+//	cluster-probe request -id ID -name NAME -address IP:8444 -pin PIN
+//	    prints a join request line for these public values (for keys
+//	    nobody holds, and for duplicate cases)
+//	cluster-probe admission -cluster-id ID -for ID,NAME,ADDR,PIN
+//	                        -member ID,NAME,ADDR,PIN [-member ...]
+//	    prints an admission line for these public values (for a wrong
+//	    pin, or an admission naming a member)
 //
-// It reads no Skep file and changes nothing.
+// It writes only the directory keygen is given, and changes nothing in
+// any Skep file.
 package main
 
 import (
+	"bufio"
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -28,12 +46,21 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strings"
 	"time"
+
+	"github.com/hashicorp/go-msgpack/v2/codec"
+	"github.com/hashicorp/raft"
+
+	"github.com/greenbeanorg/skep/internal/cluster/joincode"
+	"github.com/greenbeanorg/skep/internal/cluster/nodekey"
+	"github.com/greenbeanorg/skep/internal/cluster/raftnet"
+	"github.com/greenbeanorg/skep/internal/ids"
 )
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: cluster-probe get|tls ...")
+		fmt.Fprintln(os.Stderr, "usage: cluster-probe get|tls|keygen|rpc ...")
 		os.Exit(2)
 	}
 	var err error
@@ -42,6 +69,14 @@ func main() {
 		err = get(os.Args[2:])
 	case "tls":
 		err = tlsProbe(os.Args[2:])
+	case "keygen":
+		err = keygen(os.Args[2:])
+	case "rpc":
+		err = rpcProbe(os.Args[2:])
+	case "request":
+		err = requestLine(os.Args[2:])
+	case "admission":
+		err = admissionLine(os.Args[2:])
 	default:
 		err = fmt.Errorf("unknown command %q", os.Args[1])
 	}
@@ -144,5 +179,163 @@ func tlsProbe(args []string) error {
 	default:
 		fmt.Println("ACCEPTED: the server sent data")
 	}
+	return nil
+}
+
+// keygen makes a key the way skep-cluster does and prints its request.
+func keygen(args []string) error {
+	fs := flag.NewFlagSet("keygen", flag.ContinueOnError)
+	dir := fs.String("dir", "", "new directory for the key")
+	name := fs.String("name", "", "node name for the request")
+	address := fs.String("address", "", "address for the request (ip:8444)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *dir == "" || *name == "" || *address == "" {
+		return errors.New("keygen needs -dir, -name and -address")
+	}
+	if err := os.Mkdir(*dir, 0o700); err != nil {
+		return err
+	}
+	id, err := ids.NewUUID()
+	if err != nil {
+		return err
+	}
+	k, err := nodekey.Create(*dir, id, time.Now())
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(*dir+"/node-id", []byte(id+"\n"), 0o600); err != nil {
+		return err
+	}
+	line, err := joincode.EncodeRequest(joincode.Request{Node: joincode.Node{NodeID: id, Name: *name, Address: *address, Pin: k.Pin()}})
+	if err != nil {
+		return err
+	}
+	fmt.Printf("node ID %s\npin %s\n%s\n", id, k.Pin(), line)
+	return nil
+}
+
+// rpcProbe sends one RPC claiming a node ID and prints what happened.
+func rpcProbe(args []string) error {
+	fs := flag.NewFlagSet("rpc", flag.ContinueOnError)
+	addr := fs.String("addr", "", "target ip:8444")
+	serverPin := fs.String("server-pin", "", "the target's pin (skep-cluster status on the target)")
+	keyDir := fs.String("key-dir", "", "directory with node.key and node.crt")
+	claimID := fs.String("claim-id", "", "node ID to put in the request")
+	claimAddr := fs.String("claim-addr", "", "address to put in a Raft header")
+	op := fs.String("op", "", "raft or status")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *addr == "" || *serverPin == "" || *keyDir == "" || *claimID == "" || (*op != "raft" && *op != "status") {
+		return errors.New("rpc needs -addr, -server-pin, -key-dir, -claim-id and -op raft|status")
+	}
+	k, err := nodekey.Load(*keyDir)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("%s RPC to %s with the key %s, claiming node %s\n", *op, *addr, k.Pin(), *claimID)
+	if *op == "status" {
+		var out map[string]any
+		err := raftnet.Caller{NodeID: *claimID, Certificate: k.Certificate}.Call(context.Background(), *addr, *serverPin, raftnet.OpStatus, struct{}{}, &out)
+		if err != nil {
+			fmt.Printf("REFUSED: %v\n", err)
+		} else {
+			fmt.Printf("ACCEPTED: %v\n", out)
+		}
+		return nil
+	}
+	tc, err := raftnet.DialPinned(*addr, *serverPin, k.Certificate, 10*time.Second)
+	if err != nil {
+		fmt.Printf("REFUSED: %v\n", err)
+		return nil
+	}
+	defer tc.Close()
+	tc.SetDeadline(time.Now().Add(10 * time.Second))
+	req := &raft.AppendEntriesRequest{RPCHeader: raft.RPCHeader{ProtocolVersion: 3, ID: []byte(*claimID), Addr: []byte(*claimAddr)}, Term: 1}
+	w := bufio.NewWriter(tc)
+	mp := &codec.MsgpackHandle{}
+	mp.TimeNotBuiltin = true
+	if err := w.WriteByte(0); err != nil { // AppendEntries
+		return err
+	}
+	if err := codec.NewEncoder(w, mp).Encode(req); err != nil {
+		return err
+	}
+	if err := w.Flush(); err != nil {
+		return err
+	}
+	var respErr string
+	if err := codec.NewDecoder(bufio.NewReader(tc), &codec.MsgpackHandle{}).Decode(&respErr); err != nil {
+		fmt.Printf("REFUSED: the connection was closed without an answer (%v)\n", err)
+		return nil
+	}
+	fmt.Printf("ACCEPTED: answered (error string %q)\n", respErr)
+	return nil
+}
+
+func requestLine(args []string) error {
+	fs := flag.NewFlagSet("request", flag.ContinueOnError)
+	id := fs.String("id", "", "node ID (empty: a new one)")
+	name := fs.String("name", "", "node name")
+	address := fs.String("address", "", "ip:8444")
+	pin := fs.String("pin", "", "key pin")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *id == "" {
+		var err error
+		if *id, err = ids.NewUUID(); err != nil {
+			return err
+		}
+	}
+	line, err := joincode.EncodeRequest(joincode.Request{Node: joincode.Node{NodeID: *id, Name: *name, Address: *address, Pin: *pin}})
+	if err != nil {
+		return err
+	}
+	fmt.Println(line)
+	return nil
+}
+
+type nodeList []joincode.Node
+
+func (l *nodeList) String() string { return fmt.Sprint(*l) }
+
+func (l *nodeList) Set(v string) error {
+	n, err := parseNode(v)
+	if err != nil {
+		return err
+	}
+	*l = append(*l, n)
+	return nil
+}
+
+func parseNode(v string) (joincode.Node, error) {
+	f := strings.Split(v, ",")
+	if len(f) != 4 {
+		return joincode.Node{}, errors.New("a node is ID,NAME,ADDR,PIN")
+	}
+	return joincode.Node{NodeID: f[0], Name: f[1], Address: f[2], Pin: f[3]}, nil
+}
+
+func admissionLine(args []string) error {
+	fs := flag.NewFlagSet("admission", flag.ContinueOnError)
+	cid := fs.String("cluster-id", "", "cluster ID")
+	forNode := fs.String("for", "", "ID,NAME,ADDR,PIN of the admitted node")
+	var members nodeList
+	fs.Var(&members, "member", "ID,NAME,ADDR,PIN of a member (repeat)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	f, err := parseNode(*forNode)
+	if err != nil {
+		return err
+	}
+	line, err := joincode.EncodeAdmission(joincode.Admission{ClusterID: *cid, For: f, Members: members, ExpiresAt: time.Now().Add(30 * time.Minute).Unix()})
+	if err != nil {
+		return err
+	}
+	fmt.Println(line)
 	return nil
 }

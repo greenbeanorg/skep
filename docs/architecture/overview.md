@@ -13,9 +13,10 @@ runs as root, discovers the host, keeps the node's state in SQLite, runs
 tasks, and listens on a Unix socket only.
 
 A third binary, `skep-cluster` ([ADR 0013](../decisions/0013-clustering.md)),
-holds the node's cluster key and a one-node Raft store as its own
-unprivileged account. Since Milestone 8, step 8a it exists and runs, but
-the other two do not use it yet; it is described in
+holds the node's cluster key and the Raft store as its own unprivileged
+account. Since Milestone 8, step 8a it exists and runs, and since step
+8b-1 a host without guests can join another's cluster, but the other two
+do not use it yet; it is described in
 [skep-cluster](skep-cluster.md) and left out of the picture below.
 
 ```
