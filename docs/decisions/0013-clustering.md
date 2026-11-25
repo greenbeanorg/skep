@@ -23,7 +23,9 @@
   step 8b-2b (key rotation, the cannot-say byte, the per-node connection
   limit, clock health, the cluster audit) and adds the entry-version rule
   to B5.
-- **Amendment 4 (2026-11-25)** is **Proposed**. It records what the
+- **Amendment 4 (2026-11-25)** is **Accepted** (Andy, 2026-11-25, by
+  approving the merge of the step 8c-1 PR, #115, with the review's fixes
+  F1–F7 worked into it). It records what the
   build of step 8c-1 (users in the replicated log, `skep-api`'s read copy,
   degraded login, `skep-api admin` through the cluster, the import of a
   0.1 host's users) changes in the accepted text, and splits step 8c into
@@ -2258,10 +2260,12 @@ not final, and every caller asks again. The leader's local paths (its
 own leader loop, which makes that barrier first, and its local socket)
 are unchanged.
 
-## Amendment 4 (2026-11-25, Proposed)
+## Amendment 4 (2026-11-25, Accepted)
 
 Written with the build of step 8c-1, from the fixed decisions D1–D23 the
-review chat gave that run. **Status: Proposed.** It changes the accepted
+review chat gave that run. **Status: Accepted** (Andy, 2026-11-25, by
+approving the merge of the step 8c-1 PR, #115, with the review's fixes
+F1–F7 worked into it). It changes the accepted
 text only where it says so. The facts it rests on are in
 [0013-evidence/8c1-facts-20261125.md](0013-evidence/8c1-facts-20261125.md).
 
