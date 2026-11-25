@@ -43,6 +43,11 @@ const (
 	// openTimeout bounds the wait for bbolt's file lock, which another
 	// running skep-cluster holds.
 	openTimeout = 5 * time.Second
+	// ConfigChangeWait bounds Skep's wait for a configuration change to
+	// commit. The library's own wait has no timeout (v1.8.0
+	// requestConfigChange: the timeout covers only the hand-off); it ends
+	// with ErrLeadershipLost when the leader steps down.
+	ConfigChangeWait = 30 * time.Second
 )
 
 // ErrNotInitialised means the directory holds no store.
@@ -57,7 +62,8 @@ var ErrOutcomeUnknown = errors.New("outcome unknown: the write may have been com
 
 // Options says where the store is and who this node is.
 type Options struct {
-	// Dir is the data directory.
+	// Dir is the state directory (layout.StateDir in the data
+	// directory): raft.db and snapshots/.
 	Dir string
 	// NodeID is this node's ID, its server ID in the Raft configuration.
 	NodeID string
@@ -153,6 +159,9 @@ func Bootstrap(o Options, peerAddress string) error {
 	if Exists(o.Dir) {
 		return fmt.Errorf("store: %s already holds a cluster store", o.Dir)
 	}
+	if err := makeDir(o.Dir); err != nil {
+		return fmt.Errorf("store: create %s: %w", o.Dir, err)
+	}
 	b, err := openBackends(o.Dir)
 	if err != nil {
 		return err
@@ -180,6 +189,9 @@ type Node struct {
 	cacheMu   sync.Mutex
 	cache     map[string]bool
 	cacheTime time.Time
+
+	closeOnce sync.Once
+	closeErr  error
 }
 
 // Open opens the store and starts the Raft node.
@@ -189,6 +201,14 @@ func Open(o Options) (*Node, error) {
 	}
 	if !Exists(o.Dir) && !o.Empty {
 		return nil, fmt.Errorf("%s: %w", o.Dir, ErrNotInitialised)
+	}
+	if o.Empty {
+		// A joining node's empty state directory (decision D1 of step
+		// 8b-2a), created as the service account with an fsync of the
+		// data directory.
+		if err := makeDir(o.Dir); err != nil {
+			return nil, fmt.Errorf("store: create %s: %w", o.Dir, err)
+		}
 	}
 	b, err := openBackends(o.Dir)
 	if err != nil {
@@ -221,13 +241,17 @@ func closeTransport(t raft.Transport) {
 }
 
 // Close stops the Raft node and closes the store.
+// It may be called more than once; only the first call does anything.
 func (n *Node) Close() error {
-	err := n.raft.Shutdown().Error()
-	closeTransport(n.trans)
-	if cerr := n.bolt.Close(); err == nil {
-		err = cerr
-	}
-	return err
+	n.closeOnce.Do(func() {
+		err := n.raft.Shutdown().Error()
+		closeTransport(n.trans)
+		if cerr := n.bolt.Close(); err == nil {
+			err = cerr
+		}
+		n.closeErr = err
+	})
+	return n.closeErr
 }
 
 // Machine returns the replicated state machine, for reads.
@@ -457,17 +481,72 @@ func raftErr(err error) error {
 	if err == nil {
 		return nil
 	}
-	if errors.Is(err, raft.ErrNotLeader) || errors.Is(err, raft.ErrLeadershipLost) {
+	if errors.Is(err, raft.ErrNotLeader) || errors.Is(err, raft.ErrLeadershipLost) || errors.Is(err, raft.ErrLeadershipTransferInProgress) {
 		return fmt.Errorf("%w (%v)", ErrNotLeader, err)
 	}
 	return fmt.Errorf("%w (%v)", ErrOutcomeUnknown, err)
+}
+
+// waitFuture waits for a configuration change, at most ConfigChangeWait.
+// A change still in flight after that is an unknown outcome: the next
+// round reads the configuration again.
+func waitFuture(f raft.IndexFuture) error {
+	done := make(chan error, 1)
+	go func() { done <- f.Error() }()
+	select {
+	case err := <-done:
+		return raftErr(err)
+	case <-time.After(ConfigChangeWait):
+		return fmt.Errorf("%w (the configuration change did not commit within %s)", ErrOutcomeUnknown, ConfigChangeWait)
+	}
+}
+
+// RemoveServer removes a server from the Raft configuration (removal step
+// 1). For a server that is already absent it changes nothing the library
+// would not (v1.8.0 configuration.go nextConfiguration).
+func (n *Node) RemoveServer(id string) error {
+	err := waitFuture(n.raft.RemoveServer(raft.ServerID(id), 0, applyTimeout))
+	n.invalidateCache()
+	return err
+}
+
+// TransferLeadership hands the leadership to another voter (decision D6:
+// a leader asked to remove itself, or a leader that finds itself
+// removing). nil means this node is no longer the leader.
+func (n *Node) TransferLeadership() error {
+	if err := n.raft.LeadershipTransfer().Error(); err != nil {
+		return err
+	}
+	if n.IsLeader() {
+		return errors.New("this node is still the leader after the transfer")
+	}
+	return nil
+}
+
+// Term returns the current Raft term.
+func (n *Node) Term() uint64 { return n.raft.CurrentTerm() }
+
+// Configuration returns the latest Raft configuration with its log index
+// and whether that index is committed (it is at or below the commit
+// index).
+func (n *Node) Configuration() ([]Server, uint64, bool, error) {
+	f := n.raft.GetConfiguration()
+	if err := f.Error(); err != nil {
+		return nil, 0, false, fmt.Errorf("store: read the raft configuration: %w", err)
+	}
+	var out []Server
+	for _, s := range f.Configuration().Servers {
+		out = append(out, Server{ID: string(s.ID), Address: string(s.Address), Voter: s.Suffrage == raft.Voter})
+	}
+	idx := f.Index()
+	return out, idx, idx <= n.raft.CommitIndex(), nil
 }
 
 // AddNonvoter adds a server without a vote (join step 2). For a server
 // that is already in the configuration it changes nothing the library
 // would not (v1.8.0 configuration.go nextConfiguration).
 func (n *Node) AddNonvoter(id, address string) error {
-	err := raftErr(n.raft.AddNonvoter(raft.ServerID(id), raft.ServerAddress(address), 0, applyTimeout).Error())
+	err := waitFuture(n.raft.AddNonvoter(raft.ServerID(id), raft.ServerAddress(address), 0, applyTimeout))
 	n.invalidateCache()
 	return err
 }
@@ -475,7 +554,7 @@ func (n *Node) AddNonvoter(id, address string) error {
 // AddVoter gives a server a vote (join step 3); on a server that already
 // votes it changes nothing.
 func (n *Node) AddVoter(id, address string) error {
-	err := raftErr(n.raft.AddVoter(raft.ServerID(id), raft.ServerAddress(address), 0, applyTimeout).Error())
+	err := waitFuture(n.raft.AddVoter(raft.ServerID(id), raft.ServerAddress(address), 0, applyTimeout))
 	n.invalidateCache()
 	return err
 }
@@ -543,6 +622,90 @@ func (n *Node) LibraryEntriesOnly(from, to uint64) bool {
 		}
 	}
 	return true
+}
+
+// makeDir creates dir with mode 0700 when it is missing and fsyncs its
+// parent.
+func makeDir(dir string) error {
+	err := os.Mkdir(dir, 0o700)
+	if err != nil && !errors.Is(err, fs.ErrExist) {
+		return err
+	}
+	if err == nil {
+		if err := os.Chmod(dir, 0o700); err != nil {
+			return err
+		}
+	}
+	d, err := os.Open(filepath.Dir(dir))
+	if err != nil {
+		return err
+	}
+	err = d.Sync()
+	if cerr := d.Close(); err == nil {
+		err = cerr
+	}
+	return err
+}
+
+// ReadState rebuilds the replicated state from the store in dir without
+// starting a Raft node: the latest snapshot, then every command entry
+// after it, through a new state machine. It is for a node that is alone in
+// its Raft configuration, where every stored entry is committed (a single
+// voter commits what it has stored); it refuses otherwise. The root-run
+// commands use it, through a process running as the service account, with
+// the service stopped ("listen -none", "leave --wipe").
+func ReadState(dir, nodeID string) (clusterstate.View, []Server, error) {
+	servers, err := ReadServers(dir, nodeID)
+	if err != nil {
+		return clusterstate.View{}, nil, err
+	}
+	if !Alone(servers, nodeID) {
+		return clusterstate.View{}, servers, fmt.Errorf("store: the Raft configuration has %d servers; the state is read offline only on a node that is alone", len(servers))
+	}
+	b, err := openBackends(dir)
+	if err != nil {
+		return clusterstate.View{}, servers, err
+	}
+	defer b.bolt.Close()
+	m := clusterstate.New()
+	var from uint64
+	metas, err := b.snaps.List()
+	if err != nil {
+		return clusterstate.View{}, servers, fmt.Errorf("store: snapshots: %w", err)
+	}
+	if len(metas) > 0 {
+		meta, rc, err := b.snaps.Open(metas[0].ID)
+		if err != nil {
+			return clusterstate.View{}, servers, fmt.Errorf("store: open snapshot: %w", err)
+		}
+		err = m.Restore(rc)
+		rc.Close()
+		if err != nil {
+			return clusterstate.View{}, servers, err
+		}
+		from = meta.Index
+	}
+	last, err := b.bolt.LastIndex()
+	if err != nil {
+		return clusterstate.View{}, servers, err
+	}
+	first, err := b.bolt.FirstIndex()
+	if err != nil {
+		return clusterstate.View{}, servers, err
+	}
+	if last > from && first > from+1 {
+		return clusterstate.View{}, servers, fmt.Errorf("store: the log starts at %d, after the snapshot at %d", first, from)
+	}
+	var l raft.Log
+	for i := from + 1; i <= last; i++ {
+		if err := b.bolt.GetLog(i, &l); err != nil {
+			return clusterstate.View{}, servers, fmt.Errorf("store: log entry %d: %w", i, err)
+		}
+		if l.Type == raft.LogCommand {
+			m.Apply(l.Index, l.Data)
+		}
+	}
+	return m.View(), servers, nil
 }
 
 // ReadServers reads the Raft configuration from the store in dir without

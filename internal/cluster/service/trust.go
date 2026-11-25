@@ -2,6 +2,7 @@ package service
 
 import (
 	"github.com/greenbeanorg/skep/internal/cluster/clusterstate"
+	"github.com/greenbeanorg/skep/internal/cluster/joinstate"
 	"github.com/greenbeanorg/skep/internal/cluster/raftnet"
 )
 
@@ -25,6 +26,8 @@ func kindOf(state string) raftnet.Kind {
 		return raftnet.KindJoining
 	case clusterstate.StateMember:
 		return raftnet.KindMember
+	case clusterstate.StateRemoving:
+		return raftnet.KindRemoving
 	}
 	return raftnet.KindNone
 }
@@ -36,9 +39,11 @@ func kindOf(state string) raftnet.Kind {
 //   - from then on the machine's members and its pending entries whose
 //     expiry time has not passed by this node's clock;
 //   - on a joining node whose accepted membership does not list it, the
-//     admission's and the answer's nodes instead.
+//     join call's answer's nodes once one is accepted, the admission's
+//     before, and none at all in phase "refused" (decision D10 of 8b-2a);
+//   - a removed node accepts nobody.
 func (s *Service) acceptedNow() accepted {
-	if s.machine == nil {
+	if s.machine == nil || s.isRemoved() {
 		return accepted{source: "none"}
 	}
 	view := s.machine.View()
@@ -67,7 +72,13 @@ func (s *Service) acceptedNow() accepted {
 		}
 	}
 	if js := s.joinState(); js != nil && !listsNode(a.peers, s.cfg.NodeID) {
+		if js.Phase == joinstate.PhaseRefused {
+			return accepted{admission: true, source: "none (the join was refused)"}
+		}
 		a = accepted{admission: true, source: "admission"}
+		if len(js.Answer) > 0 {
+			a.source = "join answer"
+		}
 		for _, n := range js.Peers(s.cfg.NodeID) {
 			a.peers = append(a.peers, raftnet.Peer{NodeID: n.NodeID, Name: n.Name, Address: n.Address, Pin: n.Pin, Kind: raftnet.KindMember})
 		}
@@ -97,7 +108,8 @@ func (s *Service) ByPin(pin string) (raftnet.Peer, bool) {
 	return raftnet.Peer{}, false
 }
 
-// ByAddress implements raftnet.Trust: only joining and member keys.
+// ByAddress implements raftnet.Trust: joining, member and removing keys
+// (the leader replicates to a removing member until RemoveServer).
 func (s *Service) ByAddress(address string) (raftnet.Peer, bool) {
 	if address == "" {
 		return raftnet.Peer{}, false
@@ -105,7 +117,7 @@ func (s *Service) ByAddress(address string) (raftnet.Peer, bool) {
 	var found raftnet.Peer
 	n := 0
 	for _, p := range s.acceptedNow().peers {
-		if p.Address == address && (p.Kind == raftnet.KindJoining || p.Kind == raftnet.KindMember) {
+		if p.Address == address && (p.Kind == raftnet.KindJoining || p.Kind == raftnet.KindMember || p.Kind == raftnet.KindRemoving) {
 			found = p
 			n++
 		}

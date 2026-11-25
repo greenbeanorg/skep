@@ -116,7 +116,7 @@ func (f File) validate() error {
 		if !clusterstate.ValidNodeID(m.ID) || !clusterstate.ValidPin(m.Pin) || seen[m.ID] || seen[m.Pin] {
 			return fmt.Errorf("member %q is not valid or duplicated", m.ID)
 		}
-		if m.State != clusterstate.StateJoining && m.State != clusterstate.StateMember {
+		if m.State != clusterstate.StateJoining && m.State != clusterstate.StateMember && m.State != clusterstate.StateRemoving {
 			return fmt.Errorf("member %s has state %q", m.ID, m.State)
 		}
 		if m.Address != "" {

@@ -8,18 +8,24 @@ import (
 	"github.com/greenbeanorg/skep/internal/cluster/joincode"
 )
 
+// Moving aside is one rename of state/ and putting back one rename back;
+// the key stays where it is; putting back refuses when state/ exists.
 func TestMoveAsideAndPutBack(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "raft.db"), []byte("db"), 0o600)
-	os.Mkdir(filepath.Join(dir, "snapshots"), 0o700)
+	st := filepath.Join(dir, "state")
+	os.Mkdir(st, 0o700)
+	os.WriteFile(filepath.Join(st, "raft.db"), []byte("db"), 0o600)
+	os.Mkdir(filepath.Join(st, "snapshots"), 0o700)
 	os.WriteFile(filepath.Join(dir, "node.key"), []byte("k"), 0o600)
-	names := []string{"raft.db", "snapshots", "membership.json"}
-	aside, err := MoveAside(dir, names, "20261124T000000Z")
+	aside, err := MoveAside(dir, "20261124T000000Z")
 	if err != nil || aside != "standalone.20261124T000000Z" {
 		t.Fatal(aside, err)
 	}
-	if _, err := os.Stat(filepath.Join(dir, "raft.db")); err == nil {
-		t.Fatal("raft.db not moved")
+	if _, err := os.Stat(st); err == nil {
+		t.Fatal("state/ not moved")
+	}
+	if b, _ := os.ReadFile(filepath.Join(dir, aside, "raft.db")); string(b) != "db" {
+		t.Fatal("raft.db not inside the moved-aside directory")
 	}
 	if _, err := os.Stat(filepath.Join(dir, "node.key")); err != nil {
 		t.Fatal("the key was moved")
@@ -28,28 +34,51 @@ func TestMoveAsideAndPutBack(t *testing.T) {
 	if info.Mode().Perm() != 0o700 {
 		t.Fatalf("mode %v", info.Mode())
 	}
-	// Putting back refuses when a store exists in its place.
-	os.WriteFile(filepath.Join(dir, "raft.db"), []byte("new"), 0o600)
-	if err := PutBack(dir, aside, names); err == nil {
-		t.Fatal("put back over a new store")
+	if _, err := MoveAside(dir, "20261124T000000Z"); err == nil {
+		t.Fatal("a second move aside with the same name, without state/")
 	}
-	os.Remove(filepath.Join(dir, "raft.db"))
-	if err := PutBack(dir, aside, names); err != nil {
+	// Putting back refuses when a state exists in its place.
+	os.Mkdir(st, 0o700)
+	if err := PutBack(dir, aside); err == nil {
+		t.Fatal("put back over a new state")
+	}
+	os.Remove(st)
+	if err := PutBack(dir, aside); err != nil {
 		t.Fatal(err)
 	}
-	if b, _ := os.ReadFile(filepath.Join(dir, "raft.db")); string(b) != "db" {
+	if b, _ := os.ReadFile(filepath.Join(st, "raft.db")); string(b) != "db" {
 		t.Fatal("not the old store")
 	}
 	if _, err := os.Stat(filepath.Join(dir, aside)); err == nil {
 		t.Fatal("the moved-aside directory is left")
 	}
-	for _, bad := range []string{"../x", "raft.db", "standalone."} {
-		if err := PutBack(dir, bad, names); err == nil {
+	for _, bad := range []string{"../x", "raft.db", "standalone.", "state"} {
+		if err := PutBack(dir, bad); err == nil {
 			t.Errorf("PutBack(%q)", bad)
 		}
 		if err := DeleteStandalone(dir, bad); err == nil {
 			t.Errorf("DeleteStandalone(%q)", bad)
 		}
+	}
+}
+
+// Once an answer is accepted it replaces the admission's list (D10);
+// AllNodes is both, for join --abandon.
+func TestPeersAnswerReplacesAdmission(t *testing.T) {
+	a := joincode.Node{NodeID: "a", Name: "a"}
+	b := joincode.Node{NodeID: "b", Name: "b"}
+	c := joincode.Node{NodeID: "c", Name: "c"}
+	self := joincode.Node{NodeID: "self", Name: "self"}
+	s := State{Admission: joincode.Admission{Members: []joincode.Node{a, b}}}
+	if p := s.Peers("self"); len(p) != 2 {
+		t.Fatalf("before the answer: %v", p)
+	}
+	s.Answer = []joincode.Node{b, c, self}
+	if p := s.Peers("self"); len(p) != 2 || p[0].NodeID != "b" || p[1].NodeID != "c" {
+		t.Fatalf("after the answer: %v", p)
+	}
+	if all := s.AllNodes("self"); len(all) != 3 {
+		t.Fatalf("all nodes: %v", all)
 	}
 }
 
@@ -67,6 +96,13 @@ func TestStateRoundTrip(t *testing.T) {
 	got, err := Read(dir)
 	if err != nil || got.Phase != PhaseCalling || got.OpID != "op" {
 		t.Fatal(got, err)
+	}
+	s.Phase = PhaseAbandoning
+	if err := Write(dir, s); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := Read(dir); got.Phase != PhaseAbandoning {
+		t.Fatal("phase abandoning not kept")
 	}
 	if err := Write(dir, State{Phase: "maybe", OpID: "op", Admission: adm, Standalone: "s"}); err == nil {
 		t.Fatal("unknown phase written")

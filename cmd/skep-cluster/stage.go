@@ -10,6 +10,7 @@ import (
 
 	"github.com/greenbeanorg/skep/internal/cluster/clusterconf"
 	"github.com/greenbeanorg/skep/internal/cluster/joincode"
+	"github.com/greenbeanorg/skep/internal/cluster/layout"
 	"github.com/greenbeanorg/skep/internal/cluster/nodekey"
 	"github.com/greenbeanorg/skep/internal/cluster/service"
 	"github.com/greenbeanorg/skep/internal/cluster/store"
@@ -63,7 +64,10 @@ func readAlone(configPath, dataDir string) (clusterconf.Config, *nodekey.Key, in
 	if err != nil {
 		return cfg, nil, 0, false, err
 	}
-	servers, err := store.ReadServers(dataDir, cfg.NodeID)
+	if err := layout.CheckOldLayout(dataDir); err != nil {
+		return cfg, key, 0, false, err
+	}
+	servers, err := store.ReadServers(layout.State(dataDir), cfg.NodeID)
 	if err != nil {
 		return cfg, key, 0, false, err
 	}

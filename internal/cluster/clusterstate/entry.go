@@ -64,6 +64,12 @@ const (
 	// TypeMemberPromoted is join step 4: the member's state becomes
 	// "member" once it is a voter.
 	TypeMemberPromoted = "member.promoted"
+	// TypeMemberRemoving is removal step 0: the member's state becomes
+	// "removing" ("skep-cluster remove"). Its keys are still accepted.
+	TypeMemberRemoving = "member.removing"
+	// TypeMemberRemoved is removal step 2: the member entry and its pins
+	// are removed, after the Raft configuration without it is committed.
+	TypeMemberRemoved = "member.removed"
 )
 
 // Supported is, per entry type, the highest version this build applies.
@@ -77,6 +83,8 @@ var Supported = map[string]int{
 	TypePendingExpire:   1,
 	TypeMemberJoin:      1,
 	TypeMemberPromoted:  1,
+	TypeMemberRemoving:  1,
+	TypeMemberRemoved:   1,
 }
 
 // ActorSystem is the actor of entries no user asked for.
@@ -141,6 +149,25 @@ type MemberJoin struct {
 
 // MemberPromoted is the data of TypeMemberPromoted, version 1 (join step 4).
 type MemberPromoted struct {
+	NodeID string `json:"node_id"`
+}
+
+// MemberRemoving is the data of TypeMemberRemoving, version 1 (removal
+// step 0). ForgetGuests is the guest-list field of ADR 0013 B13 (the guest
+// entries named with --forget-guests); version 1 carries it always empty,
+// and a non-empty one is refused at apply. Step 8d, which adds the guest
+// inventory, writes the guests in version 2 of this type, so that a build
+// of this step stops at such an entry instead of applying it differently.
+type MemberRemoving struct {
+	NodeID       string   `json:"node_id"`
+	ForgetGuests []string `json:"forget_guests"`
+}
+
+// MemberRemoved is the data of TypeMemberRemoved, version 1 (removal step
+// 2). The leader proposes it only when the Raft configuration without the
+// node is committed; applying it accepts it only for a member in state
+// "removing".
+type MemberRemoved struct {
 	NodeID string `json:"node_id"`
 }
 

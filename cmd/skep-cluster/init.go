@@ -19,6 +19,7 @@ import (
 	"github.com/greenbeanorg/skep/internal/agentproto"
 	"github.com/greenbeanorg/skep/internal/cluster/clusterconf"
 	"github.com/greenbeanorg/skep/internal/cluster/clusterstate"
+	"github.com/greenbeanorg/skep/internal/cluster/layout"
 	"github.com/greenbeanorg/skep/internal/cluster/nodekey"
 	"github.com/greenbeanorg/skep/internal/cluster/store"
 	"github.com/greenbeanorg/skep/internal/ids"
@@ -127,7 +128,10 @@ func runInit(ctx context.Context, args []string, e env) error {
 
 	// Part 1, as root: everything that needs root, and nothing in the
 	// data directory but the directory itself.
-	if store.Exists(*dataDir) {
+	if err := layout.CheckOldLayout(*dataDir); err != nil {
+		return err
+	}
+	if store.Exists(layout.State(*dataDir)) {
 		return fmt.Errorf("%s already holds a cluster store: this host is initialised (see \"skep-cluster status\")", *dataDir)
 	}
 	acct, err := e.lookup(*account)
@@ -222,11 +226,10 @@ func createCluster(ctx context.Context, dataDir string, cfg clusterconf.Config, 
 	if err != nil {
 		return "", "", err
 	}
-	opts := store.Options{Dir: dataDir, NodeID: cfg.NodeID}
+	opts := store.Options{Dir: layout.State(dataDir), NodeID: cfg.NodeID}
 	fail := func(err error) (string, string, error) {
 		// Leave no half-made store: the next init starts clean.
-		_ = os.Remove(filepath.Join(dataDir, store.DBFile))
-		_ = os.RemoveAll(filepath.Join(dataDir, "snapshots"))
+		_ = layout.RemoveAll(layout.State(dataDir))
 		return "", "", err
 	}
 	if err := store.Bootstrap(opts, cfg.PeerAddress()); err != nil {

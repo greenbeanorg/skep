@@ -10,14 +10,16 @@ import (
 	"sync"
 )
 
-// Member states (ADR 0013 B1). "removing" arrives with removal (step 8b,
-// second run).
+// Member states (ADR 0013 B1, amendment 1).
 const (
 	// StateJoining is a member entry created by join step 1. The node is
 	// not a voter yet.
 	StateJoining = "joining"
 	// StateMember is a full member.
 	StateMember = "member"
+	// StateRemoving is a member being removed (removal step 0). Its keys
+	// are accepted until the Raft configuration without it takes effect.
+	StateRemoving = "removing"
 )
 
 // Member is one node's entry in the Skep membership (ADR 0013 B1).
@@ -81,6 +83,10 @@ type View struct {
 	// MembershipIndex is the index of the last entry that changed the
 	// membership (not counting pending entries).
 	MembershipIndex uint64
+	// RemovedIndex is the index of the last member.removed entry
+	// applied, 0 if none. Health on every member names the members whose
+	// state machine has not reached it (decision D12 of step 8b-2a).
+	RemovedIndex uint64
 	// Stalled is set when the machine met an entry it cannot apply.
 	Stalled *Stall
 }
@@ -136,10 +142,13 @@ type state struct {
 	epoch     uint64
 	members   map[string]Member
 	pendings  map[string]Pending
+	// removedIndex is the index of the last member.removed entry.
+	removedIndex uint64
 }
 
 func (s state) clone() state {
-	return state{clusterID: s.clusterID, epoch: s.epoch, members: maps.Clone(s.members), pendings: maps.Clone(s.pendings)}
+	return state{clusterID: s.clusterID, epoch: s.epoch, members: maps.Clone(s.members), pendings: maps.Clone(s.pendings),
+		removedIndex: s.removedIndex}
 }
 
 func (s state) sortedMembers() []Member {
@@ -474,6 +483,65 @@ func (s *state) apply(e Entry, index uint64) (change, error) {
 		mem.State = StateMember
 		s.members[d.NodeID] = mem
 		return change{membership: true, events: []Event{{Kind: "member", NodeID: mem.ID, Name: mem.Name}}}, nil
+
+	case TypeMemberRemoving:
+		var d MemberRemoving
+		if err := decodeOrStall(e, &d); err != nil {
+			return change{}, err
+		}
+		mem, ok := s.members[d.NodeID]
+		if !ok {
+			return change{}, fmt.Errorf("node %s is not a member", d.NodeID)
+		}
+		if len(d.ForgetGuests) != 0 {
+			return change{}, errors.New("guest entries cannot be named in this version of the entry (the guest inventory comes with step 8d)")
+		}
+		if mem.State == StateRemoving {
+			return change{}, fmt.Errorf("member %s is already being removed", mem.Name)
+		}
+		// Decision D7a: no removal of another member while one joins.
+		for _, other := range s.sortedMembers() {
+			if other.ID != mem.ID && other.State == StateJoining {
+				return change{}, fmt.Errorf("member %s is joining; %s cannot be removed until that join has finished or %s is removed", other.Name, mem.Name, other.Name)
+			}
+		}
+		// Decision D5g: never the last member that is not being removed.
+		rest := 0
+		for _, other := range s.sortedMembers() {
+			if other.ID != mem.ID && other.State != StateRemoving {
+				rest++
+			}
+		}
+		if rest == 0 {
+			return change{}, fmt.Errorf("%s is the only member that is not being removed", mem.Name)
+		}
+		mem.State = StateRemoving
+		s.members[d.NodeID] = mem
+		ch := change{membership: true, events: []Event{{Kind: "member removing", NodeID: mem.ID, Name: mem.Name}}}
+		// Decision D7b: every pending admission is withdrawn in the same
+		// apply, so an admission issued before a removal is void.
+		for _, p := range s.sortedPendings() {
+			delete(s.pendings, p.NodeID)
+			ch.pending = true
+			ch.events = append(ch.events, Event{Kind: "pending withdrawn", NodeID: p.NodeID, Name: p.Name})
+		}
+		return ch, nil
+
+	case TypeMemberRemoved:
+		var d MemberRemoved
+		if err := decodeOrStall(e, &d); err != nil {
+			return change{}, err
+		}
+		mem, ok := s.members[d.NodeID]
+		if !ok {
+			return change{}, fmt.Errorf("node %s is not a member", d.NodeID)
+		}
+		if mem.State != StateRemoving {
+			return change{}, fmt.Errorf("member %s is in state %s, not removing", mem.Name, mem.State)
+		}
+		delete(s.members, d.NodeID)
+		s.removedIndex = index
+		return change{membership: true, events: []Event{{Kind: "member removed", NodeID: mem.ID, Name: mem.Name}}}, nil
 	}
 	// A type a build declares in Supported without a case here changes
 	// nothing (as in step 8a); TestEveryTypeHasAnApplyStep keeps every
@@ -486,7 +554,7 @@ func (m *Machine) View() View {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	v := View{ClusterID: m.st.clusterID, Epoch: m.st.epoch, AppliedIndex: m.applied, MembershipIndex: m.memIndex,
-		Members: m.st.sortedMembers(), Pendings: m.st.sortedPendings()}
+		RemovedIndex: m.st.removedIndex, Members: m.st.sortedMembers(), Pendings: m.st.sortedPendings()}
 	if m.stalled != nil {
 		s := *m.stalled
 		v.Stalled = &s
@@ -511,8 +579,9 @@ func (m *Machine) AppliedIndex() (uint64, bool) {
 }
 
 // snapshotFormat is the version of the snapshot encoding. Format 1 (step
-// 8a) has no pending entries and no epoch; it is still read.
-const snapshotFormat = 2
+// 8a) has no pending entries and no epoch; format 2 (8b-1) no removal
+// index. Both are still read.
+const snapshotFormat = 3
 
 type snapshot struct {
 	Format          int               `json:"format"`
@@ -523,6 +592,7 @@ type snapshot struct {
 	Ops             map[string]uint64 `json:"ops"`
 	Applied         uint64            `json:"applied"`
 	MembershipIndex uint64            `json:"membership_index,omitempty"`
+	RemovedIndex    uint64            `json:"removed_index,omitempty"`
 	// Stalled is read from snapshots written by the first 8a build and
 	// ignored; it is never written. A stall belongs to the running build,
 	// not to the state: a later build that can apply the entry must.
@@ -544,7 +614,7 @@ func (m *Machine) Snapshot() ([]byte, error) {
 		return nil, fmt.Errorf("%w (index %d)", ErrSnapshotWhileStalled, m.stalled.Index)
 	}
 	s := snapshot{Format: snapshotFormat, ClusterID: m.st.clusterID, Epoch: m.st.epoch, Ops: maps.Clone(m.ops),
-		Applied: m.applied, MembershipIndex: m.memIndex, Members: m.st.sortedMembers(), Pendings: m.st.sortedPendings()}
+		Applied: m.applied, MembershipIndex: m.memIndex, RemovedIndex: m.st.removedIndex, Members: m.st.sortedMembers(), Pendings: m.st.sortedPendings()}
 	return json.Marshal(s)
 }
 
@@ -559,10 +629,10 @@ func (m *Machine) Restore(r io.Reader) error {
 	if err := dec.Decode(&s); err != nil {
 		return fmt.Errorf("clusterstate: restore: %w", err)
 	}
-	if s.Format != 1 && s.Format != snapshotFormat {
+	if s.Format < 1 || s.Format > snapshotFormat {
 		return fmt.Errorf("clusterstate: snapshot format %d is unknown to this build", s.Format)
 	}
-	st := state{clusterID: s.ClusterID, epoch: s.Epoch, members: map[string]Member{}, pendings: map[string]Pending{}}
+	st := state{clusterID: s.ClusterID, epoch: s.Epoch, members: map[string]Member{}, pendings: map[string]Pending{}, removedIndex: s.RemovedIndex}
 	if s.Format == 1 && st.clusterID != "" {
 		st.epoch = 1
 	}

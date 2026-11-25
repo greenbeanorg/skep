@@ -445,7 +445,7 @@ func TestSnapshotRestore(t *testing.T) {
 	if r := n.Apply(4, joinEntry(t, "j", nodeB, pinB, 10)); !r.Duplicate {
 		t.Fatal("the restored machine applied an old operation again")
 	}
-	if err := n.Restore(bytes.NewReader([]byte(`{"format":3}`))); err == nil {
+	if err := n.Restore(bytes.NewReader([]byte(`{"format":4}`))); err == nil {
 		t.Fatal("a snapshot of an unknown format was restored")
 	}
 	// A restore whose file write fails changes nothing.
@@ -510,5 +510,120 @@ func TestEveryTypeHasAnApplyStep(t *testing.T) {
 		if r.Err == nil {
 			t.Errorf("%s with empty data was applied without a check", typ)
 		}
+	}
+}
+
+func removingEntry(t *testing.T, op, id string, guests ...string) []byte {
+	if guests == nil {
+		guests = []string{}
+	}
+	return encode(t, TypeMemberRemoving, op, MemberRemoving{NodeID: id, ForgetGuests: guests})
+}
+
+func removedEntry(t *testing.T, op, id string) []byte {
+	return encode(t, TypeMemberRemoved, op, MemberRemoved{NodeID: id})
+}
+
+func promotedEntry(t *testing.T, op, id string) []byte {
+	return encode(t, TypeMemberPromoted, op, MemberPromoted{NodeID: id})
+}
+
+// threeMembers is smith (A, member), langrishe (B, member) and star (C,
+// joining), at index 10.
+func threeMembers(t *testing.T) *Machine {
+	t.Helper()
+	m := New()
+	steps := [][]byte{
+		initEntry(t, "init"),
+		pendingEntry(t, "pb", nodeB, "langrishe", "10.0.0.2:8444", pinB, 100),
+		joinEntry(t, "jb", nodeB, pinB, 10),
+		promotedEntry(t, "prb", nodeB),
+		pendingEntry(t, "pc", nodeC, "star", "10.0.0.3:8444", pinC, 100),
+		joinEntry(t, "jc", nodeC, pinC, 10),
+	}
+	for i, b := range steps {
+		if r := m.Apply(uint64(i+1), b); r.Err != nil {
+			t.Fatalf("step %d: %v", i+1, r.Err)
+		}
+	}
+	return m
+}
+
+func stateIn(m *Machine, id string) string {
+	mem, ok := m.Member(id)
+	if !ok {
+		return ""
+	}
+	return mem.State
+}
+
+// Removal at apply (decisions D3, D4, D5g, D7a, D7b of step 8b-2a): every
+// refusal changes nothing, the same on every node.
+func TestRemovalAtApply(t *testing.T) {
+	m := threeMembers(t)
+	// D7a: B cannot be removed while C is joining.
+	if r := m.Apply(7, removingEntry(t, "rb", nodeB)); !errors.Is(r.Err, ErrRefused) || stateIn(m, nodeB) != StateMember {
+		t.Fatalf("removal of another member during a join: %+v", r)
+	}
+	// The joining member itself can be removed: how a stuck join is
+	// cleared. A pending admission is withdrawn in the same apply (D7b).
+	if r := m.Apply(8, pendingEntry(t, "pd", "3e8b6d85-0c3b-4f8b-a03e-6c4a9c3d2f44", "d", "10.0.0.4:8444", pin('d'), 100)); r.Err != nil {
+		t.Fatal(r.Err)
+	}
+	r := m.Apply(9, removingEntry(t, "rc", nodeC))
+	if r.Err != nil || stateIn(m, nodeC) != StateRemoving || len(m.View().Pendings) != 0 {
+		t.Fatalf("removing C: %+v, view %+v", r, m.View())
+	}
+	kinds := ""
+	for _, ev := range r.Events {
+		kinds += ev.Kind + ";"
+	}
+	if kinds != "member removing;pending withdrawn;" {
+		t.Fatalf("events %q", kinds)
+	}
+	// Its key is still pinned (accepted) after step 0.
+	if _, ok := pinned(m, pinC); !ok {
+		t.Fatal("a removing member's pin is gone after step 0")
+	}
+	// A second removal of a member already being removed: refused.
+	if r := m.Apply(10, removingEntry(t, "rc2", nodeC)); !errors.Is(r.Err, ErrRefused) {
+		t.Fatalf("second removal: %+v", r)
+	}
+	// A promotion of a member that is not joining: refused (D5g).
+	if r := m.Apply(11, promotedEntry(t, "prc", nodeC)); !errors.Is(r.Err, ErrRefused) || stateIn(m, nodeC) != StateRemoving {
+		t.Fatalf("promotion of a removing member: %+v", r)
+	}
+	// The final entry only for a removing member (D5g).
+	if r := m.Apply(12, removedEntry(t, "xb", nodeB)); !errors.Is(r.Err, ErrRefused) || stateIn(m, nodeB) != StateMember {
+		t.Fatalf("final entry for a member: %+v", r)
+	}
+	if r := m.Apply(13, removedEntry(t, "xc", nodeC)); r.Err != nil || stateIn(m, nodeC) != "" || m.View().RemovedIndex != 13 {
+		t.Fatalf("final entry: %+v, removed index %d", r, m.View().RemovedIndex)
+	}
+	if _, ok := pinned(m, pinC); ok {
+		t.Fatal("the removed member's pin is still there")
+	}
+	// A guest list in version 1: refused (guests come with step 8d).
+	if r := m.Apply(14, removingEntry(t, "rb-g", nodeB, "vm1")); !errors.Is(r.Err, ErrRefused) {
+		t.Fatalf("removal naming guests: %+v", r)
+	}
+	// B, then A: A is the last member that is not being removed.
+	if r := m.Apply(15, removingEntry(t, "rb", nodeB)); r.Err != nil {
+		t.Fatal(r.Err)
+	}
+	if r := m.Apply(16, removingEntry(t, "ra", nodeA)); !errors.Is(r.Err, ErrRefused) || stateIn(m, nodeA) != StateMember {
+		t.Fatalf("removal of the last member that is not removing: %+v", r)
+	}
+	// An unknown node, and the snapshot keeps the removal index.
+	if r := m.Apply(17, removingEntry(t, "rz", "4f9c7e96-1d4c-4a9c-b14f-7d5bad4e3a55")); !errors.Is(r.Err, ErrRefused) {
+		t.Fatalf("unknown node: %+v", r)
+	}
+	b, err := m.Snapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := New()
+	if err := n.Restore(bytes.NewReader(b)); err != nil || n.View().RemovedIndex != 13 || stateIn(n, nodeB) != StateRemoving {
+		t.Fatalf("restore: %v %+v", err, n.View())
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"time"
@@ -12,6 +13,7 @@ import (
 	"github.com/greenbeanorg/skep/internal/cluster/clusterconf"
 	"github.com/greenbeanorg/skep/internal/cluster/clusterstate"
 	"github.com/greenbeanorg/skep/internal/cluster/joinstate"
+	"github.com/greenbeanorg/skep/internal/cluster/layout"
 	"github.com/greenbeanorg/skep/internal/cluster/localapi"
 	"github.com/greenbeanorg/skep/internal/cluster/membership"
 	"github.com/greenbeanorg/skep/internal/cluster/nodekey"
@@ -69,14 +71,29 @@ func runServe(ctx context.Context, args []string, e env) error {
 		log.Warn("the node certificate could not be used; a new one was issued with the same key, the pin is unchanged",
 			"reason", repaired.Error(), "pin", key.Pin(), "not_after", key.NotAfter())
 	}
-	// The join stage's start rule (put a moved-aside one-node state back).
-	if err := service.RecoverStandalone(*dataDir, log); err != nil {
+	// The start rule (decisions D1 and D2 of step 8b-2a): refuse an
+	// unfinished wipe or abandon and an earlier build's layout, put a
+	// moved-aside one-node state back when that is certain to be right.
+	if err := service.StartRule(*dataDir, log); err != nil {
 		return err
+	}
+	stateDir := layout.State(*dataDir)
+	// A node that learned it was removed runs only its local socket
+	// (decision D11).
+	removed, err := service.ReadRemoved(*dataDir)
+	if err != nil {
+		return fmt.Errorf("the removal record: %w", err)
+	}
+	if removed != nil {
+		svc := service.New(service.Options{Config: cfg, Key: key, DataDir: *dataDir, Removed: removed, Logger: log})
+		log.Error("this node was removed from its cluster; only the local socket runs: run \"skep-cluster leave --wipe\"",
+			"cluster_id", removed.ClusterID, "how", removed.How, "at", removed.At)
+		return serveSocket(ctx, svc, nil, *socket, api.UID, log, cfg, key)
 	}
 	// The applied-membership file (ADR 0013 amendment 1) is read before
 	// the store starts: until the state machine reaches its index, the
 	// node accepts keys by it.
-	writer, err := membership.NewWriter(*dataDir)
+	writer, err := membership.NewWriter(stateDir)
 	if err != nil {
 		return fmt.Errorf("the applied-membership file: %w", err)
 	}
@@ -106,7 +123,7 @@ func runServe(ctx context.Context, args []string, e env) error {
 	} else if join != nil {
 		return errors.New("this node is joining a cluster but cluster.json has no listen address")
 	}
-	opts := store.Options{Dir: *dataDir, NodeID: cfg.NodeID, Logger: log, Machine: machine, Empty: join != nil}
+	opts := store.Options{Dir: stateDir, NodeID: cfg.NodeID, Logger: log, Machine: machine, Empty: join != nil}
 	if trans != nil {
 		opts.Transport = trans
 	}
@@ -116,9 +133,18 @@ func runServe(ctx context.Context, args []string, e env) error {
 	}
 	defer node.Close()
 	svc.SetStore(node, trans)
+	return serveSocket(ctx, svc, node, *socket, api.UID, log, cfg, key)
+}
+
+// serveSocket serves the local API and runs the service's background work
+// until ctx ends. node is nil on a removed node.
+func serveSocket(ctx context.Context, svc *service.Service, node *store.Node, socket string, apiUID uint32, log *slog.Logger, cfg clusterconf.Config, key *nodekey.Key) error {
+	if node != nil {
+		defer node.Close()
+	}
 	ln, err := localapi.Listen(localapi.ListenOptions{
-		Path:           *socket,
-		AllowedUIDs:    []uint32{0, api.UID},
+		Path:           socket,
+		AllowedUIDs:    []uint32{0, apiUID},
 		MaxConnections: 32,
 		Logger:         log,
 	})
@@ -126,7 +152,7 @@ func runServe(ctx context.Context, args []string, e env) error {
 		return err
 	}
 	srv := &http.Server{
-		Handler:           localapi.NewHandler(svc, localapi.HandlerOptions{APIUID: api.UID, Logger: log}),
+		Handler:           localapi.NewHandler(svc, localapi.HandlerOptions{APIUID: apiUID, Logger: log}),
 		ConnContext:       localapi.ConnContext,
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
@@ -135,7 +161,7 @@ func runServe(ctx context.Context, args []string, e env) error {
 	}
 	v := version.Get()
 	log.Info("skep-cluster started", "version", v.Version, "commit", v.Commit, "node_id", cfg.NodeID,
-		"pin", key.Pin(), "socket", *socket, "listen_address", cfg.PeerAddress(), "pid", os.Getpid())
+		"pin", key.Pin(), "socket", socket, "listen_address", cfg.PeerAddress(), "pid", os.Getpid())
 
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()

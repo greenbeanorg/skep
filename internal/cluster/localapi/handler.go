@@ -27,6 +27,7 @@ const (
 	PathRaftConfiguration = Prefix + "/raft/configuration"
 	PathAdmit             = Prefix + "/admit"
 	PathWithdraw          = Prefix + "/admit/withdraw"
+	PathRemove            = Prefix + "/remove"
 )
 
 // CodeForbidden is the error code for a caller an operation does not
@@ -57,6 +58,9 @@ var Operations = []Operation{
 	// (ADR 0013 B2).
 	{Name: "admit", Method: http.MethodPost, Path: PathAdmit, Root: true, API: false},
 	{Name: "admit-withdraw", Method: http.MethodPost, Path: PathWithdraw, Root: true, API: false},
+	// Removing a member is root-only in step 8b-2a, like admit; skep-api
+	// gets it with cluster:manage in step 8c (decision D3).
+	{Name: "remove", Method: http.MethodPost, Path: PathRemove, Root: true, API: false},
 }
 
 // AdmitRequest is the body of the admit operation.
@@ -87,6 +91,37 @@ type WithdrawResult struct {
 	NodeID string `json:"node_id"`
 	Name   string `json:"name"`
 	OpID   string `json:"op_id"`
+}
+
+// RemoveRequest is the body of the remove operation.
+type RemoveRequest struct {
+	Name string `json:"name"`
+	// AllowUnanswered removes the member although too few of the
+	// remaining voters answered a status round (decision D7c). It needs
+	// ClusterID, typed back by the administrator.
+	AllowUnanswered bool   `json:"allow_unanswered,omitempty"`
+	ClusterID       string `json:"cluster_id,omitempty"`
+}
+
+// RemoveResult is its answer: the first entry (removing) is committed.
+type RemoveResult struct {
+	NodeID    string `json:"node_id"`
+	Name      string `json:"name"`
+	OpID      string `json:"op_id"`
+	ClusterID string `json:"cluster_id"`
+	// HandedOver is true when the node was the leader and handed the
+	// leadership over first (decision D6).
+	HandedOver bool `json:"handed_over,omitempty"`
+	// Unanswered names the remaining voters that did not answer the
+	// status round of the removal (only with AllowUnanswered).
+	Unanswered []string `json:"unanswered,omitempty"`
+}
+
+// RemovedStatus is Status for a node that was removed.
+type RemovedStatus struct {
+	ClusterID string `json:"cluster_id"`
+	At        string `json:"at"`
+	How       string `json:"how"`
 }
 
 // OpError is an error answer of an operation that changes something.
@@ -135,8 +170,16 @@ type Status struct {
 	// machine has caught up), "admission" (joining) or "none".
 	AcceptedBy string `json:"accepted_by"`
 	// Join is set while this node is joining.
-	Join  *JoinStatus `json:"join,omitempty"`
-	Build string      `json:"build"`
+	Join *JoinStatus `json:"join,omitempty"`
+	// Removed is set on a node that was removed from its cluster.
+	Removed *RemovedStatus `json:"removed,omitempty"`
+	// Removals says, for each member being removed, what its removal
+	// waits for.
+	Removals []string `json:"removals,omitempty"`
+	// UnappliedRemoval names the members that have not yet applied the
+	// last removal, from the last status round (decision D12).
+	UnappliedRemoval []string `json:"unapplied_removal,omitempty"`
+	Build            string   `json:"build"`
 }
 
 // StateMachineStatus is the state machine's part of Status.
@@ -165,6 +208,7 @@ type Backend interface {
 	// Admit and Withdraw return an *OpError for a refusal.
 	Admit(ctx context.Context, request, actor string) (AdmitResult, error)
 	Withdraw(ctx context.Context, name, actor string) (WithdrawResult, error)
+	Remove(ctx context.Context, req RemoveRequest, actor string) (RemoveResult, error)
 }
 
 // HandlerOptions configures the handler.
@@ -208,6 +252,14 @@ func NewHandler(b Backend, o HandlerOptions) http.Handler {
 				return
 			}
 			res, err := b.Admit(r.Context(), req.Request, actorOf(r))
+			writeResult(w, r, res, err)
+		},
+		PathRemove: func(w http.ResponseWriter, r *http.Request) {
+			var req RemoveRequest
+			if !decodeBody(w, r, &req) {
+				return
+			}
+			res, err := b.Remove(r.Context(), req, actorOf(r))
 			writeResult(w, r, res, err)
 		},
 		PathWithdraw: func(w http.ResponseWriter, r *http.Request) {

@@ -15,6 +15,7 @@ import (
 	"github.com/greenbeanorg/skep/internal/cluster/clusterstate"
 	"github.com/greenbeanorg/skep/internal/cluster/joincode"
 	"github.com/greenbeanorg/skep/internal/cluster/joinstate"
+	"github.com/greenbeanorg/skep/internal/cluster/layout"
 	"github.com/greenbeanorg/skep/internal/cluster/membership"
 	"github.com/greenbeanorg/skep/internal/cluster/nodekey"
 	"github.com/greenbeanorg/skep/internal/cluster/raftnet"
@@ -57,6 +58,9 @@ type tnode struct {
 	done   chan struct{}
 	hook   func(step int, id string) bool
 }
+
+// state is the node's state directory.
+func (n *tnode) state() string { return layout.State(n.dir) }
 
 type logBuffer struct {
 	mu sync.Mutex
@@ -113,7 +117,7 @@ func (h *harness) node(name string) *tnode {
 		cfg: clusterconf.Config{NodeID: id, NodeName: name, ListenAddress: ip}}
 	// A one-node cluster, as "skep-cluster init -address" makes it.
 	clusterID, _ := ids.NewUUID()
-	opts := store.Options{Dir: dir, NodeID: id}
+	opts := store.Options{Dir: layout.State(dir), NodeID: id}
 	if err := store.Bootstrap(opts, n.cfg.PeerAddress()); err != nil {
 		h.t.Fatal(err)
 	}
@@ -142,10 +146,10 @@ func (h *harness) node(name string) *tnode {
 func (h *harness) start(n *tnode) {
 	h.t.Helper()
 	log := slog.New(slog.NewTextHandler(io.MultiWriter(n.logs, testWriter{h.t, n.name}), &slog.HandlerOptions{Level: slog.LevelInfo}))
-	if err := RecoverStandalone(n.dir, log); err != nil {
+	if err := StartRule(n.dir, log); err != nil {
 		h.t.Fatal(err)
 	}
-	writer, err := membership.NewWriter(n.dir)
+	writer, err := membership.NewWriter(n.state())
 	if err != nil {
 		h.t.Fatal(err)
 	}
@@ -166,7 +170,7 @@ func (h *harness) start(n *tnode) {
 	if err != nil {
 		h.t.Fatal(err)
 	}
-	st, err := store.Open(store.Options{Dir: n.dir, NodeID: n.id, Logger: log, Machine: machine, Transport: trans, Empty: js != nil})
+	st, err := store.Open(store.Options{Dir: n.state(), NodeID: n.id, Logger: log, Machine: machine, Transport: trans, Empty: js != nil})
 	if err != nil {
 		h.t.Fatal(err)
 	}
@@ -318,11 +322,11 @@ func (h *harness) leaderOrFirst(nodes []*tnode) *tnode {
 
 func readMembershipFile(t *testing.T, n *tnode) (*membership.File, os.FileInfo) {
 	t.Helper()
-	f, err := membership.Read(n.dir)
+	f, err := membership.Read(n.state())
 	if err != nil {
 		t.Fatal(err)
 	}
-	info, err := os.Stat(filepath.Join(n.dir, membership.FileName))
+	info, err := os.Stat(filepath.Join(n.state(), membership.FileName))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -343,14 +347,14 @@ func TestJoinTwoNodes(t *testing.T) {
 			t.Fatalf("%s states", n.name)
 		}
 		h.eventually(n.name+" membership file names both members", 10*time.Second, func() bool {
-			f, _ := membership.Read(n.dir)
+			f, _ := membership.Read(n.state())
 			return f != nil && len(f.Members) == 2 && f.Members[0].State == clusterstate.StateMember && f.Members[1].State == clusterstate.StateMember
 		})
 		f, info := readMembershipFile(t, n)
 		if info.Mode().Perm() != 0o600 {
 			t.Errorf("%s membership.json mode %o", n.name, info.Mode().Perm())
 		}
-		raw, _ := os.ReadFile(filepath.Join(n.dir, membership.FileName))
+		raw, _ := os.ReadFile(filepath.Join(n.state(), membership.FileName))
 		if strings.Contains(string(raw), "pending") || strings.Contains(string(raw), "expires") {
 			t.Errorf("%s membership.json holds a pending entry: %s", n.name, raw)
 		}
@@ -387,7 +391,7 @@ func TestJoinTwoNodes(t *testing.T) {
 	// join-request and join refuse on a node whose configuration has two
 	// servers: the stage reads it from the store.
 	h.stop(smith)
-	servers, err := store.ReadServers(smith.dir, smith.id)
+	servers, err := store.ReadServers(smith.state(), smith.id)
 	if err != nil || len(servers) != 2 || store.Alone(servers, smith.id) {
 		t.Fatalf("offline read: %v %v", servers, err)
 	}
@@ -396,7 +400,7 @@ func TestJoinTwoNodes(t *testing.T) {
 	if out := StageJoin(context.Background(), smith.dir, smith.cfg, smith.key, adm, time.Now(), 0); out.Outcome != "not_alone" {
 		t.Fatalf("join on a node of two: %+v", out)
 	}
-	if _, err := os.Stat(filepath.Join(smith.dir, store.DBFile)); err != nil {
+	if _, err := os.Stat(filepath.Join(smith.state(), store.DBFile)); err != nil {
 		t.Fatal("the refused join moved the store")
 	}
 }

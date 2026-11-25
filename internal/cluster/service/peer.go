@@ -82,6 +82,17 @@ func (s *Service) HandlePeer(ctx context.Context, op string, from raftnet.Peer, 
 		}
 		res, err := s.withdrawAsLeader(req.Name, req.Actor, from.NodeID, req.OpID)
 		return res, toPeerError(err)
+	case raftnet.OpRemove:
+		if s.isRemoved() {
+			return nil, &raftnet.PeerError{Code: raftnet.CodeUnavailable, Message: "this node was removed from the cluster"}
+		}
+		return s.handleRemove(ctx, from, body)
+	case raftnet.OpRemoved:
+		n, err := decodeNotice(body)
+		if err != nil {
+			return nil, &raftnet.PeerError{Code: raftnet.CodeInvalidRequest, Message: "the notice is not valid"}
+		}
+		return s.handleRemovedNotice(from, n)
 	}
 	return nil, &raftnet.PeerError{Code: raftnet.CodeForbidden, Message: "unknown operation"}
 }
@@ -146,6 +157,9 @@ func (s *Service) handleJoin(from raftnet.Peer, req JoinRequest) (any, error) {
 	if mem, ok := s.machine.Member(from.NodeID); ok {
 		if mem.Pin != from.Pin {
 			return nil, &raftnet.PeerError{Code: raftnet.CodeRefused, Message: "this node ID is a member with another key"}
+		}
+		if mem.State == clusterstate.StateRemoving {
+			return nil, &raftnet.PeerError{Code: raftnet.CodeRefused, Message: "this node is being removed from the cluster"}
 		}
 		return s.joinAnswer(), nil
 	}
@@ -316,7 +330,11 @@ func checkAnswer(a JoinAnswer, clusterID string) error {
 	if len(a.Members) == 0 || len(a.Members) > 64 {
 		return fmt.Errorf("the answer lists %d members, not 1 to 64", len(a.Members))
 	}
-	return joincode.CheckNodes(a.Members)
+	if err := joincode.CheckNodes(a.Members); err != nil {
+		return err
+	}
+	// The same port check as the admission's (decision D10 of 8b-2a).
+	return joincode.CheckPorts(a.Members...)
 }
 
 // joinStep is a joining node's work: repeat a join call whose outcome is
@@ -384,6 +402,9 @@ func (s *Service) joinStep(ctx context.Context) {
 // the leader, which checks it again; applying the entry checks it again on
 // every node.
 func (s *Service) Admit(ctx context.Context, request, actor string) (localapi.AdmitResult, error) {
+	if s.isRemoved() {
+		return localapi.AdmitResult{}, removedError()
+	}
 	if s.cfg.ListenAddress == "" {
 		return localapi.AdmitResult{}, &localapi.OpError{HTTPStatus: http.StatusConflict, Code: "no_listen_address",
 			Message: "this node has no listen address: run \"skep-cluster listen -address ADDR\" first"}
@@ -409,6 +430,9 @@ func (s *Service) Admit(ctx context.Context, request, actor string) (localapi.Ad
 
 // Withdraw implements localapi.Backend: "skep-cluster admit --withdraw".
 func (s *Service) Withdraw(ctx context.Context, name, actor string) (localapi.WithdrawResult, error) {
+	if s.isRemoved() {
+		return localapi.WithdrawResult{}, removedError()
+	}
 	if !clusterstate.ValidName(name) {
 		return localapi.WithdrawResult{}, &localapi.OpError{HTTPStatus: http.StatusBadRequest, Code: "invalid_request", Message: "not a valid node name"}
 	}
@@ -458,6 +482,10 @@ func (s *Service) toLeader(ctx context.Context, op string, in, out any) error {
 			status = http.StatusServiceUnavailable
 		case raftnet.CodeInvalidRequest:
 			status = http.StatusBadRequest
+		case "not_found":
+			status = http.StatusNotFound
+		case "handover_failed":
+			status = http.StatusServiceUnavailable
 		}
 		return &localapi.OpError{HTTPStatus: status, Code: pe.Code, Message: "the leader " + leader.Name + " answered: " + pe.Message}
 	}

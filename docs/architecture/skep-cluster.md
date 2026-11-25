@@ -228,6 +228,7 @@ forbidden`.
 | `raft-configuration` | `GET /cluster/v1/raft/configuration` | yes | no |
 | `admit` | `POST /cluster/v1/admit` | yes | no |
 | `admit-withdraw` | `POST /cluster/v1/admit/withdraw` | yes | no |
+| `remove` | `POST /cluster/v1/remove` | yes | no |
 
 `admit` and `admit-withdraw` are root-only in this step (`skep-api` gets
 them with `cluster:manage` in 8c). Their errors: `400 invalid_request`,
@@ -437,6 +438,31 @@ Checked in the module source (`github.com/hashicorp/raft@v1.8.0`) on
 | Only `LogCommand` entries reach `FSM.Apply` | `fsm.go` `runFSM` `commitSingle`; configuration entries go to an optional `ConfigurationStore`, no-ops and barriers nowhere. Hence the state machine's own applied index |
 
 None of these fails; no finding against the ADR.
+
+### Removal, leadership and configuration changes (checked for step 8b-2a)
+
+Checked in the same module source on 2026-11-25 for removal, `leave
+--wipe` and `join --abandon` (decisions D3, D5, D6, D11 of the run).
+
+| Question | Fact | Where |
+|---|---|---|
+| What `RemoveServer` does when the leader removes itself | The leader appends the new configuration without itself and uses it at once (it keeps leading and replicating). When that configuration **commits**, the leader sees it has no vote in the committed configuration and steps down; with `Config.ShutdownOnRemove` (default **true**, which Skep keeps) it calls `Shutdown()`, otherwise it becomes a follower. So a leader that removes itself shuts its Raft instance once the change commits; Skep therefore hands leadership over first (D6) | `api.go` `RemoveServer` → `raft.go` `requestConfigChange` → `leaderLoop` → `appendConfigurationEntry`; step-down in `leaderLoop` `case <-r.leaderState.commitCh` (`!hasVote(r.configurations.committed, r.localID)` → `stepDown`, then `ShutdownOnRemove`); default in `config.go` `DefaultConfig` |
+| When a configuration change **takes effect** | On the leader at append: `appendConfigurationEntry` calls `setLatestConfiguration` and `commitment.setConfiguration` before the entry is replicated, so commit counting and replication (`startStopReplication`) use the new configuration at once. On a follower when the entry is **stored**, before it is committed: `appendEntries` → `processConfigurationLogEntry` → `setLatestConfiguration` | `raft.go` `appendConfigurationEntry`, `appendEntries`, `processConfigurationLogEntry` |
+| When it is **committed** | On the leader when the commit index passes it (`leaderLoop`, `commitCh`: `setCommittedConfiguration`); the `IndexFuture` of `AddNonvoter`/`AddVoter`/`RemoveServer` is answered then (or with `ErrLeadershipLost` when leadership is lost first). On a follower when a leader's `LeaderCommitIndex` reaches it (`appendEntries`: `setCommittedConfiguration` when `latestIndex <= idx`). The enqueue timeout of these calls bounds only the hand-off to the main loop; the wait for the commit has no timeout of its own | `raft.go` `leaderLoop`, `appendEntries`, `requestConfigChange` (`ErrEnqueueTimeout`); `ErrLeadershipLost` in `runLeader`'s deferred clean-up |
+| Only one change at a time | A leader takes a new configuration change only when its latest configuration is committed and it has committed an entry of its own term | `raft.go` `configurationChangeChIfStable` |
+| Reading the latest configuration and its index | `GetConfiguration()` returns the **latest** configuration (committed or not) and, with `Index()`, its log index; comparing that index with `CommitIndex()` tells whether it is committed | `api.go` `GetConfiguration`; `future.go` `configurationsFuture.Index` |
+| What a removed server does afterwards | The leader stops replicating to it after a best-effort send of the log up to the change (`startStopReplication`: `repl.stopCh <- lastIdx`; `replicate`: `replicateTo(s, maxIndex)`). It never learns that the change committed (no later `LeaderCommitIndex` reaches it). A removed **follower** that stored the change has a latest configuration without its own vote and does not stand for election ("not part of a stable configuration or a non-voter, not triggering a leader election"). One that did **not** receive it still thinks it votes and stands for election when its heartbeat times out | `raft.go` `startStopReplication`, `runFollower`; `replication.go` `replicate` |
+| Whether pre-vote stops it from disturbing the cluster | Yes for members that have the change: `requestPreVote` refuses a candidate that is not in the latest configuration, or not a voter, and refuses any candidate while the member has a leader. A pre-vote does not raise the term of the candidate or of the member (`preElectSelf` proposes `term+1` without storing it; a refused pre-vote leaves the member's term unchanged). Skep adds its own refusal: a Raft RPC from a node that is not a server in the receiver's latest configuration is refused before the library sees it | `raft.go` `requestPreVote`, `preElectSelf`, `runCandidate`; `internal/cluster/raftnet` per-RPC check |
+| How `LeadershipTransfer` fails | It returns an error future when: the protocol version is below 3 (`ErrUnsupportedProtocol`); a transfer is already in progress (`ErrLeadershipTransferInProgress`); there is no other voter to pick ("cannot find peer"); there is no replication state for the target; catching the target up fails ("replication failed"); the `TimeoutNow` RPC fails; or the leader is still leader one `ElectionTimeout` (1 s) after the start or after `TimeoutNow` ("leadership transfer timeout"). It succeeds (nil) when the leader leaves its leader loop. While it runs, the leader refuses `Apply`, configuration changes and barriers with `ErrLeadershipTransferInProgress` | `api.go` `LeadershipTransfer`; `raft.go` `leaderLoop` (`case future := <-r.leadershipTransferCh`), `leadershipTransfer`, `pickServer` |
+| Reading the current term and learning of leadership changes | `CurrentTerm()` reads the term; `State()` and `LeaderWithID()` the role and the leader. `LeaderCh()` signals gains and losses but **drops** signals a slow reader misses (two `true` in a row mean the leadership was lost and gained in between), and `RegisterObserver` delivers `LeaderObservation`/`RaftState` without a guarantee either. Skep therefore compares the term (D5a) and does not rely on either channel | `api.go` `CurrentTerm`, `LeaderCh` (its comment), `State`, `LeaderWithID`; `observer.go` `RegisterObserver` |
+| Whether the FSM is told of a committed configuration | Only through the optional `ConfigurationStore` interface: `runFSM` calls `StoreConfiguration(index, configuration)` for each **committed** `LogConfiguration` entry, in log order with the commands. Without it the FSM is told nothing. Skep's FSM does not implement it: the membership decisions read the configuration from the library (`GetConfiguration`), and the leader's are made after a barrier of its current term | `fsm.go` `runFSM` (`configStore, configStoreEnabled := r.fsm.(ConfigurationStore)`) |
+| A barrier commits every earlier entry | A barrier is an entry of the leader's current term; when it is applied, every entry before it, configuration changes included, is committed. So after a barrier in the current term, with no change sent since, the latest configuration is the committed one | `api.go` `Barrier`; `raft.go` `leaderLoop` (`commitCh`) |
+
+None of these makes D3, D5, D6 or D11 unworkable. Two consequences are
+built in: a configuration change's wait is bounded by Skep (the library's
+has no timeout), and a removed follower learns of its removal from its own
+log (its entry `removing` and itself absent from its latest configuration)
+or from the member's notice, never from a commit.
 
 ## Comparing the adapted handler with upstream
 

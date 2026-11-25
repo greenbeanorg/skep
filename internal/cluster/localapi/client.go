@@ -114,6 +114,13 @@ func (c *Client) Withdraw(ctx context.Context, name string) (WithdrawResult, err
 	return res, err
 }
 
+// Remove calls the remove operation.
+func (c *Client) Remove(ctx context.Context, req RemoveRequest) (RemoveResult, error) {
+	var res RemoveResult
+	err := c.post(ctx, PathRemove, req, &res)
+	return res, err
+}
+
 // Health returns the service's health document. A 503 answer is a health
 // document too.
 func (c *Client) Health(ctx context.Context) (models.Health, error) {

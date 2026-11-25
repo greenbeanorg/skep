@@ -38,9 +38,14 @@ type Store interface {
 	Apply(e clusterstate.Entry) (clusterstate.Result, error)
 	AddNonvoter(id, address string) error
 	AddVoter(id, address string) error
+	RemoveServer(id string) error
+	TransferLeadership() error
+	Term() uint64
+	Configuration() (servers []store.Server, index uint64, committed bool, err error)
 	IsServer(id string, cached bool, maxAge time.Duration) bool
 	LibraryEntriesOnly(from, to uint64) bool
 	Barrier() error
+	Close() error
 }
 
 // Timings of the background work.
@@ -66,6 +71,9 @@ type Options struct {
 	Writer  *membership.Writer
 	// Join is the joining node's record, or nil.
 	Join *joinstate.State
+	// Removed is set when state/removed.json exists: the node was removed
+	// from its cluster and runs only its local socket (decision D11).
+	Removed *RemovedRecord
 	// Now defaults to time.Now.
 	Now func() time.Time
 	// Logger defaults to slog.Default().
@@ -101,8 +109,19 @@ type Service struct {
 	renewErr   error
 	joinErr    error
 	lastRenew  time.Time
-	wasLeader  bool
-	nextLeader time.Time
+	// barrierTerm is the term of the last successful barrier; the leader
+	// repeats the barrier whenever the term differs (decision D5a).
+	barrierTerm uint64
+	nextLeader  time.Time
+	nextStatus  time.Time
+	// answers is the last status round: per member, its state machine's
+	// applied index as it answered, or the error.
+	answers map[string]statusResult
+	// removed is set once this node knows it was removed.
+	removed *RemovedRecord
+	// standaloneChecked is set once the start's clean-up of a leftover
+	// moved-aside state has run (decision D2).
+	standaloneChecked bool
 	nextWaits  time.Time
 	nextJoin   time.Time
 	// waits names, per joining member, the members its promotion waits
@@ -112,13 +131,31 @@ type Service struct {
 	// has completed join step n for a member. Returning true freezes
 	// the node's leader work, so that a test can stop it right there.
 	afterJoinStep func(step int, nodeID string) bool
-	frozen        bool
+	// afterRemovalStep is the same for removal steps 0, 1 and 2.
+	afterRemovalStep func(step int, nodeID string) bool
+	frozen           bool
+	// beforeBarrier is a test hook run before each barrier.
+	beforeBarrier func()
 }
 
 // joinStepDone runs the test hook and reports whether the node is frozen.
 func (s *Service) joinStepDone(step int, nodeID string) bool {
 	s.mu.Lock()
 	hook := s.afterJoinStep
+	s.mu.Unlock()
+	if hook == nil || !hook(step, nodeID) {
+		return false
+	}
+	s.mu.Lock()
+	s.frozen = true
+	s.mu.Unlock()
+	return true
+}
+
+// removalStepDone is joinStepDone for removal steps.
+func (s *Service) removalStepDone(step int, nodeID string) bool {
+	s.mu.Lock()
+	hook := s.afterRemovalStep
 	s.mu.Unlock()
 	if hook == nil || !hook(step, nodeID) {
 		return false
@@ -157,7 +194,7 @@ func New(o Options) *Service {
 	}
 	s := &Service{cfg: o.Config, key: o.Key, dataDir: o.DataDir, machine: o.Machine, writer: o.Writer,
 		now: o.Now, log: o.Logger, every: o.Interval, leaderInt: o.LeaderInterval, started: o.Now(),
-		join: o.Join, waits: map[string][]string{}}
+		join: o.Join, waits: map[string][]string{}, answers: map[string]statusResult{}, removed: o.Removed}
 	s.caller = raftnet.Caller{NodeID: o.Config.NodeID, Certificate: s.certificate}
 	return s
 }
@@ -220,16 +257,18 @@ func (s *Service) Run(ctx context.Context) {
 }
 
 func (s *Service) step(ctx context.Context) {
-	if s.getStore() == nil {
+	if s.isRemoved() || s.getStore() == nil {
 		return
-	}
-	if s.joinState() == nil {
-		s.reconcileAddress()
 	}
 	s.ensureListener()
 	s.revalidate()
+	if s.checkRemoved() {
+		return
+	}
+	s.cleanStandalone()
 	s.joinStep(ctx)
 	s.waitsStep(ctx)
+	s.statusStep(ctx)
 	s.leaderStep(ctx)
 	s.renew()
 }
@@ -247,17 +286,23 @@ func (s *Service) revalidate() {
 	}
 }
 
-// OnApplied is installed as the state machine's hook.
-func (s *Service) OnApplied() { s.revalidate() }
+// OnApplied is installed as the state machine's hook. A membership change
+// also brings the next status round forward, so that health names the
+// members that have not applied a removal from the start.
+func (s *Service) OnApplied() {
+	s.mu.Lock()
+	s.nextStatus = time.Time{}
+	s.mu.Unlock()
+	s.revalidate()
+}
 
 // reconcileAddress applies a listen address written by "skep-cluster
-// listen" or "join-request" to the membership entry and the Raft
-// configuration of a one-node cluster.
-func (s *Service) reconcileAddress() {
+// listen" or "join-request" (or removed by "listen -none") to the
+// membership entry and the Raft configuration of a one-node cluster. It is
+// one step of the leader loop (decision D5b) and reports whether it changed
+// anything.
+func (s *Service) reconcileAddress() bool {
 	st := s.getStore()
-	if !st.IsLeader() {
-		return
-	}
 	want := s.cfg.PeerAddress()
 	mem, ok := s.machine.Member(s.cfg.NodeID)
 	servers, err := st.Servers()
@@ -267,7 +312,7 @@ func (s *Service) reconcileAddress() {
 			err = fmt.Errorf("cluster.json says %q but the member entry says %q; the address of a clustered node cannot be changed in this build", want, mem.Address)
 		}
 		s.setAddrErr(err)
-		return
+		return false
 	}
 	var raftAddr string
 	if err == nil {
@@ -279,21 +324,22 @@ func (s *Service) reconcileAddress() {
 	}
 	if err == nil && ok && mem.Address == want && raftAddr == wantRaft {
 		s.setAddrErr(nil)
-		return
+		return false
 	}
 	if err == nil && !ok {
 		err = fmt.Errorf("node %s has no member entry in the replicated state", s.cfg.NodeID)
 	}
+	changed := false
 	if err == nil {
 		var opID string
 		if opID, err = ids.NewUUID(); err == nil {
-			var changed bool
 			if changed, err = st.SetOwnAddress(want, opID); err == nil && changed {
 				s.log.Info("the node's address records were updated", "address", want)
 			}
 		}
 	}
 	s.setAddrErr(err)
+	return changed
 }
 
 func (s *Service) setAddrErr(err error) {
@@ -307,7 +353,7 @@ func (s *Service) setAddrErr(err error) {
 
 func (s *Service) ensureListener() {
 	want := s.cfg.PeerAddress()
-	if want == "" {
+	if want == "" || s.isRemoved() {
 		return
 	}
 	s.mu.Lock()
@@ -327,6 +373,7 @@ func (s *Service) ensureListener() {
 			Address:     ap,
 			Certificate: s.certificate,
 			Accept:      s.acceptPin,
+			Keep:        s.keepPin,
 			Handle:      handle,
 			Now:         s.now,
 			Logger:      s.log,
@@ -371,6 +418,12 @@ func (s *Service) renew() {
 // Health implements localapi.Backend.
 func (s *Service) Health(context.Context) models.Health {
 	h := models.Health{Status: models.HealthOK, Version: version.Get().Version, UptimeSeconds: int64(s.now().Sub(s.started).Seconds())}
+	if r := s.removedRecord(); r != nil {
+		h.Record("removed", true, fmt.Sprintf("this node was removed from cluster %s (%s, %s): its Raft instance and its listener are shut. "+
+			"Make sure it was removed on a member (\"skep-cluster remove %s\"), then run \"skep-cluster leave --wipe\" as root on this node",
+			r.ClusterID, r.How, r.At, s.cfg.NodeName))
+		return h
+	}
 	st := s.getStore()
 	stats := st.Stats()
 	view := s.machine.View()
@@ -445,13 +498,28 @@ func (s *Service) Health(context.Context) models.Health {
 	}
 	h.Record("join", false, problem)
 
+	// Removals in progress, and the members that have not yet applied
+	// the last removal (decision D12; ADR 0013 B2).
+	problem = ""
+	for _, p := range s.removalProgress(view) {
+		problem = appendProblem(problem, p)
+	}
+	h.Record("removal", false, problem)
+	problem = ""
+	if names := s.unappliedRemoval(view); len(names) > 0 {
+		problem = "members that have not yet applied the last removal: " + joinNames(names) +
+			". A member that was down while a compromised node was removed must be wiped (\"skep-cluster leave --wipe\") before it returns"
+	}
+	h.Record("removal_applied", false, problem)
+
 	// This node's own join, while it is joining.
 	problem = ""
 	if js != nil {
 		switch js.Phase {
 		case joinstate.PhaseRefused:
 			problem = "the join was refused after its outcome was unknown: " + js.Message +
-				"; the one-node state stays moved aside (" + js.Standalone + ") and this build cannot give up a join"
+				"; the one-node state stays moved aside (" + js.Standalone + "); to give the join up, remove this node on a member " +
+				"if it is listed there, then run \"skep-cluster join --abandon\" as root"
 		case joinstate.PhaseCalling, joinstate.PhaseUnknown:
 			problem = "the outcome of the join call is unknown; repeating it"
 			if joinErr != nil {
@@ -485,6 +553,13 @@ func joinNames(n []string) string {
 
 // Status implements localapi.Backend.
 func (s *Service) Status(context.Context) localapi.Status {
+	v := version.Get()
+	if r := s.removedRecord(); r != nil {
+		return localapi.Status{NodeID: s.cfg.NodeID, NodeName: s.cfg.NodeName, ClusterID: r.ClusterID, Pin: s.key.Pin(),
+			CertificateNotAfter: s.key.NotAfter().UTC(), ListenAddress: s.cfg.PeerAddress(), AcceptedBy: "none (removed)",
+			Raft: store.Stats{State: "shutdown"}, Members: []clusterstate.Member{}, Pendings: []clusterstate.Pending{},
+			Removed: &localapi.RemovedStatus{ClusterID: r.ClusterID, At: r.At, How: r.How}, Build: v.Version + "+" + v.Commit}
+	}
 	st := s.getStore()
 	view := s.machine.View()
 	stats := st.Stats()
@@ -497,7 +572,6 @@ func (s *Service) Status(context.Context) localapi.Status {
 	}
 	upToDate := view.Stalled == nil && stats.AppliedIndex >= stats.CommitIndex &&
 		st.LibraryEntriesOnly(view.AppliedIndex, stats.AppliedIndex)
-	v := version.Get()
 	out := localapi.Status{
 		NodeID:              s.cfg.NodeID,
 		NodeName:            s.cfg.NodeName,
@@ -511,6 +585,8 @@ func (s *Service) Status(context.Context) localapi.Status {
 		Members:             members,
 		Pendings:            view.Pendings,
 		AcceptedBy:          s.acceptedNow().source,
+		Removals:            s.removalProgress(view),
+		UnappliedRemoval:    s.unappliedRemoval(view),
 		Build:               v.Version + "+" + v.Commit,
 	}
 	if servers, err := st.Servers(); err == nil {
@@ -527,6 +603,9 @@ func (s *Service) Status(context.Context) localapi.Status {
 
 // RaftConfiguration implements localapi.Backend.
 func (s *Service) RaftConfiguration(context.Context) (localapi.RaftConfiguration, error) {
+	if s.isRemoved() || s.getStore() == nil {
+		return localapi.RaftConfiguration{}, errors.New("this node was removed from its cluster")
+	}
 	servers, err := s.getStore().Servers()
 	if err != nil {
 		return localapi.RaftConfiguration{}, err

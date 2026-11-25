@@ -27,6 +27,11 @@ const (
 	// on a node that is joining, a key from its admission or from the
 	// join call's answer.
 	KindMember
+	// KindRemoving is the key of a member entry in state "removing"
+	// (removal step 0). It keeps Raft RPCs and the status RPC while the
+	// node is a server in the receiver's latest Raft configuration, and
+	// nothing else.
+	KindRemoving
 )
 
 func (k Kind) String() string {
@@ -37,6 +42,8 @@ func (k Kind) String() string {
 		return "joining"
 	case KindMember:
 		return "member"
+	case KindRemoving:
+		return "removing"
 	}
 	return "none"
 }
@@ -64,14 +71,20 @@ const (
 	OpAdmit = "admit"
 	// OpWithdraw is "admit --withdraw" passed by a member to the leader.
 	OpWithdraw = "withdraw"
+	// OpRemove is "skep-cluster remove" passed by a member to the leader.
+	OpRemove = "remove"
+	// OpRemoved is the best-effort notice a member sends a removed node
+	// (ADR 0013 B1, decision D11 of step 8b-2a).
+	OpRemoved = "removed"
 )
 
 // Operation says which kinds of key may call an operation.
 type Operation struct {
-	Name    string
-	Pending bool
-	Joining bool
-	Member  bool
+	Name     string
+	Pending  bool
+	Joining  bool
+	Member   bool
+	Removing bool
 	// RaftServer requires, in addition, that the sender is a server in
 	// the receiver's latest Raft configuration (ADR 0013 B1, rule 2).
 	RaftServer bool
@@ -81,7 +94,7 @@ type Operation struct {
 // tests are driven from this table, and the documentation's table is
 // checked against it.
 var Operations = []Operation{
-	{Name: OpRaft, Joining: true, Member: true, RaftServer: true},
+	{Name: OpRaft, Joining: true, Member: true, Removing: true, RaftServer: true},
 	// A joining node repeats its join call with the same operation ID
 	// when the outcome was unknown, so its key keeps the operation
 	// after join step 1.
@@ -89,9 +102,13 @@ var Operations = []Operation{
 	// The joining node asks every member for its applied index, as every
 	// member does, so health on every member (the joiner included) names
 	// the member being waited for.
-	{Name: OpStatus, Joining: true, Member: true},
+	{Name: OpStatus, Joining: true, Member: true, Removing: true},
 	{Name: OpAdmit, Member: true},
 	{Name: OpWithdraw, Member: true},
+	{Name: OpRemove, Member: true},
+	// On a joining node the admission's and the answer's keys are
+	// member keys, so a member can tell a joining node it was removed.
+	{Name: OpRemoved, Member: true},
 }
 
 // Allowed reports whether a key of this kind may call the operation. An
@@ -108,6 +125,8 @@ func Allowed(op string, k Kind) (Operation, bool) {
 			return o, o.Joining
 		case KindMember:
 			return o, o.Member
+		case KindRemoving:
+			return o, o.Removing
 		}
 		return o, false
 	}
