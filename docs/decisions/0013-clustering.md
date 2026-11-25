@@ -1982,29 +1982,48 @@ only where it says so. The facts it rests on are in
   own key). The leader proposes `member.key_done` keep new in its loop
   (one step after removals, before expiries) when every member's highest
   answered applied index (amendment 2, F5) is at or past the add entry's
-  index, and the rotating node presented its new key in the leader's most
-  recent successful connection to it or from it. For the leader's own
-  rotation, "presented" is its own key.
+  index, and the rotating node **has presented its new key since the
+  rotation began**: on any accepted connection to or from the leader since
+  the leader's service started (review fix F4: with "the latest connection
+  wins", anyone holding the old key, the case a rotation is for, could keep
+  the old pin alive by reconnecting). For the leader's own rotation,
+  "presented" is its own key. Status still shows the pin each node was last
+  seen using.
 - **On the rotating node**, in this order: (1) the new key is made and
   written to `node.key.next` (0600, fsync, fsync of the directory); (2)
   `rotate.json` records `{format, old_pin, new_pin, op_id, started,
   phase: rotating}`; (3) the leader is asked (`key-add`; an unknown outcome
-  is asked again every 10 s with the same operation ID); a refusal deletes
-  `node.key.next`, then `rotate.json`, and nothing else changed; (4) when
-  this node's own memory shows every member (itself included) at or past
-  the add entry's index, `node.key.next` is renamed to `node.key`
-  (directory fsync), a certificate is issued for it, the listener and the
-  diallers use it from their next handshake, and the listener's open
-  connections are closed; the old private key is gone from the disk at
-  the rename, which is intended: every member has durably applied the new
-  pin; (5) when this node applies `member.key_done` for itself,
-  `rotate.json` is deleted. **Abort**: phase `aborting` is written to
+  is asked again every 10 s with the same operation ID); **a refused add
+  ends as an abort** (review fix F2): `key-add` has no barrier, so after a
+  change of leader a refusal can come from a view that lacks an earlier
+  attempt's entry, which may still apply; phase `aborting` is written
+  first and the abort below decides, and nothing is deleted on the
+  refusal alone (the command still returns the refusal and its reason);
+  (4) when this node's own memory shows every member (itself included) at
+  or past the add entry's index, `node.key.next` is renamed to `node.key`
+  and the directory is fsynced; **only once that fsync has succeeded**
+  (review fix F3; otherwise the next round syncs again) a certificate is
+  issued for it, the listener and the diallers use it from their next
+  handshake, and the listener's open connections are closed; the old
+  private key is gone from the disk at the rename, which is intended:
+  every member has durably applied the new pin; (5) when this node applies
+  `member.key_done` for itself, `rotate.json` is deleted. A rename that
+  did not survive a crash (the accepted membership keeps only the new
+  pin, `node.key` on disk has the old one, `node.key.next` exists) is done
+  then, also while the state machine is still behind the
+  applied-membership file; `node.key.next` is never deleted while it may
+  be the only copy of a pinned key. **Abort**: phase `aborting` is written to
   `rotate.json` first (step 4 then never runs), the leader is asked
   (`key-abort`); after a barrier it proposes `member.key_done` keep old
   for a next pin that is present, or answers that the add was never
   applied (and never will be); then `node.key.next` and `rotate.json` are
-  deleted. An abort is refused (`409 refused`) once `node.key` has the
-  new pin, by the node and by the leader (a key-abort from the new key).
+  deleted. An abort is refused (`409 refused`) once `node.key` on disk
+  has the new pin or `node.key.next` is gone (the node decides from the
+  disk, not from the key in memory: F3), and by the leader for a
+  key-abort sent over a connection made with the new key (the listener
+  passes the pin the connection used to the handler: review fix F5).
+  The start rule's refusal for phase rotating with the old pin and no
+  `node.key.next` can, after F2, only come from outside interference.
 - **Start rule additions** (after the existing rules): `wipe.json` still
   wins, and `wipe-finish` also deletes `node.key.next`, then
   `rotate.json`, before `state/`. `node.key.next` without `rotate.json`:
@@ -2151,6 +2170,22 @@ of a clock in this step (`503 node_clock_skew` is step 8e).
 - **One writer**: the audit is opened with an exclusive, non-blocking
   `flock`; the running service holds it, and every writing stage runs only
   with the service stopped.
+- **`audit.started` counts the whole local log**, an uncommitted tail
+  included: its index is the last index of the local log at that start,
+  so an entry in that tail that later commits is not audited on this node.
+- **A failed append leaves the file as it was** (review fix F6): after a
+  failed write or fsync to an existing segment the file is truncated back
+  to its size before the append and synced; if that fails too, every later
+  append fails until the next start, whose open repairs the tail.
+- **A broken audit** stops `skep_cluster` from starting (nothing more is
+  written to it), and the start error gives the way out (review fix F7):
+  stop `skep_cluster`; run `skep-cluster audit verify` to see the break;
+  move `/var/db/skep/cluster/audit` to
+  `/var/db/skep/cluster/audit.broken.<UTC time>` and keep it (`audit
+  verify -dir` still reads it); start `skep_cluster`, which begins a new
+  audit with `audit.started`. No command does this; nothing (the start
+  rule, the root-owned-file check, `leave --wipe`) trips over an
+  `audit.broken.*` directory, and `leave --wipe` keeps it.
 - `skep-cluster audit verify [-dir DIR]`: root, local, read-only (opens
   nothing for writing, creates nothing, takes no lock), with the service
   running or stopped. It checks every hash, that every line is exactly the
@@ -2158,7 +2193,11 @@ of a clock in this step (`503 node_clock_skew` is step 8e).
   segments, that `seq` rises by one, and that (epoch, index) never goes
   down between reset marks; it prints the record count, the sealed
   segments, the first and last record, and for a break the file, line and
-  reason. Exit codes as `skep-agent audit verify`: 0, 1, 2.
+  reason. Exit codes as `skep-agent audit verify`: 0, 1, 2. It runs as
+  root over a directory the service account owns, so it opens every
+  segment with `O_NOFOLLOW` and `O_NONBLOCK` and checks the open file with
+  `fstat`: a symbolic link, a FIFO or anything else that is not a regular
+  file is a break, "not a regular file" (review fix F8).
 - Limits: the audit is written by the unprivileged service that also
   parses peer traffic, so a compromised `skep-cluster` can rewrite its own
   node's audit from the start, and a cut-off tail cannot be detected; the
@@ -2178,13 +2217,20 @@ marker records it and the key is always replaced).
 ### 8. A rejoining node and its old member entry (found on the lab)
 
 **Amended (amendment 3): B1's "until it has applied a membership listing
-itself" means listing it with its current key.** A node that was a member
-of the same cluster before (removed, wiped, joined again with its node ID)
-receives the log's history, which lists it with its old pin; that
-membership is the cluster's past, and its pins for other members may have
-been rotated or wiped since. The joining node goes on accepting only its
-admission's or answer's nodes, and does not take its join as finished,
-until it applies the entry of this join (a wipe always makes a new key).
-Before this, the lab saw a rejoined node stop replicating at a historical
-membership whose leader pin had been rotated away.
-
+itself" means a member entry for this join: one whose `join_op` is this
+join's `member.join` operation ID (the one `join.json`'s operation ID
+gives, the value the audit's join mark carries) and whose pin or next pin
+is the current key** (review fix F1). A node that was a member of the
+same cluster before (removed, abandoned or wiped, joined again with its
+node ID) receives the log's history, which lists it in older member
+entries; after `join --abandon`, which keeps the key, an older entry can
+even carry the current pin. That membership is the cluster's past, and
+its pins for other members may have been rotated or wiped since. The
+joining node goes on accepting only its admission's or answer's nodes,
+and does not take its join as finished (the delete of `standalone.*` and
+`join.json`), until it applies this join's entry. While `join.json`
+exists and the accepted membership comes from `state/membership.json`
+(the machine is behind the file, which has no `join_op`), the node is not
+listed. The file's format does not change. Before this, the lab saw a
+rejoined node stop replicating at a historical membership whose leader
+pin had been rotated away.

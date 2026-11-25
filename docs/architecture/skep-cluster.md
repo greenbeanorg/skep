@@ -344,8 +344,9 @@ forbidden`.
 operation of `skep-api` changes a pin; `key rotate --api` arrives with
 forwarding (8e). Their own errors: `409 rotation_in_progress` (this node
 or another member is rotating), `409 no_rotation` (abort without
-`rotate.json`), `409 refused` (abort once this node uses its new key; the
-leader or the state machine refused the add). The remove operation has
+`rotate.json`), `409 refused` (abort once `node.key` has the new pin or
+`node.key.next` is gone; the leader or the state machine refused the add,
+after which the rotation is aborted in the background). The remove operation has
 its own time limit of 60 s (every other operation 15 s), and the
 command's client waits above it.
 
@@ -721,15 +722,24 @@ member has a next pin. `member.removed` takes both pins.
 written with `O_EXCL`, fsync, fsync of the directory; no certificate until
 the switch) and `rotate.json` (`{format, old_pin, new_pin, op_id, started,
 phase}`, phase `rotating` or `aborting`). The order: next key, record,
-`key-add` to the leader; the switch (rename of `node.key.next` to
-`node.key`, directory fsync, a new `node.crt` through the "certificate is
+`key-add` to the leader (a refusal records phase `aborting` and runs the
+abort: nothing is deleted on a refusal alone, review fix F2); the switch
+(rename of `node.key.next` to `node.key`, directory fsync, and only once
+that fsync succeeded (F3) a new `node.crt` through the "certificate is
 not for this key" repair, `nodekey.Key.Adopt` so that the listener, the
 diallers and the transport, which hold the same key object, use the new
 key from their next handshake, and `Listener.CloseAll`); `rotate.json`
 deleted once this node applies its `member.key_done`. Every step can be
 repeated after a crash; the start rule table above says what a start does
 with each combination of the files. Crash points of steps 1–5 and of the
-abort are tested in-process (`TestRotationCrashPoints`).
+abort are tested in-process (`TestRotationCrashPoints`), and so are the
+refusal path's (`TestRefusedKeyAddCrashPoints`). A rename lost in a crash
+after the leader dropped the old pin (`rotateStep`, `keptNewPin`: the
+accepted membership, the machine's or the applied-membership file's,
+keeps only the new pin while `node.key` has the old one) is done at the
+next round (`TestRotationLostRename`). `rotationEnded` reads `node.key`'s
+pin from the disk and never deletes `node.key.next` while it may be the
+only copy of a pinned key; `AbortRotation` also decides from the disk.
 
 **Who decides.** The rotating node asks; the leader proposes. `key-add`
 and `key-abort` are member-key peer operations, and the leader takes the
@@ -739,10 +749,15 @@ answer is known; a repeat whose next pin is already present is answered
 with its add index. `key-abort` makes a barrier first, so that "the add is
 not applied" means it never will be. The leader proposes `member.key_done`
 keep new in its loop (after removals, before expiries) once every member's
-highest answered applied index is at or past the add index and the node's
-most recent connection to or from the leader used the new pin
-(`raftnet.PinObserver`: inbound, the listener's handshake pin; outbound,
-the pin the dialler accepted). For the leader's own rotation it is its own
+highest answered applied index is at or past the add index and the node
+has presented the new pin on any accepted connection to or from the
+leader since the leader's service started (`raftnet.PinObserver`:
+inbound, the listener's handshake pin; outbound, the pin the dialler
+accepted; `Service.used` keeps every pin seen per node, F4, so a later
+connection with the old key does not undo it). The leader's refusal of a
+`key-abort` sent with the new key compares `raftnet.Peer.ConnPin`, the pin
+the connection used, which the listener side fills for a Skep RPC (F5:
+`Peer.Pin` is the member entry's pin whichever key was used). For the leader's own rotation it is its own
 key. The rotating node switches by its own memory of the same indexes.
 
 **Where a pin is compared.** `ByPin` (and so the listener's handshake, the
@@ -839,19 +854,37 @@ The format, the chain and the keys are in amendment 3, point 6.
 - **Tail repair.** A last line without a newline (a write a crash cut off,
   never reported as written) is removed at the next open, and
   `audit.tail_repaired` records how many bytes went.
+- **A failed append** (F6): a failed write or fsync to an existing segment
+  truncates the file back to its size before the append and syncs it; if
+  that fails too, the log is marked failed and every later append fails
+  until the next `Open`, which repairs the tail.
+- **A broken audit** (F7): `Open` fails with `audit.BrokenError`, whose
+  message gives the way out (stop, `audit verify`, move `audit/` to
+  `audit.broken.<UTC time>/` and keep it, start: a new audit begins). The
+  start rule, the root-owned-file check and `leave --wipe` look only at
+  names they know, so an `audit.broken.*` directory is kept.
 - `skep-cluster audit verify [-dir DIR]` reads with `audit.Verify`: no
-  write, no create, no lock.
+  write, no create, no lock. `Verify`, `ReadAll` and the tail repair open
+  every segment with `O_NOFOLLOW|O_NONBLOCK` and check it with `fstat`
+  (F8): a segment that is not a regular file is a break.
 - The membership log lines stay; the audit is the record.
 
 ### A rejoining node (found on the lab)
 
 A joining node switches from its admission's or answer's keys to its
-state machine's membership only once that membership lists it **with its
-current key**, and its join ends only then (`Service.listsSelf`,
-`joinStep`). A node that was a member before meets its old entry, with its
-old pin, in the log's history; trusting that membership stopped a rejoin
-on the lab once other members had rotated their keys (record
-`8b2b-6a3268a-20261125.md`, case 9.7b).
+state machine's membership only once that membership lists it **for this
+join**: a member entry whose `join_op` is this join's `member.join`
+operation ID, with the current key as pin or next pin (review fix F1;
+`Service.listsSelf`, `joinStep`). Its join ends only then. While the
+machine is behind the applied-membership file the node is not listed. A
+node that was a member before meets its older entries in the log's
+history (after `join --abandon`, which keeps the key, even with its
+current pin); trusting that membership stopped a rejoin on the lab once
+other members had rotated their keys (record `8b2b-6a3268a-20261125.md`,
+case 9.7b). In-process the leader sends the whole log before the joiner
+applies it, so the race is tested on the decision itself
+(`TestJoinStepEndsOnlyAtThisJoinsEntry`) as well as end to end
+(`TestRejoinAfterAbandonWithTheSameKey`).
 
 ### Library facts (checked for step 8b-2b)
 

@@ -517,9 +517,15 @@ back.
 replaces a node's key without stopping anything: a second pin is added to
 its member entry, both pins are accepted as that node, the node switches
 once every member has applied the new pin, and the leader drops the old
-pin once it has seen the node use the new key; connections made with the
-old pin are then closed and the old key is refused in the handshake. The
-old private key leaves the disk at the switch.
+pin once it has seen the node present the new key (remembered: a later
+connection with the old key, which anyone holding it can make, does not
+keep the old pin alive); connections made with the old pin are then
+closed and the old key is refused in the handshake. The old private key
+leaves the disk at the switch, which is durable before the new key is
+used. A refused add is aborted rather than undone, so the node never
+deletes the only copy of a key the cluster may pin; and the leader's
+refusal of an abort sent with the new key compares the key the
+connection actually used.
 
 - **What a compromised member can do with `key-add` and `key-abort`.** The
   leader takes the node from the caller's key, so a member can start or
@@ -556,7 +562,12 @@ service that also parses peer traffic, so a compromised `skep-cluster`
 (or root) on a node can rewrite that node's audit from the start, and a
 cut-off tail cannot be detected; the **other members' audits are the
 cross-check**, since each records the same entries. There is no external
-anchor in 0.2 (backlog).
+anchor in 0.2 (backlog). `audit verify` runs as root over a directory the
+service account owns, so it follows no symbolic link and waits on no FIFO
+(every segment is opened with `O_NOFOLLOW|O_NONBLOCK` and checked with
+`fstat`). A failed append is undone, so it cannot leave a broken chain; a
+broken audit stops the service, which prints the way out (move it aside,
+keep it, begin a new one).
 
 **Clock health.** Each node measures the other members' clock offsets
 and warns (5 s) or reports critical (15 s); nothing is refused because

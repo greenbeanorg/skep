@@ -304,6 +304,10 @@ refusals come before `skep_cluster` is stopped: it keeps running. If it is inter
 `skep_cluster` refuses to start until you run it again; the second run
 finishes without asking the members.
 
+If members rotated their keys after this host's admission, nobody answers
+the abandon's probes (the host only knows the old pins); `skep-cluster
+leave --wipe` is then the way out.
+
 ## Closing the listener: listen -none
 
 A host that ran `skep-cluster listen` or `join-request` and is still alone
@@ -338,8 +342,10 @@ Done: this node's pin is sha256:7c41... on its applied membership; the old pin i
 ```
 
 Nothing is stopped. The node switches to its new key once every member
-has applied the new pin, and the leader drops the old pin once it has
-seen the node use the new key. The command waits up to 2 minutes
+has applied the new pin (and only once the switch is on disk: the data
+directory's fsync must succeed), and the leader drops the old pin once it
+has seen the node use the new key; a later connection with the old key
+does not undo that. The command waits up to 2 minutes
 (`-wait D`) and exits 0 when the old pin is gone; it exits 3 when the
 wait ends first and says what the rotation waits for. During a rotation,
 `skep-cluster status` shows the member's `next pin` and which key it was
@@ -359,8 +365,16 @@ allowed during a rotation, and the rotation then finishes. Or abort:
 ```
 
 An abort drops the next pin and deletes the next key; the pin stays. It
-is refused once the node uses its new key (`409 refused`): the rotation
-then ends by itself. `skep-cluster key rotate --api` (skep-api's
+is refused once `node.key` on disk has the new key, or `node.key.next` is
+gone (`409 refused`): the rotation then ends by itself.
+
+**The leader refuses the rotation.** `key rotate` prints the refusal and
+its reason, and the rotation is aborted: the node asks the leader to end
+it keeping the old key, and deletes the next key only once the leader has
+confirmed (it asks again every 10 s while the leader cannot be reached;
+`skep-cluster status` shows phase `aborting`). Nothing is deleted on the
+refusal alone, because after a change of leader an earlier attempt's
+entry may still apply. `skep-cluster key rotate --api` (skep-api's
 node-to-node key) arrives with forwarding (step 8e).
 
 If a node's key may have been **stolen**, do not rely on a rotation:
@@ -390,8 +404,29 @@ Every hash and every link checks out.
 
 It exits 0 when everything checks out and 1 with `BROKEN: <file> line
 <n>: <reason>` otherwise (2 for a usage error). `-dir DIR` checks a copy.
+A segment that is a symbolic link, a FIFO or anything but a regular file
+is a break ("not a regular file"); it is not followed or read.
 The audit is written by `skep-cluster` itself, so a compromised node can
-rewrite its own audit; compare with another member's.
+rewrite its own audit; compare with another member's. Its first record,
+`audit.started`, counts the whole local log at that start, an
+uncommitted tail included.
+
+### A broken audit
+
+Nothing more is written to a broken audit, and `skep_cluster` refuses to
+start; its error names the break and this procedure. As root:
+
+1. `service skep_cluster stop`
+2. `skep-cluster audit verify`: see where it is broken.
+3. Move it aside and keep it (use `mv`, which keeps the files' owner):
+   `mv /var/db/skep/cluster/audit /var/db/skep/cluster/audit.broken.$(date -u +%Y%m%dT%H%M%SZ)`.
+   `skep-cluster audit verify -dir /var/db/skep/cluster/audit.broken.<UTC time>`
+   still reads it.
+4. `service skep_cluster start`: a new audit begins with `audit.started`.
+
+Compare the broken audit with another member's audit before you discard
+anything. `leave --wipe` keeps `audit.broken.*` directories; nothing in
+Skep deletes them.
 
 ## Clocks
 
