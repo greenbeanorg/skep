@@ -526,9 +526,13 @@ func (n *Node) TransferLeadership() error {
 // Term returns the current Raft term.
 func (n *Node) Term() uint64 { return n.raft.CurrentTerm() }
 
-// Configuration returns the latest Raft configuration with its log index
-// and whether that index is committed (it is at or below the commit
-// index).
+// Configuration returns the latest Raft configuration (committed or not),
+// the log index of the latest configuration entry above the commit index
+// (0 when there is none), and whether the latest configuration is
+// committed: no configuration entry is stored above the commit index.
+// The library's GetConfiguration cannot say this in v1.8.0: it returns
+// only the latest configuration, from a copy outside the main loop, and
+// its Index() is always 0 (api.go GetConfiguration).
 func (n *Node) Configuration() ([]Server, uint64, bool, error) {
 	f := n.raft.GetConfiguration()
 	if err := f.Error(); err != nil {
@@ -538,8 +542,32 @@ func (n *Node) Configuration() ([]Server, uint64, bool, error) {
 	for _, s := range f.Configuration().Servers {
 		out = append(out, Server{ID: string(s.ID), Address: string(s.Address), Voter: s.Suffrage == raft.Voter})
 	}
-	idx := f.Index()
-	return out, idx, idx <= n.raft.CommitIndex(), nil
+	idx, committed := n.uncommittedConfiguration()
+	return out, idx, committed, nil
+}
+
+// uncommittedConfiguration looks at the entries stored above the commit
+// index for a configuration entry. It looks at no more than 4096 entries
+// and answers "not committed" beyond that.
+func (n *Node) uncommittedConfiguration() (uint64, bool) {
+	commit, last := n.raft.CommitIndex(), n.raft.LastIndex()
+	if last <= commit {
+		return 0, true
+	}
+	if last-commit > 4096 {
+		return last, false
+	}
+	var found uint64
+	var l raft.Log
+	for i := commit + 1; i <= last; i++ {
+		if err := n.bolt.GetLog(i, &l); err != nil {
+			continue // compacted by a snapshot: committed
+		}
+		if l.Type == raft.LogConfiguration || l.Type == raft.LogAddPeerDeprecated || l.Type == raft.LogRemovePeerDeprecated {
+			found = i
+		}
+	}
+	return found, found == 0
 }
 
 // AddNonvoter adds a server without a vote (join step 2). For a server

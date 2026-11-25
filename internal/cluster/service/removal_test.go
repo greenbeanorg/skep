@@ -350,8 +350,12 @@ func TestRemovalWhileAMemberIsDown(t *testing.T) {
 	}
 	h.eventually("health on "+leader.name+" says what the removal waits for", 30*time.Second, func() bool {
 		c := leader.svc.Health(context.Background()).Checks["removal"]
-		return strings.Contains(c.Error, "the removal of "+x.name)
+		return strings.Contains(c.Error, "the removal of "+x.name+" waits for the Raft configuration without it to commit") &&
+			strings.Contains(c.Error, down.name)
 	})
+	if _, _, committed, err := leader.st.Configuration(); err != nil || committed {
+		t.Fatalf("the configuration without %s reads as committed while %s is down (%v)", x.name, down.name, err)
+	}
 	start := time.Now()
 	h.start(down)
 	h.gone(x, 90*time.Second)

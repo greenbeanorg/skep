@@ -298,6 +298,9 @@ func (s *Service) unappliedRemoval(view clusterstate.View) []string {
 	s.mu.Unlock()
 	var out []string
 	for _, m := range view.Members {
+		if m.State == clusterstate.StateRemoving {
+			continue // it is being removed itself
+		}
 		r, ok := answers[m.ID]
 		if m.ID == s.cfg.NodeID {
 			applied, stalled := s.machine.AppliedIndex()
