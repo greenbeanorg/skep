@@ -188,8 +188,10 @@ type Service struct {
 	// afterRemovalStep is the same for removal steps 0, 1 and 2.
 	afterRemovalStep func(step int, nodeID string) bool
 	frozen           bool
-	// beforeBarrier is a test hook run before each barrier.
+	// beforeBarrier is a test hook run before each barrier of leaderStep.
 	beforeBarrier func()
+	// beforeStep is a test hook run at the start of each step.
+	beforeStep func()
 	// usersMu guards usersCh, closed and replaced whenever the users
 	// change (the users-read long poll waits on it).
 	usersMu sync.Mutex
@@ -302,23 +304,12 @@ func (s *Service) Run(ctx context.Context) {
 	s.mu.Unlock()
 	t := time.NewTicker(s.every)
 	defer t.Stop()
-	var leaderCh <-chan bool
 	if st := s.getStore(); st != nil && !s.isRemoved() {
-		leaderCh = st.LeaderCh()
+		go s.watchLeadership(ctx, st.LeaderCh())
 	}
 	for {
 		s.step(ctx)
-	wait:
 		select {
-		case <-leaderCh:
-			// D12 of step 8c-1: a new leader makes its barrier and
-			// its first round at once, not at the next tick (which
-			// the synchronous status calls of the other steps can
-			// hold up for seconds).
-			if !s.isRemoved() {
-				s.leaderStep(ctx)
-			}
-			goto wait
 		case <-ctx.Done():
 			s.mu.Lock()
 			l := s.listener
@@ -334,6 +325,12 @@ func (s *Service) Run(ctx context.Context) {
 }
 
 func (s *Service) step(ctx context.Context) {
+	s.mu.Lock()
+	hook := s.beforeStep
+	s.mu.Unlock()
+	if hook != nil {
+		hook()
+	}
 	if s.isRemoved() || s.getStore() == nil {
 		return
 	}

@@ -51,18 +51,9 @@ func (s *Service) leaderStep(ctx context.Context) {
 		if hook != nil {
 			hook()
 		}
-		// Act on everything committed before this term.
-		if err := st.Barrier(); err != nil {
-			s.log.Warn("leader: barrier failed; the work waits for the next round", "term", term, "error", err)
+		if !s.termBarrier(st, term) {
 			return
 		}
-		if st.Term() != term || !st.IsLeader() {
-			return // the term moved during the barrier: try again
-		}
-		s.mu.Lock()
-		s.barrierTerm = term
-		s.mu.Unlock()
-		s.log.Info("leader: this node is the leader; checking unfinished joins, removals and due expiries", "term", term)
 	}
 	did := s.leaderRound(ctx)
 	s.mu.Lock()
@@ -72,6 +63,56 @@ func (s *Service) leaderStep(ctx context.Context) {
 		s.nextLeader = now.Add(s.leaderInt)
 	}
 	s.mu.Unlock()
+}
+
+// termBarrier makes the barrier of term (D5a): it acts on everything
+// committed before the term, and records barrierTerm only if the node is
+// still the leader in that same term. Two callers may run it at once
+// (leaderStep and watchLeadership); a barrier changes nothing, so a second
+// one only waits again.
+func (s *Service) termBarrier(st Store, term uint64) bool {
+	if err := st.Barrier(); err != nil {
+		s.log.Warn("leader: barrier failed; the work waits for the next round", "term", term, "error", err)
+		return false
+	}
+	if st.Term() != term || !st.IsLeader() {
+		return false // the term moved during the barrier: try again
+	}
+	s.mu.Lock()
+	first := s.barrierTerm != term
+	s.barrierTerm = term
+	s.mu.Unlock()
+	if first {
+		s.log.Info("leader: this node is the leader; checking unfinished joins, removals and due expiries", "term", term)
+	}
+	return true
+}
+
+// watchLeadership makes the barrier of a new term as soon as the node
+// becomes the leader (D12 of step 8c-1, as fixed by F4 of its review), in
+// its own goroutine: Run's step can be held up for seconds by synchronous
+// status calls, and a new leader answers the peer operations only after
+// its barrier. The leader's work stays in leaderStep, one step per round;
+// leaderStep skips its own barrier when this one has recorded the term.
+func (s *Service) watchLeadership(ctx context.Context, ch <-chan bool) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case leader := <-ch:
+			st := s.getStore()
+			if !leader || st == nil || s.isRemoved() || s.isFrozen() || !st.IsLeader() {
+				continue
+			}
+			term := st.Term()
+			s.mu.Lock()
+			done := s.barrierTerm == term
+			s.mu.Unlock()
+			if !done {
+				s.termBarrier(st, term)
+			}
+		}
+	}
 }
 
 // leaderRound does at most one step and reports whether it did one.

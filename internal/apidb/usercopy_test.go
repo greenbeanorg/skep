@@ -206,11 +206,22 @@ func TestCopyAfterImportKeepsSessions(t *testing.T) {
 	if err != nil || len(local) != 1 || local[0].PasswordHash != hashOne || local[0].PasswordChangedAt == 0 {
 		t.Fatalf("import: %+v %v", local, err)
 	}
-	if err := s.FinishImport(ctx, ImportDone); err != nil {
+	// The import entry is index 3: "done" is recorded with the cluster
+	// ID and index 2 (F1 of the 8c-1 review).
+	if err := s.FinishImportDone(ctx, clusterOne, 2); err != nil {
 		t.Fatal(err)
+	}
+	// An answer read before the import (no users) and applied after
+	// "done": the same-cluster rule drops it; nothing is deleted.
+	if res := apply(t, s, answer(clusterOne, 1)); res.Changed || countRows(t, db, `SELECT COUNT(*) FROM users`) != 1 ||
+		countRows(t, db, `SELECT COUNT(*) FROM sessions`) != 1 {
+		t.Fatalf("an answer read before the import: %+v", res)
 	}
 	res := apply(t, s, answer(clusterOne, 3, cuser(uAndy, "andy", "admin", hashOne, 1)))
 	if !res.Changed || res.Replaced || res.SessionsEnded != 0 || countRows(t, db, `SELECT COUNT(*) FROM sessions`) != 1 {
 		t.Fatalf("after import: %+v", res)
+	}
+	if err := s.FinishImportDone(ctx, "", 2); err == nil {
+		t.Fatal("done without a cluster ID")
 	}
 }

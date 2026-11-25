@@ -127,21 +127,37 @@ func TestUsersImport(t *testing.T) {
 	if r := imp(5, a, noTime); RefusalCode(r.Err) != CodeInvalid {
 		t.Fatalf("no time: %v", r.Err)
 	}
+	// F3 of the 8c-1 review: each refusal about one user names its ID
+	// and username.
+	badRole, badName := b, b
+	badRole.RoleID = "writer"
+	badName.DisplayName = "a\x07b"
+	for i, c := range []struct {
+		name string
+		u    ImportUser
+		code string
+	}{{"duplicate name", dupName, CodeUsernameTaken}, {"duplicate ID", dupID, CodeInvalid}, {"no time", noTime, CodeInvalid},
+		{"unknown role", badRole, CodeUnknownRole}, {"control character", badName, CodeInvalid}} {
+		r := imp(uint64(20+i), a, c.u)
+		if RefusalCode(r.Err) != c.code || !strings.Contains(r.Err.Error(), fmt.Sprintf("user %q (%q)", c.u.ID, c.u.Username)) {
+			t.Errorf("%s: %v does not name the user", c.name, r.Err)
+		}
+	}
 	many := make([]ImportUser, MaxUsers+1)
-	if r := imp(6, many...); RefusalCode(r.Err) != CodeTooManyUsers {
+	if r := imp(30, many...); RefusalCode(r.Err) != CodeTooManyUsers {
 		t.Fatalf("too many: %v", r.Err)
 	}
 	if v := m.Users(); len(v.Users) != 0 || v.Index != 0 {
 		t.Fatalf("a refused import changed the users: %+v", v)
 	}
-	if r := imp(7, a, b); r.Err != nil {
+	if r := imp(31, a, b); r.Err != nil {
 		t.Fatal(r.Err)
 	}
 	v := m.Users()
-	if v.Index != 7 || len(v.Users) != 2 || v.Users[0].CreatedAt != 5 || v.Users[0].PasswordChangedAt != 7 || !v.Users[1].Disabled || v.Users[1].CredentialEpoch != 1 {
+	if v.Index != 31 || len(v.Users) != 2 || v.Users[0].CreatedAt != 5 || v.Users[0].PasswordChangedAt != 7 || !v.Users[1].Disabled || v.Users[1].CredentialEpoch != 1 {
 		t.Fatalf("imported: %+v", v)
 	}
-	if r := imp(8, ImportUser{ID: userC, Username: "carl", PasswordHash: hash1, RoleID: RoleAdmin, CreatedAt: 1, UpdatedAt: 1}); RefusalCode(r.Err) != CodeUsersExist {
+	if r := imp(32, ImportUser{ID: userC, Username: "carl", PasswordHash: hash1, RoleID: RoleAdmin, CreatedAt: 1, UpdatedAt: 1}); RefusalCode(r.Err) != CodeUsersExist {
 		t.Fatalf("second import: %v", r.Err)
 	}
 }

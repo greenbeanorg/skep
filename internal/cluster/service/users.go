@@ -204,7 +204,7 @@ func (s *Service) usersWriteAsLeader(req localapi.UsersWriteRequest, origin stri
 		}
 		return localapi.UsersWriteResult{}, applyError(err)
 	}
-	out := localapi.UsersWriteResult{Index: res.Index, Outcome: userapi.WriteApplied}
+	out := localapi.UsersWriteResult{Index: res.Index, ClusterID: s.machine.View().ClusterID, Outcome: userapi.WriteApplied}
 	if res.Duplicate {
 		out.Index, out.Outcome = res.OpIndex, userapi.WriteDuplicate
 	}

@@ -4,7 +4,10 @@
 // sent through users-write.
 //
 // The copy is written only by apidb.ApplyAnswer, which this package calls
-// with each answer from a node with quorum.
+// with each answer that holds the node's own state machine's users: every
+// answer with a cluster ID from a node that is neither joining nor removed,
+// with or without a leader (F2 of the 8c-1 review: what the state machine
+// holds is a committed prefix of the log). Quorum is a separate question.
 package usercopy
 
 import (
@@ -45,6 +48,9 @@ type Copy struct {
 	last    time.Time
 	facts   userapi.UsersAnswer
 	readErr error
+	// applyErr is the text of the last failed apply, "" after a
+	// successful one (F6a).
+	applyErr string
 	// applied is the copy's users index after the last apply.
 	applied uint64
 	changed chan struct{}
@@ -113,14 +119,24 @@ func (c *Copy) SyncOnce(ctx context.Context, wait time.Duration) error {
 	c.readErr, c.last, c.facts = nil, c.now(), ans
 	c.facts.Users = nil // the hashes are kept only in api.db
 	c.mu.Unlock()
-	if problem := factsProblem(ans); problem != "" {
-		return nil // no quorum: nothing is applied
+	if ans.ClusterID == "" || ans.Joining || ans.Removed {
+		return nil // not the cluster's users: nothing is applied
 	}
 	res, err := c.store.ApplyAnswer(ctx, ans, c.now())
+	c.mu.Lock()
 	if err != nil {
-		c.log.Error("cannot apply the cluster's users to the copy", "error", err)
+		if err.Error() != c.applyErr {
+			c.log.Error("cannot apply the cluster's users to the copy; treated as no quorum", "error", err)
+		}
+		c.applyErr = err.Error()
+		c.mu.Unlock()
 		return err
 	}
+	if c.applyErr != "" {
+		c.log.Info("the cluster's users apply to the copy again")
+		c.applyErr = ""
+	}
+	c.mu.Unlock()
 	if res.Changed {
 		c.log.Info("cluster users applied to the copy", "cluster_id", ans.ClusterID, "users_index", res.UsersIndex,
 			"users", len(ans.Users), "replaced", res.Replaced, "sessions_ended", res.SessionsEnded)
@@ -153,9 +169,18 @@ func factsProblem(a userapi.UsersAnswer) string {
 func (c *Copy) Problem() string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	var answered *userapi.Error
 	switch {
-	case c.readErr != nil:
+	case c.readErr != nil && errors.Is(c.readErr, userapi.ErrUnreachable):
 		return "skep-cluster is not reachable on its socket"
+	case c.readErr != nil && errors.As(c.readErr, &answered):
+		return "skep-cluster answered " + answered.Code
+	case c.readErr != nil && errors.Is(c.readErr, userapi.ErrNoAnswer):
+		return "skep-cluster did not answer"
+	case c.readErr != nil:
+		return "skep-cluster's answer could not be read"
+	case c.applyErr != "":
+		return "the cluster's users could not be applied to the copy (" + c.applyErr + ")"
 	case c.last.IsZero():
 		return "no answer from skep-cluster yet"
 	case c.now().Sub(c.last) > MaxAge:
@@ -236,7 +261,9 @@ func isTransient(err error) (transient, unknown bool) {
 		return true, true
 	case errors.As(err, &e):
 		switch e.Code {
-		case "no_leader", "unavailable", "not_committed", "removed", "joining":
+		// "forbidden" is the leader refusing this node's key (a member
+		// being removed, F6b): no quorum for this node, never a 403.
+		case "no_leader", "unavailable", "not_committed", "removed", "joining", "forbidden":
 			return true, false
 		case "outcome_unknown":
 			return true, true

@@ -112,6 +112,9 @@ type env struct {
 	// hostUsers lists the host's users from skep-api's api.db (one
 	// "name role" line each), read as the API account.
 	hostUsers func(ctx context.Context) ([]string, error)
+	// hostImportState reads the state of the import of the host's users
+	// ("skep-api admin list --import-state"), the same way.
+	hostImportState func(ctx context.Context) (string, error)
 }
 
 func realEnv() env {
@@ -153,18 +156,32 @@ func realEnv() env {
 		openTTY: func() (io.ReadWriteCloser, error) {
 			return os.OpenFile("/dev/tty", os.O_RDWR, 0)
 		},
-		hostUsers: hostUsers,
+		hostUsers: func(ctx context.Context) ([]string, error) { return hostAdmin(ctx, "admin", "list") },
+		hostImportState: func(ctx context.Context) (string, error) {
+			lines, err := hostAdmin(ctx, "admin", "list", "--import-state")
+			if err != nil {
+				return "", err
+			}
+			if len(lines) != 1 {
+				return "", fmt.Errorf("skep-api admin list --import-state printed %d lines", len(lines))
+			}
+			return lines[0], nil
+		},
 	}
 }
 
 // skepAPI is the installed skep-api; "admin list" reads api.db read-only.
 const skepAPI = "/usr/local/sbin/skep-api"
 
-// hostUsers runs "skep-api admin list" as the API account (the owner of
-// api.db, which the skep-cluster account cannot read), with a fixed
-// program, fixed arguments and a fixed environment. Its output is shown,
-// never followed.
-func hostUsers(ctx context.Context) ([]string, error) {
+// maxHostOutput is the most of skep-api's output hostAdmin reads (F6d).
+const maxHostOutput = 1 << 20
+
+// hostAdmin runs "skep-api admin list" (with or without --import-state)
+// as the API account (the owner of api.db, which the skep-cluster account
+// cannot read), with a fixed program, fixed arguments and a fixed
+// environment, and returns its lines. Its output is shown, never followed,
+// and at most 1 MiB of it is read.
+func hostAdmin(ctx context.Context, args ...string) ([]string, error) {
 	acct, err := sysaccount.Lookup(clusterconf.APIAccount)
 	if err != nil {
 		return nil, err
@@ -174,13 +191,24 @@ func hostUsers(ctx context.Context) ([]string, error) {
 	}
 	cctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(cctx, skepAPI, "admin", "list")
+	cmd := exec.CommandContext(cctx, skepAPI, args...)
 	cmd.Env = []string{"PATH=/usr/bin:/bin:/usr/sbin:/sbin", "LC_ALL=C"}
 	cmd.Dir = "/"
 	cmd.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: acct.UID, Gid: acct.GID, Groups: []uint32{}}}
-	out, err := cmd.Output()
+	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		return nil, fmt.Errorf("skep-api admin list: %w", err)
+		return nil, err
+	}
+	if err := cmd.Start(); err != nil {
+		return nil, fmt.Errorf("skep-api %s: %w", strings.Join(args, " "), err)
+	}
+	out, rerr := io.ReadAll(io.LimitReader(stdout, maxHostOutput))
+	_, _ = io.Copy(io.Discard, stdout) // the rest, so the child is not blocked
+	if err := cmd.Wait(); err != nil {
+		return nil, fmt.Errorf("skep-api %s: %w", strings.Join(args, " "), err)
+	}
+	if rerr != nil {
+		return nil, rerr
 	}
 	var lines []string
 	for _, l := range strings.Split(strings.TrimSpace(string(out)), "\n") {

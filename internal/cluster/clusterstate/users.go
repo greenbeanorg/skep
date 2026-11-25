@@ -169,7 +169,7 @@ func checkDisplayName(name string) error {
 		return refuse(CodeInvalid, "the display name must be valid text of at most %d characters", MaxDisplayName)
 	}
 	for _, r := range name {
-		if r < 0x20 || r == 0x7f || (r >= 0x80 && r < 0xa0) {
+		if r < 0x20 || r == 0x7f { // internal/auth's rule (F3 of the 8c-1 review)
 			return refuse(CodeInvalid, "the display name contains a control character")
 		}
 	}
@@ -383,17 +383,20 @@ func (s *state) applyUser(e Entry, index uint64) (change, error) {
 		}
 		names := map[string]bool{}
 		for _, iu := range d.Users {
+			// Each refusal names the user it is about (F3): the ID
+			// and username, quoted, as they may be the invalid values.
+			who := fmt.Sprintf("user %q (%q)", iu.ID, iu.Username)
 			if err := checkUserValues(iu.ID, iu.Username, iu.DisplayName, iu.RoleID, iu.PasswordHash); err != nil {
-				return change{}, err
+				return change{}, refuse(RefusalCode(err), "%s: %s", who, err.Error())
 			}
 			if iu.CreatedAt <= 0 || iu.UpdatedAt <= 0 || iu.PasswordChangedAt < 0 {
-				return change{}, refuse(CodeInvalid, "the user %s has no valid times", iu.Username)
+				return change{}, refuse(CodeInvalid, "%s: no valid times", who)
 			}
 			if _, ok := next[iu.ID]; ok {
-				return change{}, refuse(CodeInvalid, "the user ID %s is twice in the import", iu.ID)
+				return change{}, refuse(CodeInvalid, "%s: the user ID is twice in the import", who)
 			}
 			if names[iu.Username] {
-				return change{}, refuse(CodeUsernameTaken, "the username %s is twice in the import", iu.Username)
+				return change{}, refuse(CodeUsernameTaken, "%s: the username is twice in the import", who)
 			}
 			names[iu.Username] = true
 			next[iu.ID] = User{ID: iu.ID, Username: iu.Username, DisplayName: iu.DisplayName, PasswordHash: iu.PasswordHash,

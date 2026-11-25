@@ -457,6 +457,9 @@ itself.
 - Join a host that has VMs or jails, or remove one that owns guests with
   `--forget-guests` (step 8d).
 - Admit or remove through the web interface or `skepctl` (step 8c-2).
+- Change the address of a clustered node.
+- Limit a node without quorum to reads and to stopping and starting its
+  own guests (ADR 0013 B9): this comes with the guest inventory (step 8d).
 
 ## Users in a cluster (step 8c-1)
 
@@ -480,6 +483,14 @@ skep-api admin import-users
 On every other node the cluster has users already: the command lists the
 node's own users, says that the cluster's replace them, and does it with
 `--yes`. A joining host takes the cluster's users (its confirmation lists
-its own); after `leave --wipe` a host has no users until
-`skep-api admin create` runs.
-- Change the address of a clustered node.
+its own); `skep-cluster join` refuses a host whose import is still
+pending (run `skep-api admin import-users` first, so that its users are
+not lost), and goes on, saying so, when it cannot read that state. After
+`leave --wipe` a host has no users until `skep-api admin create` runs.
+
+A node that has lost its leader still applies what its own state machine
+holds (a committed part of the log): a user disabled or a password
+changed before the leader went away takes effect there, and that user's
+sessions end. Changes still answer `503 no_quorum`. If the copy cannot be
+applied at all, the `cluster_users` health check says so, and the node
+counts as having no quorum until it can.

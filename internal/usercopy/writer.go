@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/greenbeanorg/skep/internal/apidb"
@@ -147,12 +148,34 @@ func errText(err error) string {
 	return err.Error()
 }
 
+// RefusalCodes are the state machine's refusal codes (D5): an entry
+// refused with one of them applied nothing.
+var RefusalCodes = []string{"username_taken", "last_admin", "unknown_role", "not_found", "users_exist", "hash_changed", "too_many_users", "invalid"}
+
+// Refused is a refusal with one of RefusalCodes. It wraps the error that
+// internal/auth knows, and reads as it.
+type Refused struct {
+	Code string
+	Err  error
+}
+
+func (r *Refused) Error() string { return r.Err.Error() }
+func (r *Refused) Unwrap() error { return r.Err }
+
 // refusal maps a refusal code to internal/auth's errors (D5).
 func refusal(err error) error {
 	var e *userapi.Error
 	if !errors.As(err, &e) {
 		return err
 	}
+	mapped := mapRefusal(e)
+	if slices.Contains(RefusalCodes, e.Code) {
+		return &Refused{Code: e.Code, Err: mapped}
+	}
+	return mapped
+}
+
+func mapRefusal(e *userapi.Error) error {
 	switch e.Code {
 	case "username_taken":
 		return auth.ErrUsernameTaken

@@ -60,6 +60,22 @@ func (s *UserStore) RecordImportOp(ctx context.Context, opID string) (string, er
 	return c.ImportOpID, err
 }
 
+// FinishImportDone moves a pending import to done, in one statement with
+// the cluster ID and users index the copy is at (F1 of the 8c-1 review):
+// usersIndex is the import entry's index minus 1, so that the same-cluster
+// rule of ApplyAnswer drops every answer read before the import, and the
+// next answer (the import's) applies.
+func (s *UserStore) FinishImportDone(ctx context.Context, clusterID string, usersIndex uint64) error {
+	if clusterID == "" {
+		return fmt.Errorf("database: an import is done only with its cluster ID")
+	}
+	if _, err := s.db.ExecContext(ctx, `UPDATE cluster_copy SET import_state = ?, cluster_id = ?, users_index = ? WHERE id = 1 AND import_state = ?`,
+		ImportDone, clusterID, int64(usersIndex), ImportPending); err != nil {
+		return fmt.Errorf("database: record the import's end: %w", err)
+	}
+	return nil
+}
+
 // FinishImport moves a pending import to done or superseded.
 func (s *UserStore) FinishImport(ctx context.Context, state string) error {
 	if state != ImportDone && state != ImportSuperseded {

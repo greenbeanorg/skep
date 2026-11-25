@@ -28,6 +28,10 @@ const importRepeat = 60 * time.Second
 // measured: a node ID has this length.
 const sizeOrigin = "00000000-0000-0000-0000-000000000000"
 
+// sizeOpID stands for the operation ID when the size is measured: the
+// import's operation ID is a UUID of this length (F6f of the 8c-1 review).
+const sizeOpID = "00000000-0000-4000-8000-000000000000"
+
 // adminImportUsers makes this host's 0.1 users the cluster's (step 8c-1,
 // D14). It records the operation ID in api.db before it sends the one
 // users.import entry, and repeats it with the same ID while the outcome is
@@ -69,7 +73,7 @@ func adminImportUsers(ctx context.Context, args []string, e env) error {
 		return err
 	}
 	// The size is checked before anything is recorded or sent (D7).
-	probe, err := clusterstate.NewEntry(clusterstate.TypeUsersImport, cs.ImportOpID+"x", usercopy.ActorString(usercopy.LocalActor(e.uid)),
+	probe, err := clusterstate.NewEntry(clusterstate.TypeUsersImport, sizeOpID, usercopy.ActorString(usercopy.LocalActor(e.uid)),
 		sizeOrigin, clusterstate.UsersImport{Users: local, At: time.Now().Unix()})
 	if err != nil {
 		return err
@@ -92,10 +96,18 @@ func adminImportUsers(ctx context.Context, args []string, e env) error {
 		return err
 	}
 	req := userapi.UsersWriteRequest{Type: clusterstate.TypeUsersImport, OpID: opID, Actor: usercopy.ActorString(usercopy.LocalActor(e.uid)), Data: data}
-	_, err = writer.Send(ctx, req, importRepeat)
+	res, err := writer.Send(ctx, req, importRepeat)
 	switch {
+	case err == nil && (res.ClusterID == "" || res.Index == 0):
+		// F1 of the 8c-1 review: "done" is recorded only with the
+		// cluster ID and index, or an answer read before the import
+		// could take the adopt path and delete this host's users.
+		return fmt.Errorf("the import was written (operation %s), but skep-cluster's answer names no cluster ID; "+
+			"the import stays pending: run the command again once every node runs this build", opID)
 	case err == nil:
-		if err := store.FinishImport(ctx, apidb.ImportDone); err != nil {
+		// The answers read before the import are of an index below
+		// the import's: the copy's same-cluster rule drops them.
+		if err := store.FinishImportDone(ctx, res.ClusterID, res.Index-1); err != nil {
 			return err
 		}
 		syncCopy(ctx, ucopy)
@@ -118,10 +130,17 @@ func adminImportUsers(ctx context.Context, args []string, e env) error {
 		fmt.Fprintln(e.stdout, "This host now uses the cluster's users.")
 		return nil
 	}
-	if errors.Is(err, &models.Error{Code: auth.CodeNoQuorum}) {
-		return fmt.Errorf("%w; the operation ID is recorded: run the command again, it finishes the import", err)
+	// Only a refusal of the state machine (one of the codes of D5) is
+	// known to have applied nothing: then the recorded operation ID is
+	// dropped. After any other error the outcome may be unknown, and a
+	// rerun must send the same ID (F6c of the 8c-1 review).
+	var refused *usercopy.Refused
+	if !errors.As(err, &refused) {
+		if errors.Is(err, &models.Error{Code: auth.CodeNoQuorum}) {
+			return fmt.Errorf("%w; the operation ID is recorded: run the command again, it finishes the import", err)
+		}
+		return fmt.Errorf("%w; the operation ID %s is kept: run the command again, it finishes the import", err, opID)
 	}
-	// A refusal applied nothing: the recorded operation ID is dropped.
 	if cerr := store.ClearImportOp(ctx); cerr != nil {
 		return cerr
 	}
@@ -136,9 +155,11 @@ func syncCopy(ctx context.Context, c *usercopy.Copy) {
 }
 
 // adminList lists this node's users for "skep-cluster join" (D21): names
-// and roles, from api.db opened read-only. It changes nothing.
+// and roles, from api.db opened read-only. With --import-state it prints
+// only the import state word (F5 of the 8c-1 review). It changes nothing.
 func adminList(ctx context.Context, args []string, e env) error {
 	flags := newLocalFlags("skep-api admin list", e.stderr)
+	importState := flags.set.Bool("import-state", false, "print only the state of the import of this host's users")
 	cfg, err := flags.prepare(args, e)
 	if err != nil {
 		return err
@@ -146,7 +167,9 @@ func adminList(ctx context.Context, args []string, e env) error {
 	path := cfg.Database.Path
 	st, err := os.Lstat(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return nil // no database: no users
+		// F6d: no file is not "no users"; the join says it could not
+		// read them.
+		return fmt.Errorf("there is no api.db at %s", path)
 	}
 	if err != nil || !st.Mode().IsRegular() {
 		return fmt.Errorf("%s is not a readable regular file", path)
@@ -159,6 +182,14 @@ func adminList(ctx context.Context, args []string, e env) error {
 		return err
 	}
 	defer db.Close()
+	if *importState {
+		var state string
+		if err := db.QueryRowContext(ctx, `SELECT import_state FROM cluster_copy WHERE id = 1`).Scan(&state); err != nil {
+			return fmt.Errorf("read %s: %w", path, err)
+		}
+		fmt.Fprintln(e.stdout, state)
+		return nil
+	}
 	rows, err := db.QueryContext(ctx, `SELECT username, role_id, disabled FROM users ORDER BY username`)
 	if err != nil {
 		return fmt.Errorf("read %s: %w", path, err)

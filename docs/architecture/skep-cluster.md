@@ -942,38 +942,67 @@ data); the service builds it (origin this node, the leader's time). A
 member that is not the leader passes it on as the peer operation
 `users-write`, which the leader answers only after its barrier of the
 current term. The answer is the entry's index (the first one, for a
-duplicate) and the user without its hash.
+duplicate), the cluster ID, and the user without its hash.
 
 **`skep-api`'s copy.** The `users` table of `api.db` is the copy, with
 the cluster ID it belongs to and its users index (table `cluster_copy`).
-A long poll applies each answer from a node with quorum in one
-transaction (`apidb.ApplyAnswer`, the only writer of the replicated
-columns): it adopts the first cluster, replaces the users and deletes
+A long poll applies, in one transaction, every answer that has a cluster
+ID and does not come from a joining or removed node, with or without a
+leader and stalled or not: what the node's own state machine holds is a
+committed prefix of the log (whether there is quorum is a separate
+question, below). `apidb.ApplyAnswer` is the only writer of the
+replicated columns: it adopts the first cluster, replaces the users and deletes
 every session for another cluster ID, never goes back to a lower users
 index for the same cluster, and ends every session of a user whose epoch
 changed or who is gone, each audited as `session.revoke` by `system`. A
-session is valid only while its epoch equals its user's. A write waits up
+session is valid only while its epoch equals its user's. A failed apply
+is logged once per change of error, shown by `cluster_users`, and counts
+as no quorum while it lasts. A write waits up
 to 10 s for the copy to reach its index, repeating with the same
 operation ID while the outcome is unknown.
 
-**Without quorum** (the socket unreachable, no answer for 15 s, no
-leader, stalled, joining or removed): user writes answer `503 no_quorum`
+**Without quorum** (the socket unreachable or answering an error, no
+answer for 15 s, no leader, stalled, joining or removed, or a copy that
+cannot be applied): user writes answer `503 no_quorum`
 with `details.outcome`; the password is checked first, then an enabled
 administrator gets a degraded session of at most one hour and anyone else
 `503 no_quorum`; an empty copy answers `no_quorum`, not `setup_required`.
 The hash upgrade at login is a `user.rehash` with a 2 s limit, not sent
 without quorum. `skep-api`'s health has the non-critical check
-`cluster_users`.
+`cluster_users`. The writer treats the codes `no_leader`, `unavailable`,
+`not_committed`, `removed`, `joining` and `forbidden` (the leader refusing
+a member being removed) as transient: it repeats the write, then answers
+`503 no_quorum`, never 403. A cluster at 2000 users answers `409
+too_many_users`.
+
+A node without quorum is not yet limited to reads and to stopping and
+starting its own guests (ADR 0013 B9): that is built in step 8d with the
+guest inventory.
 
 **Import.** Migration `api/0006` marks a host that had users `pending`:
 logins use its own rows, user writes answer `503 users_import_pending`.
 `skep-api admin import-users` records an operation ID, sends one
 `users.import` (at most 192 KiB), and repeats it while the outcome is
-unknown; a cluster that has users refuses it (`users_exist`), and with
-`--yes` the host takes the cluster's users (`superseded`).
+unknown. It records `done` in one statement with the answer's cluster ID
+and a users index one below the import entry's, so that the copy's
+same-cluster rule drops every `users-read` answer taken before the import
+(one with no users would otherwise delete the host's users and sessions);
+an answer without a cluster ID leaves the import pending. Only one of the
+eight refusal codes drops the recorded operation ID; after any other
+error it is kept for a rerun. A cluster that has users refuses the import
+(`users_exist`), and with `--yes` the host takes the cluster's users
+(`superseded`). `skep-cluster join` refuses a host whose import is
+pending (it reads the state with `skep-api admin list --import-state`,
+read-only, as the API account) and goes on, saying so, when the state
+cannot be read.
 
-**Leader barrier (D12).** A new leader makes its barrier and first round
-as soon as the library reports the leadership, not at the next tick.
+**Leader barrier (D12).** A new leader makes the barrier of its term as
+soon as the library reports the leadership, in its own goroutine that
+waits on the library's leader channel, and records the term only if the
+node is still the leader in that term; so it answers the peer operations
+without waiting for the background step, which synchronous status calls
+can hold up for seconds. The leader's work stays in the step, one step
+per round; the step skips its own barrier once the term is recorded.
 
 **Tests use a real `skep-cluster`**: package `clustertest` runs a one-node
 cluster in the test's process, and the browser test's stack runs the

@@ -30,8 +30,9 @@ const adminUsage = `usage:
   skep-api admin exists --username NAME [flags]
         report whether a user exists, reading api.db without changing it;
         exit 0: it exists, 1: it does not, 2: error
-  skep-api admin list [flags]
-        list this node's users (name and role), reading api.db without changing it
+  skep-api admin list [--import-state] [flags]
+        list this node's users (name and role), reading api.db without changing it;
+        with --import-state, print only the state of the import of its users
   skep-api admin import-users [--yes] [flags]
         make this host's 0.1 users the cluster's (once, on an upgraded host)
   skep-api admin hash-benchmark [flags]

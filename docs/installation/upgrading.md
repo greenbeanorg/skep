@@ -69,6 +69,10 @@ running; `skep-setup upgrade` does not restart it yet (step 8c-2): run
    cluster's replace them; run it again with `--yes` to accept. That
    node's sessions end, and only the cluster's accounts exist on it.
 
+A host whose import is still pending cannot join a cluster:
+`skep-cluster join` refuses it until `skep-api admin import-users` has
+run there.
+
 Until step 8c-2, a fresh install from `main` cannot log anyone in: nothing
 starts `skep_cluster` for it, and without quorum an empty copy answers
 `no_quorum`.

@@ -83,11 +83,14 @@ func InfoOf(u clusterstate.User) UserInfo {
 
 // UsersWriteResult is the answer of users-write: the index of the entry
 // that applied the operation (the first one, for a duplicate) and the
-// resulting user (none after a delete or an import).
+// resulting user (none after a delete or an import). ClusterID is the
+// cluster whose log holds the entry (F1 of the 8c-1 review: the import
+// records it with the index).
 type UsersWriteResult struct {
-	Index   uint64    `json:"index"`
-	Outcome string    `json:"outcome"`
-	User    *UserInfo `json:"user,omitempty"`
+	Index     uint64    `json:"index"`
+	ClusterID string    `json:"cluster_id,omitempty"`
+	Outcome   string    `json:"outcome"`
+	User      *UserInfo `json:"user,omitempty"`
 }
 
 // Client calls users-read and users-write on skep-cluster's socket, as

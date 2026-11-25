@@ -379,6 +379,20 @@ func printHostUsers(ctx context.Context, e env, w io.Writer) {
 	}
 }
 
+// refusePendingImport refuses the join of a host whose 0.1 users have not
+// been imported (F5 of the 8c-1 review): its users would be lost. A state
+// that cannot be read does not stop the join; it is said.
+func refusePendingImport(ctx context.Context, e env) error {
+	state, err := e.hostImportState(ctx)
+	switch {
+	case err != nil:
+		fmt.Fprintf(e.stdout, "The state of this host's user import could not be read (%s); the join goes on.\n", termSafe(err.Error()))
+	case state == "pending":
+		return errors.New("refused: this host's users have not been imported: run \"skep-api admin import-users\" first; nothing was changed")
+	}
+	return nil
+}
+
 // confirmJoin asks on the terminal, or checks -cluster-id (decision D4 of
 // the 8b-1 run).
 func confirmJoin(e env, adm joincode.Admission, clusterID string) error {
@@ -456,6 +470,9 @@ func runJoin(ctx context.Context, args []string, e env) error {
 		return errors.New("the service account must not be root")
 	}
 	if err := refuseGuests(ctx, e, *agentSocket, "join"); err != nil {
+		return err
+	}
+	if err := refusePendingImport(ctx, e); err != nil {
 		return err
 	}
 	printAdmission(e.stdout, adm)

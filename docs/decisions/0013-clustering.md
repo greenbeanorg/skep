@@ -2282,11 +2282,14 @@ still the old one, and changes nothing else), `user.delete` and
 `users.import`. The state machine checks every value and is the only
 authority (the ID a lower-case UUID, the username rule of
 `internal/auth`, kept equal by a test, a display name of at most 128
-characters without control characters, one of the three role IDs, a hash
+characters without control characters (below U+0020 and U+007F: the rule
+of `internal/auth`, kept equal by the same test), one of the three role
+IDs, a hash
 that starts with `$argon2id$` and is at most 512 bytes, unique usernames).
 A refusal carries a code as well as a text (`username_taken`,
 `last_admin`, `unknown_role`, `not_found`, `users_exist`, `hash_changed`,
-`too_many_users`, `invalid`).
+`too_many_users`, `invalid`). A refusal of `users.import` about one of
+its users names that user (ID and username).
 
 ### 2. The last administrator (D4)
 
@@ -2351,6 +2354,22 @@ replace them, and with confirmation records `superseded`. In a cluster of
 several upgraded 0.1 hosts, the first import wins and every other host
 takes the cluster's users.
 
+The answer of `users-write` carries the cluster ID (through a member's
+peer answer too). The command records `done` in one statement with that
+cluster ID and the users index of the import entry minus 1: the copy's
+same-cluster rule (point 7) then drops every `users-read` answer taken
+before the import was applied, which, with no users in it, would
+otherwise take the adopt path and delete the host's users and sessions.
+An answer without a cluster ID leaves the import pending, and the command
+says so. The recorded operation ID is dropped only after one of the eight
+refusal codes (point 1); after any other error it is kept for a rerun.
+
+`skep-cluster join` refuses a host whose import is `pending` before it
+changes anything (run `skep-api admin import-users` first): it reads the
+state with `skep-api admin list --import-state`, read-only, as the API
+account, the same way as the user list of its confirmation. When the
+state cannot be read, the join goes on and says so.
+
 ### 7. The read copy never goes back (D15)
 
 **Amended (amendment 4): B9's read copy is `api.db`'s `users` table, with
@@ -2358,15 +2377,21 @@ the cluster ID it belongs to and the index of the last entry that changed
 users.** For one cluster ID the copy never goes back to a lower users
 index (a restarted follower that has not caught up is not applied). A
 copy of another cluster (after a join or a wipe) replaces the users and
-deletes every session. A user whose epoch changed, or who is gone, loses
+deletes every session. The copy applies every `users-read` answer that has a
+cluster ID and does not come from a joining or removed node, with or
+without a leader and stalled or not: what the node's own state machine
+holds is a committed prefix of the log, so a disable or a password change
+it has applied takes effect on that node even after its leader is gone.
+Whether there is quorum (point 8) is a separate question and is
+unchanged. A user whose epoch changed, or who is gone, loses
 every session in the same transaction, each one audited as
 `session.revoke` with the actor `system` and the cause. The only code that
 writes the replicated columns is the copy's apply function; the copy's
 rule after a restore of the cluster store (step 8g) is in the backlog.
 
-### 8. Two error codes
+### 8. Three error codes
 
-Both approved by Andy for this step:
+All three approved by Andy for this step:
 
 - `503 no_quorum`: a user write that cannot be committed, with
   `details.outcome` `not_written`, `unknown` or `written_not_synced`; a
@@ -2374,10 +2399,17 @@ Both approved by Andy for this step:
   while the copy is empty and there is no quorum.
 - `503 users_import_pending`: a user write on a host whose 0.1 users have
   not been imported; the message names `skep-api admin import-users`.
+- `409 too_many_users`: a user create (or an import) that would take the
+  cluster past 2000 users (point 4).
 
-No quorum, for `skep-api`, is: the socket unreachable, the last answer
-older than 15 s, or an answer that says no leader, stalled, joining or
-removed. A cluster health document that is unavailable because of a clock
+No quorum, for `skep-api`, is: the socket unreachable or answering an
+error, the last answer older than 15 s, an answer that says no leader,
+stalled, joining or removed, or an answer the copy fails to apply (logged
+once per change of error and shown by the health check `cluster_users`).
+A write answered `no_leader`, `unavailable`, `not_committed`, `removed`,
+`joining` or `forbidden` (the leader refusing a member being removed) is
+repeated with the same operation ID and then answers `503 no_quorum`,
+never 403. A cluster health document that is unavailable because of a clock
 is not read at all.
 
 ### 9. 8c is built in two steps
@@ -2387,4 +2419,24 @@ enables, restarts and backs up `skep_cluster`; admit, withdraw and remove
 in the public API with `cluster:manage`). Until 8c-2, a fresh install from
 `main` has no running `skep_cluster`, so nobody can log in to it (the
 release's known issues say so).
+
+### 10. A new leader's barrier does not wait for the background step (D12)
+
+A new leader makes the barrier of its term as soon as the Raft library
+reports the leadership, in a goroutine of its own that waits on the
+library's leader channel: it reads the term, makes the barrier, and
+records the term as done only if the node is still the leader in that
+same term. A new leader answers the peer operations only after that
+barrier (amendment 3, point 9), and the background step can be held up
+for seconds by synchronous status calls. The leader's work stays one loop
+with one step per round; that loop keeps its own barrier check and skips
+it once the term is recorded.
+
+### 11. B9's limit on a node without quorum is built in 8d
+
+B9's limit of a node without quorum to reads and to stopping and starting
+its own guests is **not built in 8c-1**: a degraded session is limited in
+time (one hour) and by the refusal of user writes only. The limit is
+built in step 8d, with the guest inventory that tells which guests a node
+owns.
 
