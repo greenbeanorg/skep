@@ -383,3 +383,25 @@ func TestKeyAbortWithTheNewKeyIsRefused(t *testing.T) {
 	}
 	h.start(y)
 }
+
+// F9 of the 8b-2b review: a status round before the state machine has
+// applied anything asks the members of the applied-membership file with
+// both pins of a rotating member.
+func TestRoundMembersFromTheFileKeepTheNextPin(t *testing.T) {
+	dir := t.TempDir()
+	w, err := membership.NewWriter(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := "00000000-0000-4000-8000-0000000000b2"
+	next := "sha256:" + strings.Repeat("b", 64)
+	if err := w.Write(clusterstate.Membership{ClusterID: "00000000-0000-4000-8000-0000000000cc", Epoch: 1, Index: 5,
+		Members: []clusterstate.Member{{ID: id, Name: "smith", Address: "127.0.0.2:8444", Pin: "sha256:" + strings.Repeat("a", 64),
+			NextPin: next, State: clusterstate.StateMember}}}); err != nil {
+		t.Fatal(err)
+	}
+	s := New(Options{Config: clusterconf.Config{NodeID: "00000000-0000-4000-8000-0000000000a1"}, Writer: w, Logger: discardLog()})
+	if m := s.roundMembers(); len(m) != 1 || m[0].NextPin != next {
+		t.Fatalf("round members: %+v", m)
+	}
+}

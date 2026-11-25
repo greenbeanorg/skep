@@ -267,3 +267,41 @@ func TestJoinStepEndsOnlyAtThisJoinsEntry(t *testing.T) {
 		}
 	}
 }
+
+// F7 of the 8b-2b review: the broken-audit procedure's moved directory,
+// audit.broken.<UTC time>, trips nothing: the start rule and the service
+// start (a new audit begins with audit.started), and leave --wipe keeps
+// it.
+func TestBrokenAuditDirectoryIsKept(t *testing.T) {
+	h := newHarness(t)
+	defer h.stopAll()
+	h.cluster("smith", "langrishe", "star")
+	x := follower(h)
+	h.stop(x)
+	moved := filepath.Join(x.dir, "audit.broken.20261125T120000Z")
+	if err := os.Rename(filepath.Join(x.dir, "audit"), moved); err != nil {
+		t.Fatal(err)
+	}
+	h.start(x)
+	if recs := records(t, x); len(recs) == 0 || recs[0].Kind != "audit.started" {
+		t.Fatalf("the new audit: %+v", recs)
+	}
+	leader := h.leader()
+	h.remove(leader, x.name)
+	h.gone(x, 60*time.Second)
+	h.stop(x)
+	if _, err := WipeBegin(x.dir, x.id, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	cfg := x.cfg
+	cfg.ListenAddress = ""
+	if _, _, err := WipeFinish(context.Background(), x.dir, cfg, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if entries, err := os.ReadDir(moved); err != nil || len(entries) == 0 {
+		t.Fatalf("the moved audit after leave --wipe: %v %v", entries, err)
+	}
+	x.key = loadKey(t, x.dir)
+	h.start(x)
+	h.eventually("x leads its own cluster after the wipe", 20*time.Second, func() bool { return x.st != nil && x.st.IsLeader() })
+}

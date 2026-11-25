@@ -371,7 +371,7 @@ func (s *Service) roundMembers() []clusterstate.Member {
 	}
 	if f := s.writer.Current(); f != nil {
 		for _, m := range f.Members {
-			members = append(members, clusterstate.Member{ID: m.ID, Name: m.Name, Address: m.Address, Pin: m.Pin, State: m.State})
+			members = append(members, clusterstate.Member{ID: m.ID, Name: m.Name, Address: m.Address, Pin: m.Pin, NextPin: m.NextPin, State: m.State})
 		}
 	}
 	return members

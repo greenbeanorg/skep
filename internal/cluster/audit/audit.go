@@ -180,8 +180,10 @@ func segments(dir string) ([]int, error) {
 	}
 	var out []int
 	for _, e := range entries {
+		// Every name of a segment counts, whatever the file is: one
+		// that is not a regular file is a break when it is opened.
 		m := segRE.FindStringSubmatch(e.Name())
-		if m == nil || !e.Type().IsRegular() {
+		if m == nil {
 			continue
 		}
 		n, _ := strconv.Atoi(m[1])
@@ -217,6 +219,13 @@ type Log struct {
 	skipOp   string
 	// failAppend is a test hook: when set, appends fail with it.
 	failAppend error
+	// failWrite, failSync and failUndo are test hooks: a write that
+	// fails after writing part of the record, an fsync that fails, and
+	// an undo of either that fails.
+	failWrite, failSync, failUndo error
+	// failed is set when a failed append could not be undone: every
+	// later append fails until the next Open, which repairs the tail.
+	failed error
 	// segLimit is MaxSegment; a test lowers it.
 	segLimit int64
 }
@@ -293,7 +302,15 @@ func repairTail(dir string) (int64, error) {
 		return 0, err
 	}
 	path := filepath.Join(dir, SegmentName(nums[len(nums)-1]))
-	b, err := os.ReadFile(path)
+	rf, err := openSegment(path, os.O_RDONLY)
+	if errors.Is(err, errNotRegular) {
+		return 0, nil // a break: readEnd reports it
+	}
+	if err != nil {
+		return 0, fmt.Errorf("audit: %w", err)
+	}
+	b, err := io.ReadAll(rf)
+	rf.Close()
 	if err != nil {
 		return 0, fmt.Errorf("audit: %w", err)
 	}
@@ -308,7 +325,7 @@ func repairTail(dir string) (int64, error) {
 		}
 		return int64(len(b)), syncDir(dir)
 	}
-	f, err := os.OpenFile(path, os.O_WRONLY, FileMode)
+	f, err := openSegment(path, os.O_WRONLY)
 	if err != nil {
 		return 0, fmt.Errorf("audit: %w", err)
 	}
@@ -332,8 +349,7 @@ func (l *Log) readEnd() error {
 		return err
 	}
 	if rep.Break != nil {
-		return fmt.Errorf("audit: the cluster audit in %s is broken at %s line %d (%s); nothing more is written to it. "+
-			"Run \"skep-cluster audit verify\" as root", l.dir, rep.Break.File, rep.Break.Line, rep.Break.Reason)
+		return &BrokenError{Dir: l.dir, Break: *rep.Break}
 	}
 	l.records = uint64(rep.Records)
 	if rep.Last != nil {
@@ -352,6 +368,23 @@ func (l *Log) readEnd() error {
 		l.month = rep.lastMonth
 	}
 	return nil
+}
+
+// BrokenError is Open's error for an audit whose chain is broken. Its
+// message gives the way out (F7 of the 8b-2b review): nothing more is
+// written to a broken audit; it is moved aside, kept, and a new audit
+// begins.
+type BrokenError struct {
+	Dir   string
+	Break Break
+}
+
+func (e *BrokenError) Error() string {
+	return fmt.Sprintf("audit: the cluster audit in %s is broken at %s line %d (%s); nothing more is written to it. "+
+		"To go on: stop skep_cluster; run \"skep-cluster audit verify\" as root to see the break; "+
+		"move %s to %s.broken.<UTC time> (keep it: \"skep-cluster audit verify -dir\" still reads it); "+
+		"start skep_cluster, which begins a new audit with audit.started",
+		e.Dir, e.Break.File, e.Break.Line, e.Break.Reason, e.Dir, e.Dir)
 }
 
 // Close closes the audit and gives up its lock.
@@ -397,6 +430,9 @@ func (l *Log) append(r Record) error {
 	if l.failAppend != nil {
 		return l.failAppend
 	}
+	if l.failed != nil {
+		return fmt.Errorf("audit: an earlier write failed and could not be undone; nothing more is written until skep_cluster starts again: %w", l.failed)
+	}
 	now := l.now().UTC()
 	month := now.Format("2006-01")
 	newSeg := l.seg == 0 || l.size >= l.segLimit || (l.month != "" && month != l.month)
@@ -420,17 +456,18 @@ func (l *Log) append(r Record) error {
 		if err != nil {
 			return fmt.Errorf("audit: new segment: %w", err)
 		}
-		_, err = f.Write(b)
-		if err == nil {
-			err = f.Sync()
-		}
-		if err != nil {
+		if err := l.writeSync(f, b); err != nil {
 			f.Close()
-			_ = os.Remove(filepath.Join(l.dir, SegmentName(next)))
+			if rerr := os.Remove(filepath.Join(l.dir, SegmentName(next))); rerr != nil {
+				l.failed = rerr
+			}
 			return fmt.Errorf("audit: write: %w", err)
 		}
 		if err := syncDir(l.dir); err != nil {
+			// The record is in the file, perhaps not in the directory:
+			// the next Open reads whatever survived.
 			f.Close()
+			l.failed = err
 			return fmt.Errorf("audit: fsync of the directory: %w", err)
 		}
 		l.f, l.seg, l.size, l.month = f, next, int64(len(b)), month
@@ -442,11 +479,14 @@ func (l *Log) append(r Record) error {
 			}
 			l.f = f
 		}
-		if _, err := l.f.Write(b); err != nil {
+		if err := l.writeSync(l.f, b); err != nil {
+			// The file as it was before this append (F6 of the 8b-2b
+			// review): a partial line or an unsynced record would
+			// break the chain at the next append or the next start.
+			if terr := l.undo(); terr != nil {
+				l.failed = terr
+			}
 			return fmt.Errorf("audit: write: %w", err)
-		}
-		if err := l.f.Sync(); err != nil {
-			return fmt.Errorf("audit: fsync: %w", err)
 		}
 		l.size += int64(len(b))
 	}
@@ -465,6 +505,34 @@ func (l *Log) append(r Record) error {
 		}
 	}
 	return nil
+}
+
+// writeSync writes b and fsyncs the file (the test hooks fail either step;
+// a failed write writes part of b first).
+func (l *Log) writeSync(f *os.File, b []byte) error {
+	if l.failWrite != nil {
+		_, _ = f.Write(b[:len(b)/2])
+		return l.failWrite
+	}
+	if _, err := f.Write(b); err != nil {
+		return err
+	}
+	if l.failSync != nil {
+		return l.failSync
+	}
+	return f.Sync()
+}
+
+// undo truncates the current segment back to its size before the append
+// and syncs it.
+func (l *Log) undo() error {
+	if l.failUndo != nil {
+		return l.failUndo
+	}
+	if err := l.f.Truncate(l.size); err != nil {
+		return err
+	}
+	return l.f.Sync()
 }
 
 // resetKinds are the records that change the node's cluster: the key
@@ -650,7 +718,11 @@ func Verify(dir string) (Report, error) {
 			rep.Break = &Break{File: name, Line: 0, Reason: "the first segment is not " + SegmentName(1)}
 			return rep, nil
 		}
-		f, err := os.Open(filepath.Join(dir, name))
+		f, err := openSegment(filepath.Join(dir, name), os.O_RDONLY)
+		if errors.Is(err, errNotRegular) {
+			rep.Break = &Break{File: name, Line: 0, Reason: errNotRegular.Error()}
+			return rep, nil
+		}
 		if err != nil {
 			return rep, fmt.Errorf("audit: %w", err)
 		}
@@ -771,9 +843,9 @@ func ReadAll(dir string) ([]Record, error) {
 	}
 	var out []Record
 	for _, n := range nums {
-		f, err := os.Open(filepath.Join(dir, SegmentName(n)))
+		f, err := openSegment(filepath.Join(dir, SegmentName(n)), os.O_RDONLY)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("%s: %w", SegmentName(n), err)
 		}
 		br := bufio.NewReaderSize(f, 64<<10)
 		for {
