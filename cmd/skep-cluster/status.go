@@ -46,6 +46,17 @@ func runStatus(ctx context.Context, args []string, e env) error {
 		fmt.Fprintln(e.stdout, string(b))
 		return nil
 	}
+	if r := st.Removed; r != nil {
+		fmt.Fprintf(e.stdout, "Node ID:       %s\n", termSafe(st.NodeID))
+		fmt.Fprintf(e.stdout, "Node name:     %s\n", termSafe(st.NodeName))
+		fmt.Fprintf(e.stdout, "Node key pin:  %s\n", termSafe(st.Pin))
+		fmt.Fprintf(e.stdout, "REMOVED:       from cluster %s, %s (%s)\n", termSafe(r.ClusterID), termSafe(r.How), termSafe(r.At))
+		fmt.Fprintf(e.stdout, "Raft:          shut; listener: none\n")
+		fmt.Fprintf(e.stdout, "Build:         %s\n", termSafe(st.Build))
+		fmt.Fprintf(e.stdout, "Run \"skep-cluster leave --wipe\" as root (after removing this node on a member, if that was not done).\n")
+		printHealth(e, h)
+		return nil
+	}
 	fmt.Fprintf(e.stdout, "Node ID:       %s\n", termSafe(st.NodeID))
 	fmt.Fprintf(e.stdout, "Node name:     %s\n", termSafe(st.NodeName))
 	fmt.Fprintf(e.stdout, "Cluster ID:    %s\n", termSafe(st.ClusterID))
@@ -97,6 +108,12 @@ func runStatus(ctx context.Context, args []string, e env) error {
 			}
 		}
 		fmt.Fprintf(e.stdout, "  %s  %s  %s, %s  %s  %s\n", termSafe(m.Name), termSafe(m.ID), termSafe(m.State), role, termSafe(addr), termSafe(m.Pin))
+	}
+	for _, r := range st.Removals {
+		fmt.Fprintf(e.stdout, "Removal:       %s\n", termSafe(r))
+	}
+	if len(st.UnappliedRemoval) > 0 {
+		fmt.Fprintf(e.stdout, "Not yet applied the last removal: %s\n", termSafe(strings.Join(st.UnappliedRemoval, ", ")))
 	}
 	if len(st.Pendings) > 0 {
 		fmt.Fprintf(e.stdout, "Pending admissions (%d):\n", len(st.Pendings))

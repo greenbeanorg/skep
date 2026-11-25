@@ -613,7 +613,13 @@ func (m *Machine) Snapshot() ([]byte, error) {
 	if m.stalled != nil {
 		return nil, fmt.Errorf("%w (index %d)", ErrSnapshotWhileStalled, m.stalled.Index)
 	}
-	s := snapshot{Format: snapshotFormat, ClusterID: m.st.clusterID, Epoch: m.st.epoch, Ops: maps.Clone(m.ops),
+	// Format 2 while no member was ever removed, so that a build of 8b-1
+	// in a cluster being upgraded can still read a snapshot sent to it.
+	format := snapshotFormat
+	if m.st.removedIndex == 0 {
+		format = 2
+	}
+	s := snapshot{Format: format, ClusterID: m.st.clusterID, Epoch: m.st.epoch, Ops: maps.Clone(m.ops),
 		Applied: m.applied, MembershipIndex: m.memIndex, RemovedIndex: m.st.removedIndex, Members: m.st.sortedMembers(), Pendings: m.st.sortedPendings()}
 	return json.Marshal(s)
 }

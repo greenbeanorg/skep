@@ -57,6 +57,7 @@ type tnode struct {
 	cancel context.CancelFunc
 	done   chan struct{}
 	hook   func(step int, id string) bool
+	rhook  func(step int, id string) bool
 }
 
 // state is the node's state directory.
@@ -149,6 +150,17 @@ func (h *harness) start(n *tnode) {
 	if err := StartRule(n.dir, log); err != nil {
 		h.t.Fatal(err)
 	}
+	// A removed node runs only its local socket, as serve does.
+	if rec, err := ReadRemoved(n.dir); err != nil {
+		h.t.Fatal(err)
+	} else if rec != nil {
+		svc := New(Options{Config: n.cfg, Key: n.key, DataDir: n.dir, Removed: rec, Now: n.clock.now, Logger: log,
+			Interval: 50 * time.Millisecond, LeaderInterval: 300 * time.Millisecond})
+		ctx, cancel := context.WithCancel(context.Background())
+		n.svc, n.st, n.cancel, n.done = svc, nil, cancel, make(chan struct{})
+		go func() { defer close(n.done); svc.Run(ctx) }()
+		return
+	}
 	writer, err := membership.NewWriter(n.state())
 	if err != nil {
 		h.t.Fatal(err)
@@ -165,12 +177,19 @@ func (h *harness) start(n *tnode) {
 	svc := New(Options{Config: n.cfg, Key: n.key, DataDir: n.dir, Machine: machine, Writer: writer, Join: js,
 		Now: n.clock.now, Logger: log, Interval: 50 * time.Millisecond, LeaderInterval: 300 * time.Millisecond})
 	svc.afterJoinStep = n.hook
+	svc.afterRemovalStep = n.rhook
 	machine.SetOnApplied(svc.OnApplied)
-	trans, err := raftnet.New(raftnet.Options{LocalAddress: n.cfg.PeerAddress(), Certificate: n.key.Certificate, Trust: svc, Peer: svc, Logger: log})
-	if err != nil {
-		h.t.Fatal(err)
+	opts := store.Options{Dir: n.state(), NodeID: n.id, Logger: log, Machine: machine, Empty: js != nil}
+	var trans *raftnet.Transport
+	if n.cfg.PeerAddress() != "" { // a wiped node has no address
+		var err error
+		trans, err = raftnet.New(raftnet.Options{LocalAddress: n.cfg.PeerAddress(), Certificate: n.key.Certificate, Trust: svc, Peer: svc, Logger: log})
+		if err != nil {
+			h.t.Fatal(err)
+		}
+		opts.Transport = trans
 	}
-	st, err := store.Open(store.Options{Dir: n.state(), NodeID: n.id, Logger: log, Machine: machine, Transport: trans, Empty: js != nil})
+	st, err := store.Open(opts)
 	if err != nil {
 		h.t.Fatal(err)
 	}
@@ -187,7 +206,9 @@ func (h *harness) stop(n *tnode) {
 	}
 	n.cancel()
 	<-n.done
-	_ = n.st.Close()
+	if n.st != nil {
+		_ = n.st.Close()
+	}
 	n.cancel, n.svc, n.st = nil, nil, nil
 }
 
@@ -247,7 +268,7 @@ func (h *harness) join(j *tnode, adm joincode.Admission) StageOutcome {
 
 func (h *harness) leader() *tnode {
 	for _, n := range h.nodes {
-		if n.svc != nil && n.st.IsLeader() {
+		if n.svc != nil && n.st != nil && !n.svc.isRemoved() && n.st.IsLeader() {
 			return n
 		}
 	}

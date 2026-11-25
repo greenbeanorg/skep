@@ -560,7 +560,7 @@ func TestListenNeedsTheRunningService(t *testing.T) {
 
 func TestUnknownCommand(t *testing.T) {
 	w := newWorld(t)
-	for _, c := range []string{"recover", "leave", "remove"} {
+	for _, c := range []string{"recover", "rotate", "feature-level"} {
 		if err := run(context.Background(), []string{c}, w.env(0)); err == nil || !strings.Contains(err.Error(), "unknown command") {
 			t.Errorf("%s: %v", c, err)
 		}
