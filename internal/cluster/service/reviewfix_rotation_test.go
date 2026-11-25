@@ -445,6 +445,8 @@ func TestLeaderAnswersOnlyAfterTheTermBarrier(t *testing.T) {
 		raftnet.OpRemove:   `{"name":"wu","actor":"root","op_id":"op3"}`,
 		raftnet.OpKeyAdd:   `{"op_id":"op4","next_pin":"sha256:` + strings.Repeat("e", 64) + `","actor":"root"}`,
 		raftnet.OpKeyAbort: `{"op_id":"op5","next_pin":"sha256:` + strings.Repeat("e", 64) + `","actor":"root"}`,
+		// Step 8c-1: users-write computes no refusal before the barrier.
+		raftnet.OpUsersWrite: `{"type":"user.delete","op_id":"op6","actor":"local:0","data":{"id":"00000000-0000-4000-8000-0000000000ee"}}`,
 	} {
 		_, err := l.svc.HandlePeer(context.Background(), op, from, []byte(body))
 		var pe *raftnet.PeerError
