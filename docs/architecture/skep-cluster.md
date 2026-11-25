@@ -1,10 +1,11 @@
-# skep-cluster (Milestone 8, steps 8a and 8b-1)
+# skep-cluster (Milestone 8, steps 8a, 8b-1 and 8b-2a)
 
 `skep-cluster` is the third Skep service, next to `skep-agent` and
 `skep-api`. It holds the node's cluster key, the cluster membership and
 the replicated store, and runs as its own unprivileged account. The design
-is [ADR 0013](../decisions/0013-clustering.md) with its amendment 1; this
-page describes what is built.
+is [ADR 0013](../decisions/0013-clustering.md) with its amendments 1 and 2
+(amendment 2 is Proposed with the 8b-2a PR); this page describes what is
+built.
 
 **Built so far:** every host is a one-node cluster (8a), and a host
 **without guests** can join another cluster (8b-1): `join-request`,
@@ -12,10 +13,13 @@ page describes what is built.
 the sender checked on every RPC, pending entries with expiry and
 withdrawal, the join's four steps and their crash points, promotion once
 caught up and applied by every member, and the applied-membership file.
-**Not built yet** (the second 8b run and later steps): removal and
-`leave --wipe`, `join --abandon`, key rotation, clock-offset health, the
-cluster audit (each membership event is a log line for now), joining a
-host with guests (8d), replicated users (8c). `skep-api`, `skep-agent`
+Step 8b-2a adds **removal** (`remove`, three records driven by the leader
+loop), **`leave --wipe`**, **`join --abandon`**, **`listen -none`**, the
+`state/` directory with crash-safe file steps, and health after a
+removal. **Not built yet** (step 8b-2b and later): key rotation,
+clock-offset health, the cluster audit (each membership event is a log
+line for now), a per-key connection limit, joining a host with guests
+(8d), replicated users (8c). `skep-api`, `skep-agent`
 and `skep-setup` do not use `skep-cluster` yet and are unchanged; the
 public API is unchanged.
 
@@ -36,7 +40,7 @@ FreeBSD.
 | Service account | `skep-cluster`, UID and GID **410** | Created by the package's pre-install script, as the `skep` account (409) is. Not the `skep` account: `skep-api` must not be able to read the node key |
 | Service | `/usr/local/sbin/skep-cluster`, rc.d `skep_cluster` | Refuses to run as root. Not enabled by the package or by `skep-setup` |
 | Configuration | `/usr/local/etc/skep/cluster.json`, `root:skep-cluster`, `0640` | Written by the root-run commands (`init`, `listen`, `join-request`); the service reads it and cannot change it |
-| Data directory | `/var/db/skep/cluster`, `skep-cluster:skep-cluster`, `0700` | `node.key` (`0600`), `node.crt`, `raft.db` (`0600`), `snapshots/`, `membership.json` (`0600`); while joining also `join.json` (`0600`) and `standalone.<UTC time>/` (`0700`). Nothing in it belongs to root |
+| Data directory | `/var/db/skep/cluster`, `skep-cluster:skep-cluster`, `0700` | `node.key` (`0600`), `node.crt`, and `state/` (`0700`) holding `raft.db` (`0600`), `snapshots/`, `membership.json` (`0600`) and, on a removed node, `removed.json` (`0600`); while joining also `join.json` (`0600`) and `standalone.<UTC time>/` (`0700`, a renamed `state/`); while `leave --wipe` runs, `wipe.json` (`0600`). Nothing in it belongs to root |
 | Local API | Unix socket `/var/run/skep-cluster/cluster.sock` | Peer credentials checked; see the table below |
 | Node-to-node listener | TCP **8444** on the management address | Open only after `listen -address`, `join-request -address` or `init -address`. A single host opens no port |
 
@@ -65,13 +69,46 @@ skep-cluster join-request -address ADDR          root; on the new host: prints i
 skep-cluster admit REQUEST                       root; on a member: admits, prints the admission
 skep-cluster admit -withdraw NAME                root; on a member: withdraws a pending admission
 skep-cluster join [-cluster-id ID] ADMISSION     root; on the new host: joins
+skep-cluster join --abandon                      root; gives up a join past its point of no return
+skep-cluster remove [-allow-unanswered] NAME     root; on a member: removes a member
+skep-cluster leave --wipe [-cluster-id ID]       root; a new one-node cluster, new key, no listener
+skep-cluster listen -none                        root; closes the listener of a node that is alone
 skep-cluster status [-json]                      root or skep
 skep-cluster health [-json]                      root or skep; exit 1 unless ok
 skep-cluster version
 ```
 
-The procedure, as the commands print it, is in
+The procedures, as the commands print them, are in
 [Joining hosts into a cluster](../administration/cluster.md).
+
+### The data directory and the start rule (amendment 2, D1 and D2)
+
+The store, the snapshots, the applied-membership file and the removal
+record are in **`state/`**. A join moves the one-node state aside with one
+`rename(state, standalone.<UTC time>)` and puts it back with one rename;
+every rename, create and delete that a later start depends on is followed
+by an `fsync` of the parent directory (`internal/cluster/layout`). There
+is no migration from the layout of 8a and 8b-1: a service that finds
+`raft.db` directly in the data directory refuses to start and names the
+three paths to move into `state/`.
+
+**The start rule** (`service.StartRule`), before anything is opened:
+
+| Found | The service |
+|---|---|
+| `wipe.json` | refuses: "`leave --wipe` did not finish; run it again" |
+| `raft.db` directly in the data directory | refuses and names the paths to move |
+| `join.json` in phase `abandoning` | refuses: "`join --abandon` did not finish; run it again" |
+| `state/` | starts normally (a `removed.json` in it: only the local socket, below) |
+| no `state/`, `join.json` | starts on an empty `state/`: the join decides |
+| no `state/`, no `join.json`, one `standalone.*` | renames it back to `state/`, with a warning |
+| no `state/`, no `join.json`, several `standalone.*` | refuses and names them |
+
+Wherever a `standalone.*` and `join.json` are both deleted (a finished
+join, a wipe), the `standalone.*` goes first. A node whose own state is
+`member`, that is not joining, and that still finds a `standalone.*`
+deletes it with a log line. A message saying "the next start of
+skep_cluster puts it back" is printed only when the rule above would.
 
 **`init`** does its work in two parts. As root: it refuses if the host is
 already initialised, reads the node ID from the agent, creates the data
@@ -123,9 +160,8 @@ belongs to root.
   `skep_cluster`; starts the stage, which **makes the join call**:
   1. it checks that the admission names this key, and reads "is this node
      alone" from the store;
-  2. it moves `raft.db`, `snapshots/` and `membership.json` into
-     `standalone.<UTC time>/` and writes `join.json` (phase `calling`, a
-     new operation ID, the admission);
+  2. it renames `state/` to `standalone.<UTC time>` and writes
+     `join.json` (phase `calling`, a new operation ID, the admission);
   3. it calls the join operation on the admission's members (below);
   4. **only when it knows join step 1 was not applied** (every handshake
      failed and nothing was sent, or a leader refused, or no member had a
@@ -135,23 +171,57 @@ belongs to root.
      `accepted`), and after an unknown outcome (sent, no answer, or an
      answer that failed the check) phase `unknown`.
 
-  **The start rule.** Before the store is opened, `skep-cluster` (the
-  service) looks at the data directory: with `join.json` present, or with
-  a `raft.db`, it does nothing (with `join.json` nothing is ever put
-  back). With neither and **exactly one** `standalone.*/`, it puts that
-  state back and logs a warning naming the directory: this is a stage
-  stopped after the move aside and before `join.json` was written, or
-  after `join.json` was removed and before the put-back; both are certain
-  to have sent nothing that was applied. With neither and **more than
-  one** `standalone.*/`, it refuses to start and names them.
+  The start rule (above) decides what the next start does with what a
+  stopped stage left.
 
   Root then starts `skep_cluster` in every case and runs the root-file
   check. **What root believes from the stage** is only its outcome, for
   what it prints; no root effect depends on it (the service is started
   whatever the outcome). After `accepted` or `unknown` the command says
-  the join is past its point of no return and that this build has no
-  command to give up a join, then waits (default 90 s) for the node to
-  apply its own member entry.
+  the join is past its point of no return and how to give it up
+  (`remove` on a member, then `join --abandon`), then waits (default
+  90 s) for the node to apply its own member entry.
+- **`remove NAME`** calls the local API (root only). The service passes it
+  to the leader, which checks it (below, "Removal") and proposes the first
+  entry; the command then waits (default 2 min) until the member entry is
+  gone, prints the members that have not yet applied the removal and, when
+  the list is not empty, the operator rule of ADR 0013 B2. No root effect
+  depends on the service's answers. `-allow-unanswered` needs the cluster
+  ID typed back on `/dev/tty` or given as `-cluster-id`; the service
+  checks it again.
+- **`leave --wipe`**, as root: loads `cluster.json`, stops `skep_cluster`;
+  the stage `wipe-info` (service account) reads the cluster ID from
+  `state/removed.json`, `state/membership.json`, `join.json` or the store,
+  and whether a wipe is under way; root asks for the cluster ID on
+  `/dev/tty` or checks `-cluster-id` (not when a wipe is under way); the
+  stage `wipe-begin` writes `wipe.json` (the new cluster ID, the old pin)
+  unless it exists; **root removes `listen_address` from `cluster.json`**;
+  the stage `wipe-finish` deletes every `standalone.*`, then `join.json`,
+  then `state/`, replaces the node key if it still has the old pin, makes
+  a one-node cluster with the marker's cluster ID and no address, and
+  removes `wipe.json` last; root starts the service and runs the root-file
+  check. Each step can be repeated, so the command run again after a crash
+  finishes the wipe without asking.
+- **`join --abandon`**, as root: stops `skep_cluster`; the stage `abandon`
+  (service account, it holds the key) asks every node of the admission and
+  of the stored join answer whether it accepts this host's key
+  (`raftnet.ProbeKey`: a TCP connection and a handshake with that node's
+  pin, then the listener's first byte: the accepted marker, or a refusal).
+  Only if at least one answers and none accepts, it writes phase
+  `abandoning` to `join.json`, deletes `state/` (the joining node's log),
+  renames `standalone.<UTC time>` to `state/` and removes `join.json`
+  last; with phase `abandoning` already there it finishes these steps
+  without asking again. Root starts the service and runs the root-file
+  check; what it prints comes from the stage's outcome.
+- **`listen -none`**, as root: refused unless `cluster.json` has a listen
+  address; stops `skep_cluster`; the stage `read-state` rebuilds the state
+  from the store with the service stopped (`store.ReadState`: snapshot
+  plus every stored entry, valid on a node that is alone) and refuses
+  unless the node is alone, the only member, nothing is pending, and it is
+  not joining or removed; root removes `listen_address` from
+  `cluster.json` and starts the service, which updates its own member
+  entry and Raft server entry to "no address" and opens no port; `admit`
+  is then refused (`no_listen_address`) as on a fresh host.
 
 ### The join call and what a joining node accepts
 
@@ -180,11 +250,16 @@ belongs to root.
   does not undo that.
 - The service starts on an empty store when `join.json` exists. Until its
   accepted membership lists this node it accepts **only the admission's
-  and the answer's keys** (as members) and applies no Raft-configuration
-  rule. Phase `unknown` (or `calling`, found at start) makes it repeat the
+  keys, or, once a join answer has been accepted, only the answer's**
+  (the answer replaces the admission's list; amendment 2, D10), as
+  members, and applies no Raft-configuration rule. In phase `refused` it
+  accepts **no** inbound key. The answer's addresses get the same port
+  check (8444) as the admission's. Phase `unknown` (or `calling`, found at start) makes it repeat the
   call with the same operation ID every 10 s; a repeat after step 1 is
-  answered as accepted. A refusal after an unknown outcome is phase
-  `refused`: health is critical, and the one-node state stays aside.
+  answered as accepted (and refused once the member is `removing`). A
+  refusal after an unknown outcome is phase `refused`: health is
+  critical, the one-node state stays aside, and health says how to give
+  the join up.
 - When the node has applied a membership that lists it in state `member`,
   the service deletes `standalone.*/` and `join.json`.
 
@@ -230,11 +305,14 @@ forbidden`.
 | `admit-withdraw` | `POST /cluster/v1/admit/withdraw` | yes | no |
 | `remove` | `POST /cluster/v1/remove` | yes | no |
 
-`admit` and `admit-withdraw` are root-only in this step (`skep-api` gets
-them with `cluster:manage` in 8c). Their errors: `400 invalid_request`,
-`409 no_listen_address`, `409 joining`, `409 refused` (the leader or the
-state machine refused it, with the reason), `404 not_found` (withdraw),
-`503 not_committed` / `no_leader` / `outcome_unknown`. A member that is
+`admit`, `admit-withdraw` and `remove` are root-only in this step
+(`skep-api` gets them with `cluster:manage` in 8c). Their errors: `400
+invalid_request`, `409 no_listen_address`, `409 joining`, `409 refused`
+(the leader or the state machine refused it, with the reason), `409
+removed` (this node was removed), `409 voters_unanswered` (remove: too
+few of the remaining voters answer), `404 not_found` (withdraw, remove),
+`503 handover_failed` (remove of the leader), `503 not_committed` /
+`no_leader` / `outcome_unknown`. A member that is
 not the leader passes the operation to the leader as a typed Skep RPC;
 the leader checks it again and the state machine checks it again at apply
 on every node. The actor recorded is `root` (the verified peer); the
@@ -249,8 +327,8 @@ phase.
 ## The node-to-node listener and transport
 
 - **TLS 1.3 only**; a client certificate is required and accepted by its
-  pin alone: pinned in a member entry (`joining` or `member`) or in a
-  pending entry of the membership the node has applied. A pending key
+  pin alone: pinned in a member entry (`joining`, `member` or `removing`)
+  or in a pending entry of the membership the node has applied. A pending key
   whose expiry time has passed **by this node's clock** is refused
   earlier; none is accepted after the expiry entry. Every other key is
   refused in the handshake. No session tickets; an expired certificate is
@@ -281,16 +359,20 @@ phase.
   (addresses are unique among accepted keys) and accepts only that node's
   pin. A Skep RPC client names the pin it expects.
 - When an applied entry changes the membership or the pending entries,
-  and every second (for clock-based expiry), the listener closes every
-  open connection whose key is no longer accepted.
+  and every second (for clock-based expiry and for configuration
+  changes), the listener closes every open connection whose key is no
+  longer accepted, and every connection of a `removing` member that is no
+  longer a server in the latest Raft configuration (amendment 2, D11).
 
-| Operation on 8444 | pending key | joining key | member key | Also |
-|---|---|---|---|---|
-| `raft` (AppendEntries with its heartbeat fast path, RequestVote, RequestPreVote, InstallSnapshot, TimeoutNow) | no | yes | yes | a server in the latest Raft configuration |
-| `join` | yes | yes | no | |
-| `status` | no | yes | yes | |
-| `admit` (passed to the leader) | no | no | yes | |
-| `withdraw` (passed to the leader) | no | no | yes | |
+| Operation on 8444 | pending key | joining key | member key | removing key | Also |
+|---|---|---|---|---|---|
+| `raft` (AppendEntries with its heartbeat fast path, RequestVote, RequestPreVote, InstallSnapshot, TimeoutNow) | no | yes | yes | yes | a server in the latest Raft configuration |
+| `join` | yes | yes | no | no | |
+| `status` | no | yes | yes | yes | |
+| `admit` (passed to the leader) | no | no | yes | no | |
+| `withdraw` (passed to the leader) | no | no | yes | no | |
+| `remove` (passed to the leader) | no | no | yes | no | |
+| `removed` (the notice to a removed node) | no | no | yes | no | |
 
 The table is `raftnet.Operations`; the tests are driven from it. On a
 joining node that its own membership does not list yet, the admission's
@@ -326,6 +408,8 @@ pool keeps 3 connections per peer.
 | `pending.expire` | node ID, `expires_at`, `at` (leader's clock) | removes it when `at` ≥ `expires_at` |
 | `member.join` (join step 1) | node ID, pin, `at` (leader's clock) | consumes the pending entry, creates the member entry in state `joining` with the entry's index (`joined_index`) and op ID |
 | `member.promoted` (join step 4) | node ID | `joining` → `member` |
+| `member.removing` (removal step 0) | node ID, `forget_guests` (always empty in version 1) | `joining` or `member` → `removing`; refused for a member already `removing`, while **another** member is `joining`, for the last member that is not `removing`, and with a non-empty guest list (step 8d writes guests in version 2); **withdraws every pending entry** in the same apply |
+| `member.removed` (removal step 2) | node ID | removes a `removing` member entry and its pins; records the entry's index as the last removal |
 
 - **Apply is deterministic**: no wall clock (every time is in the entry,
   written by the proposing leader), no local file content, no map order
@@ -343,12 +427,14 @@ pool keeps 3 connections per peer.
   time), an expiry not yet due, a join without a pending entry, with
   another pin or at or after the expiry, a promotion of a node that is not
   `joining`, an address change with more than one member or a pending
-  entry, a second `cluster.init`, or a cluster ID that is not a UUID.
+  entry, a second `cluster.init`, a cluster ID that is not a UUID, and the
+  removal refusals in the table above.
 - Each membership event is **one log line** on every node that applies it
   (`cluster membership: pending created | pending used | pending expired |
-  pending withdrawn | member joining | member`) with actor, operation ID
-  and origin; the leader logs `non-voter added` and `promoted` (actor
-  `system`, the join's op ID). The cluster audit (B10) is the next run.
+  pending withdrawn | member joining | member | member removing | member
+  removed`) with actor, operation ID and origin; the leader logs
+  `non-voter added`, `promoted`, `server removed` and `ghost removed`
+  (actor `system`). The cluster audit (B10) is step 8b-2b.
 - **Step 8d** adds the joining host's guest list to `member.join` as its
   version 2 (ID, name, kind per guest), so that the name check and the
   inventory write stay in join step 1 (ADR 0013 B3); version 1 means a host
@@ -389,23 +475,79 @@ directory, `fsync`, `rename`, `fsync` of the directory.
   the machine is not stopped, the library has applied its commit index and
   every entry between the two indexes is one of the library's own, it
   prints "up to date, last Skep entry 7 (entries 8-10 are Raft's own)".
-- **The leader's work**, when it gains leadership (after a barrier) and
-  every 10 s. A node counts as having gained leadership only once its
-  barrier has succeeded; a failed barrier is tried again in the next round
-  (every second) before any leader work. Then: propose the expiry of every pending entry its clock has
-  passed, and for every member in state `joining`: not a Raft server → join
+- **The leader's work** (amendment 2, D5): **one leader loop** makes every
+  configuration change (`AddNonvoter`, `AddVoter`, `RemoveServer`, and a
+  one-node cluster's own address) and proposes every membership entry of
+  the leader's own. Whenever the Raft term differs from the term of its
+  last successful barrier it makes a barrier first (retried every second
+  until one succeeds in the current term), and reads the state after it.
+  Then **one step per round** (the next round follows at the next tick
+  after a step, otherwise after 10 s), in this order: a leader that is
+  itself `removing` hands the leadership over (`LeadershipTransfer`);
+  nothing while its latest configuration is not committed; a one-node
+  cluster's address; the **ghost sweep** (a Raft server without a member
+  entry is removed and logged); the next removal step (below); the expiry
+  of every pending entry its clock has passed; the next join step for a
+  member in state `joining` (never `removing`): not a Raft server → join
   step 2 (`AddNonvoter`); a non-voter → step 3 when the joiner's applied
   index is within one snapshot threshold (8192) of the leader's commit
   index **and** every member in the Skep membership (the joiner and the
   leader included) answers the status RPC with an applied index at or past
   the member's `joined_index` and a running machine; a voter → step 4.
-  Every step can be repeated: a new leader finishes what the last one left.
+  Every step can be repeated: a new leader finishes what the last one
+  left. Skep bounds the wait for a configuration change at 30 s (the
+  library's own has none); a change still in flight is read again next
+  round.
 - Every node (not only the leader) asks every member the same way every
   10 s while a join is in progress, so **health on every member, the joiner
   included, names the member being waited for** (check `join`, a warning).
 - No case was found where the machine's own index makes catch-up fail: the
   gap between it and the commit index is the library's own entries after
   the last Skep entry, a handful against a threshold of 8192.
+
+### Removal (amendment 2, D3–D7, D11, D12)
+
+- **`remove NAME`** reaches the leader (a member that is not the leader
+  passes it as a typed Skep RPC). The leader refuses: an unknown name
+  (`not_found`), a member already `removing`, a removal while **another**
+  member is `joining` (removing the joining member itself is allowed: it
+  is how a stuck join is cleared), a wrong cluster ID with the override,
+  and, **without `-allow-unanswered`**, a removal after which fewer than a
+  majority of the remaining voters answered a status round made at once
+  (`voters_unanswered`: the cluster would accept no changes until they
+  return). When the node to remove **is the leader**, it first hands the
+  leadership over and passes the removal to the new leader; if the
+  hand-over fails, nothing is written (`handover_failed`).
+- Then **step 0** (`member.removing`, the operation ID a new UUID, actor
+  `root`, origin the node where the command ran). The leader loop does
+  **step 1** (`RemoveServer`) while the member is a server in the latest
+  configuration, voter or not, and **step 2** (`member.removed`,
+  operation ID `removed:<node ID>:<joined index>`) once the configuration
+  without it is committed, then sends the removed node a best-effort
+  notice (`removed`).
+- **Members close the removed node's connections** when the configuration
+  without it takes effect on them, and refuse its key in the handshake
+  after step 2. The heartbeat fast path's copy of the Raft configuration
+  (at most 250 ms old) bounds how long a removed node's heartbeat can
+  still be accepted after that: the in-process test measured 15 ms on
+  loopback (`TestRemovedHeartbeatBound`).
+- **The removed node** learns it from the notice (from a member key it
+  accepts, naming it and its cluster) or from its own log (its entry
+  `removing` and itself absent from its latest Raft configuration while
+  it is not the leader, or its entry gone once its state machine has
+  caught up). It writes `state/removed.json`, shuts its Raft instance and
+  its listener, and keeps its local socket: `status` says REMOVED, health
+  is critical (`removed`, naming the cluster and saying to run `leave
+  --wipe`), `admit` and `remove` answer `removed`. At every later start
+  it runs only its local socket.
+- **Health after a removal** (D12): every node runs a status round every
+  10 s and at once after a membership change; health (`removal_applied`,
+  a warning) names the members whose state machine has not reached the
+  last `member.removed` entry (or did not answer), until all have, with
+  the operator rule. While a removal runs, `removal` (a warning) says what
+  it waits for: the leader's `RemoveServer`, the configuration without
+  the node to commit (naming the voters that do not answer), or the final
+  entry.
 
 ## Health
 
@@ -416,8 +558,11 @@ member entry exists and pins the key on disk; not checked while joining),
 `cluster.json`; a clustered node's address is not changed this way),
 `listener` (open when configured), `certificate` (renewal, warning),
 `join` (a join in progress and whom its promotion waits for, warning),
-`joining` (this node's own join: critical when it was refused after an
-unknown outcome). `skep-api`'s health does not include it yet.
+`removal` (a removal in progress and what it waits for, warning),
+`removal_applied` (members that have not yet applied the last removal,
+warning), `joining` (this node's own join: critical when it was refused
+after an unknown outcome), and on a removed node only `removed`
+(critical). `skep-api`'s health does not include it yet.
 
 ## hashicorp/raft v1.8.0: facts the design relies on
 
@@ -487,22 +632,29 @@ checklist in the update's PR:
 | 9 | The library's `consumeCh` handshake: unbuffered `RPC` with a buffered `RespChan` of 1 | Same |
 | 10 | Anything new in `net_transport.go` that the adapted copy lacks (read the whole diff) | v1.8.0 is the base |
 
-## Limits of 8b-1
+## Limits of 8b-2a
 
 - Only a host **without VMs or jails** joins, and only a one-node host
   (`join-request` and `join` refuse otherwise). The host's users are not
-  replaced (8c) and no drain is taken (8d).
-- **No removal, `leave --wipe`, `join --abandon` or key rotation.** A join
-  past its point of no return cannot be given up with this build; a member
-  cannot leave. Test clusters are reset by hand (stop the service, delete
-  the data directory and `cluster.json`, `init` again).
-- With a member down, a join cannot finish (by design, amendment 1); the
-  joiner stays a working non-voter and health names the member.
-- `admit` is root-only on a member; through the API from 8c.
-- No clock-offset health and no cluster audit yet (each membership event
-  is a log line).
-- A clustered node's address cannot be changed; `listen` refuses on a node
-  that is not alone, and no command closes the listener again (backlog).
+  replaced (8c) and no drain is taken (8d). `remove` has no
+  `--forget-guests` and no guest refusal (8d; the entry's guest list is
+  always empty).
+- **No key rotation, clock-offset health, cluster audit or per-key
+  connection limit** (step 8b-2b). Each membership event is a log line.
+- With a member down, a join cannot finish (by design, amendment 1), and a
+  removal that leaves too few answering voters is refused unless
+  `-allow-unanswered`; such a removal may not finish until the member
+  returns, because the configuration without the removed node needs it.
+- `admit` and `remove` are root-only on a member; through the API from 8c.
+- A clustered node's address cannot be changed; `listen` and `listen
+  -none` refuse on a node that is not alone.
 - The operation IDs applied so far are kept without a bound (step 8c).
 - `skep-setup` does not know the service: after a package upgrade, restart
   it by hand (`service skep_cluster restart`).
+- A member that was down while a node was removed still pins it until it
+  has caught up (ADR 0013 amendment 1, point 6); health names such
+  members, and the operator rule is to wipe them if the removed node was
+  compromised.
+- A snapshot written after a removal has format 3, which an 8b-1 build
+  cannot read: in a rolling upgrade from 8b-1, upgrade every node before
+  removing one (the new entry types stop an 8b-1 state machine anyway).

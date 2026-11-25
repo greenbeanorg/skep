@@ -75,13 +75,16 @@ procedure, and results recorded as it describes are welcome.
 - No clustering, HA, backup, network management, graphical consoles or
   metric history in 0.1. **On `main` after 0.1 (Milestone 8, not
   released):** a host without VMs and jails can join another host's
-  cluster (step 8b-1), as a preview: a joined host cannot leave or be
-  removed yet, a join past its point of no return cannot be given up,
-  users and guests are not shared, `admit` is root-only on a member, there
-  is no cluster audit (membership events are log lines) and no clock-offset
-  check; with a member down a join waits. Test clusters are reset by hand
+  cluster (step 8b-1), and be removed, wiped (`leave --wipe`) or give up
+  a join (`join --abandon`) (step 8b-2a), as a preview: users and guests
+  are not shared, `admit` and `remove` are root-only on a member, there is
+  no key rotation, no cluster audit (membership events are log lines) and
+  no clock-offset check; with a member down a join waits, and a removal
+  that leaves too few answering voters needs an override and waits for
+  them. The data directory layout changed in 8b-2a (`state/`, no
+  migration; a host on an 8b-1 build is moved by hand)
   ([Joining hosts into a cluster](../../administration/cluster.md),
-  [limits](../../architecture/skep-cluster.md#limits-of-8b-1)).
+  [limits](../../architecture/skep-cluster.md#limits-of-8b-2a)).
 
 ## Installation and upgrade
 

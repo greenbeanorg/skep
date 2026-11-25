@@ -1,11 +1,11 @@
-# Joining hosts into a cluster
+# Joining hosts into a cluster, and removing them
 
 Every Skep host is a one-node cluster (`skep-cluster`, see
 [the architecture page](../architecture/skep-cluster.md)). This page joins
-a host to another host's cluster with the commands of Milestone 8, step
-8b-1. **This step is a preview:** only a host without VMs and jails can
-join, a joined host cannot leave yet, and users are not shared yet (each
-host keeps its own). Do it on test hosts.
+a host to another host's cluster, removes it again, and gives up a join,
+with the commands of Milestone 8, steps 8b-1 and 8b-2a. **This is a
+preview:** only a host without VMs and jails can join, and users are not
+shared yet (each host keeps its own). Do it on test hosts.
 
 Both sides exchange **key pins** before the first connection: the new
 host's request carries its pin, the member's admission carries the pin of
@@ -126,7 +126,7 @@ starts the service again.
   The cluster accepted this node (cluster 61d2a433-...).
   The join is past its point of no return: the one-node state stays moved aside (standalone.20261124T183211Z)
   and skep-cluster keeps working with the admission's members until it has joined.
-  This build has no command to give up a join.
+  To give it up: on a member, "skep-cluster remove langrishe"; then here "skep-cluster join --abandon".
   This node has applied its member entry: state joining.
   It is a non-voter until it has caught up and every member has applied its entry;
   "skep-cluster health" on any member names the member being waited for.
@@ -151,13 +151,156 @@ Members (2):
 Health:        ok
 ```
 
+## Removing a node
+
+On any member, as root (here: removing `star`):
+
+```
+# skep-cluster remove star
+Removing star (node ID 2a09...) from cluster ff71... (operation 5c1e...): the first entry is committed.
+The leader removes it from the Raft configuration, then removes its member entry; it does that by itself.
+star is removed: no member pins its key any more once each has applied the removal.
+Every member has applied the removal.
+On star, as root, before it can join a cluster again:
+  skep-cluster leave --wipe
+```
+
+- The removal is three records: an entry that marks the member
+  `removing`, its removal from the Raft configuration, and an entry that
+  removes its member entry and pin. The command writes the first; the
+  leader does the other two, and a new leader finishes what the last one
+  left. Nothing needs to be run again.
+- **Removing the leader** works the same way: it hands the leadership to
+  another voter first (the output starts with "This node was the leader:
+  it handed the leadership over first."). If the hand-over fails, nothing
+  is written and the command says so.
+- The removed node is refused by every member as soon as the
+  configuration without it reaches them. It is told (best effort), or
+  finds out from its own log, shuts its cluster connections and its
+  listener, and `skep-cluster status` and `health` there say:
+
+  ```
+  REMOVED:       from cluster ff71..., notice from smith.greenbean.org (e894...) (2026-11-25T03:10:11Z)
+  Run "skep-cluster leave --wipe" as root (after removing this node on a member, if that was not done).
+  ```
+
+  Its guests keep running. It cannot join again until it is wiped.
+- **Refusals:** a name that is not a member (`not_found`); a member that is
+  already being removed; any member while **another** member is joining
+  (remove the joining member, or wait for its join); and a removal after
+  which too few of the remaining voters answer:
+
+  ```
+  skep-cluster: voters_unanswered: without star the cluster has 2 voters and needs 2 of them for every change,
+  but only 1 answered now (no answer from langrishe.greenbean.org): after this removal the cluster would accept
+  no changes until they return. Nothing was written. To remove it all the same, run the command again with
+  -allow-unanswered and confirm the cluster ID
+  ```
+
+  With `-allow-unanswered` the command asks for the cluster ID on the
+  terminal (or takes `-cluster-id ID`; there is no "yes" flag). The
+  removal then starts, but it **cannot finish** while the member that does
+  not answer is down: the configuration without the removed node needs
+  it. `skep-cluster health` says what it waits for, and the removal
+  finishes by itself when the member returns.
+- **A removal while a member is down.** When the removal finishes with a
+  member down, the command and `skep-cluster health` on every member name
+  the members that have not yet applied it:
+
+  ```
+  Members that have not yet applied the removal: langrishe.greenbean.org (no answer).
+  ```
+
+  **Rule:** if you removed the node because it is compromised, wipe every
+  member that was down during the removal (`skep-cluster leave --wipe` on
+  it) before it returns to the network, and join it again. Until it has
+  caught up it still trusts the removed node's key (ADR 0013 amendment 1,
+  point 6).
+- A pending admission is withdrawn when a removal starts: admit the host
+  again afterwards.
+
+## Wiping a node: leave --wipe
+
+On the node itself, as root. Remove it on a member first if it is still
+a member (the command reminds you).
+
+```
+# skep-cluster leave --wipe
+This wipes the cluster state of this node (star, node ID 2a09...):
+  cluster ff71..., node key pin sha256:8b32...
+It becomes a one-node cluster with a new cluster ID and a new node key, and no listener.
+Wipe this node's cluster state?
+Type the cluster ID (ff71...) to confirm: ff71...
+This node is a one-node cluster again.
+  Cluster ID:   4d0c...
+  Node key pin: sha256:91ae... (new)
+  Listener:     none (no network port)
+If it has not been removed on a member of its old cluster yet, remove it there, as root:
+  skep-cluster remove star
+To join a cluster again: skep-cluster join-request -address ADDR
+```
+
+Without a terminal give `-cluster-id ID` (the current cluster ID). The
+command stops and starts `skep_cluster` itself. It keeps the node ID and
+makes a **new key**, so the old pin is never valid again. If it is
+interrupted (a crash, a reboot), `skep_cluster` refuses to start until you
+run `skep-cluster leave --wipe` again; the second run finishes the wipe
+without asking.
+
+## Giving up a join: join --abandon
+
+A join that is past its point of no return (the cluster added the node,
+or the outcome is unknown) is not undone by the join command. To give it
+up:
+
+1. On a member, remove the node if it is listed (`skep-cluster status`
+   there): `skep-cluster remove langrishe`.
+2. On the node, as root:
+
+   ```
+   # skep-cluster join --abandon
+     smith.greenbean.org (e894..., 10.79.20.81:8444): answers and refuses this key (...)
+     star (2a09..., 10.79.20.83:8444): answers and refuses this key (...)
+   The join is given up: this host's one-node cluster is back (pin sha256:3f1c...).
+   ```
+
+It asks every node of the admission and of the cluster's answer whether
+it still accepts this host's key, and puts the one-node state back only if
+at least one answers and none accepts it. Otherwise it changes nothing:
+
+```
+Refused: smith.greenbean.org still accept(s) this host's key, so the cluster still counts this host.
+On smith.greenbean.org, as root, remove this host first:
+  skep-cluster remove langrishe
+then run "skep-cluster join --abandon" here again.
+```
+
+or, when nobody answers, "Run it again when at least one member is
+reachable." On a host without a join in progress it refuses ("this host
+has no join in progress"). If it is interrupted after it decided,
+`skep_cluster` refuses to start until you run it again; the second run
+finishes without asking the members.
+
+## Closing the listener: listen -none
+
+A host that ran `skep-cluster listen` or `join-request` and is still alone
+can close port 8444 again, as root:
+
+```
+# skep-cluster listen -none
+skep-cluster no longer listens on 10.79.20.83:8444: no network port is open, and "skep-cluster admit" is refused.
+To listen again: skep-cluster listen -address ADDR
+```
+
+It is refused on a node that is not alone in its cluster, that has a
+pending admission (withdraw it first), that is joining, or that was
+removed. It stops and starts `skep_cluster`.
+
 ## What you cannot do yet
 
-- Join a host that has VMs or jails (step 8d).
-- Remove a node, or make a host leave (`leave --wipe`), or give up a join
-  (`join --abandon`): the next run of step 8b. Until then a test cluster is
-  reset by hand on each host: `service skep_cluster stop`, delete
-  `/var/db/skep/cluster` and `/usr/local/etc/skep/cluster.json`,
-  `skep-cluster init` again (a new cluster, the same key only if
-  `node.key` is kept; deleting the directory makes a new key).
-- Admit through the web interface or `skepctl` (step 8c).
+- Join a host that has VMs or jails, or remove one that owns guests with
+  `--forget-guests` (step 8d).
+- Rotate a node key, see clock offsets between nodes, or read a cluster
+  audit (step 8b-2b; membership events are log lines for now).
+- Admit or remove through the web interface or `skepctl` (step 8c).
+- Change the address of a clustered node.

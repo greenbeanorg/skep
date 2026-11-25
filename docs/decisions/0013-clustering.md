@@ -11,6 +11,11 @@
   B13, each changed passage marked "Amended (amendment 1)". Its open
   question (what "has applied" means after a restart) was answered with
   option a: the durable applied-membership file.
+- **Amendment 2 (2026-11-25)** is **Proposed** (Andy accepts it by
+  approving the merge of the step 8b-2a PR). It is at the end of this
+  document and records what the build of removal, `leave --wipe`, `join
+  --abandon` and `listen -none` changed or added to the accepted text;
+  the passages it changes are marked "Amended (amendment 2)".
 - Date: 2026-11-23 (evaluation draft), 2026-11-24 (rewritten as the design)
 - Depends on: [ADR 0004](0004-privilege-boundary.md) (privilege boundary),
   [ADR 0005](0005-agent-task-engine.md) (task engine),
@@ -285,7 +290,11 @@ Each item was proposed for review. Andy's answers and the final review
         (`/var/db/skep/cluster/standalone.<UTC time>/`, still owned by
         the `skep-cluster` account); the users and roles in it are also
         written to a root-only file (B3). **Amended (amendment 1):** the
-        applied-membership file moves aside with it. The service starts
+        applied-membership file moves aside with it. **Amended
+        (amendment 2):** the store, the snapshots and that file are in
+        one directory, `/var/db/skep/cluster/state/`, and moving them
+        aside is one rename of `state/` to `standalone.<UTC time>`
+        (putting it back is one rename back). The service starts
         with an empty log, no applied-membership file and the
         admission's pins.
      5. The service calls the join operation on a member, **sending the
@@ -321,7 +330,10 @@ Each item was proposed for review. Andy's answers and the final review
           (root) on the host. It restores the moved-aside state only
           if **at least one member of the admission answers and none
           that answers accepts this node's key**; otherwise it refuses
-          and changes nothing.
+          and changes nothing. **Amended (amendment 2):** it asks the
+          nodes of the stored join answer too, writes the phase
+          `abandoning` to `join.json` before any file step, and a run
+          after a crash finishes without asking again.
         - **Why:** a host that restored its one-node state while the
           cluster still counts it as a voter would never vote again. A
           cluster of two members and that voter would need two of
@@ -418,7 +430,9 @@ Each item was proposed for review. Andy's answers and the final review
   on, and the final Skep entry then removes its pins. The removed node is not told by Raft
   (measured, evidence §11), so removal also sends it a best-effort
   notice; its `skep-cluster` stops when it sees itself absent from its
-  applied configuration, and it must be wiped (`skep-cluster leave
+  applied configuration (amended, amendment 2: it writes that down
+  durably, shuts its Raft instance and its listener, and keeps only its
+  local socket for `status` and `health`), and it must be wiped (`skep-cluster leave
   --wipe`, root), which gives it a new key, before it can join again.
   Removing a node that still owns guests is B13.
 - **Per-RPC identity: the pin is the identity.** Each RPC carries a
@@ -436,7 +450,9 @@ Each item was proposed for review. Andy's answers and the final review
 
   A **joining node** has neither record yet: it accepts the pins in its
   admission until it has applied a membership that lists it, and the
-  normal rule from then on.
+  normal rule from then on. **Amended (amendment 2):** once a join answer
+  has been accepted, the answer's nodes **replace** the admission's; in
+  the phase `refused` the joining node accepts no inbound key.
 
   **Amended (amendment 1): the applied membership is durable.** The
   library does not store the commit index; at start a node restores
@@ -444,7 +460,8 @@ Each item was proposed for review. Andy's answers and the final review
   after it only when a leader tells it the commit index (checked in
   v1.8.0, `api.go` `NewRaft`). So "the membership the receiver has
   applied" is kept on disk:
-  - **The file:** `/var/db/skep/cluster/membership.json`, written by
+  - **The file:** `/var/db/skep/cluster/state/membership.json`
+    (amended, amendment 2: inside `state/`), written by
     the service as the `skep-cluster` account, mode `0600`,
     atomically: a temporary file in the same directory, `fsync`,
     `rename`, `fsync` of the directory. Content: the cluster ID, the
@@ -1684,8 +1701,9 @@ no node would accept another.
 **The decision:**
 
 - **The file.** The service writes the applied membership to
-  `/var/db/skep/cluster/membership.json`, as the `skep-cluster`
-  account, mode `0600`, atomically: a temporary file in the same
+  `/var/db/skep/cluster/state/membership.json` (amended, amendment 2:
+  inside `state/`), as the `skep-cluster` account, mode `0600`,
+  atomically: a temporary file in the same
   directory, `fsync`, `rename`, `fsync` of the directory. Content: the
   cluster ID, the membership epoch (B4), the log index it reflects, and
   every member entry (ID, address, both pins, state). **Pending entries
@@ -1734,3 +1752,146 @@ not prevent this; it would need membership entries signed by a quorum
 removing a node because it is compromised, wipe every member that was
 down at that time before it returns. Health on every member names the
 members that have not yet applied a removal.
+
+## Amendment 2 (2026-11-25, Proposed)
+
+Written with the build of step 8b-2a (removal, `leave --wipe`, `join
+--abandon`, a way back to no listener, crash-safe file steps), from the
+fixed decisions D1–D14 the review chat gave that run. **Status:
+Proposed.** Andy accepts it by approving the merge of the step 8b-2a
+PR. It changes the accepted text only where it says so; the changed
+passages are marked "Amended (amendment 2)".
+
+### 1. One state directory, one rename (D1)
+
+- The Raft store (`raft.db`), the snapshots and the applied-membership
+  file are in **one directory, `/var/db/skep/cluster/state/`** (`0700`,
+  the service account). The node key, its certificate and `join.json`
+  stay in `/var/db/skep/cluster`.
+- A join moves the one-node state aside with **one** `rename(state,
+  standalone.<UTC time>)`; putting it back is one rename back. Every
+  rename, create and delete in the data directory that a later start
+  depends on is followed by an `fsync` of the parent directory.
+- **No migration code.** A service that finds `raft.db` directly in the
+  data directory refuses to start and names the three paths to move
+  into `state/` (0.2 is unreleased; the lab was moved by hand).
+
+### 2. The start rule (D2)
+
+Before anything is opened: a wipe marker (point 5) → refuse; `raft.db` in
+the data directory → refuse (point 1); `join.json` in phase `abandoning`
+(point 6) → refuse; `state/` present → start; `state/` absent and
+`join.json` present → the join decides; `state/` absent, no `join.json`,
+exactly one `standalone.*` → rename it back with a warning; several →
+refuse and name them. Wherever both a `standalone.*` and `join.json` are
+deleted, the `standalone.*` goes first; a node whose own state is
+`member`, that is not joining and that still finds a `standalone.*`
+deletes it with a log line.
+
+### 3. The leader's membership work is tied to the term (D5)
+
+- The leader repeats its barrier whenever the Raft term differs from the
+  term of its last successful barrier (not only when a "was leader" flag
+  flips), and does nothing else until that barrier has succeeded.
+- **One leader loop** makes every configuration change (`AddNonvoter`,
+  `AddVoter`, `RemoveServer`, and a one-node cluster's own address) and
+  proposes every membership entry of the leader's own, after a barrier
+  in the current term, from a view read after it, **one step per
+  round**.
+- It never continues a join for a member in state `removing`. Removal
+  step 1 runs whenever a `removing` member is still a server in the
+  latest Raft configuration, voter or not; the final entry is proposed
+  only when the configuration without it is committed.
+- **Ghost sweep:** a server in the Raft configuration with no member
+  entry is removed (`RemoveServer`) and logged.
+- At apply: a promotion of a member that is not `joining`, a `removing`
+  entry for the last member that is not `removing`, and a final entry
+  for a member that is not `removing` are refused.
+- Removal is `skep-cluster remove NAME`, root-only on the local socket in
+  this step (the API gets it with `cluster:manage` in 8c). New entry
+  types `member.removing` and `member.removed`, version 1. The
+  `removing` entry carries the guest-list field of B13, always empty in
+  version 1; step 8d writes guests in version 2.
+
+### 4. Removal guards (D7)
+
+- Removing a member is refused while **another** member is `joining`;
+  removing the joining member itself is allowed (how a stuck join is
+  cleared).
+- Applying the `removing` entry **withdraws every pending admission** in
+  the same apply: an admission issued before a removal is void.
+- Removal is refused when, without the member, fewer than a majority of
+  the remaining voters answer a status round made at the request (the
+  cluster would then accept no changes until they return). The override
+  is `-allow-unanswered` with the cluster ID typed back on `/dev/tty` or
+  given as `-cluster-id`; there is no `-yes`.
+
+### 5. `leave --wipe` (D8)
+
+Root, local; it stops the service itself and confirms the cluster ID. The
+result is a one-node cluster with a **new cluster ID and a new node
+key**, the same node ID, **no listen address and no open port**. It
+writes a marker (`wipe.json`) first and removes it last; while the
+marker exists the service refuses to start, and running the command
+again finishes the wipe without asking again. It deletes every
+`standalone.*` and `join.json` before `state/`. It prints that the node
+must also be removed on a member, with the command.
+
+### 6. `join --abandon` (D9)
+
+Only with a `join.json`, root, local, the service stopped by the command.
+It asks every node of the admission **and of the stored join answer**.
+In TLS 1.3 the listener's first byte after the handshake (the accepted
+marker) is how "accepts this host's key" is known. It restores the
+one-node state only if at least one node answers and none accepts the
+key; before any file step it writes the phase **`abandoning`** to
+`join.json`, with which the service refuses to start and a rerun
+finishes without asking again. Otherwise it changes nothing and names
+the node that still accepts the key and the command to run there.
+
+### 7. What a joining node accepts (D10)
+
+Once a join answer has been accepted, the answer's nodes **replace** the
+admission's (before, they were added). In phase `refused` the joining
+node accepts no inbound key. The answer's addresses get the same port
+check as the admission's.
+
+### 8. The removed node (D11)
+
+- Members close its connections when the configuration change without it
+  takes effect on them (its key stays accepted in the handshake until
+  the final entry, as amendment 1 says), and refuse it in the handshake
+  after the final entry. The heartbeat fast path's copy of the Raft
+  configuration (at most 250 ms old) bounds how long a removed node's
+  heartbeat can still be accepted after the change took effect; the
+  in-process test measures it.
+- A member sends the removed node a best-effort notice. A node learns it
+  was removed by that notice (from a key it accepts, naming it and its
+  cluster) or from its own log (its entry `removing` and itself absent
+  from its latest Raft configuration, or its entry gone). It writes that
+  down durably (`state/removed.json`), shuts its Raft instance and its
+  listener, keeps its local socket for `status` and `health` (critical,
+  naming the cluster and saying to run `leave --wipe`), and does the
+  same after a restart.
+
+### 9. Health after a removal (D12)
+
+Every member's health names the members that have not yet applied the
+last removal (from a status round every node makes every 10 s and at
+once after a membership change), until all have. `skep-cluster remove`
+prints the same list and, when it is not empty, the operator rule of B2.
+
+### 10. Back to no listener (D13)
+
+`skep-cluster listen -none` (root, local) is refused unless the node is
+alone in its cluster with nothing pending (read from the store with the
+service stopped); afterwards no port is open and `admit` is refused as
+on a fresh host.
+
+### What this does not change
+
+The order and crash points of B1, the promotion rule, the
+applied-membership file's rules, the trust model of B2 and the risk of
+amendment 1 point 6 (a member that was down during a removal still pins
+the removed node until it catches up; Skep 0.2 does not prevent it).
+
