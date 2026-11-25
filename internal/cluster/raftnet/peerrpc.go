@@ -168,6 +168,7 @@ func (t *Transport) servePeerRPC(conn net.Conn, r *bufio.Reader, pin string) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), PeerTimeout-2*time.Second)
 	defer cancel()
+	p.ConnPin = pin
 	out, err := t.peer.HandlePeer(ctx, req.Op, p, req.Body)
 	if err != nil {
 		var pe *PeerError

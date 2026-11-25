@@ -58,6 +58,10 @@ type Peer struct {
 	// 8b-2b, D1): both pins are this node.
 	NextPin string
 	Kind    Kind
+	// ConnPin is the pin of the key the connection actually used, filled
+	// by the listener side for a Skep RPC (F5 of the 8b-2b review: Pin is
+	// the member entry's pin whichever of its keys the caller presented).
+	ConnPin string
 }
 
 // Pins returns the peer's pins: its pin, and its next pin while it

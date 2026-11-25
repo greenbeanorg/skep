@@ -214,7 +214,8 @@ func rotationErr(status int, code, msg string) *localapi.OpError {
 
 // Rotate implements localapi.Backend: "skep-cluster key rotate", root
 // only. It makes the new key, records the rotation, and asks the leader
-// once; a refusal undoes both files. The rest goes on in the background.
+// once; a refusal becomes an abort (F2 of the 8b-2b review). The rest
+// goes on in the background.
 func (s *Service) Rotate(ctx context.Context, actor string) (localapi.RotateResult, error) {
 	if s.isRemoved() {
 		return localapi.RotateResult{}, s.removedError()
@@ -285,7 +286,7 @@ func (s *Service) Rotate(ctx context.Context, actor string) (localapi.RotateResu
 	idx, refusal, err := s.askKeyAdd(ctx, r, actor)
 	switch {
 	case refusal != nil:
-		s.rotationRefused(r, refusal.Message)
+		s.rotationRefused(ctx, r, refusal.Message)
 		return localapi.RotateResult{}, refusal
 	case err != nil:
 		res.Pending = "the leader was asked and no answer came; this node asks again every 10 s: " + err.Error()
@@ -316,8 +317,21 @@ func (s *Service) AbortRotation(ctx context.Context, actor string) (localapi.Rot
 	if r == nil {
 		return localapi.RotateResult{}, rotationErr(http.StatusConflict, "no_rotation", "this node has no key rotation under way (no rotate.json)")
 	}
-	if s.key.Pin() == r.NewPin {
-		return localapi.RotateResult{}, refusedErr("this node already uses its new key (pin " + r.NewPin + "); the rotation can no longer be aborted, it ends by itself")
+	// Decided from the disk, not from memory (F3 of the 8b-2b review): a
+	// rename whose key could not be loaded yet has switched all the same.
+	hasNext, err := layout.Exists(filepath.Join(s.dataDir, nodekey.NextKeyFile))
+	if err != nil {
+		return localapi.RotateResult{}, err
+	}
+	pin, err := nodekey.FilePin(s.dataDir, nodekey.KeyFile)
+	if err != nil {
+		return localapi.RotateResult{}, err
+	}
+	if pin == r.NewPin || s.key.Pin() == r.NewPin {
+		return localapi.RotateResult{}, refusedErr("this node already uses its new key (node.key has pin " + r.NewPin + "); the rotation can no longer be aborted, it ends by itself")
+	}
+	if !hasNext {
+		return localapi.RotateResult{}, refusedErr("node.key.next does not exist; the rotation cannot be aborted from here (it is ending, or a file was removed by hand)")
 	}
 	if r.Phase != PhaseAborting {
 		r.Phase = PhaseAborting
@@ -377,31 +391,56 @@ func (s *Service) askKeyAdd(ctx context.Context, r RotateState, actor string) (u
 }
 
 func (s *Service) selfPeer() raftnet.Peer {
-	return raftnet.Peer{NodeID: s.cfg.NodeID, Name: s.cfg.NodeName, Address: s.cfg.PeerAddress(), Pin: s.key.Pin(), Kind: raftnet.KindMember}
+	return raftnet.Peer{NodeID: s.cfg.NodeID, Name: s.cfg.NodeName, Address: s.cfg.PeerAddress(), Pin: s.key.Pin(), ConnPin: s.key.Pin(), Kind: raftnet.KindMember}
 }
 
-// rotationRefused undoes steps 1 and 2: node.key.next first, then
-// rotate.json. Nothing else changed.
-func (s *Service) rotationRefused(r RotateState, why string) {
-	if err := layout.RemoveFile(filepath.Join(s.dataDir, nodekey.NextKeyFile)); err != nil {
-		s.log.Error("key rotation refused, and node.key.next could not be deleted; the next start deletes it", "error", err)
+// rotationRefused turns a refused key-add into an abort (F2 of the 8b-2b
+// review). key-add has no barrier: after a change of leader a refusal can
+// come from a view that lacks an earlier attempt's entry, which may still
+// apply, and node.key.next would then be the only copy of a key the
+// cluster pins. So nothing is deleted on the refusal alone: phase aborting
+// is recorded first, then the abort step asks the leader (barrier, then
+// member.key_done keep old or not_added), and the files go only as an
+// abort deletes them. An abort whose answer does not come is asked again
+// every 10 s by the rotation step.
+func (s *Service) rotationRefused(ctx context.Context, r RotateState, why string) {
+	s.rotMu.Lock()
+	r.Phase = PhaseAborting
+	if err := writeRotate(s.dataDir, r); err != nil {
+		s.rotMu.Unlock()
+		s.log.Error("key rotation refused, and phase aborting could not be recorded; the rotation goes on and asks again", "error", err)
 		return
 	}
-	if s.rotateStepDone(rotStopAfterNextRm) {
-		return
-	}
-	if err := layout.RemoveFile(filepath.Join(s.dataDir, layout.RotateFile)); err != nil {
-		s.log.Error("key rotation refused, and rotate.json could not be deleted", "error", err)
-		return
-	}
-	s.setRotation(nil)
+	s.setRotation(&r)
+	s.mu.Lock()
+	s.nextRotate = s.now().Add(rotateRetry)
+	s.mu.Unlock()
+	s.rotMu.Unlock()
 	s.event(audit.EventKeyRotation, map[string]string{"step": "refused", "new_pin": r.NewPin, "op_id": r.OpID, "reason": why})
-	s.log.Warn("key rotation refused; nothing changed", "reason", why)
+	s.log.Warn("key rotation refused; it is aborted", "reason", why)
+	if s.rotateStepDone(rotStopAfterAbort) {
+		return
+	}
+	if err := s.abortStep(ctx, r, "system"); err != nil {
+		s.log.Info("key rotation: the abort's outcome is unknown; asking again in 10 s", "error", err)
+	}
 }
 
 // rotationEnded deletes what is left of a rotation that ended: the next
-// key (an abort), then rotate.json.
+// key (an abort), then rotate.json. node.key.next is never deleted while it
+// may be the only copy of a pinned key (F3 of the 8b-2b review): after an
+// abort only while node.key on disk has the old pin, after keep new only
+// once node.key on disk has the new pin.
 func (s *Service) rotationEnded(r RotateState, step string) {
+	pin, err := nodekey.FilePin(s.dataDir, nodekey.KeyFile)
+	switch {
+	case err != nil:
+		s.log.Error("key rotation ended, and node.key cannot be read; retrying", "error", err)
+		return
+	case step == "done" && pin != r.NewPin, step == "aborted" && pin == r.NewPin:
+		s.log.Error("key rotation ended, but node.key on disk does not have the pin it kept; node.key.next is kept", "step", step, "pin", pin)
+		return
+	}
 	if err := layout.RemoveFile(filepath.Join(s.dataDir, nodekey.NextKeyFile)); err != nil {
 		s.log.Error("key rotation ended, and node.key.next could not be deleted; retrying", "error", err)
 		return
@@ -414,7 +453,7 @@ func (s *Service) rotationEnded(r RotateState, step string) {
 		return
 	}
 	s.setRotation(nil)
-	pin := r.OldPin
+	pin = r.OldPin
 	if step == "done" {
 		pin = r.NewPin
 	}
@@ -426,6 +465,17 @@ func (s *Service) rotationEnded(r RotateState, step string) {
 func (s *Service) rotateStep(ctx context.Context) {
 	r := s.rotationState()
 	if r == nil || s.isFrozen() {
+		return
+	}
+	// F3 of the 8b-2b review: the accepted membership (the state
+	// machine's, or the applied-membership file's while the machine is
+	// behind it) already keeps only the new pin, and this node does not
+	// use it: a switch whose rename did not survive a crash. The others
+	// refuse the old key, so the machine may never catch up: switch now.
+	if s.key.Pin() != r.NewPin && r.Phase == PhaseRotating && s.keptNewPin(*r) {
+		s.rotMu.Lock()
+		s.switchKey(*r)
+		s.rotMu.Unlock()
 		return
 	}
 	view := s.machine.View()
@@ -468,7 +518,7 @@ func (s *Service) rotateStep(ctx context.Context) {
 		_, refusal, err := s.askKeyAdd(ctx, *r, "system")
 		switch {
 		case refusal != nil:
-			s.rotationRefused(*r, refusal.Message)
+			s.rotationRefused(ctx, *r, refusal.Message)
 		case err != nil:
 			s.log.Info("key rotation: the leader's answer is unknown; asking again in 10 s", "error", err)
 		}
@@ -489,6 +539,20 @@ func (s *Service) rotateStep(ctx context.Context) {
 		return
 	}
 	s.switchKey(*r)
+}
+
+// keptNewPin: the accepted membership lists this node with only r's new pin.
+func (s *Service) keptNewPin(r RotateState) bool {
+	a := s.acceptedNow()
+	if a.admission {
+		return false
+	}
+	for _, p := range a.peers {
+		if p.NodeID == s.cfg.NodeID && p.Kind != raftnet.KindPending {
+			return p.Pin == r.NewPin && p.NextPin == ""
+		}
+	}
+	return false
 }
 
 // due reports whether the rotation step may ask the leader now.
@@ -533,12 +597,26 @@ func (s *Service) keyAddWaits(view clusterstate.View, m clusterstate.Member) []s
 // diallers use it from their next handshake; open connections are closed.
 func (s *Service) switchKey(r RotateState) {
 	next := filepath.Join(s.dataDir, nodekey.NextKeyFile)
-	if err := os.Rename(next, filepath.Join(s.dataDir, nodekey.KeyFile)); err != nil {
-		s.log.Error("key rotation: renaming node.key.next failed; retrying", "error", err)
+	hasNext, err := layout.Exists(next)
+	if err != nil {
+		s.log.Error("key rotation: node.key.next cannot be checked; retrying", "error", err)
 		return
 	}
-	if err := layout.SyncDir(s.dataDir); err != nil {
-		s.log.Error("key rotation: fsync of the data directory failed after the rename", "error", err)
+	if hasNext {
+		if err := os.Rename(next, filepath.Join(s.dataDir, nodekey.KeyFile)); err != nil {
+			s.log.Error("key rotation: renaming node.key.next failed; retrying", "error", err)
+			return
+		}
+	} else if pin, err := nodekey.FilePin(s.dataDir, nodekey.KeyFile); err != nil || pin != r.NewPin {
+		// Neither the next key nor the new pin in node.key.
+		s.log.Error("key rotation: node.key.next is missing and node.key does not have the new pin", "pin", pin, "error", err)
+		return
+	}
+	// The switch is durable before the new key is used (F3 of the 8b-2b
+	// review): without the fsync, the next round syncs again.
+	if err := s.syncDir(s.dataDir); err != nil {
+		s.log.Error("key rotation: fsync of the data directory failed after the rename; the new key is not used yet, retrying", "error", err)
+		return
 	}
 	if s.rotateStepDone(rotStopAfterRename) {
 		return
@@ -677,7 +755,7 @@ func (s *Service) keyAbortAsLeader(from raftnet.Peer, req keyAbortRequest) (any,
 	if !ok {
 		return nil, refusedErr("this node is not a member")
 	}
-	if mem.NextPin != "" && from.Pin == mem.NextPin {
+	if mem.NextPin != "" && from.ConnPin == mem.NextPin {
 		return nil, refusedErr("this node already uses its new key; the rotation can no longer be aborted")
 	}
 	if mem.NextPin == req.NextPin {
@@ -700,8 +778,7 @@ func (s *Service) keyAbortAsLeader(from raftnet.Peer, req keyAbortRequest) (any,
 // proposeKeyDone is the leader's rotation step (after removals, before
 // expiries): member.key_done keep new for a member whose next pin every
 // member has applied (by each member's highest answered applied index) and
-// that the leader has seen use its new key in its most recent connection
-// to or from it.
+// that the leader has seen present its new key since this service started.
 func (s *Service) proposeKeyDone(view clusterstate.View) bool {
 	for _, m := range view.Members {
 		if m.NextPin == "" || m.State != clusterstate.StateMember {
@@ -725,14 +802,17 @@ func (s *Service) proposeKeyDone(view clusterstate.View) bool {
 	return false
 }
 
-// seenNewKey: the node (this one: its own key) last used its next pin.
+// seenNewKey: the node (this one: its own key) has presented its next pin
+// on an accepted connection since this service started (F4 of the 8b-2b
+// review: a later connection with the old key, which anyone holding the
+// old key can make, does not undo that).
 func (s *Service) seenNewKey(m clusterstate.Member) bool {
 	if m.ID == s.cfg.NodeID {
 		return s.key.Pin() == m.NextPin
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.seen[m.ID].pin == m.NextPin
+	return m.NextPin != "" && s.used[m.ID][m.NextPin]
 }
 
 // rotationProgress says, for each member with a next pin, what its

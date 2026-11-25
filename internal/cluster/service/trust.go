@@ -135,13 +135,18 @@ func (s *Service) ByPin(pin string) (raftnet.Peer, bool) {
 }
 
 // SawPin implements raftnet.PinObserver: which pin a node's last
-// successful connection to or from this node used.
+// successful connection to or from this node used (for status), and every
+// pin it has used since this service started (for the end of a rotation).
 func (s *Service) SawPin(nodeID, pin string) {
 	if nodeID == "" || pin == "" {
 		return
 	}
 	s.mu.Lock()
 	s.seen[nodeID] = pinSeen{pin: pin, at: s.now()}
+	if s.used[nodeID] == nil {
+		s.used[nodeID] = map[string]bool{}
+	}
+	s.used[nodeID][pin] = true
 	s.mu.Unlock()
 }
 

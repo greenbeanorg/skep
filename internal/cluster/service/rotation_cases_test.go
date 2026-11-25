@@ -128,9 +128,10 @@ func TestRotationAbortAfterSwitchRefused(t *testing.T) {
 	if _, err := x.svc.AbortRotation(context.Background(), "root"); opCode(err) != "refused" || !strings.Contains(err.Error(), "already uses its new key") {
 		t.Fatalf("abort after the switch: %v", err)
 	}
-	// The leader refuses an abort from the new key too.
+	// The leader refuses an abort from the new key too (the transport
+	// gives the member entry's pin as Pin and the key used as ConnPin).
 	leader := h.leader()
-	_, err = leader.svc.keyAbortAsLeader(raftnet.Peer{NodeID: x.id, Name: x.name, Pin: res.NewPin, Kind: raftnet.KindMember},
+	_, err = leader.svc.keyAbortAsLeader(raftnet.Peer{NodeID: x.id, Name: x.name, Pin: res.OldPin, ConnPin: res.NewPin, Kind: raftnet.KindMember},
 		keyAbortRequest{OpID: res.OpID, NextPin: res.NewPin, Actor: "root"})
 	if err == nil || !strings.Contains(err.Error(), "already uses its new key") {
 		t.Fatalf("leader: %v", err)

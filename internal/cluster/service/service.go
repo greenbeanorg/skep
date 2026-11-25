@@ -17,6 +17,7 @@ import (
 	"github.com/greenbeanorg/skep/internal/cluster/clusterconf"
 	"github.com/greenbeanorg/skep/internal/cluster/clusterstate"
 	"github.com/greenbeanorg/skep/internal/cluster/joinstate"
+	"github.com/greenbeanorg/skep/internal/cluster/layout"
 	"github.com/greenbeanorg/skep/internal/cluster/localapi"
 	"github.com/greenbeanorg/skep/internal/cluster/membership"
 	"github.com/greenbeanorg/skep/internal/cluster/nodekey"
@@ -145,6 +146,11 @@ type Service struct {
 	// seen is, per node, the pin its last successful connection to or
 	// from this node used (D1).
 	seen map[string]pinSeen
+	// used is, per node, every pin seen on an accepted connection to or
+	// from it since this service started (F4 of the 8b-2b review): once a
+	// node has presented its new key, it has switched for good, whatever
+	// a later connection with the old key says.
+	used map[string]map[string]bool
 	// rotation is this node's own key rotation (rotate.json), or nil.
 	rotation *RotateState
 	// nextRotate is when the rotation step next asks the leader.
@@ -158,6 +164,8 @@ type Service struct {
 	// node's rotation; returning true stops the node's rotation work
 	// there (a crash point).
 	afterRotateStep func(step string) bool
+	// syncDir fsyncs a directory (layout.SyncDir; a test makes it fail).
+	syncDir func(dir string) error
 	// noticeBusy is set while a removed notice is being checked.
 	noticeBusy bool
 	// runCtx is Run's context, for work started outside the step loop.
@@ -240,7 +248,8 @@ func New(o Options) *Service {
 	s := &Service{cfg: o.Config, key: o.Key, dataDir: o.DataDir, machine: o.Machine, writer: o.Writer,
 		now: o.Now, log: o.Logger, every: o.Interval, leaderInt: o.LeaderInterval, started: o.Now(),
 		join: o.Join, waits: map[string][]string{}, answers: map[string]statusResult{}, highest: map[string]uint64{}, removed: o.Removed,
-		clocks: map[string]clockSample{}, clockOp: raftnet.OpClock, audit: o.Audit, seen: map[string]pinSeen{}, rotation: o.Rotation}
+		clocks: map[string]clockSample{}, clockOp: raftnet.OpClock, audit: o.Audit, seen: map[string]pinSeen{}, used: map[string]map[string]bool{}, rotation: o.Rotation,
+		syncDir: layout.SyncDir}
 	s.caller = raftnet.Caller{NodeID: o.Config.NodeID, Certificate: s.certificate}
 	return s
 }
