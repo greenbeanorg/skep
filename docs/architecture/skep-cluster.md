@@ -4,7 +4,7 @@
 `skep-api`. It holds the node's cluster key, the cluster membership and
 the replicated store, and runs as its own unprivileged account. The design
 is [ADR 0013](../decisions/0013-clustering.md) with its amendments 1, 2
-and 3 (amendment 3 is Proposed with the 8b-2b PR); this page describes
+and 3 (amendment 3 Accepted with the 8b-2b PR); this page describes
 what is built.
 
 **Built so far:** every host is a one-node cluster (8a), and a host
@@ -529,6 +529,12 @@ directory, `fsync`, `rename`, `fsync` of the directory.
   the leader's own. Whenever the Raft term differs from the term of its
   last successful barrier it makes a barrier first (retried every second
   until one succeeds in the current term), and reads the state after it.
+  Until that barrier has succeeded, the leader answers the **peer
+  operations** (join, removal, key rotation) `unavailable` (amendment 3,
+  point 9; `notLeader` in `service/peer.go`): its view may lack entries
+  of earlier terms, and a join refused from a stale view records phase
+  `refused`, which sticks; `unavailable` makes the caller ask again. The
+  leader's local paths are unchanged.
   Then **one step per round** (the next round follows at the next tick
   after a step, otherwise after 10 s), in this order: a leader that is
   itself `removing` hands the leadership over (`LeadershipTransfer`);

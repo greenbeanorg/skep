@@ -17,10 +17,12 @@
   document and records what the build of removal, `leave --wipe`, `join
   --abandon` and `listen -none` changed or added to the accepted text;
   the passages it changes are marked "Amended (amendment 2)".
-- **Amendment 3 (2026-11-25)** is **Proposed**. It records the build of
+- **Amendment 3 (2026-11-25)** is **Accepted** (Andy, 2026-11-25, by
+  approving the merge of the step 8b-2b PR, with the review's fixes F1 to
+  F9 and V2 worked into it). It records the build of
   step 8b-2b (key rotation, the cannot-say byte, the per-node connection
   limit, clock health, the cluster audit) and adds the entry-version rule
-  to B5. Andy accepts it by approving the merge of the step 8b-2b PR.
+  to B5.
 - Date: 2026-11-23 (evaluation draft), 2026-11-24 (rewritten as the design)
 - Depends on: [ADR 0004](0004-privilege-boundary.md) (privilege boundary),
   [ADR 0005](0005-agent-task-engine.md) (task engine),
@@ -1940,11 +1942,12 @@ applied-membership file's rules, the trust model of B2 and the risk of
 amendment 1 point 6 (a member that was down during a removal still pins
 the removed node until it catches up; Skep 0.2 does not prevent it).
 
-## Amendment 3 (2026-11-25, Proposed)
+## Amendment 3 (2026-11-25, Accepted)
 
 Written with the build of step 8b-2b, from the fixed decisions D1–D6 the
-review chat gave that run. **Status: Proposed.** Andy accepts it by
-approving the merge of the step 8b-2b PR. It changes the accepted text
+review chat gave that run. **Status: Accepted** (Andy, 2026-11-25, by
+approving the merge of the step 8b-2b PR, with the review's fixes F1 to
+F9 and V2 worked into it). It changes the accepted text
 only where it says so. The facts it rests on are in
 [0013-evidence/8b2b-facts-20261125.md](0013-evidence/8b2b-facts-20261125.md).
 
@@ -2234,3 +2237,17 @@ exists and the accepted membership comes from `state/membership.json`
 listed. The file's format does not change. Before this, the lab saw a
 rejoined node stop replicating at a historical membership whose leader
 pin had been rotated away.
+
+### 9. A new leader answers peer operations only after its barrier (V2)
+
+**Amended (amendment 3): a leader answers the peer operations (join,
+removal, key rotation and the other leader-only RPCs) with
+`unavailable` until its barrier of the current term has succeeded**
+(V2 of the 8b-2b review; `service/peer.go` `notLeader`). Before that
+barrier its state machine may lack entries committed in earlier terms,
+and an answer computed from that stale view could be a refusal that
+sticks: a join refused with "no pending entry" or "expired" is recorded
+by the joining node as phase `refused`, which is final. `unavailable` is
+not final, and every caller asks again. The leader's local paths (its
+own leader loop, which makes that barrier first, and its local socket)
+are unchanged.
