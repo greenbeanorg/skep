@@ -18,6 +18,14 @@ import (
 	"github.com/greenbeanorg/skep/internal/cluster/store"
 )
 
+// stopAll stops every node before the test's temporary directories are
+// removed (they are cleaned up before the harness's own clean-up runs).
+func (h *harness) stopAll() {
+	for _, n := range h.nodes {
+		h.stop(n)
+	}
+}
+
 // peerOf is n as a raftnet.Peer (the sender of a notice).
 func peerOf(n *tnode) raftnet.Peer {
 	return raftnet.Peer{NodeID: n.id, Name: n.name, Address: n.cfg.PeerAddress(), Pin: n.key.Pin(), Kind: raftnet.KindMember}
@@ -40,6 +48,7 @@ func sendNotice(t *testing.T, from, x *tnode, clusterID string) {
 // confirmed by the members refusing the key.
 func TestRemovedNoticeIsChecked(t *testing.T) {
 	h := newHarness(t)
+	defer h.stopAll()
 	h.cluster("smith", "langrishe", "star")
 	leader := h.leader()
 	x := follower(h)
@@ -87,6 +96,7 @@ func TestRemovedNoticeIsChecked(t *testing.T) {
 // it is withdrawn and every member refuses the key, a notice is believed.
 func TestRemovedNoticeOnAJoiningNode(t *testing.T) {
 	h := newHarness(t)
+	defer h.stopAll()
 	h.cluster("smith", "langrishe")
 	leader := h.leader()
 	j := h.node("wu")
@@ -134,6 +144,7 @@ func TestRemovedNoticeOnAJoiningNode(t *testing.T) {
 // machine refuses a pending.create at apply.
 func TestNoAdmissionDuringARemoval(t *testing.T) {
 	h := newHarness(t)
+	defer h.stopAll()
 	h.cluster("a", "b", "c", "d")
 	leader := h.leader()
 	x := follower(h)
@@ -174,6 +185,7 @@ func TestNoAdmissionDuringARemoval(t *testing.T) {
 // removal's index, each saying which it is.
 func TestRemovalAppliedIsRemembered(t *testing.T) {
 	h := newHarness(t)
+	defer h.stopAll()
 	h.cluster("a", "b", "c", "d")
 	leader := h.leader()
 	x := follower(h)
@@ -218,6 +230,7 @@ func TestRemovalAppliedIsRemembered(t *testing.T) {
 // at once and the leader loop keeps its pace meanwhile.
 func TestStatusRoundDoesNotBlockTheStepLoop(t *testing.T) {
 	h := newHarness(t)
+	defer h.stopAll()
 	h.cluster("smith", "langrishe", "star")
 	leader := h.leader()
 	y := follower(h)
@@ -281,6 +294,7 @@ func TestStatusRoundDoesNotBlockTheStepLoop(t *testing.T) {
 // nothing either.
 func TestAbandonWithNothingToPutBack(t *testing.T) {
 	h := newHarness(t)
+	defer h.stopAll()
 	n := h.node("smith")
 	_, _, gn := ghost(t, "ghost", "127.0.88.9")
 	for _, standalone := range []string{"standalone.20260101T000000Z", "elsewhere"} {

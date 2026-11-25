@@ -421,8 +421,11 @@ func TestGhostSweep(t *testing.T) {
 		_, in := findServer(servers, ghostID)
 		return !in
 	})
-	if !strings.Contains(leader.logs.String(), "ghost removed") {
-		t.Fatal("the sweep was not logged")
+	// F9: "ghost removed" when RemoveServer returned no error; a call that
+	// returned an error although the change committed logs the failure,
+	// and the next round finds no ghost.
+	if l := leader.logs.String(); !strings.Contains(l, `event="ghost removed"`) && !strings.Contains(l, `event="ghost removal failed"`) {
+		t.Fatalf("the sweep was not logged:\n%s", l)
 	}
 }
 
