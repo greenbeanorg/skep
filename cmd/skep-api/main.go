@@ -27,11 +27,13 @@ import (
 	"github.com/greenbeanorg/skep/internal/apitls"
 	"github.com/greenbeanorg/skep/internal/audit"
 	"github.com/greenbeanorg/skep/internal/auth"
+	"github.com/greenbeanorg/skep/internal/cluster/userapi"
 	"github.com/greenbeanorg/skep/internal/config"
 	"github.com/greenbeanorg/skep/internal/database"
 	"github.com/greenbeanorg/skep/internal/logging"
 	"github.com/greenbeanorg/skep/internal/privdrop"
 	"github.com/greenbeanorg/skep/internal/termpass"
+	"github.com/greenbeanorg/skep/internal/usercopy"
 	"github.com/greenbeanorg/skep/internal/webui"
 	"github.com/greenbeanorg/skep/migrations"
 	"github.com/greenbeanorg/skep/pkg/models"
@@ -108,6 +110,7 @@ func runServer(ctx context.Context, args []string, e env) error {
 		dev         = flags.Bool("dev", false, "development mode: local data directory, text logs, debug level")
 		listen      = flags.String("listen", "", "listen address (default "+config.DefaultAPIListenAddress+")")
 		agentSocket = flags.String("agent-socket", "", "Unix socket of skep-agent (default "+config.DefaultSocketPath+")")
+		clusterSock = flags.String("cluster-socket", "", "Unix socket of skep-cluster (default "+config.DefaultClusterSocket+")")
 		dataDir     = flags.String("data-dir", "", "state directory")
 		logLevel    = flags.String("log-level", "", "debug, info, warn, or error")
 		logFormat   = flags.String("log-format", "", "json or text")
@@ -130,6 +133,7 @@ func runServer(ctx context.Context, args []string, e env) error {
 	overrides := config.APIOverrides{
 		ListenAddress: *listen,
 		AgentSocket:   *agentSocket,
+		ClusterSocket: *clusterSock,
 		DataDir:       *dataDir,
 		LogLevel:      *logLevel,
 		LogFormat:     *logFormat,
@@ -183,15 +187,26 @@ func runServer(ctx context.Context, args []string, e env) error {
 	if err != nil {
 		return err
 	}
+	// The users are the cluster's (step 8c-1): the copy in api.db is kept
+	// by a long poll of skep-cluster, and every change goes through it.
 	userStore := apidb.NewUserStore(db)
-	users := auth.NewUsers(userStore, hasher, access, log)
+	ucopy := usercopy.New(userStore, userapi.NewClient(cfg.ClusterSocket), log)
+	copyCtx, stopCopy := context.WithCancel(ctx)
+	copyDone := make(chan struct{})
+	go func() { defer close(copyDone); ucopy.Run(copyCtx) }()
+	defer func() {
+		stopCopy()
+		<-copyDone
+	}()
+	writer := usercopy.NewWriter(ucopy)
+	users := auth.NewUsers(userStore, writer, hasher, access, log)
 	throttle := auth.DefaultThrottleConfig()
 	throttle.PerAddress = cfg.Auth.Login.PerAddressPerMinute
 	throttle.FailuresBeforeDelay = cfg.Auth.Login.FailuresBeforeDelay
 	throttle.MaxDelay = cfg.Auth.Login.MaxDelay.Std()
 	throttle.PerUsername = cfg.Auth.Login.PerUsernameFailures
 	authn, err := auth.NewAuthenticator(auth.AuthenticatorOptions{
-		Users: userStore, Sessions: apidb.NewSessionStore(db), Hasher: hasher, Audit: access,
+		Users: userStore, Writer: writer, Sessions: apidb.NewSessionStore(db), Hasher: hasher, Audit: access,
 		Throttle: throttle,
 		Session: auth.SessionConfig{
 			IdleTimeout:     cfg.Auth.Session.IdleTimeout.Std(),
@@ -209,8 +224,11 @@ func runServer(ctx context.Context, args []string, e env) error {
 	if exists, err := users.AdminExists(ctx); err != nil {
 		return err
 	} else if !exists {
-		log.Warn("no administrator exists yet: nobody can log in. Create one on this host with " +
-			"'skep-api admin create --username NAME'")
+		log.Warn("this node's copy of the cluster's users has no administrator yet: nobody can log in. Once skep-cluster "+
+			"answers, create one on this host with 'skep-api admin create --username NAME'", "cluster_socket", cfg.ClusterSocket)
+	}
+	if cs, err := userStore.CopyState(ctx); err == nil && cs.Import == apidb.ImportPending {
+		log.Warn("this host's users are not yet the cluster's: user changes are refused until 'skep-api admin import-users' runs as root")
 	}
 	go authn.Run(ctx, sessionSweepInterval)
 
@@ -243,7 +261,7 @@ func runServer(ctx context.Context, args []string, e env) error {
 		<-archiveDone
 	}()
 
-	checks := map[string]models.HealthProbe{}
+	checks := map[string]models.HealthProbe{usercopy.CheckName: ucopy.Health}
 	if archive != nil {
 		checks[models.CheckAccessAuditArchive] = archive.Health
 	}

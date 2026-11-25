@@ -28,12 +28,15 @@ type Role struct {
 // User is an account. PasswordHash never leaves skep-api: the API layer
 // converts a User to its public form without it.
 type User struct {
-	ID                string
-	Username          string
-	DisplayName       string
-	PasswordHash      string
-	Role              Role
-	Disabled          bool
+	ID           string
+	Username     string
+	DisplayName  string
+	PasswordHash string
+	Role         Role
+	Disabled     bool
+	// CredentialEpoch is raised by a password change, a role change and
+	// a change of the disabled flag (step 8c-1, D6).
+	CredentialEpoch   uint64
 	LastLoginAt       *time.Time
 	PasswordChangedAt *time.Time
 	CreatedAt         time.Time
@@ -42,16 +45,6 @@ type User struct {
 
 // IsAdmin reports whether the user has the built-in admin role.
 func (u User) IsAdmin() bool { return u.Role.ID == RoleAdmin }
-
-// NewUserRecord is what the store needs to create a user.
-type NewUserRecord struct {
-	ID           string
-	Username     string
-	DisplayName  string
-	PasswordHash string
-	RoleID       string
-	At           time.Time
-}
 
 // UserUpdate changes a user. Nil fields are left as they are.
 type UserUpdate struct {
@@ -86,7 +79,28 @@ const (
 	CodeUsernameTaken = "username_taken"
 	CodeLastAdmin     = "last_admin"
 	CodeUnknownRole   = "unknown_role"
+	// CodeNoQuorum: a user write that cannot be committed, a login
+	// without quorum that is not an administrator's (step 8c-1, D17).
+	CodeNoQuorum = "no_quorum"
+	// CodeUsersImportPending: a user write on a host whose 0.1 users are
+	// not yet the cluster's (D14).
+	CodeUsersImportPending = "users_import_pending"
+	// CodeTooManyUsers: the cluster holds the most users it may (D7).
+	CodeTooManyUsers = "too_many_users"
 )
+
+// Outcomes of a user write that was not committed (details.outcome of
+// no_quorum).
+const (
+	OutcomeNotWritten       = "not_written"
+	OutcomeUnknown          = "unknown"
+	OutcomeWrittenNotSynced = "written_not_synced"
+)
+
+// NoQuorum returns the no_quorum error with its outcome.
+func NoQuorum(outcome, message string) *models.Error {
+	return &models.Error{Code: CodeNoQuorum, Message: message, Details: map[string]any{"outcome": outcome}}
+}
 
 var (
 	// ErrUsernameTaken is returned when a username already exists.
@@ -98,36 +112,49 @@ var (
 	ErrUnknownRole = &models.Error{Code: CodeUnknownRole, Message: "no such role"}
 )
 
-// UserStore persists users, roles, and (for revocation) their sessions.
-// The SQLite implementation is in internal/database. A missing user or
-// role is models.ErrNotFound.
+// UserStore reads the read copy of the cluster's users, and the roles,
+// from api.db (internal/apidb). A missing user or role is
+// models.ErrNotFound. Nothing in it changes a user: user writes go through
+// the cluster (UserWriter, step 8c-1).
 type UserStore interface {
-	// CreateUser returns ErrUsernameTaken or ErrUnknownRole when it
-	// applies.
-	CreateUser(ctx context.Context, u NewUserRecord) (User, error)
 	UserByName(ctx context.Context, username string) (User, error)
 	UserByID(ctx context.Context, id string) (User, error)
 	// ListUsers returns every user, ordered by username.
 	ListUsers(ctx context.Context) ([]User, error)
-	// UpdateUser applies upd and deletes the user's sessions in the same
-	// transaction when the role or the disabled flag changed. It returns
-	// ErrLastAdmin instead of disabling or demoting the only enabled
-	// administrator.
-	UpdateUser(ctx context.Context, id string, upd UserUpdate, at time.Time) (user User, changed UserChange, ended []EndedSession, err error)
-	// SetPassword stores a new hash and deletes the user's sessions in
-	// the same transaction.
-	SetPassword(ctx context.Context, id, hash string, at time.Time) ([]EndedSession, error)
-	// UpgradeHash replaces the hash of an unchanged password with one
-	// made with stronger parameters. Sessions are kept. It does nothing
-	// when the stored hash is no longer old.
-	UpgradeHash(ctx context.Context, id, old, hash string) error
-	// DeleteUser removes the user and its sessions. It returns
-	// ErrLastAdmin for the only enabled administrator.
-	DeleteUser(ctx context.Context, id string) (User, []EndedSession, error)
+	// RecordLogin stores the time of a login (a local column).
 	RecordLogin(ctx context.Context, id string, at time.Time) error
 	ListRoles(ctx context.Context) ([]Role, error)
 	// AdminExists reports whether an enabled administrator exists.
 	AdminExists(ctx context.Context) (bool, error)
+}
+
+// User entry types a UserWriter sends (the cluster's, step 8c-1).
+const (
+	WriteCreate   = "user.create"
+	WriteUpdate   = "user.update"
+	WritePassword = "user.password"
+	WriteRehash   = "user.rehash"
+	WriteDelete   = "user.delete"
+)
+
+// UserWrite is one user entry: its type, who asked for it, and its data
+// (without the time, which the cluster's leader writes).
+type UserWrite struct {
+	Type  string
+	Actor Actor
+	Data  any
+	// Timeout bounds the whole write; 0 is the writer's default.
+	Timeout time.Duration
+}
+
+// UserWriter sends user entries through the cluster. Write returns once the
+// local read copy reflects the entry, or an error: ErrUsernameTaken,
+// ErrLastAdmin, ErrUnknownRole, models.ErrNotFound, models.Invalid, a
+// no_quorum or users_import_pending error.
+type UserWriter interface {
+	Write(ctx context.Context, w UserWrite) error
+	// Quorum reports whether user writes can be committed now.
+	Quorum() bool
 }
 
 // UserChange says what an update changed, for the audit log and for

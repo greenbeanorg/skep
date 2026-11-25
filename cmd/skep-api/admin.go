@@ -5,13 +5,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/greenbeanorg/skep/internal/apidb"
 	"io"
 	"strings"
 	"time"
 
-	"github.com/greenbeanorg/skep/internal/audit"
+	"github.com/greenbeanorg/skep/internal/apidb"
 	"github.com/greenbeanorg/skep/internal/auth"
+	"github.com/greenbeanorg/skep/internal/cluster/userapi"
+	"github.com/greenbeanorg/skep/internal/usercopy"
 	"github.com/greenbeanorg/skep/internal/config"
 	"github.com/greenbeanorg/skep/internal/termpass"
 	"github.com/greenbeanorg/skep/pkg/models"
@@ -29,12 +30,17 @@ const adminUsage = `usage:
   skep-api admin exists --username NAME [flags]
         report whether a user exists, reading api.db without changing it;
         exit 0: it exists, 1: it does not, 2: error
+  skep-api admin list [flags]
+        list this node's users (name and role), reading api.db without changing it
+  skep-api admin import-users [--yes] [flags]
+        make this host's 0.1 users the cluster's (once, on an upgraded host)
   skep-api admin hash-benchmark [flags]
         measure how long one password hash takes on this host
 
 The password is never accepted as an argument or from the environment.
 With --password-stdin it is read from standard input (one line).
-The only enabled administrator can be neither disabled nor deleted.`
+The only enabled administrator can be neither disabled nor deleted.
+Every change goes through skep-cluster and needs its quorum.`
 
 // runAdmin dispatches the "admin" commands. They are the only way to
 // create the first administrator and the documented recovery for a lost
@@ -56,6 +62,10 @@ func runAdmin(ctx context.Context, args []string, e env) error {
 		return adminDelete(ctx, args[1:], e)
 	case "exists":
 		return adminExists(ctx, args[1:], e)
+	case "list":
+		return adminList(ctx, args[1:], e)
+	case "import-users":
+		return adminImportUsers(ctx, args[1:], e)
 	case "hash-benchmark":
 		return adminHashBenchmark(ctx, args[1:], e)
 	default:
@@ -111,7 +121,16 @@ func adminSetup(ctx context.Context, cfg config.API, e env) (*auth.Users, func()
 		db.Close()
 		return nil, nil, err
 	}
-	users := auth.NewUsers(apidb.NewUserStore(db), hasher, apidb.NewAccessLog(db), log)
+	// The users are the cluster's (step 8c-1): a change goes through
+	// skep-cluster, and the command brings this node's copy up to date
+	// itself. The copy is read once first, so that the checks below see
+	// the cluster's users; without quorum it stays as it is.
+	store := apidb.NewUserStore(db)
+	ucopy := usercopy.New(store, userapi.NewClient(cfg.ClusterSocket), log)
+	sctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	_ = ucopy.SyncOnce(sctx, 0)
+	cancel()
+	users := auth.NewUsers(store, usercopy.NewCommandWriter(ucopy), hasher, apidb.NewAccessLog(db), log)
 	return users, func() { db.Close() }, nil
 }
 
@@ -141,7 +160,7 @@ func adminCreate(ctx context.Context, args []string, e env) error {
 	if err != nil {
 		return err
 	}
-	user, err := users.Create(ctx, auth.Actor{Name: audit.LocalActor(e.uid)}, auth.NewUser{
+	user, err := users.Create(ctx, usercopy.LocalActor(e.uid), auth.NewUser{
 		Username: *username, DisplayName: *displayName, Password: password, RoleID: auth.RoleAdmin,
 	})
 	if err != nil {
@@ -178,7 +197,7 @@ func adminResetPassword(ctx context.Context, args []string, e env) error {
 	if err != nil {
 		return err
 	}
-	if err := users.SetPassword(ctx, auth.Actor{Name: audit.LocalActor(e.uid)}, user.ID, password); err != nil {
+	if err := users.SetPassword(ctx, usercopy.LocalActor(e.uid), user.ID, password); err != nil {
 		return err
 	}
 	fmt.Fprintf(e.stdout, "The password of %q was replaced and all of that user's sessions were ended.\n", user.Username)
@@ -230,7 +249,7 @@ func adminDisable(ctx context.Context, args []string, e env) error {
 		return nil
 	}
 	disabled := true
-	if _, err := users.Update(ctx, auth.Actor{Name: audit.LocalActor(e.uid)}, user.ID, auth.UserUpdate{Disabled: &disabled}); err != nil {
+	if _, err := users.Update(ctx, usercopy.LocalActor(e.uid), user.ID, auth.UserUpdate{Disabled: &disabled}); err != nil {
 		if errors.Is(err, auth.ErrLastAdmin) {
 			return lastAdminError(user.Username, "disabled")
 		}
@@ -266,7 +285,7 @@ func adminDelete(ctx context.Context, args []string, e env) error {
 		return fmt.Errorf("deleting %q (role %s) cannot be undone; run the command again with --yes to confirm",
 			user.Username, user.Role.Name)
 	}
-	if err := users.Delete(ctx, auth.Actor{Name: audit.LocalActor(e.uid)}, user.ID); err != nil {
+	if err := users.Delete(ctx, usercopy.LocalActor(e.uid), user.ID); err != nil {
 		if errors.Is(err, auth.ErrLastAdmin) {
 			return lastAdminError(user.Username, "deleted")
 		}

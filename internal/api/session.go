@@ -35,6 +35,10 @@ var statusForAuthCode = map[string]int{
 	auth.CodeUsernameTaken:      http.StatusConflict,
 	auth.CodeLastAdmin:          http.StatusConflict,
 	auth.CodeUnknownRole:        http.StatusBadRequest,
+	// Step 8c-1 (ADR 0013 amendment 4).
+	auth.CodeNoQuorum:           http.StatusServiceUnavailable,
+	auth.CodeUsersImportPending: http.StatusServiceUnavailable,
+	auth.CodeTooManyUsers:       http.StatusConflict,
 }
 
 func isUnauthenticated(err error) bool { return errors.Is(err, auth.ErrUnauthenticated) }
@@ -192,7 +196,7 @@ func (h *handler) sessionResponse(u auth.User, s auth.Session) models.SessionRes
 	return models.SessionResponse{
 		User: publicUser(u),
 		Session: models.SessionInfo{
-			Kind: string(s.Kind), CreatedAt: s.CreatedAt, ExpiresAt: s.ExpiresAt,
+			Kind: string(s.Kind), CreatedAt: s.CreatedAt, ExpiresAt: s.ExpiresAt, Degraded: s.Degraded,
 			IdleTimeoutSeconds: int64(h.auth.SessionLifetime().IdleTimeout / time.Second),
 		},
 		Permissions: perms,

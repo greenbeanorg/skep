@@ -27,6 +27,9 @@ const (
 	DefaultDevDataDir = ".skep-dev"
 	// DefaultSocketPath is the agent's Unix socket in production.
 	DefaultSocketPath = "/var/run/skep/agent.sock"
+	// DefaultClusterSocket is skep-cluster's local socket, which skep-api
+	// reads the replicated users from (step 8c-1).
+	DefaultClusterSocket = "/var/run/skep-cluster/cluster.sock"
 	// DevSocketPath is the agent's socket in dev mode, relative to the
 	// data directory.
 	DevSocketPath = "run/agent.sock"

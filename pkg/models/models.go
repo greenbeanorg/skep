@@ -352,6 +352,10 @@ type SessionInfo struct {
 	ExpiresAt time.Time `json:"expires_at"`
 	// IdleTimeoutSeconds is how long the session survives without use.
 	IdleTimeoutSeconds int64 `json:"idle_timeout_seconds"`
+	// Degraded is true for a session created while skep-cluster had no
+	// quorum (ADR 0013 amendment 4): it ends at most one hour after the
+	// login.
+	Degraded bool `json:"degraded"`
 }
 
 // SessionResponse is the body of a successful login and of

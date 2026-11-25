@@ -23,6 +23,11 @@ type Session struct {
 	ExpiresAt time.Time
 	SourceIP  string
 	UserAgent string
+	// CredentialEpoch is the user's epoch at the login: the session is
+	// valid only while it equals the user's (step 8c-1, D15).
+	CredentialEpoch uint64
+	// Degraded marks a login without quorum (D18): at most one hour.
+	Degraded bool
 }
 
 // SessionStore persists sessions. The SQLite implementation is in
@@ -54,6 +59,10 @@ const (
 	DefaultAbsoluteTimeout = 12 * time.Hour
 	MaxIdleTimeout         = 24 * time.Hour
 	MaxAbsoluteTimeout     = 30 * 24 * time.Hour
+	// DegradedLifetime bounds a session created without quorum (D18).
+	DegradedLifetime = time.Hour
+	// rehashTimeout bounds the hash upgrade at login (D19).
+	rehashTimeout = 2 * time.Second
 	// touchInterval is how often, at most, a session's last use is
 	// written.
 	touchInterval = time.Minute
@@ -122,7 +131,10 @@ func (id Identity) Actor(sourceIP, requestID string) Actor {
 
 // AuthenticatorOptions configures an Authenticator.
 type AuthenticatorOptions struct {
-	Users    UserStore
+	Users UserStore
+	// Writer sends the hash upgrade at login and says whether there is
+	// quorum (step 8c-1).
+	Writer   UserWriter
 	Sessions SessionStore
 	Hasher   *Hasher
 	Audit    AuditWriter
@@ -136,6 +148,7 @@ type AuthenticatorOptions struct {
 // Authenticator performs logins and checks sessions.
 type Authenticator struct {
 	users    UserStore
+	writer   UserWriter
 	sessions SessionStore
 	hasher   *Hasher
 	audit    AuditWriter
@@ -149,8 +162,8 @@ type Authenticator struct {
 
 // NewAuthenticator validates opts and returns an Authenticator.
 func NewAuthenticator(opts AuthenticatorOptions) (*Authenticator, error) {
-	if opts.Users == nil || opts.Sessions == nil || opts.Hasher == nil || opts.Audit == nil {
-		return nil, errors.New("auth: users, sessions, hasher, and audit are required")
+	if opts.Users == nil || opts.Writer == nil || opts.Sessions == nil || opts.Hasher == nil || opts.Audit == nil {
+		return nil, errors.New("auth: users, writer, sessions, hasher, and audit are required")
 	}
 	if opts.Session.IdleTimeout <= 0 || opts.Session.IdleTimeout > MaxIdleTimeout {
 		return nil, fmt.Errorf("auth: the idle timeout must be positive and at most %s", MaxIdleTimeout)
@@ -167,7 +180,7 @@ func NewAuthenticator(opts AuthenticatorOptions) (*Authenticator, error) {
 	throttle := NewThrottle(opts.Throttle)
 	throttle.now = opts.Now
 	return &Authenticator{
-		users: opts.Users, sessions: opts.Sessions, hasher: opts.Hasher, audit: opts.Audit,
+		users: opts.Users, writer: opts.Writer, sessions: opts.Sessions, hasher: opts.Hasher, audit: opts.Audit,
 		throttle: throttle, throttled: newThrottleLog(), cfg: opts.Session, log: opts.Logger, now: opts.Now,
 	}, nil
 }
@@ -230,11 +243,19 @@ func (a *Authenticator) Login(ctx context.Context, req LoginRequest) (LoginResul
 		return LoginResult{}, &RateLimitedError{RetryAfter: retry, Limit: limit}
 	}
 
+	// Quorum is read once, before anything else: the answer must not
+	// depend on what the password check found (D18).
+	quorum := a.writer.Quorum()
 	// Without an administrator nobody can log in, and saying so reveals
-	// nothing an attacker could use.
+	// nothing an attacker could use. An empty copy without quorum may be
+	// a copy that has not been filled yet: no_quorum, not setup_required.
 	if exists, err := a.users.AdminExists(ctx); err != nil {
 		return LoginResult{}, err
 	} else if !exists {
+		if !quorum {
+			refuse(audit.Failure, CodeNoQuorum, nil)
+			return LoginResult{}, NoQuorum(OutcomeNotWritten, "skep-cluster has no quorum and this node's copy of the users is empty; nobody can log in until it has")
+		}
 		refuse(audit.Failure, CodeSetupRequired, nil)
 		return LoginResult{}, ErrSetupRequired
 	}
@@ -281,11 +302,24 @@ func (a *Authenticator) Login(ctx context.Context, req LoginRequest) (LoginResul
 	a.throttle.Success(req.SourceIP, req.Username)
 	actor.ID = user.ID
 
-	if rehash {
+	// Without quorum (D18), checked only after the password: an enabled
+	// administrator of the copy gets a degraded session of at most an
+	// hour; anyone else with the right password gets no_quorum.
+	degraded := !quorum
+	if degraded && !user.IsAdmin() {
+		refuse(audit.Failure, CodeNoQuorum, nil)
+		a.log.Warn("login refused without quorum: only an administrator may log in now", "source_ip", req.SourceIP, "username", actor.Name)
+		return LoginResult{}, NoQuorum(OutcomeNotWritten, "skep-cluster has no quorum: only an administrator may log in now")
+	}
+
+	if rehash && !degraded {
 		// The stored hash uses weaker parameters than the current
-		// ones. The password is right, so it can be hashed again.
+		// ones. The password is right, so it can be hashed again; the
+		// new hash goes through the cluster (D19), within 2 s.
 		if stronger, err := a.hasher.Hash(ctx, req.Password); err == nil {
-			if err := a.users.UpgradeHash(ctx, user.ID, user.PasswordHash, stronger); err != nil {
+			err := a.writer.Write(ctx, UserWrite{Type: WriteRehash, Actor: Actor{ID: user.ID, Name: user.Username, RequestID: req.RequestID},
+				Data: map[string]any{"id": user.ID, "old_hash": user.PasswordHash, "new_hash": stronger}, Timeout: rehashTimeout})
+			if err != nil {
 				a.log.Warn("could not upgrade a password hash", "user_id", user.ID, "error", err)
 			} else {
 				a.log.Info("password hash upgraded to the current parameters", "user_id", user.ID)
@@ -309,6 +343,13 @@ func (a *Authenticator) Login(ctx context.Context, req LoginRequest) (LoginResul
 		ExpiresAt:  now.Add(a.cfg.AbsoluteTimeout),
 		SourceIP:   req.SourceIP,
 		UserAgent:  truncate(req.UserAgent, maxUserAgentLength),
+		// The epoch of the row the password was checked against: a
+		// change applied since makes the session invalid at once.
+		CredentialEpoch: user.CredentialEpoch,
+		Degraded:        degraded,
+	}
+	if degraded && sess.ExpiresAt.After(now.Add(DegradedLifetime)) {
+		sess.ExpiresAt = now.Add(DegradedLifetime)
 	}
 	if err := a.sessions.CreateSession(ctx, sess); err != nil {
 		return LoginResult{}, err
@@ -318,9 +359,9 @@ func (a *Authenticator) Login(ctx context.Context, req LoginRequest) (LoginResul
 	}
 	record(ctx, a.audit, a.log, actor, audit.AccessEntry{
 		Action: ActionLogin, ResourceType: "user", ResourceID: user.ID, Outcome: audit.Success,
-		Details: map[string]any{"session_kind": string(req.Kind)},
+		Details: map[string]any{"session_kind": string(req.Kind), "degraded": degraded},
 	})
-	a.log.Info("login", "user_id", user.ID, "username", user.Username, "session_kind", string(req.Kind), "source_ip", req.SourceIP)
+	a.log.Info("login", "degraded", degraded, "user_id", user.ID, "username", user.Username, "session_kind", string(req.Kind), "source_ip", req.SourceIP)
 	return LoginResult{Token: token, Session: sess, User: user}, nil
 }
 
@@ -375,7 +416,7 @@ func (a *Authenticator) authenticate(ctx context.Context, token string, kind Ses
 	if err != nil {
 		return Identity{}, err
 	}
-	if user.Disabled {
+	if user.Disabled || sess.CredentialEpoch != user.CredentialEpoch {
 		return Identity{}, ErrUnauthenticated
 	}
 	if touch && now.Sub(sess.LastSeenAt) >= touchInterval {
