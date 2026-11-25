@@ -17,6 +17,8 @@ Usage:
   8c1-api.py req HOST USER METHOD PATH [JSON] prints status and the body (no secrets)
   8c1-api.py health HOST                     prints the health document's cluster_users check
   8c1-api.py users HOST USER                 prints "id username role disabled" lines
+  8c1-api.py create HOST USER NAME PWFILE ROLE  creates a user, the password read from PWFILE
+  8c1-api.py setpw HOST USER ID PWFILE       sets a user's password from PWFILE
 """
 import json, os, ssl, subprocess, sys, time, urllib.error, urllib.request
 
@@ -119,6 +121,18 @@ def main():
             return
         for u in b["items"]:
             print(f"{u['id']} {u['username']} {u['role']} disabled={u['disabled']}")
+    elif cmd in ("create", "setpw"):
+        host, user, target, pwfile = sys.argv[2:6]
+        with open(pwfile) as f:
+            pw = f.read().strip()
+        if cmd == "create":
+            body, method, path = {"username": target, "password": pw, "role": sys.argv[6]}, "POST", "/users"
+        else:
+            body, method, path = {"password": pw}, "PUT", "/users/" + target
+        pw = None
+        st, b = call(host, method, path, body, tokens().get(host + "/" + user))
+        body = None
+        print(f"{host} {method} {path} as {user}: {st} {json.dumps(clean(b))[:600]}")
     else:
         sys.exit(__doc__)
 
