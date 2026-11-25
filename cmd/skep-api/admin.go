@@ -12,9 +12,9 @@ import (
 	"github.com/greenbeanorg/skep/internal/apidb"
 	"github.com/greenbeanorg/skep/internal/auth"
 	"github.com/greenbeanorg/skep/internal/cluster/userapi"
-	"github.com/greenbeanorg/skep/internal/usercopy"
 	"github.com/greenbeanorg/skep/internal/config"
 	"github.com/greenbeanorg/skep/internal/termpass"
+	"github.com/greenbeanorg/skep/internal/usercopy"
 	"github.com/greenbeanorg/skep/pkg/models"
 )
 

@@ -17,6 +17,7 @@ import (
 
 	"github.com/greenbeanorg/skep/internal/apidb"
 	"github.com/greenbeanorg/skep/internal/auth"
+	"github.com/greenbeanorg/skep/internal/cluster/clustertest"
 	"github.com/greenbeanorg/skep/internal/database"
 	"github.com/greenbeanorg/skep/migrations"
 )
@@ -30,6 +31,11 @@ type env struct {
 	users  *auth.Users
 	authn  *auth.Authenticator
 	access *apidb.AccessLog
+	// node is the real one-node skep-cluster the users live in (step
+	// 8c-1); stack is skep-api's copy of them; stop ends both.
+	node  *clustertest.Node
+	stack clustertest.Users
+	stop  func()
 	// tokens are bearer tokens of one user per built-in role.
 	tokens map[string]string
 	ids    map[string]string
@@ -58,14 +64,23 @@ func newEnv(dir string) (*env, error) {
 		return nil, err
 	}
 	e := &env{db: db, access: apidb.NewAccessLog(db), tokens: map[string]string{}, ids: map[string]string{}}
-	store := apidb.NewUserStore(db)
-	e.users = auth.NewUsers(store, hasher, e.access, quiet)
+	if e.node, err = clustertest.New(); err != nil {
+		return nil, err
+	}
+	var stopStack func()
+	if e.stack, stopStack, err = e.node.UserStack(db); err != nil {
+		e.node.Close()
+		return nil, err
+	}
+	e.stop = func() { stopStack(); e.node.Close() }
+	store := e.stack.Store
+	e.users = auth.NewUsers(store, e.stack.Writer, hasher, e.access, quiet)
 	throttle := auth.DefaultThrottleConfig()
 	// The tests log in often from one address; the limits themselves are
 	// tested in internal/auth and in TestLoginIsThrottled.
 	throttle.PerAddress = 1000
 	e.authn, err = auth.NewAuthenticator(auth.AuthenticatorOptions{
-		Users: store, Sessions: apidb.NewSessionStore(db), Hasher: hasher, Audit: e.access,
+		Users: store, Writer: e.stack.Writer, Sessions: apidb.NewSessionStore(db), Hasher: hasher, Audit: e.access,
 		Throttle: throttle,
 		Session:  auth.SessionConfig{IdleTimeout: auth.DefaultIdleTimeout, AbsoluteTimeout: auth.DefaultAbsoluteTimeout},
 		Logger:   quiet,
@@ -116,7 +131,7 @@ func freshEnv(t *testing.T) *env {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { e.db.Close() })
+	t.Cleanup(func() { e.stop(); e.db.Close() })
 	return e
 }
 
@@ -173,6 +188,21 @@ func (e *env) auditCount(t *testing.T, where string, args ...any) int {
 		t.Fatal(err)
 	}
 	return n
+}
+
+// createWithLocalRole creates a viewer through the cluster, then gives it a
+// role that exists only in this api.db, by hand. Roles are not replicated
+// (step 8c-1, D1): the cluster accepts only the built-in ones, and these
+// tests need a role with a chosen set of permissions.
+func (e *env) createWithLocalRole(ctx context.Context, username, roleID string) (auth.User, error) {
+	u, err := e.users.Create(ctx, auth.Actor{Name: "local:0"}, auth.NewUser{Username: username, Password: testPassword, RoleID: auth.RoleViewer})
+	if err != nil {
+		return auth.User{}, err
+	}
+	if _, err := e.db.ExecContext(ctx, `UPDATE users SET role_id = ? WHERE id = ?`, roleID, u.ID); err != nil {
+		return auth.User{}, err
+	}
+	return e.users.ByID(ctx, u.ID)
 }
 
 func quietLog() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }

@@ -486,7 +486,7 @@ func TestCloneNeedsBothPermissions(t *testing.T) {
 	if _, err := e.db.Exec(`INSERT INTO roles (id, name, permissions) VALUES ('writer', 'writer', '["vm:read","vm:write"]')`); err != nil {
 		t.Fatal(err)
 	}
-	u, err := e.users.Create(ctx, auth.Actor{Name: "local:0"}, auth.NewUser{Username: "writer1", Password: testPassword, RoleID: "writer"})
+	u, err := e.createWithLocalRole(ctx, "writer1", "writer")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -514,7 +514,7 @@ func TestContainerCloneNeedsBothPermissions(t *testing.T) {
 	if _, err := e.db.Exec(`INSERT INTO roles (id, name, permissions) VALUES ('ctrwriter', 'ctrwriter', '["container:read","container:write"]')`); err != nil {
 		t.Fatal(err)
 	}
-	u, err := e.users.Create(ctx, auth.Actor{Name: "local:0"}, auth.NewUser{Username: "ctrwriter1", Password: testPassword, RoleID: "ctrwriter"})
+	u, err := e.createWithLocalRole(ctx, "ctrwriter1", "ctrwriter")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -549,7 +549,7 @@ func TestContainerRollbackNeedsBothPermissions(t *testing.T) {
 		if _, err := e.db.Exec(`INSERT INTO roles (id, name, permissions) VALUES (?, ?, ?)`, rc.role, rc.role, rc.perms); err != nil {
 			t.Fatal(err)
 		}
-		u, err := e.users.Create(ctx, auth.Actor{Name: "local:0"}, auth.NewUser{Username: rc.role + "1", Password: testPassword, RoleID: rc.role})
+		u, err := e.createWithLocalRole(ctx, rc.role+"1", rc.role)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -581,7 +581,7 @@ func TestRemovingADiskNeedsVMDelete(t *testing.T) {
 	if _, err := e.db.Exec(`INSERT INTO roles (id, name, permissions) VALUES ('writer', 'writer', '["vm:read","vm:write"]')`); err != nil {
 		t.Fatal(err)
 	}
-	u, err := e.users.Create(ctx, auth.Actor{Name: "local:0"}, auth.NewUser{Username: "writer1", Password: testPassword, RoleID: "writer"})
+	u, err := e.createWithLocalRole(ctx, "writer1", "writer")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -622,7 +622,7 @@ func TestMetricsNeedVMAndStorageRead(t *testing.T) {
 	if _, err := e.db.Exec(`INSERT INTO roles (id, name, permissions) VALUES ('sys', 'sys', '["system:read"]')`); err != nil {
 		t.Fatal(err)
 	}
-	u, err := e.users.Create(ctx, auth.Actor{Name: "local:0"}, auth.NewUser{Username: "sys1", Password: testPassword, RoleID: "sys"})
+	u, err := e.createWithLocalRole(ctx, "sys1", "sys")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -641,7 +641,7 @@ func TestMetricsNeedVMAndStorageRead(t *testing.T) {
 	if _, err := e.db.Exec(`INSERT INTO roles (id, name, permissions) VALUES ('sys2', 'sys2', '["system:read","vm:read","storage:read"]')`); err != nil {
 		t.Fatal(err)
 	}
-	u2, err := e.users.Create(ctx, auth.Actor{Name: "local:0"}, auth.NewUser{Username: "sys2", Password: testPassword, RoleID: "sys2"})
+	u2, err := e.createWithLocalRole(ctx, "sys2", "sys2")
 	if err != nil {
 		t.Fatal(err)
 	}

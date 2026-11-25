@@ -3,6 +3,7 @@ package auth_test
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"github.com/greenbeanorg/skep/internal/apidb"
 	"io"
@@ -15,7 +16,9 @@ import (
 
 	"github.com/greenbeanorg/skep/internal/audit"
 	"github.com/greenbeanorg/skep/internal/auth"
+	"github.com/greenbeanorg/skep/internal/cluster/clustertest"
 	"github.com/greenbeanorg/skep/internal/database"
+	"github.com/greenbeanorg/skep/internal/usercopy"
 	"github.com/greenbeanorg/skep/migrations"
 	"github.com/greenbeanorg/skep/pkg/models"
 )
@@ -59,11 +62,15 @@ func (a *auditLog) reset() {
 type fixture struct {
 	db     *sql.DB
 	store  *apidb.UserStore
+	writer *usercopy.Writer
+	node   *clustertest.Node
 	hasher *auth.Hasher
 	audit  *auditLog
 	users  *auth.Users
 	authn  *auth.Authenticator
 	clock  *clock
+	// revokeMark is the last audit_log ID revocations returned.
+	revokeMark int64
 }
 
 // clock is a settable time source for session lifetimes and limits.
@@ -101,9 +108,13 @@ func newFixture(t *testing.T) *fixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f := &fixture{db: db, store: apidb.NewUserStore(db), hasher: hasher, audit: &auditLog{},
+	// A real one-node skep-cluster: user changes go through it (step
+	// 8c-1, D22).
+	node := clustertest.Start(t)
+	stack := node.Users(t, db)
+	f := &fixture{db: db, store: stack.Store, writer: stack.Writer, node: node, hasher: hasher, audit: &auditLog{},
 		clock: &clock{t: time.Now().UTC().Truncate(time.Millisecond)}}
-	f.users = auth.NewUsers(f.store, hasher, f.audit, quiet())
+	f.users = auth.NewUsers(f.store, f.writer, hasher, f.audit, quiet())
 	f.authn, err = auth.NewAuthenticator(f.authnOptions())
 	if err != nil {
 		t.Fatal(err)
@@ -113,7 +124,7 @@ func newFixture(t *testing.T) *fixture {
 
 func (f *fixture) authnOptions() auth.AuthenticatorOptions {
 	return auth.AuthenticatorOptions{
-		Users: f.store, Sessions: apidb.NewSessionStore(f.db), Hasher: f.hasher, Audit: f.audit,
+		Users: f.store, Writer: f.writer, Sessions: apidb.NewSessionStore(f.db), Hasher: f.hasher, Audit: f.audit,
 		Throttle: auth.DefaultThrottleConfig(),
 		Session:  auth.SessionConfig{IdleTimeout: auth.DefaultIdleTimeout, AbsoluteTimeout: auth.DefaultAbsoluteTimeout},
 		Logger:   quiet(), Now: f.clock.now,
@@ -145,6 +156,32 @@ func (f *fixture) addSession(t *testing.T, userID string, kind auth.SessionKind,
 		VALUES (?, ?, ?, ?, ?, ?, ?)`, auth.HashToken(token), userID, string(kind), now, now, now, ip); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// revocations returns the session.revoke entries the copy wrote to api.db
+// since the last call (step 8c-1: the copy's apply ends the sessions, as
+// the actor "system").
+func (f *fixture) revocations(t *testing.T) []audit.AccessEntry {
+	t.Helper()
+	rows, err := f.db.Query(`SELECT id, actor_name, COALESCE(resource_id, ''), COALESCE(details, '{}') FROM audit_log
+		WHERE action = ? AND id > ? ORDER BY id`, auth.ActionSessionRevoke, f.revokeMark)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var out []audit.AccessEntry
+	for rows.Next() {
+		var e audit.AccessEntry
+		var details string
+		if err := rows.Scan(&f.revokeMark, &e.ActorName, &e.ResourceID, &details); err != nil {
+			t.Fatal(err)
+		}
+		if err := json.Unmarshal([]byte(details), &e.Details); err != nil {
+			t.Fatal(err)
+		}
+		out = append(out, e)
+	}
+	return out
 }
 
 func (f *fixture) sessions(t *testing.T, userID string) int {
@@ -264,7 +301,7 @@ func TestSetPasswordEndsSessions(t *testing.T) {
 	}
 	// One revocation entry per session, with its kind, its address, and
 	// the cause.
-	revoked := f.audit.find(auth.ActionSessionRevoke)
+	revoked := f.revocations(t)
 	if len(revoked) != 2 {
 		t.Fatalf("revocations audited = %+v", revoked)
 	}
@@ -307,7 +344,7 @@ func TestUpdateUser(t *testing.T) {
 	if err != nil || got.Role.ID != auth.RoleOperator || f.sessions(t, u.ID) != 0 {
 		t.Fatalf("role: %+v, %v, sessions %d", got.Role, err, f.sessions(t, u.ID))
 	}
-	if r := f.audit.find(auth.ActionSessionRevoke); len(r) != 1 || r[0].Details["cause"] != auth.CauseRoleChange || r[0].ActorID != "admin-id" {
+	if r := f.revocations(t); len(r) != 1 || r[0].Details["cause"] != auth.CauseRoleChange || r[0].ActorName != "system" {
 		t.Errorf("revocation = %+v", r)
 	}
 	// Disabling ends them too.
@@ -318,7 +355,7 @@ func TestUpdateUser(t *testing.T) {
 	if err != nil || !got.Disabled || f.sessions(t, u.ID) != 0 {
 		t.Fatalf("disable: %+v, %v", got, err)
 	}
-	if r := f.audit.find(auth.ActionSessionRevoke); len(r) != 1 || r[0].Details["cause"] != auth.CauseUserDisabled {
+	if r := f.revocations(t); len(r) != 1 || r[0].Details["cause"] != auth.CauseUserDisabled {
 		t.Errorf("revocation = %+v", r)
 	}
 	if upd := f.audit.find(auth.ActionUserUpdate); len(upd) != 1 || upd[0].Details["disabled"] != true || upd[0].SourceIP != "192.0.2.1" {
@@ -395,7 +432,7 @@ func TestLastAdministratorIsProtected(t *testing.T) {
 	if f.sessions(t, only.ID) != 0 {
 		t.Error("the deleted user's session survived")
 	}
-	if r := f.audit.find(auth.ActionSessionRevoke); len(r) != 1 || r[0].Details["cause"] != auth.CauseUserDeleted {
+	if r := f.revocations(t); len(r) != 1 || r[0].Details["cause"] != auth.CauseUserDeleted {
 		t.Errorf("revocation = %+v", r)
 	}
 	if err := f.users.Delete(ctx, admin, "nope"); !errors.Is(err, models.ErrNotFound) {

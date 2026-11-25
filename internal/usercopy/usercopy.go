@@ -93,6 +93,9 @@ func (c *Copy) SyncOnce(ctx context.Context, wait time.Duration) error {
 	if c.facts.ClusterID != "" && c.facts.ClusterID != cs.ClusterID {
 		after = 0 // another cluster: ask without waiting on our index
 	}
+	if c.last.IsZero() || c.readErr != nil {
+		wait = 0 // no answer yet: quorum is not known until one comes
+	}
 	c.mu.Unlock()
 	ans, err := c.client.UsersRead(ctx, after, wait)
 	c.mu.Lock()

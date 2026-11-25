@@ -83,6 +83,10 @@ type Options struct {
 	// so that the library's start-up warnings do not reach the terminal;
 	// errors still come back as errors.
 	Quiet bool
+	// FastTimers shortens the library's heartbeat, election and lease
+	// timeouts to 50 ms, so that a one-node store elects itself at once.
+	// Only tests set it (package clustertest); skep-cluster never does.
+	FastTimers bool
 }
 
 // SnapshotThreshold is the library's default snapshot threshold, which
@@ -233,7 +237,11 @@ func Open(o Options) (*Node, error) {
 		// anything.
 		_, trans = raft.NewInmemTransport(raft.ServerAddress("local-" + o.NodeID))
 	}
-	r, err := raft.NewRaft(raftConfig(o.NodeID, o.Quiet), &fsm{machine: machine, log: o.Logger}, b.bolt, b.bolt, b.snaps, trans)
+	rc := raftConfig(o.NodeID, o.Quiet)
+	if o.FastTimers {
+		rc.HeartbeatTimeout, rc.ElectionTimeout, rc.LeaderLeaseTimeout = 50*time.Millisecond, 50*time.Millisecond, 50*time.Millisecond
+	}
+	r, err := raft.NewRaft(rc, &fsm{machine: machine, log: o.Logger}, b.bolt, b.bolt, b.snaps, trans)
 	if err != nil {
 		closeTransport(trans)
 		b.bolt.Close()

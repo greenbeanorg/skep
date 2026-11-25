@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/greenbeanorg/skep/internal/auth"
+	"github.com/greenbeanorg/skep/internal/cluster/clustertest"
 	"github.com/greenbeanorg/skep/internal/config"
 	"github.com/greenbeanorg/skep/internal/termpass"
 )
@@ -19,11 +20,14 @@ import (
 const testPassword = "correct horse battery staple"
 
 // fastConfig writes a configuration with the cheapest allowed Argon2id
-// parameters, so the tests do not spend their time hashing.
+// parameters, so the tests do not spend their time hashing, and the socket
+// of a real one-node skep-cluster that the test's users live in (step
+// 8c-1).
 func fastConfig(t *testing.T) string {
 	t.Helper()
+	node := clustertest.Start(t)
 	path := filepath.Join(t.TempDir(), "api.json")
-	if err := os.WriteFile(path, []byte(`{"auth": {"argon2": {"memory_kib": 19456, "passes": 2}}}`), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte(`{"auth": {"argon2": {"memory_kib": 19456, "passes": 2}}, "cluster_socket": "`+node.Socket+`"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	return path
@@ -241,7 +245,7 @@ func TestAdminResetPassword(t *testing.T) {
 	}
 	var set, revoked int
 	db.QueryRow(`SELECT COUNT(*) FROM audit_log WHERE action = 'user.password.set' AND actor_name = 'local:4242'`).Scan(&set)
-	db.QueryRow(`SELECT COUNT(*) FROM audit_log WHERE action = 'session.revoke' AND actor_name = 'local:4242' AND details LIKE '%password change%'`).Scan(&revoked)
+	db.QueryRow(`SELECT COUNT(*) FROM audit_log WHERE action = 'session.revoke' AND actor_name = 'system' AND details LIKE '%password change%'`).Scan(&revoked)
 	if set != 1 || revoked != 1 {
 		t.Errorf("audit: %d password entries, %d revocations", set, revoked)
 	}
@@ -382,7 +386,7 @@ func TestAdminDisable(t *testing.T) {
 	if n := countRows(t, db, `SELECT COUNT(*) FROM sessions WHERE user_id = ?`, andy.ID); n != 0 {
 		t.Error("the disabled user's session survived")
 	}
-	if n := countRows(t, db, `SELECT COUNT(*) FROM audit_log WHERE action = 'session.revoke' AND actor_name = 'local:4242' AND details LIKE '%user disabled%'`); n != 1 {
+	if n := countRows(t, db, `SELECT COUNT(*) FROM audit_log WHERE action = 'session.revoke' AND actor_name = 'system' AND details LIKE '%user disabled%'`); n != 1 {
 		t.Errorf("%d audited revocations, want 1", n)
 	}
 
