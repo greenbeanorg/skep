@@ -104,7 +104,7 @@ func TestClusterViewFollowsLocalapiStatus(t *testing.T) {
 }
 
 func TestCleanControlAndFormatCharacters(t *testing.T) {
-	if got := Clean("a\x1b[31mb‮c​d\ne"); got != "a?[31mb?c?d?e" {
+	if got := Clean("a\x1b[31mb\u202ec\u200bd\ne"); got != "a?[31mb?c?d?e" {
 		t.Fatalf("%q", got)
 	}
 }

@@ -3,7 +3,6 @@ package main
 import (
 	"os"
 	"os/exec"
-	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
@@ -13,11 +12,9 @@ import (
 // library; they learn about the cluster through skep-cluster's commands and
 // its socket. Checked for the development build and for FreeBSD.
 func TestNoRaftLibraryLinked(t *testing.T) {
-	gobin := filepath.Join(runtime.GOROOT(), "bin", "go")
-	if _, err := os.Stat(gobin); err != nil {
-		if gobin, err = exec.LookPath("go"); err != nil {
-			t.Fatal("no go command to list the dependencies with")
-		}
+	gobin, err := exec.LookPath("go")
+	if err != nil {
+		t.Fatal("no go command to list the dependencies with")
 	}
 	for _, goos := range []string{runtime.GOOS, "freebsd"} {
 		for _, cmd := range []string{"../skep-setup", "../skep-api"} {
