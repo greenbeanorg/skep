@@ -41,8 +41,8 @@ case2() {
 	C=$(cid $S)
 	h "2. langrishe: join -cluster-id $C"
 	on $L "sudo $SC join -cluster-id $C '$ADM'"; echo "exit=$?"
-	waitfor $L 90 'langrishe .* member, voter'
-	waitfor $S 60 'langrishe .* member, voter'
+	waitfor $L 90 'langrishe[^ ]* .*member, voter'
+	waitfor $S 60 'langrishe[^ ]* .*member, voter'
 	for x in $S $L; do h "2. state on $(name $x)"; status $x; memfile $x; done
 	rootfiles $S $L
 }
@@ -52,7 +52,7 @@ case3() {
 	h "3. smith: join-request refused (two servers)"
 	on $S "sudo $SC join-request -address 10.79.20.81"; echo "exit=$?"
 	h "3. smith: join refused (two servers), with an admission naming smith"
-	ADM=$($P admission -cluster-id $C -for "$(nodeid $S),smith,10.79.20.81:8444,$(pin $S)" -member "$(nodeid $L),langrishe,10.79.20.82:8444,$(pin $L)")
+	ADM=$($P admission -cluster-id $C -for "$(nodeid $S),$(field $S 'Node name'),10.79.20.81:8444,$(pin $S)" -member "$(nodeid $L),$(field $L 'Node name'),10.79.20.82:8444,$(pin $L)")
 	on $S "sudo $SC join -cluster-id $C '$ADM'"; echo "exit=$?"
 	waitfor $S 30 'Health: *ok'
 	h "3. langrishe stopped: admit on smith does not commit"
@@ -63,6 +63,16 @@ case3() {
 	on $L 'sudo service skep_cluster start'; waitfor $S 60 'Health: *ok'
 	h "3. pending entries after langrishe is back (nocommit must not be there)"
 	status $S | sed -n '/^Pending/,$p'
+}
+
+case3join() {
+	C=$(cid $S)
+	h "3. smith: join refused (two servers), with an admission naming smith"
+	ADM=$($P admission -cluster-id $C -for "$(nodeid $S),$(field $S 'Node name'),10.79.20.81:8444,$(pin $S)" -member "$(nodeid $L),$(field $L 'Node name'),10.79.20.82:8444,$(pin $L)")
+	on $S "sudo $SC join -cluster-id $C '$ADM'"; echo "exit=$?"
+	waitfor $S 30 'Health: *ok'
+	status $S | egrep '^Raft|^Members|member, voter'
+	rootfiles $S
 }
 
 case4() {
@@ -118,7 +128,7 @@ case5b() {
 	ADM2=$(cat /tmp/8b1-adm-t2.line)
 	status $S | sed -n '/^Pending/,/^Health/p'
 	on $T "sudo $SC join -cluster-id $C '$ADM2'"; echo "exit=$?"
-	waitfor $S 120 'star .* member, voter'
+	waitfor $S 120 'star[^ ]* .*member, voter'
 	for x in $S $L $T; do h "5'. state on $(name $x)"; status $x; memfile $x; done
 	rootfiles $S $L $T
 }

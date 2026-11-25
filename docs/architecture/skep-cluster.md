@@ -21,9 +21,13 @@ public API is unchanged.
 
 **Validated on FreeBSD:** step 8a on `smith` (2026-11-24, build `67396a5`,
 [record](../../tests/integration/cluster/results/8a-67396a5-20261124-smith.md)).
-Step 8b-1: see [the lab record](../../tests/integration/cluster/results/)
-`8b1-*`; everything below that the record does not name is unit-tested
-and tested in-process only (several nodes over real TLS on loopback).
+Step 8b-1 on `smith`, `langrishe` and `star` (2026-11-24, build `2de184b`,
+[record](../../tests/integration/cluster/results/8b1-2de184b-20261124.md)):
+three hosts joined into one cluster, the identity and refusal cases, a
+full stop and an expiry. What the record lists as in-process only (crash
+points, a member down during a join, unknown outcomes, the file's fault
+cases) is tested on several nodes over real TLS on loopback, not on
+FreeBSD.
 
 ## What exists
 
