@@ -15,7 +15,7 @@ file in the scratchpad, deleted at the end of the run), never printed.
 Usage:
   8c1-api.py login HOST USER PWFILE          prints status, degraded, minutes left
   8c1-api.py req HOST USER METHOD PATH [JSON] prints status and the body (no secrets)
-  8c1-api.py health HOST                     prints the health document's cluster_users check
+  8c1-api.py health HOST [USER]              prints the health document's cluster_users check
   8c1-api.py users HOST USER                 prints "id username role disabled" lines
   8c1-api.py create HOST USER NAME PWFILE ROLE  creates a user, the password read from PWFILE
   8c1-api.py setpw HOST USER ID PWFILE       sets a user's password from PWFILE
@@ -110,7 +110,8 @@ def main():
         print(f"{host} {method} {path} as {user}: {st} {json.dumps(clean(b))[:600]}")
     elif cmd == "health":
         host = sys.argv[2]
-        st, b = call(host, "GET", "/health")
+        tok = tokens().get(host + "/" + sys.argv[3]) if len(sys.argv) > 3 else None
+        st, b = call(host, "GET", "/health", None, tok)
         c = b.get("checks", {}).get("cluster_users") if isinstance(b, dict) else b
         print(f"{host} health: {st} status={b.get('status') if isinstance(b, dict) else '?'} cluster_users={json.dumps(c)}")
     elif cmd == "users":

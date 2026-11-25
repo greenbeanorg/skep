@@ -36,7 +36,7 @@ pw)
 a)
 	h "case a: before the import"
 	for x in smith langrishe star; do
-		api health $x
+		api health $x "$ADMIN"
 		v=ADMIN_$x; api login $x "${!v}" "$CREDS/$x-admin"
 		api create $x "${!v}" lab8c-refused "$LAB8C1_PW" viewer
 	done ;;
@@ -79,7 +79,7 @@ d)
 	api login $Xn "$TMPU" "$LAB8C1_PW"
 	lab svc $X skep_cluster stop
 	sleep 20
-	api health $Xn
+	api health $Xn "$ADMIN"
 	api create $Xn "$ADMIN" lab8c-nq "$LAB8C1_PW" viewer
 	api login $Xn "$ADMIN" "$CREDS/smith-admin"
 	id=$(uid_of $Ln "$TMPU")
@@ -93,7 +93,7 @@ d)
 	lab wait3
 	sleep 3
 	api req $Xn "$TMPU" GET /auth/session
-	api health $Xn
+	api health $Xn "$ADMIN"
 	api req $Ln "$ADMIN" DELETE /users/$id ;;
 e)
 	roles
@@ -101,7 +101,7 @@ e)
 	lab svc $R skep_cluster stop
 	lab svc $X skep_cluster stop
 	sleep 20
-	api health $Ln
+	api health $Ln "$ADMIN"
 	api create $Ln "$ADMIN" lab8c-nq "$LAB8C1_PW" viewer
 	api login $Ln "$ADMIN" "$CREDS/smith-admin"
 	lab svc $R skep_cluster start
@@ -122,7 +122,7 @@ f)
 	sleep 5
 	api req $Rn "$ADMIN" GET /auth/session | cut -c1-200
 	ssh -n -o BatchMode=yes aba@$R 'sudo skep-api admin list | wc -l'
-	api health $Rn ;;
+	api health $Rn "$ADMIN" ;;
 h)
 	h "case h: audit verify and the hash count on each node"
 	for x in $S $LG $T; do lab audit $x; lab hashes $x; done ;;
