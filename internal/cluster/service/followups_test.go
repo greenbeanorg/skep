@@ -210,14 +210,45 @@ func TestJoiningNodeIgnoresItsOldMemberEntry(t *testing.T) {
 	if a.source != "join answer" || len(a.peers) != 1 || a.peers[0].NodeID != other {
 		t.Fatalf("with its old entry only: %+v", a)
 	}
-	// The entry of this join, with its current key.
+	// An entry for this node with its current key but another join's
+	// operation ID is not this join's either (F1 of the 8b-2b review).
 	s2 := New(Options{Config: clusterconf.Config{NodeID: self, NodeName: "star"}, Key: key, Machine: clusterstate.New(), Join: js, Logger: discardLog()})
 	e, _ = clusterstate.NewEntry(clusterstate.TypeClusterInit, "init2", clusterstate.ActorSystem, self, clusterstate.ClusterInit{
 		ClusterID: "00000000-0000-4000-8000-0000000000cc",
-		Member:    clusterstate.Member{ID: self, Name: "star", Address: "127.0.0.1:8444", Pin: key.Pin(), State: clusterstate.StateMember}})
+		Member:    clusterstate.Member{ID: other, Name: "smith", Address: "127.0.0.2:8444", Pin: "sha256:" + strings.Repeat("d", 64), State: clusterstate.StateMember}})
 	raw, _ = e.Encode()
-	s2.machine.Apply(1, raw)
+	if r := s2.machine.Apply(1, raw); r.Err != nil {
+		t.Fatal(r.Err)
+	}
+	apply := func(i uint64, typ, op string, d any) {
+		t.Helper()
+		e, err := clusterstate.NewEntry(typ, op, "root", other, d)
+		if err != nil {
+			t.Fatal(err)
+		}
+		raw, _ := e.Encode()
+		if r := s2.machine.Apply(i, raw); r.Err != nil {
+			t.Fatal(r.Err)
+		}
+	}
+	far := time.Now().Add(time.Hour).Unix()
+	apply(2, clusterstate.TypePendingCreate, "p1", clusterstate.PendingCreate{NodeID: self, Name: "star", Address: "127.0.0.1:8444", Pin: key.Pin(), ExpiresAt: far})
+	apply(3, clusterstate.TypeMemberJoin, joinOpID(self, "an-older-join"), clusterstate.MemberJoin{NodeID: self, Pin: key.Pin(), At: time.Now().Unix()})
+	if a := s2.acceptedNow(); a.source != "join answer" {
+		t.Fatalf("with another join's entry and its current key: %+v", a)
+	}
+	// This join's entry (js.OpID "op"), with its current key.
+	s2.machine = clusterstate.New()
+	e, _ = clusterstate.NewEntry(clusterstate.TypeClusterInit, "init3", clusterstate.ActorSystem, other, clusterstate.ClusterInit{
+		ClusterID: "00000000-0000-4000-8000-0000000000cc",
+		Member:    clusterstate.Member{ID: other, Name: "smith", Address: "127.0.0.2:8444", Pin: "sha256:" + strings.Repeat("d", 64), State: clusterstate.StateMember}})
+	raw, _ = e.Encode()
+	if r := s2.machine.Apply(1, raw); r.Err != nil {
+		t.Fatal(r.Err)
+	}
+	apply(2, clusterstate.TypePendingCreate, "p2", clusterstate.PendingCreate{NodeID: self, Name: "star", Address: "127.0.0.1:8444", Pin: key.Pin(), ExpiresAt: far})
+	apply(3, clusterstate.TypeMemberJoin, joinOpID(self, "op"), clusterstate.MemberJoin{NodeID: self, Pin: key.Pin(), At: time.Now().Unix()})
 	if a := s2.acceptedNow(); a.source != "state machine" {
-		t.Fatalf("with its current key: %+v", a)
+		t.Fatalf("with this join's entry: %+v", a)
 	}
 }

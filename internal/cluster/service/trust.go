@@ -72,7 +72,7 @@ func (s *Service) acceptedNow() accepted {
 			}
 		}
 	}
-	if js := s.joinState(); js != nil && !s.listsSelf(a.peers) {
+	if js := s.joinState(); js != nil && !(a.source == "state machine" && s.listsSelf(view.Members, js)) {
 		if js.Phase == joinstate.PhaseRefused {
 			return accepted{admission: true, source: "none (the join was refused)"}
 		}
@@ -87,21 +87,24 @@ func (s *Service) acceptedNow() accepted {
 	return a
 }
 
-// listsSelf reports whether peers list this node with its current key.
-// A joining node that was a member of the same cluster before (removed,
-// wiped, joined again with its node ID) meets its old member entry, with
-// its old pin, in the log's history; that membership is the cluster's past
-// (other members' pins in it may have been rotated or wiped since), so the
-// joining node goes on accepting its admission's or answer's nodes until
-// it applies the entry of this join, which carries its current key (a wipe
-// always makes a new key).
-func (s *Service) listsSelf(peers []raftnet.Peer) bool {
-	if s.key == nil {
+// listsSelf reports whether the state machine's members list this node
+// for this join (F1 of the 8b-2b review): a member entry for this node
+// whose join_op is this join's member.join operation ID and whose pin or
+// next pin is the current key. A joining node that was a member of the
+// same cluster before (removed, abandoned or wiped, joined again with its
+// node ID, possibly with the same key) meets its older member entries in
+// the log's history; that membership is the cluster's past (other
+// members' pins in it may have been rotated or wiped since), so the node
+// goes on accepting its admission's or answer's nodes until it applies
+// this join's entry. While the machine is behind the applied-membership
+// file, the node is not listed (the file has no join_op).
+func (s *Service) listsSelf(members []clusterstate.Member, js *joinstate.State) bool {
+	if s.key == nil || js == nil || js.OpID == "" {
 		return false
 	}
-	pin := s.key.Pin()
-	for _, p := range peers {
-		if p.NodeID == s.cfg.NodeID && p.Kind != raftnet.KindPending && (p.Pin == pin || p.NextPin == pin) {
+	pin, op := s.key.Pin(), joinOpID(s.cfg.NodeID, js.OpID)
+	for _, m := range members {
+		if m.ID == s.cfg.NodeID && m.JoinOp == op && (m.Pin == pin || (m.NextPin != "" && m.NextPin == pin)) {
 			return true
 		}
 	}
