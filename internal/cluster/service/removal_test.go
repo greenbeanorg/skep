@@ -417,10 +417,13 @@ func TestGhostSweep(t *testing.T) {
 	leader.svc.mu.Lock()
 	leader.svc.frozen = false
 	leader.svc.mu.Unlock()
-	h.eventually("the ghost removed", 30*time.Second, func() bool {
+	// The latest configuration drops the ghost when RemoveServer is
+	// appended, before it commits and the sweep logs it: wait for both.
+	h.eventually("the ghost removed and the sweep logged", 30*time.Second, func() bool {
 		servers, _ := leader.st.Servers()
 		_, in := findServer(servers, ghostID)
-		return !in
+		l := leader.logs.String()
+		return !in && (strings.Contains(l, `event="ghost removed"`) || strings.Contains(l, `event="ghost removal failed"`))
 	})
 	// F9: "ghost removed" when RemoveServer returned no error; a call that
 	// returned an error although the change committed logs the failure,

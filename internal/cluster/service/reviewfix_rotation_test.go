@@ -54,15 +54,18 @@ func TestRefusedKeyAddIsAnAbort(t *testing.T) {
 		// node.key.next is kept while x's member entry still has the
 		// next pin.
 		stop := make(chan struct{})
+		watched := make(chan struct{})
 		bad := make(chan string, 1)
+		svc := x.svc
 		go func() {
+			defer close(watched)
 			for {
 				select {
 				case <-stop:
 					return
 				case <-time.After(5 * time.Millisecond):
 				}
-				if _, next := pinOn(x, x); next == res.NewPin && !fileExists(x.dir, nodekey.NextKeyFile) {
+				if m, _ := svc.machine.Member(x.id); m.NextPin == res.NewPin && !fileExists(x.dir, nodekey.NextKeyFile) {
 					select {
 					case bad <- "node.key.next deleted while the next pin is in x's member entry":
 					default:
@@ -77,6 +80,7 @@ func TestRefusedKeyAddIsAnAbort(t *testing.T) {
 				!fileExists(x.dir, nodekey.NextKeyFile) && !fileExists(x.dir, layout.RotateFile)
 		})
 		close(stop)
+		<-watched
 		select {
 		case msg := <-bad:
 			t.Fatal(msg)

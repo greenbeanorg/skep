@@ -112,6 +112,11 @@ func TestRejoinAfterAbandonWithTheSameKey(t *testing.T) {
 			h := newHarness(t)
 			defer h.stopAll()
 			h.cluster("smith", "langrishe", "star")
+			var down *tnode
+			if !promoted {
+				down = follower(h) // wu stays joining (its promotion waits)
+				h.stop(down)
+			}
 			j := h.node("wu")
 			h.start(j)
 			h.eventually("wu leads its one-node cluster", 20*time.Second, func() bool { return j.svc.machine.View().ClusterID != "" })
@@ -145,6 +150,7 @@ func TestRejoinAfterAbandonWithTheSameKey(t *testing.T) {
 				h.gone(j, 60*time.Second)
 				h.eventually("wu knows it was removed", 30*time.Second, func() bool { return removedMode(j) })
 				h.stop(j)
+				h.start(down)
 			}
 			if out := StageAbandon(j.dir, j.cfg, j.key, 3*time.Second); out.Outcome != "restored" {
 				t.Fatalf("abandon: %+v", out)
