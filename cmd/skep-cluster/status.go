@@ -119,6 +119,20 @@ func runStatus(ctx context.Context, args []string, e env) error {
 	if len(st.UnappliedRemoval) > 0 {
 		fmt.Fprintf(e.stdout, "Not yet applied the last removal: %s\n", termSafe(strings.Join(st.UnappliedRemoval, ", ")))
 	}
+	if len(st.Clocks) > 0 {
+		fmt.Fprintf(e.stdout, "Clocks (offset from this node, ± half the round trip):\n")
+		for _, c := range st.Clocks {
+			if !c.Known {
+				fmt.Fprintf(e.stdout, "  %s  not known (%s)\n", termSafe(c.Name), termSafe(c.Note))
+				continue
+			}
+			line := fmt.Sprintf("  %s  %+.3f s  ±%.3f s  round trip %d ms", termSafe(c.Name), float64(c.OffsetMillis)/1000, float64(c.UncertaintyMillis)/1000, c.RoundTripMillis)
+			if c.Note != "" {
+				line += "  (last attempt: " + termSafe(c.Note) + ")"
+			}
+			fmt.Fprintln(e.stdout, line)
+		}
+	}
 	if len(st.Pendings) > 0 {
 		fmt.Fprintf(e.stdout, "Pending admissions (%d):\n", len(st.Pendings))
 		for _, p := range st.Pendings {

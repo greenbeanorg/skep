@@ -346,10 +346,12 @@ func (s *Service) statusStep(ctx context.Context) {
 	members := s.roundMembers()
 	go func() {
 		res := s.statusRound(ctx, members)
+		clocks := s.clockRound(ctx, members, res)
 		s.mu.Lock()
 		s.answers = res
 		s.noteApplied(res)
 		s.noteKeyAnswers(res)
+		s.noteClocks(clocks)
 		s.statusBusy = false
 		s.firstRound = true
 		s.mu.Unlock()
@@ -397,6 +399,34 @@ func (s *Service) noteKeyAnswers(res map[string]statusResult) {
 	} else {
 		s.keyRefused = 0
 	}
+}
+
+// clockRound asks every member that answered the status round for its
+// clock, at once (D3). A member that did not answer status gets no sample
+// this round ("no answer").
+func (s *Service) clockRound(ctx context.Context, members []clusterstate.Member, res map[string]statusResult) map[string]clockSample {
+	out := map[string]clockSample{}
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	for _, m := range members {
+		if m.ID == s.cfg.NodeID {
+			continue
+		}
+		if r, ok := res[m.ID]; !ok || r.err != nil {
+			out[m.ID] = clockSample{unknown: "no answer"}
+			continue
+		}
+		wg.Add(1)
+		go func(m clusterstate.Member) {
+			defer wg.Done()
+			c := s.sampleClock(ctx, m)
+			mu.Lock()
+			out[m.ID] = c
+			mu.Unlock()
+		}(m)
+	}
+	wg.Wait()
+	return out
 }
 
 // noteApplied keeps, per member, the highest applied index it has ever

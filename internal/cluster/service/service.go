@@ -130,6 +130,11 @@ type Service struct {
 	// keyRefused counts the consecutive status rounds in which a member
 	// refused this node's key and none accepted it (D6 of step 8b-2b).
 	keyRefused int
+	// clocks is, per member, this node's last clock sample (D3).
+	clocks map[string]clockSample
+	// clockOp is the operation name of the clock request; a test sets an
+	// unknown one to get the answer a build without it gives.
+	clockOp string
 	// noticeBusy is set while a removed notice is being checked.
 	noticeBusy bool
 	// runCtx is Run's context, for work started outside the step loop.
@@ -211,7 +216,8 @@ func New(o Options) *Service {
 	}
 	s := &Service{cfg: o.Config, key: o.Key, dataDir: o.DataDir, machine: o.Machine, writer: o.Writer,
 		now: o.Now, log: o.Logger, every: o.Interval, leaderInt: o.LeaderInterval, started: o.Now(),
-		join: o.Join, waits: map[string][]string{}, answers: map[string]statusResult{}, highest: map[string]uint64{}, removed: o.Removed}
+		join: o.Join, waits: map[string][]string{}, answers: map[string]statusResult{}, highest: map[string]uint64{}, removed: o.Removed,
+		clocks: map[string]clockSample{}, clockOp: raftnet.OpClock}
 	s.caller = raftnet.Caller{NodeID: o.Config.NodeID, Certificate: s.certificate}
 	return s
 }
@@ -555,6 +561,10 @@ func (s *Service) Health(context.Context) models.Health {
 	}
 	h.Record("key_refused", false, problem)
 
+	// Clock offsets from this node's point of view (D3 of step 8b-2b).
+	problem, critical := s.clockProblem(view.Members)
+	h.Record("clock", critical, problem)
+
 	// This node's own join, while it is joining.
 	problem = ""
 	if js != nil {
@@ -634,6 +644,7 @@ func (s *Service) Status(context.Context) localapi.Status {
 		AcceptedBy:          s.acceptedNow().source,
 		Removals:            s.removalProgress(view),
 		UnappliedRemoval:    s.unappliedRemoval(view),
+		Clocks:              s.clockStatus(view.Members),
 		Build:               v.Version + "+" + v.Commit,
 	}
 	if servers, err := st.Servers(); err == nil {

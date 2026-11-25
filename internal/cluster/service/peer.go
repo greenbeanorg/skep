@@ -55,6 +55,8 @@ func (s *Service) HandlePeer(ctx context.Context, op string, from raftnet.Peer, 
 	case raftnet.OpStatus:
 		applied, stalled := s.machine.AppliedIndex()
 		return StatusAnswer{NodeID: s.cfg.NodeID, AppliedIndex: applied, Stalled: stalled}, nil
+	case raftnet.OpClock:
+		return ClockAnswer{NodeID: s.cfg.NodeID, UnixMillis: s.now().UnixMilli()}, nil
 	case raftnet.OpJoin:
 		var req JoinRequest
 		// The operation ID must be a lower-case UUID (a node ID's form).

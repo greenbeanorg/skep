@@ -76,6 +76,11 @@ const (
 	// OpRemoved is the best-effort notice a member sends a removed node
 	// (ADR 0013 B1, decision D11 of step 8b-2a).
 	OpRemoved = "removed"
+	// OpClock answers the node's clock in Unix milliseconds, for the
+	// clock-offset health check (D3 of step 8b-2b). It is its own
+	// operation, not a field of status, so that a node of an older build
+	// answers status as before and its clock reads "not known".
+	OpClock = "clock"
 )
 
 // Operation says which kinds of key may call an operation.
@@ -103,6 +108,8 @@ var Operations = []Operation{
 	// member does, so health on every member (the joiner included) names
 	// the member being waited for.
 	{Name: OpStatus, Joining: true, Member: true, Removing: true},
+	// Every key that may call status may ask for the clock.
+	{Name: OpClock, Joining: true, Member: true, Removing: true},
 	{Name: OpAdmit, Member: true},
 	{Name: OpWithdraw, Member: true},
 	{Name: OpRemove, Member: true},

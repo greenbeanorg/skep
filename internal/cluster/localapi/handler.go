@@ -179,7 +179,26 @@ type Status struct {
 	// UnappliedRemoval names the members that have not yet applied the
 	// last removal, from the last status round (decision D12).
 	UnappliedRemoval []string `json:"unapplied_removal,omitempty"`
-	Build            string   `json:"build"`
+	// Clocks is, per other member, its clock offset from this node's as
+	// the last status rounds measured it (D3 of step 8b-2b).
+	Clocks []ClockStatus `json:"clocks,omitempty"`
+	Build  string        `json:"build"`
+}
+
+// ClockStatus is one member's clock as this node measured it.
+type ClockStatus struct {
+	NodeID string `json:"node_id"`
+	Name   string `json:"name"`
+	// Known is false while there is no sample: none yet, a build
+	// without the clock operation, or no answer (Note says which).
+	Known bool `json:"known"`
+	// OffsetMillis is the member's time minus this node's, at the
+	// midpoint of the request; UncertaintyMillis is half the round trip.
+	OffsetMillis      int64     `json:"offset_ms,omitempty"`
+	UncertaintyMillis int64     `json:"uncertainty_ms,omitempty"`
+	RoundTripMillis   int64     `json:"round_trip_ms,omitempty"`
+	At                time.Time `json:"at,omitempty"`
+	Note              string    `json:"note,omitempty"`
 }
 
 // StateMachineStatus is the state machine's part of Status.
