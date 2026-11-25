@@ -367,7 +367,13 @@ func (h *harness) cluster(names ...string) []*tnode {
 			}
 			h.joined(n, 60*time.Second)
 		} else {
-			h.eventually(name+" leads its one-node cluster", 20*time.Second, func() bool { return n.st.IsLeader() })
+			// Leads, and its barrier of the term has succeeded: until
+			// then it answers peer operations "unavailable" (V2 of the
+			// 8b-2b review).
+			h.eventually(name+" leads its one-node cluster", 20*time.Second, func() bool {
+				_, notReady := n.svc.notLeader()
+				return n.st.IsLeader() && !notReady
+			})
 		}
 		out = append(out, n)
 	}
