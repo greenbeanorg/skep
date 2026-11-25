@@ -23,6 +23,12 @@
   step 8b-2b (key rotation, the cannot-say byte, the per-node connection
   limit, clock health, the cluster audit) and adds the entry-version rule
   to B5.
+- **Amendment 4 (2026-11-25)** is **Proposed**. It records what the
+  build of step 8c-1 (users in the replicated log, `skep-api`'s read copy,
+  degraded login, `skep-api admin` through the cluster, the import of a
+  0.1 host's users) changes in the accepted text, and splits step 8c into
+  8c-1 and 8c-2. It is at the end of this document; the passages it
+  changes are marked "Amended (amendment 4)".
 - Date: 2026-11-23 (evaluation draft), 2026-11-24 (rewritten as the design)
 - Depends on: [ADR 0004](0004-privilege-boundary.md) (privilege boundary),
   [ADR 0005](0005-agent-task-engine.md) (task engine),
@@ -1346,7 +1352,7 @@ green, and the lab test listed, on smith (UFS), langrishe (ZFS) and star
 |---|---|---|
 | 8a | `skep-cluster` skeleton: the `skep-cluster` account (fixed UID/GID, proposed by the run with ADR 0012's method and recorded in the PR), rc.d service, `/var/db/skep/cluster`, `cluster.json` (`root:skep-cluster`, `0640`); node key; node ID read from the agent by the root-run `init`; `init` without `-address` (every host a one-node cluster, Part C answer 10, with **no network listener**); `skep-cluster listen -address` opening port 8444 (B1); the Raft store with the library version pinned; type-and-version labels on every Skep entry (B5); a Unix socket with peer-credential check (`skep` and root, each operation naming which; the `skep-cluster` commands root runs use it); health | smith: init, restart, health; the socket refuses other UIDs; after `init` nothing listens on 8444; after `listen -address` it does, on that address only; `skep_agent`/`skep_api` untouched |
 | 8b | Join and trust (B1): `join-request`, `admit` (pending entries, expiry by log entry, withdrawal), `join` with the cluster confirmation, the one-node state moved aside and put back, the two records and their crash points, the listener's member-or-pending rule, the inbound handler with per-RPC identity and the upstream-comparison checklist, non-voter then automatic promotion once caught up and applied by every member, the applied-membership file and the state machine's applied index on the status RPC (amendment 1), remove with its `removing` step, `leave --wipe`, removal of a node that owns guests (B13), clock-offset health (B1), cluster audit (B10) | Three nodes; every identity test from the prototype; pending key limited to join; wrong and expired admissions; removal refused within one apply; removal with guests refused without `--forget-guests` |
-| 8c | Replicated identity: users and roles in the store, the API's read copy, credential epochs, degraded login without quorum or without `skep-cluster` (B9); `skep-api admin` through the cluster; the 0.1 migration of users and roles by `skep-setup upgrade` (B3) | Login on any node; password change revokes sessions on all; a cut-off node's login rules |
+| 8c | Replicated identity: users and roles in the store, the API's read copy, credential epochs, degraded login without quorum or without `skep-cluster` (B9); `skep-api admin` through the cluster; the 0.1 migration of users and roles by `skep-setup upgrade` (B3). **Amended (amendment 4):** users only (roles are not replicated), built in two steps: **8c-1** users in the log, the read copy, credential epochs, degraded login, `skep-api admin` through the cluster and the import of a 0.1 host's users as a command (`skep-api admin import-users`); **8c-2** `skep-setup` and `skep_cluster`, and admit, withdraw and remove in the public API | Login on any node; password change revokes sessions on all; a cut-off node's login rules |
 | 8d | Guest inventory and owner (A7): the owner's API publishes its guests; cluster-wide names; the agent's root-only, expiring drain operation with the reason `join` (B7, moved here from 8f because the join needs it); join with guests, the atomic name check and user replacement (B3); the agent's read of a task by idempotency key; automatic reconciliation by the owner (B8); a new guest entry owned by a `removing` member refused (amendment 1) | langrishe joins with guests; names unique; guests keep running; a failed create leaves no entry |
 | 8e | Forwarding (B8): the node-to-node listener on port 8445 with the pinned node-to-node keys, signed envelope verified in the receiving API and recorded in the agent's audit, re-authorization, `node_unreachable`, `node_clock_skew`, the versioned forwarding protocol and `node_version_mismatch` (B5); one view in the interface | A VM on langrishe managed from smith's interface; replay refused; the user-facing listener requests no client certificate and serves no forwarding path |
 | 8f | Drain (B7): the agent's refusal rule with both scopes, the upgrade drain (the root-only operation exists since 8d, here with the reason `upgrade` and the full refusal scopes), maintenance mode persisted in `agent.db`; `skep-setup upgrade` backs up the cluster store (root, `0600`) and drains | Upgrade a lab VM with a running task; kill setup mid-drain, drain expires; stops accepted in maintenance, refused in an upgrade drain |
@@ -2251,3 +2257,134 @@ by the joining node as phase `refused`, which is final. `unavailable` is
 not final, and every caller asks again. The leader's local paths (its
 own leader loop, which makes that barrier first, and its local socket)
 are unchanged.
+
+## Amendment 4 (2026-11-25, Proposed)
+
+Written with the build of step 8c-1, from the fixed decisions D1–D23 the
+review chat gave that run. **Status: Proposed.** It changes the accepted
+text only where it says so. The facts it rests on are in
+[0013-evidence/8c1-facts-20261125.md](0013-evidence/8c1-facts-20261125.md).
+
+### 1. Users are replicated; roles are not (D1)
+
+**Amended (amendment 4): A7's and B12's "users and roles" become users.**
+The three built-in roles (`admin`, `operator`, `viewer`) come from each
+build's `api.db` migrations, as today; a replicated user carries a role
+ID, one of those three. No role or permission row is replicated, and none
+changes in step 8c-1. A permission a later build adds to a built-in role
+reaches a node with that build's migration; a cluster of mixed builds
+can therefore grant a role different permissions on different nodes
+during an upgrade, which is the state of 0.1 between two hosts today.
+
+Six entry types, all version 1: `user.create`, `user.update`,
+`user.password`, `user.rehash` (applies only while the stored hash is
+still the old one, and changes nothing else), `user.delete` and
+`users.import`. The state machine checks every value and is the only
+authority (the ID a lower-case UUID, the username rule of
+`internal/auth`, kept equal by a test, a display name of at most 128
+characters without control characters, one of the three role IDs, a hash
+that starts with `$argon2id$` and is at most 512 bytes, unique usernames).
+A refusal carries a code as well as a text (`username_taken`,
+`last_admin`, `unknown_role`, `not_found`, `users_exist`, `hash_changed`,
+`too_many_users`, `invalid`).
+
+### 2. The last administrator (D4)
+
+**Amended (amendment 4): ADR 0006's last-administrator rule is decided by
+the state machine.** An entry that would leave no enabled user with the
+role `admin` is refused (`last_admin`), the same on every node. It no
+longer lives in `api.db` transactions, which can no longer change a user.
+
+### 3. Credential epochs (D6)
+
+**Amended (amendment 4): B9's epoch is raised by a password change, a role
+change and a change of the disabled flag; a delete removes the user and
+its epoch with it.** Each user's epoch starts at 1 and goes up by one
+with each of those. A display-name change and `user.rehash` (a stronger
+hash of the same password) do not raise it. A session stores the epoch
+at login and is valid only while it equals the user's.
+
+### 4. Limits (D7)
+
+At most 2000 users (`too_many_users`). An encoded `users.import` entry is
+at most 192 KiB; the command refuses a larger one before it sends
+anything (the node-to-node message limit is 256 KiB). An import larger
+than one entry is in the backlog.
+
+### 5. Operation IDs are forgotten (D8): B5, the third in-place change
+
+**Amended (amendment 4): an applied operation ID is forgotten once 100000
+log indexes have passed since the entry that applied it.** The decision
+is made from the entry's index alone, before that entry is checked for a
+duplicate, so every node forgets the same IDs at the same entry; snapshots
+carry what is still remembered. Without it the set of operation IDs grows
+for ever with every user write.
+
+This is the **third change to how existing entry types are applied that
+is made in place, in version 1, before the release** (B5, amendment 3's
+entry-version rule; the first two were the `pending.create` refusals of
+amendments 2 and 3). It is acceptable for the same reasons: no release
+contains it (0.2 is unreleased), and no existing log can hold an entry
+100000 indexes after another (the lab's logs hold a few hundred), so
+every node on any build applies every existing log the same way. From the
+0.2 release on, such a change is a new version.
+
+Snapshot format 5 is written only once the state holds a user or has
+forgotten an operation ID; otherwise the format is chosen as before, so an
+8b-2b build still reads a snapshot of a cluster without users. An 8b-2b
+build stalls at the first user entry (B5: stop, never skip): **every node
+is upgraded before the first user write**.
+
+### 6. The import only fills an empty cluster (D14)
+
+**Amended (amendment 4): B3's "0.1 migration of users" is the command
+`skep-api admin import-users`, and the import fills only a cluster without
+users.** Migration `api/0006` records whether a host had users
+(`pending`) or not (`not_needed`). While it is `pending`, logins work
+from the host's own rows and every user write is refused with `503
+users_import_pending`. The import records its operation ID in `api.db`
+before it sends the one `users.import` entry, and repeats it with the
+same ID while the outcome is unknown, so a rerun after a crash finishes.
+It is refused with `users_exist` once the cluster has a user: the
+command then lists the host's usernames, says that the cluster's users
+replace them, and with confirmation records `superseded`. In a cluster of
+several upgraded 0.1 hosts, the first import wins and every other host
+takes the cluster's users.
+
+### 7. The read copy never goes back (D15)
+
+**Amended (amendment 4): B9's read copy is `api.db`'s `users` table, with
+the cluster ID it belongs to and the index of the last entry that changed
+users.** For one cluster ID the copy never goes back to a lower users
+index (a restarted follower that has not caught up is not applied). A
+copy of another cluster (after a join or a wipe) replaces the users and
+deletes every session. A user whose epoch changed, or who is gone, loses
+every session in the same transaction, each one audited as
+`session.revoke` with the actor `system` and the cause. The only code that
+writes the replicated columns is the copy's apply function; the copy's
+rule after a restore of the cluster store (step 8g) is in the backlog.
+
+### 8. Two error codes
+
+Both approved by Andy for this step:
+
+- `503 no_quorum`: a user write that cannot be committed, with
+  `details.outcome` `not_written`, `unknown` or `written_not_synced`; a
+  login without quorum that is not an administrator's, and any login
+  while the copy is empty and there is no quorum.
+- `503 users_import_pending`: a user write on a host whose 0.1 users have
+  not been imported; the message names `skep-api admin import-users`.
+
+No quorum, for `skep-api`, is: the socket unreachable, the last answer
+older than 15 s, or an answer that says no leader, stalled, joining or
+removed. A cluster health document that is unavailable because of a clock
+is not read at all.
+
+### 9. 8c is built in two steps
+
+8c-1 (this amendment's build) and 8c-2 (`skep-setup` initialises,
+enables, restarts and backs up `skep_cluster`; admit, withdraw and remove
+in the public API with `cluster:manage`). Until 8c-2, a fresh install from
+`main` has no running `skep_cluster`, so nobody can log in to it (the
+release's known issues say so).
+
