@@ -772,10 +772,13 @@ func TestStartRuleLayoutAndLeftovers(t *testing.T) {
 		t.Fatal(err)
 	}
 	h.start(n)
-	h.eventually("the leftover deleted", 20*time.Second, func() bool { return len(standalones(t, n.dir)) == 0 })
-	if !strings.Contains(n.logs.String(), "a moved-aside one-node state left by a finished join was deleted") {
-		t.Fatal("no log line")
-	}
+	// The service deletes the directory and then logs it
+	// (removal.go, cleanStandalone): wait for both, or a check made
+	// between the two finds no line (the failure of run 45717751535).
+	const line = "a moved-aside one-node state left by a finished join was deleted"
+	h.eventually("the leftover deleted and logged", 20*time.Second, func() bool {
+		return len(standalones(t, n.dir)) == 0 && strings.Contains(n.logs.String(), line)
+	})
 }
 
 // D10: once an answer is accepted, a joining node accepts the answer's
