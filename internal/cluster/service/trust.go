@@ -2,6 +2,7 @@ package service
 
 import (
 	"github.com/greenbeanorg/skep/internal/cluster/clusterstate"
+	"github.com/greenbeanorg/skep/internal/cluster/peerlistener"
 	"github.com/greenbeanorg/skep/internal/cluster/joinstate"
 	"github.com/greenbeanorg/skep/internal/cluster/raftnet"
 )
@@ -144,4 +145,42 @@ func (s *Service) RaftServer(nodeID string, heartbeat bool) bool {
 func (s *Service) acceptPin(pin string) bool {
 	_, ok := s.ByPin(pin)
 	return ok
+}
+
+// cannotSay is the listener's "cannot say" rule (D2 of step 8b-2b): this
+// node cannot say whether it would accept a key it does not accept now
+// while its state machine is stopped, while the machine has not reached
+// the applied-membership file's index, or while it is a joining node
+// whose join was refused. A key over its connection limit gets the same
+// answer from the listener itself.
+func (s *Service) cannotSay() bool {
+	if s.machine == nil || s.isRemoved() {
+		return false
+	}
+	view := s.machine.View()
+	if view.Stalled != nil {
+		return true
+	}
+	if file := s.writer.Current(); file != nil && view.AppliedIndex < file.Index {
+		return true
+	}
+	if js := s.joinState(); js != nil && js.Phase == joinstate.PhaseRefused {
+		return true
+	}
+	return false
+}
+
+// connGroup is the listener's per-node limit (D5 of step 8b-2b): a member,
+// joining or removing key counts by its node ID (both pins of a rotating
+// node are one node), with MaxPerNode; a pending key by itself, with
+// MaxPerPending.
+func (s *Service) connGroup(pin string) (string, int) {
+	p, ok := s.ByPin(pin)
+	if !ok {
+		return "key:" + pin, peerlistener.MaxPerPending
+	}
+	if p.Kind == raftnet.KindPending {
+		return "pending:" + pin, peerlistener.MaxPerPending
+	}
+	return "node:" + p.NodeID, peerlistener.MaxPerNode
 }

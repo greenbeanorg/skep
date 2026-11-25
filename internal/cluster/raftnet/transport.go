@@ -325,7 +325,7 @@ func DialPinned(address, pin string, cert func() *tls.Certificate, timeout time.
 	// handshake has finished; its marker says it accepted the key.
 	if err := confirmAccepted(tc, timeout); err != nil {
 		_ = tc.Close()
-		return nil, &HandshakeError{Address: address, Err: err}
+		return nil, &HandshakeError{Address: address, Err: err, Answered: true}
 	}
 	_ = tc.SetDeadline(time.Time{})
 	return tc, nil
@@ -335,6 +335,41 @@ func DialPinned(address, pin string, cert func() *tls.Certificate, timeout time.
 type HandshakeError struct {
 	Address string
 	Err     error
+	// Answered is set when the TLS handshake with the expected key
+	// completed and the listener's first byte (or its refusal) was
+	// awaited: the node at the address is the one dialled.
+	Answered bool
+}
+
+// KeyAnswer classifies a connection's outcome as ProbeKey does: nil, an
+// error answer of a Skep RPC (*PeerError) or an unknown outcome after the
+// request was sent is ProbeAccepted; a refusal after a completed handshake is
+// ProbeRefused; the cannot-say byte is ProbeCannotSay; everything else,
+// a timeout included, is ProbeNoAnswer.
+func KeyAnswer(err error) string {
+	if err == nil {
+		return ProbeAccepted
+	}
+	var pe *PeerError
+	var ou *OutcomeUnknownError
+	if errors.As(err, &pe) || errors.As(err, &ou) {
+		return ProbeAccepted // the connection was accepted; the RPC failed later
+	}
+	var he *HandshakeError
+	if !errors.As(err, &he) {
+		return ProbeNoAnswer
+	}
+	if !he.Answered {
+		return ProbeNoAnswer
+	}
+	var ne net.Error
+	switch {
+	case errors.Is(he.Err, ErrCannotSay):
+		return ProbeCannotSay
+	case errors.As(he.Err, &ne) && ne.Timeout():
+		return ProbeNoAnswer
+	}
+	return ProbeRefused
 }
 
 func (e *HandshakeError) Error() string {

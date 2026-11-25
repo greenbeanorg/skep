@@ -26,6 +26,11 @@ const (
 	// client could not tell a refused key from an accepted one before it
 	// sent something.
 	acceptedMarker byte = 0x01
+	// cannotSayMarker is the byte a listener sends, then closes, when it
+	// does not accept the key and cannot say whether it would (step
+	// 8b-2b, D2; peerlistener.CannotSay). Every dialler treats it as a
+	// failed connection; ProbeKey reports ProbeCannotSay.
+	cannotSayMarker byte = 0x02
 	// maxPeerMessage bounds a Skep RPC request or answer.
 	maxPeerMessage = 256 << 10
 	// PeerTimeout bounds one Skep RPC, the join call's write through the
@@ -181,6 +186,11 @@ func (t *Transport) servePeerRPC(conn net.Conn, r *bufio.Reader, pin string) {
 	answer(peerResponse{OK: true, Body: body})
 }
 
+// ErrCannotSay is the error of a connection whose listener answered that
+// it cannot say whether it accepts this node's key (D2).
+var ErrCannotSay = errors.New("the node cannot say now whether it accepts this key (its state machine is stopped or behind, " +
+	"its join was refused, or the key is over its connection limit)")
+
 // confirmAccepted reads the listener's accepted marker. Until it has come,
 // nothing is sent.
 func confirmAccepted(tc *tls.Conn, timeout time.Duration) error {
@@ -188,6 +198,9 @@ func confirmAccepted(tc *tls.Conn, timeout time.Duration) error {
 	var b [1]byte
 	if _, err := io.ReadFull(tc, b[:]); err != nil {
 		return err
+	}
+	if b[0] == cannotSayMarker {
+		return ErrCannotSay
 	}
 	if b[0] != acceptedMarker {
 		return fmt.Errorf("unexpected first byte %#x from the listener", b[0])

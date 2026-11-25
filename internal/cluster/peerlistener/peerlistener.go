@@ -27,6 +27,25 @@ const (
 	maxHandshakes = 64
 	// MaxConnections bounds the accepted connections open at once.
 	MaxConnections = 256
+	// MaxPerNode bounds the accepted connections of one member node (a
+	// member, joining or removing key; both pins of a rotating node count
+	// as one node). Normal use is far below it: the Raft pool keeps 3
+	// connections per peer, plus one status call and one heartbeat
+	// connection at a time.
+	MaxPerNode = 16
+	// MaxPerPending bounds the accepted connections of one pending key,
+	// which may only make the join call.
+	MaxPerPending = 4
+	// CannotSay is the one byte the listener sends, after the handshake,
+	// in place of a silent close when it cannot say whether it would
+	// accept the key: its state machine is stopped or has not reached
+	// the applied-membership file's index, it is a joining node whose
+	// join was refused, or the key is over its connection limit (step
+	// 8b-2b, D2). It then closes. A silent close means "this node is up to
+	// date and refuses this key".
+	CannotSay byte = 0x02
+	// writeTimeout bounds writing the cannot-say byte.
+	writeTimeout = 5 * time.Second
 )
 
 // Options configures the listener.
@@ -48,6 +67,13 @@ type Options struct {
 	Keep func(pin string) bool
 	// Handle serves an accepted connection. Nil closes it at once.
 	Handle func(conn *tls.Conn, pin string)
+	// CannotSay reports whether this node cannot now say whether it
+	// would accept a key it does not accept (D2). Nil: never.
+	CannotSay func() bool
+	// Group returns the node a key belongs to, for the per-node limit,
+	// and that node's limit (MaxPerNode or MaxPerPending). Both pins of a
+	// rotating node give the same group. Nil: no per-node limit.
+	Group func(pin string) (group string, limit int)
 	// Now defaults to time.Now.
 	Now func() time.Time
 	// Logger defaults to slog.Default().
@@ -63,8 +89,14 @@ type Listener struct {
 	sem  chan struct{}
 
 	mu     sync.Mutex
-	conns  map[*tls.Conn]string
+	conns  map[*tls.Conn]connInfo
 	closed bool
+}
+
+// connInfo is what the listener keeps of an open connection.
+type connInfo struct {
+	pin   string
+	group string
 }
 
 // errNotPinned is the handshake failure for a key outside the membership.
@@ -105,7 +137,10 @@ func TLSConfig(o Options) *tls.Config {
 			if t := now(); t.Before(leaf.NotBefore) || t.After(leaf.NotAfter) {
 				return errors.New("the client certificate is expired or not yet valid")
 			}
-			if !o.Accept(nodekey.PinOfCertificate(leaf)) {
+			// A key that is not accepted is refused in the handshake,
+			// unless this node cannot say: then the handshake completes
+			// so that the cannot-say byte can be sent (serve).
+			if !o.Accept(nodekey.PinOfCertificate(leaf)) && (o.CannotSay == nil || !o.CannotSay()) {
 				return errNotPinned
 			}
 			return nil
@@ -132,7 +167,7 @@ func Listen(o Options) (*Listener, error) {
 	if err != nil {
 		return nil, fmt.Errorf("peerlistener: %w", err)
 	}
-	l := &Listener{ln: ln, conf: TLSConfig(o), opts: o, sem: make(chan struct{}, maxHandshakes), conns: map[*tls.Conn]string{}}
+	l := &Listener{ln: ln, conf: TLSConfig(o), opts: o, sem: make(chan struct{}, maxHandshakes), conns: map[*tls.Conn]connInfo{}}
 	l.wg.Add(1)
 	go l.accept()
 	return l, nil
@@ -169,8 +204,8 @@ func (l *Listener) Revalidate() int {
 	}
 	l.mu.Lock()
 	var drop []*tls.Conn
-	for c, pin := range l.conns {
-		if !keep(pin) {
+	for c, info := range l.conns {
+		if !keep(info.pin) {
 			drop = append(drop, c)
 		}
 	}
@@ -187,6 +222,25 @@ func (l *Listener) Open() int {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return len(l.conns)
+}
+
+// OpenPerGroup returns the accepted connections open now, per node (the
+// groups of Options.Group).
+func (l *Listener) OpenPerGroup() map[string]int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	out := map[string]int{}
+	for _, info := range l.conns {
+		out[info.group]++
+	}
+	return out
+}
+
+// sendCannotSay writes the cannot-say byte and closes the connection.
+func sendCannotSay(tc *tls.Conn) {
+	_ = tc.SetWriteDeadline(time.Now().Add(writeTimeout))
+	_, _ = tc.Write([]byte{CannotSay})
+	_ = tc.Close()
 }
 
 func (l *Listener) accept() {
@@ -227,6 +281,24 @@ func (l *Listener) serve(c net.Conn) {
 		return
 	}
 	pin := nodekey.PinOfCertificate(tc.ConnectionState().PeerCertificates[0])
+	// The handshake let the key through. Asked again: it may be a key the
+	// node does not accept and cannot say about (D2), or the membership
+	// may have changed since.
+	if !l.opts.Accept(pin) {
+		if l.opts.CannotSay != nil && l.opts.CannotSay() {
+			l.opts.Logger.Info("node listener: a key this node does not accept now, and it cannot say whether it would; answered cannot-say",
+				"remote", c.RemoteAddr().String(), "pin", pin)
+			sendCannotSay(tc)
+			return
+		}
+		l.opts.Logger.Warn("node listener: connection refused after the handshake: the key is not accepted", "remote", c.RemoteAddr().String(), "pin", pin)
+		_ = tc.Close()
+		return
+	}
+	group, limit := pin, 0
+	if l.opts.Group != nil {
+		group, limit = l.opts.Group(pin)
+	}
 	l.mu.Lock()
 	if l.closed {
 		l.mu.Unlock()
@@ -239,7 +311,23 @@ func (l *Listener) serve(c net.Conn) {
 		_ = tc.Close()
 		return
 	}
-	l.conns[tc] = pin
+	if limit > 0 {
+		n := 0
+		for _, info := range l.conns {
+			if info.group == group {
+				n++
+			}
+		}
+		if n >= limit {
+			l.mu.Unlock()
+			// Connections already open are not touched.
+			l.opts.Logger.Warn("node listener: this node's key is over its connection limit; answered cannot-say",
+				"remote", c.RemoteAddr().String(), "pin", pin, "open", n, "limit", limit)
+			sendCannotSay(tc)
+			return
+		}
+	}
+	l.conns[tc] = connInfo{pin: pin, group: group}
 	l.mu.Unlock()
 	defer func() {
 		l.mu.Lock()

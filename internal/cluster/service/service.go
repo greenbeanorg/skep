@@ -127,6 +127,9 @@ type Service struct {
 	// started has ended; until then removal_applied says nothing (every
 	// member would read "no answer since this node started").
 	firstRound bool
+	// keyRefused counts the consecutive status rounds in which a member
+	// refused this node's key and none accepted it (D6 of step 8b-2b).
+	keyRefused int
 	// noticeBusy is set while a removed notice is being checked.
 	noticeBusy bool
 	// runCtx is Run's context, for work started outside the step loop.
@@ -391,6 +394,8 @@ func (s *Service) ensureListener() {
 			Certificate: s.certificate,
 			Accept:      s.acceptPin,
 			Keep:        s.keepPin,
+			CannotSay:   s.cannotSay,
+			Group:       s.connGroup,
 			Handle:      handle,
 			Now:         s.now,
 			Logger:      s.log,
@@ -533,6 +538,22 @@ func (s *Service) Health(context.Context) models.Health {
 			". A member that was down while a compromised node was removed must be wiped (\"skep-cluster leave --wipe\") before it returns"
 	}
 	h.Record("removal_applied", false, problem)
+
+	// Every member that answers refuses this node's key (D6 of step
+	// 8b-2b): a warning only; the node never enters removed mode for it.
+	problem = ""
+	s.mu.Lock()
+	refusedRounds := s.keyRefused
+	s.mu.Unlock()
+	if refusedRounds >= keyRefusedRounds {
+		next := "\"skep-cluster leave --wipe\""
+		if js != nil {
+			next = "\"skep-cluster join --abandon\""
+		}
+		problem = fmt.Sprintf("every member that answers refuses this node's key (%d status rounds in a row); it was probably removed while it was down. Run %s as root",
+			refusedRounds, next)
+	}
+	h.Record("key_refused", false, problem)
 
 	// This node's own join, while it is joining.
 	problem = ""

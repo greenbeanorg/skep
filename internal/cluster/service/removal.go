@@ -320,6 +320,10 @@ type statusResult struct {
 	stalled bool
 	err     error
 	at      time.Time
+	// key is what the member's listener answered to this node's key
+	// (raftnet.KeyAnswer of the status call): accepted, refused, cannot
+	// say or no answer.
+	key string
 }
 
 // statusStep is the status round every node runs every LeaderInterval
@@ -339,16 +343,60 @@ func (s *Service) statusStep(ctx context.Context) {
 	s.mu.Unlock()
 	// In its own goroutine, so that the once-a-second work is not held
 	// for statusTimeout while a member does not answer.
-	members := s.machine.View().Members
+	members := s.roundMembers()
 	go func() {
 		res := s.statusRound(ctx, members)
 		s.mu.Lock()
 		s.answers = res
 		s.noteApplied(res)
+		s.noteKeyAnswers(res)
 		s.statusBusy = false
 		s.firstRound = true
 		s.mu.Unlock()
 	}()
+}
+
+// roundMembers are the members a status round asks: the state machine's,
+// or, while it has none yet (a restart before the first entries are
+// applied), the applied-membership file's (D6 of step 8b-2b).
+func (s *Service) roundMembers() []clusterstate.Member {
+	members := s.machine.View().Members
+	if len(members) > 0 {
+		return members
+	}
+	if f := s.writer.Current(); f != nil {
+		for _, m := range f.Members {
+			members = append(members, clusterstate.Member{ID: m.ID, Name: m.Name, Address: m.Address, Pin: m.Pin, State: m.State})
+		}
+	}
+	return members
+}
+
+// keyRefusedRounds is how many consecutive status rounds must have a real
+// refusal of this node's key and no acceptance before health warns (D6).
+const keyRefusedRounds = 3
+
+// noteKeyAnswers counts the consecutive status rounds in which at least
+// one other member refused this node's key and none accepted it. A round
+// with nobody else to ask resets the count. s.mu is held.
+func (s *Service) noteKeyAnswers(res map[string]statusResult) {
+	refused, accepted := 0, 0
+	for id, r := range res {
+		if id == s.cfg.NodeID {
+			continue
+		}
+		switch r.key {
+		case raftnet.ProbeRefused:
+			refused++
+		case raftnet.ProbeAccepted:
+			accepted++
+		}
+	}
+	if refused > 0 && accepted == 0 {
+		s.keyRefused++
+	} else {
+		s.keyRefused = 0
+	}
 }
 
 // noteApplied keeps, per member, the highest applied index it has ever
@@ -371,8 +419,12 @@ func (s *Service) statusRound(ctx context.Context, members []clusterstate.Member
 		go func(m clusterstate.Member) {
 			defer wg.Done()
 			applied, stalled, err := s.appliedOf(ctx, m)
+			key := raftnet.KeyAnswer(err)
+			if err != nil && m.Address == "" {
+				key = raftnet.ProbeNoAnswer
+			}
 			mu.Lock()
-			out[m.ID] = statusResult{applied: applied, stalled: stalled, err: err, at: s.now()}
+			out[m.ID] = statusResult{applied: applied, stalled: stalled, err: err, at: s.now(), key: key}
 			mu.Unlock()
 		}(m)
 	}

@@ -62,14 +62,19 @@ const (
 	// ProbeNoAnswer: no connection, or a key at the address that is not
 	// the expected one.
 	ProbeNoAnswer = "no answer"
+	// ProbeCannotSay: the node answered (its key has the expected pin)
+	// that it cannot say now whether it accepts the key (D2 of step
+	// 8b-2b). Every caller counts it exactly as ProbeNoAnswer.
+	ProbeCannotSay = "cannot say now"
 )
 
 // ProbeKey tells whether the node at address, whose key has serverPin,
 // accepts cert's key. In TLS 1.3 the client's handshake ends before the
 // server has checked the client's key, so the listener's first byte after
 // the handshake is how acceptance is known (decision D9 of step 8b-2a):
-// the accepted marker, or a refusal (an alert or a closed connection).
-// The error says why for the two other results.
+// the accepted marker, the cannot-say byte, or a refusal (an alert or a
+// closed connection). The error says why for the results other than
+// accepted.
 func ProbeKey(address, serverPin string, cert func() *tls.Certificate, timeout time.Duration) (string, error) {
 	d := net.Dialer{Timeout: timeout}
 	raw, err := d.Dial("tcp", address)
@@ -86,7 +91,10 @@ func ProbeKey(address, serverPin string, cert func() *tls.Certificate, timeout t
 	}
 	if err := confirmAccepted(tc, timeout); err != nil {
 		var ne net.Error
-		if errors.As(err, &ne) && ne.Timeout() {
+		switch {
+		case errors.Is(err, ErrCannotSay):
+			return ProbeCannotSay, err
+		case errors.As(err, &ne) && ne.Timeout():
 			return ProbeNoAnswer, err
 		}
 		return ProbeRefused, err
