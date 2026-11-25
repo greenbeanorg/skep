@@ -352,7 +352,10 @@ func (s *Service) joinStep(ctx context.Context) {
 	if js == nil {
 		return
 	}
-	if mem, ok := s.machine.Member(s.cfg.NodeID); ok && mem.State == clusterstate.StateMember && s.acceptedNow().source == "state machine" {
+	// Its member entry with its current key (an older entry of the same
+	// node ID in the log's history is not this join's).
+	if mem, ok := s.machine.Member(s.cfg.NodeID); ok && mem.State == clusterstate.StateMember && mem.Pin == s.key.Pin() &&
+		s.acceptedNow().source == "state machine" {
 		if err := joinstate.DeleteStandalone(s.dataDir, js.Standalone); err != nil {
 			s.log.Error("join finished, but the moved-aside one-node state could not be deleted", "error", err)
 			return

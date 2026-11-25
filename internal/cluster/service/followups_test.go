@@ -12,8 +12,10 @@ import (
 
 	"github.com/greenbeanorg/skep/internal/cluster/clusterconf"
 	"github.com/greenbeanorg/skep/internal/cluster/clusterstate"
+	"github.com/greenbeanorg/skep/internal/cluster/joincode"
 	"github.com/greenbeanorg/skep/internal/cluster/joinstate"
 	"github.com/greenbeanorg/skep/internal/cluster/localapi"
+	"github.com/greenbeanorg/skep/internal/cluster/nodekey"
 	"github.com/greenbeanorg/skep/internal/cluster/store"
 )
 
@@ -177,5 +179,45 @@ func TestCreateClusterIsQuiet(t *testing.T) {
 	}
 	if len(out) != 0 {
 		t.Fatalf("CreateCluster wrote to stderr: %q", out)
+	}
+}
+
+// Found on the lab (8b-2b, 9.7b): a joining node that was a member of the
+// same cluster before meets its old member entry, with its old pin, in the
+// log's history. That is not this join: it keeps accepting its answer's
+// nodes, and its join is not finished, until an entry lists it with its
+// current key.
+func TestJoiningNodeIgnoresItsOldMemberEntry(t *testing.T) {
+	self := "00000000-0000-4000-8000-0000000000a1"
+	other := "00000000-0000-4000-8000-0000000000b2"
+	key, err := nodekey.Create(t.TempDir(), self, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldPin := "sha256:" + strings.Repeat("c", 64)
+	m := clusterstate.New()
+	e, _ := clusterstate.NewEntry(clusterstate.TypeClusterInit, "init", clusterstate.ActorSystem, self, clusterstate.ClusterInit{
+		ClusterID: "00000000-0000-4000-8000-0000000000cc",
+		Member:    clusterstate.Member{ID: self, Name: "star", Address: "127.0.0.1:8444", Pin: oldPin, State: clusterstate.StateMember}})
+	raw, _ := e.Encode()
+	if r := m.Apply(1, raw); r.Err != nil {
+		t.Fatal(r.Err)
+	}
+	js := &joinstate.State{Phase: joinstate.PhaseAccepted, OpID: "op",
+		Answer: []joincode.Node{{NodeID: other, Name: "smith", Address: "127.0.0.2:8444", Pin: "sha256:" + strings.Repeat("d", 64)}}}
+	s := New(Options{Config: clusterconf.Config{NodeID: self, NodeName: "star"}, Key: key, Machine: m, Join: js, Logger: discardLog()})
+	a := s.acceptedNow()
+	if a.source != "join answer" || len(a.peers) != 1 || a.peers[0].NodeID != other {
+		t.Fatalf("with its old entry only: %+v", a)
+	}
+	// The entry of this join, with its current key.
+	s2 := New(Options{Config: clusterconf.Config{NodeID: self, NodeName: "star"}, Key: key, Machine: clusterstate.New(), Join: js, Logger: discardLog()})
+	e, _ = clusterstate.NewEntry(clusterstate.TypeClusterInit, "init2", clusterstate.ActorSystem, self, clusterstate.ClusterInit{
+		ClusterID: "00000000-0000-4000-8000-0000000000cc",
+		Member:    clusterstate.Member{ID: self, Name: "star", Address: "127.0.0.1:8444", Pin: key.Pin(), State: clusterstate.StateMember}})
+	raw, _ = e.Encode()
+	s2.machine.Apply(1, raw)
+	if a := s2.acceptedNow(); a.source != "state machine" {
+		t.Fatalf("with its current key: %+v", a)
 	}
 }

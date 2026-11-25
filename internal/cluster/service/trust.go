@@ -72,7 +72,7 @@ func (s *Service) acceptedNow() accepted {
 			}
 		}
 	}
-	if js := s.joinState(); js != nil && !listsNode(a.peers, s.cfg.NodeID) {
+	if js := s.joinState(); js != nil && !s.listsSelf(a.peers) {
 		if js.Phase == joinstate.PhaseRefused {
 			return accepted{admission: true, source: "none (the join was refused)"}
 		}
@@ -85,6 +85,27 @@ func (s *Service) acceptedNow() accepted {
 		}
 	}
 	return a
+}
+
+// listsSelf reports whether peers list this node with its current key.
+// A joining node that was a member of the same cluster before (removed,
+// wiped, joined again with its node ID) meets its old member entry, with
+// its old pin, in the log's history; that membership is the cluster's past
+// (other members' pins in it may have been rotated or wiped since), so the
+// joining node goes on accepting its admission's or answer's nodes until
+// it applies the entry of this join, which carries its current key (a wipe
+// always makes a new key).
+func (s *Service) listsSelf(peers []raftnet.Peer) bool {
+	if s.key == nil {
+		return false
+	}
+	pin := s.key.Pin()
+	for _, p := range peers {
+		if p.NodeID == s.cfg.NodeID && p.Kind != raftnet.KindPending && (p.Pin == pin || p.NextPin == pin) {
+			return true
+		}
+	}
+	return false
 }
 
 func listsNode(peers []raftnet.Peer, id string) bool {
