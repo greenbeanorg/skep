@@ -44,7 +44,7 @@ term) st "$2" | sed -n 's/^Raft: *//p' ;;
 leader) leader ;;
 rootcheck) for x in $S $L $T; do echo "$(name $x): root-owned [$(on $x 'sudo find /var/db/skep/cluster -user root | tr "\n" " "')]"; done ;;
 audit) on $2 "sudo $SC audit verify; echo exit=\$?" ;;
-count) on $2 "sudo cat /var/db/skep/cluster/audit/audit-*.jsonl | wc -l | tr -d ' '; sudo cat /var/db/skep/cluster/audit/audit-*.jsonl | grep -o '\"kind\":\"entry\",\"epoch\":[0-9]*,\"index\":[0-9]*' | sort | uniq -d | wc -l | tr -d ' '" ;;
+count) on $2 "sudo sh -c 'cat /var/db/skep/cluster/audit/audit-*.jsonl' | wc -l | tr -d ' '" ;;
 sc) x=$2; shift 2; h "$(name $x): skep-cluster $*"; on $x "sudo $SC $*"; echo "exit=$?" ;;
 *) echo "usage: $0 deploy | upgrade HOST | wait3 | wait2 A B | st HOST | hl HOST | pids | term HOST | leader | rootcheck | audit HOST | count HOST | sc HOST ARGS..." >&2; exit 2 ;;
 esac

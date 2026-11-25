@@ -69,7 +69,8 @@ func stageJoin(ctx context.Context, dataDir string, cfg clusterconf.Config, key 
 	if err != nil {
 		return StageOutcome{Outcome: "error", Message: "moving the one-node state aside failed: " + err.Error() + "; " + startRuleSays(dataDir)}
 	}
-	StageMark(dataDir, audit.EventJoinMovedAside, false, map[string]string{"node_id": cfg.NodeID, "cluster_id": adm.ClusterID, "standalone": standalone})
+	StageMark(dataDir, audit.EventJoinMovedAside, false, map[string]string{"node_id": cfg.NodeID, "join_op": joinOpID(cfg.NodeID, opID),
+		"cluster_id": adm.ClusterID, "standalone": standalone})
 	if stopped(stopAfterMoveAside) {
 		return StageOutcome{Outcome: "stopped", Standalone: standalone}
 	}

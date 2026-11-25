@@ -121,3 +121,47 @@ func TestClusterAudit(t *testing.T) {
 		t.Fatal("the leader did not record star's join")
 	}
 }
+
+// D4, as found on the lab: a node that was a member of the same cluster
+// before (removed, wiped, joined again with the same node ID) receives the
+// log's entries, its older member.join among them. Its audit records
+// nothing between node.join.started and this join's own member.join.
+func TestClusterAuditRejoin(t *testing.T) {
+	h := newHarness(t)
+	defer h.stopAll()
+	h.cluster("smith", "langrishe", "star")
+	leader := h.leader()
+	x := follower(h)
+	h.remove(leader, x.name)
+	h.eventually(x.name+" is gone", 60*time.Second, func() bool { _, ok := leader.svc.machine.Member(x.id); return !ok })
+	h.stop(x)
+	if _, err := WipeBegin(x.dir, x.id, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	cfg := x.cfg
+	cfg.ListenAddress = ""
+	if _, _, err := WipeFinish(context.Background(), x.dir, cfg, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	x.key = loadKey(t, x.dir)
+	h.start(x)
+	adm := h.admit(leader, x)
+	if o := h.join(x, adm); o.Outcome != JoinAccepted {
+		t.Fatalf("join again: %+v", o)
+	}
+	h.joined(x, 60*time.Second)
+	recs := records(t, x)
+	started := -1
+	for i, r := range recs {
+		if r.Kind == audit.EventJoinMovedAside {
+			started = i
+		}
+	}
+	if started < 0 || started+1 >= len(recs) {
+		t.Fatalf("no join mark or nothing after it")
+	}
+	next := recs[started+1]
+	if next.Kind != audit.KindEntry || next.EntryType != "member.join" || next.NodeID != x.id || next.OpID != recs[started].Details["join_op"] {
+		t.Fatalf("the first record after the join mark is %+v", next)
+	}
+}

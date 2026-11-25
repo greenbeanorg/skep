@@ -1,0 +1,911 @@
+smith: skep-agent=32095  skep-api=32182  skep-cluster=32392  vid=0 vmm=0
+langrishe: skep-agent=37259  skep-api=37347  skep-cluster=37988  vid=0 vmm=0
+star: skep-agent=36979  skep-api=37066  skep-cluster=37876  vid=0 vmm=0
+10.79.20.81
+
+=== 13:26:28Z deploy to smith ===
+8b2b-lab-upgrade.sh
+cluster-probe
+pkg
+da4f90e2f927738212d835812e7c378f6466da4764a7cb74542a05bc27ee83fd
+
+=== 13:26:29Z deploy to langrishe ===
+8b2b-lab-upgrade.sh
+cluster-probe
+pkg
+da4f90e2f927738212d835812e7c378f6466da4764a7cb74542a05bc27ee83fd
+
+=== 13:26:30Z deploy to star ===
+8b2b-lab-upgrade.sh
+cluster-probe
+pkg
+da4f90e2f927738212d835812e7c378f6466da4764a7cb74542a05bc27ee83fd
+
+=== 13:26:39Z upgrade star ===
+
+=== 13:26:39Z before ===
+star
+b1fa1cde3ed903cad368c1ac6a4b5256c7f505ab7a8802e3e0b87923187b4c1e
+f8823b6e09293bba36d664c6682404758474867944d59f7b6127606e9bb2c6c5
+vid=0
+skep-agent=36979  skep-api=37066  skep-cluster=37876  
+skep 0.1.0
+skep-agent 0.1.0 (commit cdd5602, built 2026-11-25T08:23:09Z, go1.27.4 freebsd/amd64)
+
+=== 13:26:39Z staged binaries ===
+4a9dec4a2c7bd03561f39629deafbbc1034c19e71618a97bea9b292baba431be usr/local/sbin/skep-agent
+047df834d711d8f954e5da17c13a9b51419354d1f708f35679f778f1496a2d0d usr/local/sbin/skep-api
+da4f90e2f927738212d835812e7c378f6466da4764a7cb74542a05bc27ee83fd usr/local/sbin/skep-cluster
+9838dff54de591cb736ca8c234a49f85790827471e99f4098359082c723eb4b2 usr/local/sbin/skep-setup
+
+=== 13:26:39Z pkg create ===
+Name           : skep
+Version        : 0.1.0
+Architecture   : FreeBSD:15:amd64
+
+=== 13:26:53Z pkg install -y -f ./out/skep-0.1.0.pkg ===
+Updating FreeBSD-ports repository catalogue...
+FreeBSD-ports repository is up to date.
+Updating FreeBSD-ports-kmods repository catalogue...
+FreeBSD-ports-kmods repository is up to date.
+Updating FreeBSD-base repository catalogue...
+FreeBSD-base repository is up to date.
+All repositories are up to date.
+Checking integrity... done (0 conflicting)
+The following 1 package(s) will be affected (of 0 checked):
+
+New packages to be INSTALLED:
+	skep: 0.1.0 [unknown-repository]
+
+Number of packages to be installed: 1
+
+The process will require 55 MiB more space.
+[1/1] Installing skep-0.1.0...
+Extracting skep-0.1.0: .......... done
+exit=0
+
+=== 13:26:55Z skep-setup upgrade -yes -keep 50 ===
+  installed: skep-agent, skep-api and skep-setup are 0.1.0+6a3268a
+  service skep_api stop
+  skep-agent db backup: /var/db/skep/backup/0.1.0+cdd5602-20261125T132655Z/agent.db sha256 cee6245c6cdba9d6d08e0b266589c6dcec1fee0114c729bdff1d99096f827bc1
+  skep-api db backup: /var/db/skep/backup/0.1.0+cdd5602-20261125T132655Z/api.db sha256 6f6224dba16db33e999848a46231d4a638d67c1c960dcdc32d167cd9a1b433f0
+  service skep_agent stop (from here on, Ctrl-C does not interrupt the upgrade)
+  skep_agent pid 53373 runs /usr/local/sbin/skep-agent at 0.1.0+6a3268a
+  skep_api pid 53460 runs /usr/local/sbin/skep-api at 0.1.0+6a3268a
+  agent socket: answers as 0.1.0+6a3268a
+  health: ok
+upgraded to 0.1.0+6a3268a; backups in /var/db/skep/backup/0.1.0+cdd5602-20261125T132655Z
+exit=0
+
+=== 13:26:56Z skep-setup check -mgmt vtnet0 -pool zroot -no-racct  (exit 1 expected for known items) ===
+skep-setup check, root / (read-only; nothing was changed)
+  agent: running
+  agent start check paths (each with its parents up to /): /usr/local/sbin/skep-agent, /usr/local/etc/skep/agent.json, /var/db/skep, /var/db/skep/agent, /var/run/skep
+  agent start check: passed
+  17 ok, 0 to add, 1 warnings, 0 conflicts, 1 for you, 0 refused
+  warn     /boot/loader.conf                  kern.racct.enable
+                                                left off (--no-racct): jail limits other than disk_quota are refused without RACCT
+  manual   network                            no guest bridge
+                                                guests can have no NIC until a bridge is allow-listed (--bridge, or --create-bridge with --uplink)
+exit=1
+
+=== 13:26:56Z service skep_cluster restart (by hand) ===
+Stopping skep_cluster.
+Waiting for PIDS: 37874.
+Starting skep_cluster.
+exit=0
+
+=== 13:26:58Z after ===
+skep-agent 0.1.0 (commit 6a3268a, built 2026-11-25T13:26:12Z, go1.27.4 freebsd/amd64)
+skep-cluster 0.1.0 (6a3268a, built 2026-11-25T13:26:12Z)
+skep-agent=53373  skep-api=53460  skep-cluster=53670  
+b1fa1cde3ed903cad368c1ac6a4b5256c7f505ab7a8802e3e0b87923187b4c1e
+f8823b6e09293bba36d664c6682404758474867944d59f7b6127606e9bb2c6c5
+vid=0
+root-owned in /var/db/skep/cluster: []
+smith: skep-agent=32095  skep-api=32182  skep-cluster=32392  vid=0 vmm=0
+langrishe: skep-agent=37259  skep-api=37347  skep-cluster=37988  vid=0 vmm=0
+star: skep-agent=53373  skep-api=53460  skep-cluster=53670  vid=0 vmm=0
+healthy (3 voters on 10.79.20.81 10.79.20.82 10.79.20.83) after 0s
+### mixed window, from star (upgraded):
+Node ID:       2a098aca-9d7a-4c10-9b79-3850c7acec79
+Node name:     star
+Cluster ID:    ff712cb0-58a7-41ba-87cf-4bff6b1579d0
+Node key pin:  sha256:f5742845b98100d56e92b5c223f4b952565fa29460af5044fb4bd16c9bd3f459
+Certificate:   valid until 2027-12-27T08:35:34Z
+Raft:          follower, term 26, commit 121, last 121
+State machine: up to date, last Skep entry 119 (entries 120-121 are Raft's own)
+Keys accepted: by the state machine
+Listener:      10.79.20.83:8444 (open)
+Build:         0.1.0+6a3268a
+Members (3):
+  star  2a098aca-9d7a-4c10-9b79-3850c7acec79  member, voter  10.79.20.83:8444  sha256:f5742845b98100d56e92b5c223f4b952565fa29460af5044fb4bd16c9bd3f459
+  langrishe.greenbean.org  4ae4a218-b2b0-477d-b8c5-f378cd84229b  member, voter  10.79.20.82:8444  sha256:ef3397d9070a9b99d04699efbfe06f953a67088761636e7026dfe7dbf2d5b67d
+  smith.greenbean.org  e8944569-ddf8-4830-8f99-4adee0a02d57  member, voter  10.79.20.81:8444  sha256:2a50620c2c5ee1a190d5d6c64428e7f201686cd208656be286de8890488e1635
+Clocks (offset from this node, ± half the round trip):
+  langrishe.greenbean.org  not known (older build or refused (forbidden))
+  smith.greenbean.org  not known (older build or refused (forbidden))
+Health:        ok
+Health:        ok
+health-exit=0
+
+=== 13:27:07Z upgrade langrishe ===
+
+=== 13:27:09Z before ===
+langrishe.greenbean.org
+20ed00c1ced70484df824c37be2f33f3cdb9c21555f32f4b3d0d0a2522e92f3b
+99cc13b7b0348aba9e5eeb527d187d151d7d54f21b791df2fc41209410795b30
+vid=0
+skep-agent=37259  skep-api=37347  skep-cluster=37988  
+skep 0.1.0
+skep-agent 0.1.0 (commit cdd5602, built 2026-11-25T08:23:09Z, go1.27.4 freebsd/amd64)
+
+=== 13:27:09Z staged binaries ===
+4a9dec4a2c7bd03561f39629deafbbc1034c19e71618a97bea9b292baba431be usr/local/sbin/skep-agent
+047df834d711d8f954e5da17c13a9b51419354d1f708f35679f778f1496a2d0d usr/local/sbin/skep-api
+da4f90e2f927738212d835812e7c378f6466da4764a7cb74542a05bc27ee83fd usr/local/sbin/skep-cluster
+9838dff54de591cb736ca8c234a49f85790827471e99f4098359082c723eb4b2 usr/local/sbin/skep-setup
+
+=== 13:27:09Z pkg create ===
+Name           : skep
+Version        : 0.1.0
+Architecture   : FreeBSD:15:amd64
+
+=== 13:27:26Z pkg install -y -f ./out/skep-0.1.0.pkg ===
+Updating FreeBSD-ports repository catalogue...
+FreeBSD-ports repository is up to date.
+Updating FreeBSD-ports-kmods repository catalogue...
+FreeBSD-ports-kmods repository is up to date.
+Updating FreeBSD-base repository catalogue...
+FreeBSD-base repository is up to date.
+All repositories are up to date.
+Checking integrity... done (0 conflicting)
+The following 1 package(s) will be affected (of 0 checked):
+
+New packages to be INSTALLED:
+	skep: 0.1.0 [unknown-repository]
+
+Number of packages to be installed: 1
+
+The process will require 55 MiB more space.
+[1/1] Installing skep-0.1.0...
+Extracting skep-0.1.0: .......... done
+exit=0
+
+=== 13:27:28Z skep-setup upgrade -yes -keep 50 ===
+  installed: skep-agent, skep-api and skep-setup are 0.1.0+6a3268a
+  service skep_api stop
+  skep-agent db backup: /var/db/skep/backup/0.1.0+cdd5602-20261125T132728Z/agent.db sha256 ca23d521ff59387ab20cc19b3affb4f3d512c25b960294aa00e91165e78f05b7
+  skep-api db backup: /var/db/skep/backup/0.1.0+cdd5602-20261125T132728Z/api.db sha256 e600e12452f27c97af89ed13aa4167961585436b2ee3e1467b94224c24cb4ea3
+  service skep_agent stop (from here on, Ctrl-C does not interrupt the upgrade)
+  skep_agent pid 53638 runs /usr/local/sbin/skep-agent at 0.1.0+6a3268a
+  skep_api pid 53725 runs /usr/local/sbin/skep-api at 0.1.0+6a3268a
+  agent socket: answers as 0.1.0+6a3268a
+  health: ok
+upgraded to 0.1.0+6a3268a; backups in /var/db/skep/backup/0.1.0+cdd5602-20261125T132728Z
+exit=0
+
+=== 13:27:29Z skep-setup check -mgmt vtnet0 -pool zroot -no-racct  (exit 1 expected for known items) ===
+skep-setup check, root / (read-only; nothing was changed)
+  agent: running
+  agent start check paths (each with its parents up to /): /usr/local/sbin/skep-agent, /usr/local/etc/skep/agent.json, /var/db/skep, /var/db/skep/agent, /var/run/skep
+  agent start check: passed
+  17 ok, 0 to add, 1 warnings, 0 conflicts, 1 for you, 0 refused
+  warn     /boot/loader.conf                  kern.racct.enable
+                                                left off (--no-racct): jail limits other than disk_quota are refused without RACCT
+  manual   network                            no guest bridge
+                                                guests can have no NIC until a bridge is allow-listed (--bridge, or --create-bridge with --uplink)
+exit=1
+
+=== 13:27:29Z service skep_cluster restart (by hand) ===
+Stopping skep_cluster.
+Waiting for PIDS: 37986.
+Starting skep_cluster.
+exit=0
+
+=== 13:27:31Z after ===
+skep-agent 0.1.0 (commit 6a3268a, built 2026-11-25T13:26:12Z, go1.27.4 freebsd/amd64)
+skep-cluster 0.1.0 (6a3268a, built 2026-11-25T13:26:12Z)
+skep-agent=53638  skep-api=53725  skep-cluster=53935  
+20ed00c1ced70484df824c37be2f33f3cdb9c21555f32f4b3d0d0a2522e92f3b
+99cc13b7b0348aba9e5eeb527d187d151d7d54f21b791df2fc41209410795b30
+vid=0
+root-owned in /var/db/skep/cluster: []
+smith: skep-agent=32095  skep-api=32182  skep-cluster=32392  vid=0 vmm=0
+langrishe: skep-agent=53638  skep-api=53725  skep-cluster=53935  vid=0 vmm=0
+star: skep-agent=53373  skep-api=53460  skep-cluster=53670  vid=0 vmm=0
+healthy (3 voters on 10.79.20.81 10.79.20.82 10.79.20.83) after 0s
+### mixed window, from langrishe:
+Clocks (offset from this node, ± half the round trip):
+  smith.greenbean.org  not known (older build or refused (forbidden))
+  star  -1.094 s  ±0.002 s  round trip 5 ms
+Health:        ok
+
+=== 13:27:31Z upgrade smith ===
+
+=== 13:27:33Z before ===
+smith.greenbean.org
+c4a7a85dfdae8c6486732a1c846dc89e84e9b22ade6187edeb0a2839d8da48fd
+3d0bf555649329921da73ddbf465513414abffde877474dab64f513917e97eeb
+vid=0
+skep-agent=32095  skep-api=32182  skep-cluster=32392  
+skep 0.1.0
+skep-agent 0.1.0 (commit cdd5602, built 2026-11-25T08:23:09Z, go1.27.4 freebsd/amd64)
+
+=== 13:27:33Z staged binaries ===
+4a9dec4a2c7bd03561f39629deafbbc1034c19e71618a97bea9b292baba431be usr/local/sbin/skep-agent
+047df834d711d8f954e5da17c13a9b51419354d1f708f35679f778f1496a2d0d usr/local/sbin/skep-api
+da4f90e2f927738212d835812e7c378f6466da4764a7cb74542a05bc27ee83fd usr/local/sbin/skep-cluster
+9838dff54de591cb736ca8c234a49f85790827471e99f4098359082c723eb4b2 usr/local/sbin/skep-setup
+
+=== 13:27:33Z pkg create ===
+Name           : skep
+Version        : 0.1.0
+Architecture   : FreeBSD:15:amd64
+
+=== 13:27:50Z pkg install -y -f ./out/skep-0.1.0.pkg ===
+Updating FreeBSD-ports repository catalogue...
+FreeBSD-ports repository is up to date.
+Updating FreeBSD-ports-kmods repository catalogue...
+FreeBSD-ports-kmods repository is up to date.
+All repositories are up to date.
+Checking integrity... done (0 conflicting)
+The following 1 package(s) will be affected (of 0 checked):
+
+New packages to be INSTALLED:
+	skep: 0.1.0 [unknown-repository]
+
+Number of packages to be installed: 1
+
+The process will require 55 MiB more space.
+[1/1] Installing skep-0.1.0...
+Extracting skep-0.1.0: .......... done
+exit=0
+
+=== 13:27:51Z skep-setup upgrade -yes -keep 50 ===
+  installed: skep-agent, skep-api and skep-setup are 0.1.0+6a3268a
+  service skep_api stop
+  skep-agent db backup: /var/db/skep/backup/0.1.0+cdd5602-20261125T132751Z/agent.db sha256 e8c063e624e40187dbf15967ae7d65a6bd5a7b170040be5e466e69933e4aac7b
+  skep-api db backup: /var/db/skep/backup/0.1.0+cdd5602-20261125T132751Z/api.db sha256 8d10454cc2f4676514aa5ca605356c5e6c398b1c38ac99eb0686c549e7ee551d
+  service skep_agent stop (from here on, Ctrl-C does not interrupt the upgrade)
+  skep_agent pid 48234 runs /usr/local/sbin/skep-agent at 0.1.0+6a3268a
+  skep_api pid 48321 runs /usr/local/sbin/skep-api at 0.1.0+6a3268a
+  agent socket: answers as 0.1.0+6a3268a
+  health: ok
+upgraded to 0.1.0+6a3268a; backups in /var/db/skep/backup/0.1.0+cdd5602-20261125T132751Z
+exit=0
+
+=== 13:27:52Z skep-setup check -mgmt vtnet0  (exit 1 expected for known items) ===
+skep-setup check, root / (read-only; nothing was changed)
+  agent: running
+  agent start check paths (each with its parents up to /): /usr/local/sbin/skep-agent, /usr/local/etc/skep/agent.json, /var/db/skep, /var/db/skep/agent, /var/run/skep
+  agent start check: passed
+  13 ok, 1 to add, 0 warnings, 1 conflicts, 3 for you, 0 refused
+  add      /boot/loader.conf                  kern.racct.enable="1"
+                                                -> append kern.racct.enable="1" to /boot/loader.conf
+                                                RACCT, which Skep's jail limits (RCTL) need; takes effect only after a reboot
+  manual   storage                            no pool named
+                                                VMs need a ZFS pool (--pool) or a directory pool (--dir-pool); jails need ZFS
+  manual   network                            no guest bridge
+                                                guests can have no NIC until a bridge is allow-listed (--bridge, or --create-bridge with --uplink)
+  conflict config                             /usr/local/etc/skep/agent.json
+                                                written by an earlier apply with other answers; setup writes it once and never rewrites it. Proposed content:
+                                                {
+                                                  "storage": {
+                                                    "pools": [],
+                                                    "directories": [],
+                                                    "dataset_root": "skep",
+                                                    "media_dir": "/var/db/skep/media"
+                                                  },
+                                                  "network": {
+                                                    "bridges": [],
+                                                    "management_interfaces": [
+                                                      "vtnet0"
+                                                    ]
+                                                  }
+                                                }
+  manual   packages                           FreeBSD-base repository
+                                                disabled; the pkgbase jail template source needs it (or use the dist source)
+                                                $ mkdir -p /usr/local/etc/pkg/repos && printf 'FreeBSD-base: { enabled: yes }\n' >> /usr/local/etc/pkg/repos/FreeBSD.conf
+exit=1
+
+=== 13:27:52Z service skep_cluster restart (by hand) ===
+Stopping skep_cluster.
+Waiting for PIDS: 32390.
+Starting skep_cluster.
+exit=0
+
+=== 13:27:54Z after ===
+skep-agent 0.1.0 (commit 6a3268a, built 2026-11-25T13:26:12Z, go1.27.4 freebsd/amd64)
+skep-cluster 0.1.0 (6a3268a, built 2026-11-25T13:26:12Z)
+skep-agent=48234  skep-api=48321  skep-cluster=48531  
+c4a7a85dfdae8c6486732a1c846dc89e84e9b22ade6187edeb0a2839d8da48fd
+3d0bf555649329921da73ddbf465513414abffde877474dab64f513917e97eeb
+vid=0
+root-owned in /var/db/skep/cluster: []
+smith: skep-agent=48234  skep-api=48321  skep-cluster=48531  vid=0 vmm=0
+langrishe: skep-agent=53638  skep-api=53725  skep-cluster=53935  vid=0 vmm=0
+star: skep-agent=53373  skep-api=53460  skep-cluster=53670  vid=0 vmm=0
+healthy (3 voters on 10.79.20.81 10.79.20.82 10.79.20.83) after 0s
+smith: skep-agent=48234  skep-api=48321  skep-cluster=48531  vid=0 vmm=0
+langrishe: skep-agent=53638  skep-api=53725  skep-cluster=53935  vid=0 vmm=0
+star: skep-agent=53373  skep-api=53460  skep-cluster=53670  vid=0 vmm=0
+leader, term 27, commit 123, last 123
+follower, term 27, commit 123, last 123
+follower, term 27, commit 123, last 123
+### 9.2 clocks
+-- 10.79.20.81
+Clocks (offset from this node, ± half the round trip):
+  langrishe.greenbean.org  +0.000 s  ±0.000 s  round trip 1 ms
+  star  -1.094 s  ±0.002 s  round trip 4 ms
+Health:        ok
+Health:        ok
+health-exit=0
+-- 10.79.20.82
+Clocks (offset from this node, ± half the round trip):
+  smith.greenbean.org  not known (older build or refused (forbidden))
+  star  -1.096 s  ±0.001 s  round trip 2 ms
+Health:        ok
+Health:        ok
+health-exit=0
+-- 10.79.20.83
+Clocks (offset from this node, ± half the round trip):
+  langrishe.greenbean.org  +1.099 s  ±0.003 s  round trip 6 ms
+  smith.greenbean.org  +1.098 s  ±0.002 s  round trip 4 ms
+Health:        ok
+Health:        ok
+health-exit=0
+### 9.3 audit
+-- 10.79.20.81
+Cluster audit:   /var/db/skep/cluster/audit
+Records:         1 in 1 segment(s)
+Sealed segments: none (a segment is sealed when the next one exists)
+Open segment:    audit-00000001.jsonl
+First record:    seq 1, 2026-11-25T13:27:52.194Z, audit.started (epoch 1, index 121)
+Last record:     seq 1, 2026-11-25T13:27:52.194Z, audit.started (epoch 1, index 121)
+Highest entry:   epoch 1, index 121
+Every hash and every link checks out.
+exit=0
+-- 10.79.20.82
+Cluster audit:   /var/db/skep/cluster/audit
+Records:         1 in 1 segment(s)
+Sealed segments: none (a segment is sealed when the next one exists)
+Open segment:    audit-00000001.jsonl
+First record:    seq 1, 2026-11-25T13:27:29.700Z, audit.started (epoch 1, index 121)
+Last record:     seq 1, 2026-11-25T13:27:29.700Z, audit.started (epoch 1, index 121)
+Highest entry:   epoch 1, index 121
+Every hash and every link checks out.
+exit=0
+-- 10.79.20.83
+Cluster audit:   /var/db/skep/cluster/audit
+Records:         1 in 1 segment(s)
+Sealed segments: none (a segment is sealed when the next one exists)
+Open segment:    audit-00000001.jsonl
+First record:    seq 1, 2026-11-25T13:26:56.450Z, audit.started (epoch 1, index 121)
+Last record:     seq 1, 2026-11-25T13:26:56.450Z, audit.started (epoch 1, index 121)
+Highest entry:   epoch 1, index 121
+Every hash and every link checks out.
+exit=0
+-- langrishe clocks again (13:28:11Z)
+Clocks (offset from this node, ± half the round trip):
+  smith.greenbean.org  +0.000 s  ±0.000 s  round trip 1 ms
+  star  -1.095 s  ±0.002 s  round trip 4 ms
+Health:        ok
+### 9.3 tamper test on smith
+cp: /var/db/skep/cluster/audit/audit-*.jsonl: No such file or directory
+total 16
+drwx------  2 root wheel 512 Nov 25 08:28 .
+drwxrwxrwt  7 root wheel 512 Nov 25 08:28 ..
+before change:
+Cluster audit:   /tmp/skep-8b2b-audit.UmoqaQ
+Records:         0 in 0 segment(s)
+Sealed segments: none (a segment is sealed when the next one exists)
+The audit is empty.
+exit=0
+after changing byte 30:
+Cluster audit:   /tmp/skep-8b2b-audit.UmoqaQ
+Records:         0 in 1 segment(s)
+Sealed segments: none (a segment is sealed when the next one exists)
+Open segment:    audit-00000001.jsonl
+BROKEN:          audit-00000001.jsonl line 1: the last line has no newline (a cut-off write)
+skep-cluster: the cluster audit is broken
+exit=1
+ls: /tmp/skep-8b2b-audit.UmoqaQ: No such file or directory
+### 9.3 tamper test on smith (second attempt; the first copied nothing: the glob ran as aba)
+total 24
+drwx------  2 root         wheel        512 Nov 25 08:28 .
+drwxrwxrwt  7 root         wheel        512 Nov 25 08:28 ..
+-rw-------  1 skep-cluster skep-cluster 184 Nov 25 08:27 audit-00000001.jsonl
+before change:
+Cluster audit:   /tmp/skep-8b2b-audit.FcObs2
+Records:         1 in 1 segment(s)
+Sealed segments: none (a segment is sealed when the next one exists)
+Open segment:    audit-00000001.jsonl
+First record:    seq 1, 2026-11-25T13:27:52.194Z, audit.started (epoch 1, index 121)
+Last record:     seq 1, 2026-11-25T13:27:52.194Z, audit.started (epoch 1, index 121)
+Highest entry:   epoch 1, index 121
+Every hash and every link checks out.
+exit=0
+after changing byte 30:
+Cluster audit:   /tmp/skep-8b2b-audit.FcObs2
+Records:         0 in 1 segment(s)
+Sealed segments: none (a segment is sealed when the next one exists)
+Open segment:    audit-00000001.jsonl
+BROKEN:          audit-00000001.jsonl line 1: the hash does not match the record (changed)
+skep-cluster: the cluster audit is broken
+exit=1
+ls: /tmp/skep-8b2b-audit.FcObs2: No such file or directory
+### 9.4 langrishe: old-key copy (never leaves langrishe, never printed)
+total  53
+drwx------ skep-cluster .
+drwxrwxrwt root ..
+-rwxr-xr-x skep-cluster cluster-probe
+-rw-r--r-- skep-cluster node.crt
+-rw------- skep-cluster node.key
+probe 10.79.20.81:8444 with the old key (before):
+status RPC to 10.79.20.81:8444 with the key sha256:ef3397d9070a9b99d04699efbfe06f953a67088761636e7026dfe7dbf2d5b67d, claiming node 4ae4a218-b2b0-477d-b8c5-f378cd84229b
+ACCEPTED: map[applied_index:119 node_id:e8944569-ddf8-4830-8f99-4adee0a02d57 stalled:false]
+probe 10.79.20.83:8444 with the old key (before):
+status RPC to 10.79.20.83:8444 with the key sha256:ef3397d9070a9b99d04699efbfe06f953a67088761636e7026dfe7dbf2d5b67d, claiming node 4ae4a218-b2b0-477d-b8c5-f378cd84229b
+ACCEPTED: map[applied_index:119 node_id:2a098aca-9d7a-4c10-9b79-3850c7acec79 stalled:false]
+### 9.4a rotate langrishe (R); term before:
+leader, term 27, commit 123, last 123
+follower, term 27, commit 123, last 123
+follower, term 27, commit 123, last 123
+-- during, 13:28:45Z:
+ on 10.79.20.81:
+  langrishe.greenbean.org  4ae4a218-b2b0-477d-b8c5-f378cd84229b  member, voter  10.79.20.82:8444  sha256:ef3397d9070a9b99d04699efbfe06f953a67088761636e7026dfe7dbf2d5b67d
+      next pin sha256:dbc8bfa5fac9763911566f4f85f3c7d8e15cb92b91a9b90da271ca1fdbaaeab0 (rotating; last seen using the new key)
+Rotation:      the key rotation of langrishe.greenbean.org waits for the leader to drop the old pin
+  langrishe.greenbean.org  +0.000 s  ±0.000 s  round trip 1 ms
+  key_rotation: degraded: the key rotation of langrishe.greenbean.org waits for the leader to drop the old pin
+ on 10.79.20.83:
+  langrishe.greenbean.org  4ae4a218-b2b0-477d-b8c5-f378cd84229b  member, voter  10.79.20.82:8444  sha256:ef3397d9070a9b99d04699efbfe06f953a67088761636e7026dfe7dbf2d5b67d
+      next pin sha256:dbc8bfa5fac9763911566f4f85f3c7d8e15cb92b91a9b90da271ca1fdbaaeab0 (rotating; last seen using the old key)
+Rotation:      the key rotation of langrishe.greenbean.org waits for the leader to drop the old pin
+  langrishe.greenbean.org  +1.099 s  ±0.003 s  round trip 6 ms
+  key_rotation: degraded: the key rotation of langrishe.greenbean.org waits for the leader to drop the old pin
+-- during, 13:28:48Z:
+ on 10.79.20.81:
+  langrishe.greenbean.org  4ae4a218-b2b0-477d-b8c5-f378cd84229b  member, voter  10.79.20.82:8444  sha256:dbc8bfa5fac9763911566f4f85f3c7d8e15cb92b91a9b90da271ca1fdbaaeab0
+  langrishe.greenbean.org  +0.000 s  ±0.000 s  round trip 1 ms
+ on 10.79.20.83:
+  langrishe.greenbean.org  4ae4a218-b2b0-477d-b8c5-f378cd84229b  member, voter  10.79.20.82:8444  sha256:dbc8bfa5fac9763911566f4f85f3c7d8e15cb92b91a9b90da271ca1fdbaaeab0
+  langrishe.greenbean.org  +1.098 s  ±0.002 s  round trip 5 ms
+-- during, 13:28:52Z:
+ on 10.79.20.81:
+  langrishe.greenbean.org  4ae4a218-b2b0-477d-b8c5-f378cd84229b  member, voter  10.79.20.82:8444  sha256:dbc8bfa5fac9763911566f4f85f3c7d8e15cb92b91a9b90da271ca1fdbaaeab0
+  langrishe.greenbean.org  +0.000 s  ±0.000 s  round trip 1 ms
+ on 10.79.20.83:
+  langrishe.greenbean.org  4ae4a218-b2b0-477d-b8c5-f378cd84229b  member, voter  10.79.20.82:8444  sha256:dbc8bfa5fac9763911566f4f85f3c7d8e15cb92b91a9b90da271ca1fdbaaeab0
+  langrishe.greenbean.org  +1.098 s  ±0.002 s  round trip 5 ms
+-- during, 13:28:55Z:
+ on 10.79.20.81:
+  langrishe.greenbean.org  4ae4a218-b2b0-477d-b8c5-f378cd84229b  member, voter  10.79.20.82:8444  sha256:dbc8bfa5fac9763911566f4f85f3c7d8e15cb92b91a9b90da271ca1fdbaaeab0
+  langrishe.greenbean.org  +0.000 s  ±0.000 s  round trip 1 ms
+ on 10.79.20.83:
+  langrishe.greenbean.org  4ae4a218-b2b0-477d-b8c5-f378cd84229b  member, voter  10.79.20.82:8444  sha256:dbc8bfa5fac9763911566f4f85f3c7d8e15cb92b91a9b90da271ca1fdbaaeab0
+  langrishe.greenbean.org  +1.098 s  ±0.002 s  round trip 5 ms
+-- command output on langrishe:
+Rotating this node's key:
+  old pin: sha256:ef3397d9070a9b99d04699efbfe06f953a67088761636e7026dfe7dbf2d5b67d
+  new pin: sha256:dbc8bfa5fac9763911566f4f85f3c7d8e15cb92b91a9b90da271ca1fdbaaeab0
+The leader added the new pin (log index 124). Every member now accepts both keys as this node.
+Done: this node's pin is sha256:dbc8bfa5fac9763911566f4f85f3c7d8e15cb92b91a9b90da271ca1fdbaaeab0 on its applied membership; the old pin is no longer accepted.
+exit=0
+### 9.4a after: old key probed
+probe 10.79.20.81:8444 with the old key (after):
+status RPC to 10.79.20.81:8444 with the key sha256:ef3397d9070a9b99d04699efbfe06f953a67088761636e7026dfe7dbf2d5b67d, claiming node 4ae4a218-b2b0-477d-b8c5-f378cd84229b
+REFUSED: TLS handshake with 10.79.20.81:8444 failed: remote error: tls: bad certificate
+probe 10.79.20.83:8444 with the old key (after):
+status RPC to 10.79.20.83:8444 with the key sha256:ef3397d9070a9b99d04699efbfe06f953a67088761636e7026dfe7dbf2d5b67d, claiming node 4ae4a218-b2b0-477d-b8c5-f378cd84229b
+REFUSED: TLS handshake with 10.79.20.83:8444 failed: remote error: tls: bad certificate
+ls: /tmp/skep-8b2b-oldkey: No such file or directory
+-- term after:
+leader, term 27, commit 125, last 125
+follower, term 27, commit 125, last 125
+follower, term 27, commit 125, last 125
+-- 10.79.20.81
+  star  2a098aca-9d7a-4c10-9b79-3850c7acec79  member, voter  10.79.20.83:8444  sha256:f5742845b98100d56e92b5c223f4b952565fa29460af5044fb4bd16c9bd3f459
+  langrishe.greenbean.org  4ae4a218-b2b0-477d-b8c5-f378cd84229b  member, voter  10.79.20.82:8444  sha256:dbc8bfa5fac9763911566f4f85f3c7d8e15cb92b91a9b90da271ca1fdbaaeab0
+  smith.greenbean.org  e8944569-ddf8-4830-8f99-4adee0a02d57  member, voter  10.79.20.81:8444  sha256:2a50620c2c5ee1a190d5d6c64428e7f201686cd208656be286de8890488e1635
+Health:        ok
+-- 10.79.20.82
+  star  2a098aca-9d7a-4c10-9b79-3850c7acec79  member, voter  10.79.20.83:8444  sha256:f5742845b98100d56e92b5c223f4b952565fa29460af5044fb4bd16c9bd3f459
+  langrishe.greenbean.org  4ae4a218-b2b0-477d-b8c5-f378cd84229b  member, voter  10.79.20.82:8444  sha256:dbc8bfa5fac9763911566f4f85f3c7d8e15cb92b91a9b90da271ca1fdbaaeab0
+  smith.greenbean.org  e8944569-ddf8-4830-8f99-4adee0a02d57  member, voter  10.79.20.81:8444  sha256:2a50620c2c5ee1a190d5d6c64428e7f201686cd208656be286de8890488e1635
+Health:        ok
+-- 10.79.20.83
+  star  2a098aca-9d7a-4c10-9b79-3850c7acec79  member, voter  10.79.20.83:8444  sha256:f5742845b98100d56e92b5c223f4b952565fa29460af5044fb4bd16c9bd3f459
+  langrishe.greenbean.org  4ae4a218-b2b0-477d-b8c5-f378cd84229b  member, voter  10.79.20.82:8444  sha256:dbc8bfa5fac9763911566f4f85f3c7d8e15cb92b91a9b90da271ca1fdbaaeab0
+  smith.greenbean.org  e8944569-ddf8-4830-8f99-4adee0a02d57  member, voter  10.79.20.81:8444  sha256:2a50620c2c5ee1a190d5d6c64428e7f201686cd208656be286de8890488e1635
+Health:        ok
+### 9.4 rotate 10.79.20.83; term before:
+leader, term 27, commit 125, last 125
+follower, term 27, commit 125, last 125
+follower, term 27, commit 125, last 125
+Rotating this node's key:
+  old pin: sha256:f5742845b98100d56e92b5c223f4b952565fa29460af5044fb4bd16c9bd3f459
+  new pin: sha256:e3be2eeb1397dff0306520032fdab65020a686c03d39f345d0918639c14e06a8
+The leader added the new pin (log index 126). Every member now accepts both keys as this node.
+Done: this node's pin is sha256:e3be2eeb1397dff0306520032fdab65020a686c03d39f345d0918639c14e06a8 on its applied membership; the old pin is no longer accepted.
+exit=0
+-- term after:
+leader, term 27, commit 127, last 127
+follower, term 27, commit 127, last 127
+follower, term 27, commit 127, last 127
+-- 10.79.20.81
+  star  2a098aca-9d7a-4c10-9b79-3850c7acec79  member, voter  10.79.20.83:8444  sha256:e3be2eeb1397dff0306520032fdab65020a686c03d39f345d0918639c14e06a8
+  langrishe.greenbean.org  4ae4a218-b2b0-477d-b8c5-f378cd84229b  member, voter  10.79.20.82:8444  sha256:dbc8bfa5fac9763911566f4f85f3c7d8e15cb92b91a9b90da271ca1fdbaaeab0
+  smith.greenbean.org  e8944569-ddf8-4830-8f99-4adee0a02d57  member, voter  10.79.20.81:8444  sha256:2a50620c2c5ee1a190d5d6c64428e7f201686cd208656be286de8890488e1635
+Health:        ok
+-- 10.79.20.82
+  star  2a098aca-9d7a-4c10-9b79-3850c7acec79  member, voter  10.79.20.83:8444  sha256:e3be2eeb1397dff0306520032fdab65020a686c03d39f345d0918639c14e06a8
+  langrishe.greenbean.org  4ae4a218-b2b0-477d-b8c5-f378cd84229b  member, voter  10.79.20.82:8444  sha256:dbc8bfa5fac9763911566f4f85f3c7d8e15cb92b91a9b90da271ca1fdbaaeab0
+  smith.greenbean.org  e8944569-ddf8-4830-8f99-4adee0a02d57  member, voter  10.79.20.81:8444  sha256:2a50620c2c5ee1a190d5d6c64428e7f201686cd208656be286de8890488e1635
+Health:        ok
+-- 10.79.20.83
+  star  2a098aca-9d7a-4c10-9b79-3850c7acec79  member, voter  10.79.20.83:8444  sha256:e3be2eeb1397dff0306520032fdab65020a686c03d39f345d0918639c14e06a8
+  langrishe.greenbean.org  4ae4a218-b2b0-477d-b8c5-f378cd84229b  member, voter  10.79.20.82:8444  sha256:dbc8bfa5fac9763911566f4f85f3c7d8e15cb92b91a9b90da271ca1fdbaaeab0
+  smith.greenbean.org  e8944569-ddf8-4830-8f99-4adee0a02d57  member, voter  10.79.20.81:8444  sha256:2a50620c2c5ee1a190d5d6c64428e7f201686cd208656be286de8890488e1635
+Health:        ok
+### 9.4 rotate 10.79.20.81; term before:
+leader, term 27, commit 127, last 127
+follower, term 27, commit 127, last 127
+follower, term 27, commit 127, last 127
+Rotating this node's key:
+  old pin: sha256:2a50620c2c5ee1a190d5d6c64428e7f201686cd208656be286de8890488e1635
+  new pin: sha256:52d7ff4947a9221a2f425044dfe3215dac24212d59888c6fdce3c438d504eec3
+The leader added the new pin (log index 128). Every member now accepts both keys as this node.
+Done: this node's pin is sha256:52d7ff4947a9221a2f425044dfe3215dac24212d59888c6fdce3c438d504eec3 on its applied membership; the old pin is no longer accepted.
+exit=0
+-- term after:
+leader, term 27, commit 129, last 129
+follower, term 27, commit 129, last 129
+follower, term 27, commit 129, last 129
+-- 10.79.20.81
+  star  2a098aca-9d7a-4c10-9b79-3850c7acec79  member, voter  10.79.20.83:8444  sha256:e3be2eeb1397dff0306520032fdab65020a686c03d39f345d0918639c14e06a8
+  langrishe.greenbean.org  4ae4a218-b2b0-477d-b8c5-f378cd84229b  member, voter  10.79.20.82:8444  sha256:dbc8bfa5fac9763911566f4f85f3c7d8e15cb92b91a9b90da271ca1fdbaaeab0
+  smith.greenbean.org  e8944569-ddf8-4830-8f99-4adee0a02d57  member, voter  10.79.20.81:8444  sha256:52d7ff4947a9221a2f425044dfe3215dac24212d59888c6fdce3c438d504eec3
+Health:        ok
+-- 10.79.20.82
+  star  2a098aca-9d7a-4c10-9b79-3850c7acec79  member, voter  10.79.20.83:8444  sha256:e3be2eeb1397dff0306520032fdab65020a686c03d39f345d0918639c14e06a8
+  langrishe.greenbean.org  4ae4a218-b2b0-477d-b8c5-f378cd84229b  member, voter  10.79.20.82:8444  sha256:dbc8bfa5fac9763911566f4f85f3c7d8e15cb92b91a9b90da271ca1fdbaaeab0
+  smith.greenbean.org  e8944569-ddf8-4830-8f99-4adee0a02d57  member, voter  10.79.20.81:8444  sha256:52d7ff4947a9221a2f425044dfe3215dac24212d59888c6fdce3c438d504eec3
+Health:        ok
+-- 10.79.20.83
+  star  2a098aca-9d7a-4c10-9b79-3850c7acec79  member, voter  10.79.20.83:8444  sha256:e3be2eeb1397dff0306520032fdab65020a686c03d39f345d0918639c14e06a8
+  langrishe.greenbean.org  4ae4a218-b2b0-477d-b8c5-f378cd84229b  member, voter  10.79.20.82:8444  sha256:dbc8bfa5fac9763911566f4f85f3c7d8e15cb92b91a9b90da271ca1fdbaaeab0
+  smith.greenbean.org  e8944569-ddf8-4830-8f99-4adee0a02d57  member, voter  10.79.20.81:8444  sha256:52d7ff4947a9221a2f425044dfe3215dac24212d59888c6fdce3c438d504eec3
+Health:        ok
+### 9.4 audit after the three rotations
+-- 10.79.20.81
+Records:         10 in 1 segment(s)
+Last record:     seq 10, 2026-11-25T13:29:54.206Z, node.key.rotation
+exit=0
+   1 audit.started 121    
+   2 entry 124 member.key_add langrishe.greenbean.org applied 
+   3 entry 125 member.key_done langrishe.greenbean.org applied 
+   4 entry 126 member.key_add star applied 
+   5 entry 127 member.key_done star applied 
+   6 node.key.rotation     started
+   7 entry 128 member.key_add smith.greenbean.org applied 
+   8 node.key.rotation     switched
+   9 entry 129 member.key_done smith.greenbean.org applied 
+   10 node.key.rotation     done
+-- 10.79.20.82
+Records:         10 in 1 segment(s)
+Last record:     seq 10, 2026-11-25T13:29:54.279Z, entry (epoch 1, index 129) member.key_done applied
+exit=0
+   1 audit.started 121    
+   2 node.key.rotation     started
+   3 entry 124 member.key_add langrishe.greenbean.org applied 
+   4 node.key.rotation     switched
+   5 entry 125 member.key_done langrishe.greenbean.org applied 
+   6 node.key.rotation     done
+   7 entry 126 member.key_add star applied 
+   8 entry 127 member.key_done star applied 
+   9 entry 128 member.key_add smith.greenbean.org applied 
+   10 entry 129 member.key_done smith.greenbean.org applied 
+-- 10.79.20.83
+Records:         10 in 1 segment(s)
+Last record:     seq 10, 2026-11-25T13:29:53.211Z, entry (epoch 1, index 129) member.key_done applied
+exit=0
+   1 audit.started 121    
+   2 entry 124 member.key_add langrishe.greenbean.org applied 
+   3 entry 125 member.key_done langrishe.greenbean.org applied 
+   4 node.key.rotation     started
+   5 entry 126 member.key_add star applied 
+   6 node.key.rotation     switched
+   7 entry 127 member.key_done star applied 
+   8 node.key.rotation     done
+   9 entry 128 member.key_add smith.greenbean.org applied 
+   10 entry 129 member.key_done smith.greenbean.org applied 
+### 9.5 leader: 10.79.20.81
+-- stop skep_cluster on star (X)
+Stopping skep_cluster.
+Waiting for PIDS: 53668.
+exit=0
+-- on langrishe (R): key rotate -wait 30s
+Rotating this node's key:
+  old pin: sha256:dbc8bfa5fac9763911566f4f85f3c7d8e15cb92b91a9b90da271ca1fdbaaeab0
+  new pin: sha256:55d21ebcb99593d4ec0f75c5bb0dcea549576929f0f0b69b5b8846b86dd9b2da
+The leader added the new pin (log index 130). Every member now accepts both keys as this node.
+After 30s the rotation has not ended.
+  the key rotation of langrishe.greenbean.org waits for star to apply its new pin (index 130)
+It ends by itself; "skep-cluster health" on any member says what it waits for.
+A member that stays down can be removed ("skep-cluster remove NAME"), or the rotation aborted ("skep-cluster key rotate --abort") while this node still uses its old key.
+exit=3
+-- status/health on 10.79.20.81
+  langrishe.greenbean.org  4ae4a218-b2b0-477d-b8c5-f378cd84229b  member, voter  10.79.20.82:8444  sha256:dbc8bfa5fac9763911566f4f85f3c7d8e15cb92b91a9b90da271ca1fdbaaeab0
+      next pin sha256:55d21ebcb99593d4ec0f75c5bb0dcea549576929f0f0b69b5b8846b86dd9b2da (rotating; last seen using the old key)
+Rotation:      the key rotation of langrishe.greenbean.org waits for star to apply its new pin (index 130)
+  langrishe.greenbean.org  +0.003 s  ±0.004 s  round trip 8 ms
+  key_rotation: degraded: the key rotation of langrishe.greenbean.org waits for star to apply its new pin (index 130)
+-- status/health on 10.79.20.82
+Node name:     langrishe.greenbean.org
+  langrishe.greenbean.org  4ae4a218-b2b0-477d-b8c5-f378cd84229b  member, voter  10.79.20.82:8444  sha256:dbc8bfa5fac9763911566f4f85f3c7d8e15cb92b91a9b90da271ca1fdbaaeab0
+      next pin sha256:55d21ebcb99593d4ec0f75c5bb0dcea549576929f0f0b69b5b8846b86dd9b2da (rotating; this node uses the old key)
+Key rotation:  rotating, old pin sha256:dbc8bfa5fac9763911566f4f85f3c7d8e15cb92b91a9b90da271ca1fdbaaeab0, new pin sha256:55d21ebcb99593d4ec0f75c5bb0dcea549576929f0f0b69b5b8846b86dd9b2da, using sha256:dbc8bfa5fac9763911566f4f85f3c7d8e15cb92b91a9b90da271ca1fdbaaeab0
+Rotation:      the key rotation of langrishe.greenbean.org waits for star to apply its new pin (index 130)
+  key_rotation: degraded: the key rotation of langrishe.greenbean.org waits for star to apply its new pin (index 130)
+-- start skep_cluster on star (13:30:43Z)
+Starting skep_cluster.
+exit=0
+rotation finished 15 s after star was started
+healthy (3 voters on 10.79.20.81 10.79.20.82 10.79.20.83) after 0s
+-- 10.79.20.81
+  langrishe.greenbean.org  4ae4a218-b2b0-477d-b8c5-f378cd84229b  member, voter  10.79.20.82:8444  sha256:55d21ebcb99593d4ec0f75c5bb0dcea549576929f0f0b69b5b8846b86dd9b2da
+Health:        ok
+-- 10.79.20.82
+  langrishe.greenbean.org  4ae4a218-b2b0-477d-b8c5-f378cd84229b  member, voter  10.79.20.82:8444  sha256:55d21ebcb99593d4ec0f75c5bb0dcea549576929f0f0b69b5b8846b86dd9b2da
+Health:        ok
+-- 10.79.20.83
+  langrishe.greenbean.org  4ae4a218-b2b0-477d-b8c5-f378cd84229b  member, voter  10.79.20.82:8444  sha256:55d21ebcb99593d4ec0f75c5bb0dcea549576929f0f0b69b5b8846b86dd9b2da
+Health:        ok
+### 9.6 leader: 10.79.20.81
+Stopping skep_cluster.
+Waiting for PIDS: 54183.
+exit=0
+It ends by itself; "skep-cluster health" on any member says what it waits for.
+A member that stays down can be removed ("skep-cluster remove NAME"), or the rotation aborted ("skep-cluster key rotate --abort") while this node still uses its old key.
+exit=3
+-- abort on langrishe
+Aborting the key rotation of this node: the next pin sha256:5402c48ec4c9ed432df5abddda887098203d41190476c427d770d4e2dc44858c is dropped, the pin stays sha256:55d21ebcb99593d4ec0f75c5bb0dcea549576929f0f0b69b5b8846b86dd9b2da.
+Aborted: this node's pin stays sha256:55d21ebcb99593d4ec0f75c5bb0dcea549576929f0f0b69b5b8846b86dd9b2da; the next key is deleted.
+exit=0
+-- 10.79.20.81
+  langrishe.greenbean.org  4ae4a218-b2b0-477d-b8c5-f378cd84229b  member, voter  10.79.20.82:8444  sha256:55d21ebcb99593d4ec0f75c5bb0dcea549576929f0f0b69b5b8846b86dd9b2da
+-- 10.79.20.82
+  langrishe.greenbean.org  4ae4a218-b2b0-477d-b8c5-f378cd84229b  member, voter  10.79.20.82:8444  sha256:55d21ebcb99593d4ec0f75c5bb0dcea549576929f0f0b69b5b8846b86dd9b2da
+-- files on langrishe:
+audit
+node.crt
+node.key
+state
+-- start star
+Starting skep_cluster.
+exit=0
+healthy (3 voters on 10.79.20.81 10.79.20.82 10.79.20.83) after 8s
+-- 10.79.20.81
+  langrishe.greenbean.org  4ae4a218-b2b0-477d-b8c5-f378cd84229b  member, voter  10.79.20.82:8444  sha256:55d21ebcb99593d4ec0f75c5bb0dcea549576929f0f0b69b5b8846b86dd9b2da
+Health:        ok
+-- 10.79.20.82
+  langrishe.greenbean.org  4ae4a218-b2b0-477d-b8c5-f378cd84229b  member, voter  10.79.20.82:8444  sha256:55d21ebcb99593d4ec0f75c5bb0dcea549576929f0f0b69b5b8846b86dd9b2da
+Health:        ok
+-- 10.79.20.83
+  langrishe.greenbean.org  4ae4a218-b2b0-477d-b8c5-f378cd84229b  member, voter  10.79.20.82:8444  sha256:55d21ebcb99593d4ec0f75c5bb0dcea549576929f0f0b69b5b8846b86dd9b2da
+Health:        ok
+### 9.7 leader: 10.79.20.81
+Stopping skep_cluster.
+Waiting for PIDS: 54328.
+exit=0
+  new pin: sha256:8240e043f486b50f05a73d78cd4cd0574cf4b6b1814c4f43ba71e54b0bdd19e7
+The leader added the new pin (log index 135). Every member now accepts both keys as this node.
+  the key rotation of langrishe.greenbean.org waits for star to apply its new pin (index 135)
+It ends by itself; "skep-cluster health" on any member says what it waits for.
+exit=3
+-- on smith (L): remove star
+Removing star (node ID 2a098aca-9d7a-4c10-9b79-3850c7acec79) from cluster ff712cb0-58a7-41ba-87cf-4bff6b1579d0 (operation 6e9b73bb-3833-4188-a879-9e02d20cd335): the first entry is committed.
+The leader removes it from the Raft configuration, then removes its member entry; it does that by itself.
+star is removed: no member pins its key any more once each has applied the removal.
+Every member has applied the removal.
+On star, as root, before it can join a cluster again:
+  skep-cluster leave --wipe
+exit=0
+rotation finished 0 s after the removal command returned
+-- 10.79.20.81
+Raft:          leader, term 27, commit 139, last 139
+  langrishe.greenbean.org  4ae4a218-b2b0-477d-b8c5-f378cd84229b  member, voter  10.79.20.82:8444  sha256:8240e043f486b50f05a73d78cd4cd0574cf4b6b1814c4f43ba71e54b0bdd19e7
+  smith.greenbean.org  e8944569-ddf8-4830-8f99-4adee0a02d57  member, voter  10.79.20.81:8444  sha256:52d7ff4947a9221a2f425044dfe3215dac24212d59888c6fdce3c438d504eec3
+Health:        ok
+-- 10.79.20.82
+Raft:          follower, term 27, commit 139, last 139
+  langrishe.greenbean.org  4ae4a218-b2b0-477d-b8c5-f378cd84229b  member, voter  10.79.20.82:8444  sha256:8240e043f486b50f05a73d78cd4cd0574cf4b6b1814c4f43ba71e54b0bdd19e7
+  smith.greenbean.org  e8944569-ddf8-4830-8f99-4adee0a02d57  member, voter  10.79.20.81:8444  sha256:52d7ff4947a9221a2f425044dfe3215dac24212d59888c6fdce3c438d504eec3
+Health:        ok
+-- start star (13:32:06Z)
+Starting skep_cluster.
+exit=0
+after 20 s:
+Node ID:       2a098aca-9d7a-4c10-9b79-3850c7acec79
+Node name:     star
+Cluster ID:    
+Node key pin:  sha256:e3be2eeb1397dff0306520032fdab65020a686c03d39f345d0918639c14e06a8
+Certificate:   valid until 2027-12-27T13:29:24Z
+Raft:          candidate, term 27, commit 0, last 134
+State machine: up to date, last Skep entry 0
+Keys accepted: by the membership file
+Listener:      10.79.20.83:8444 (open)
+Build:         0.1.0+6a3268a
+Members (0):
+Health:        unavailable
+  key_refused: degraded: every member that answers refuses this node's key (3 status rounds in a row); it was probably removed while it was down. Run "skep-cluster leave --wipe" as root
+  raft: unavailable: the cluster has no leader (this node is candidate)
+-- star: leave --wipe
+This wipes the cluster state of this node (star, node ID 2a098aca-9d7a-4c10-9b79-3850c7acec79):
+  cluster ff712cb0-58a7-41ba-87cf-4bff6b1579d0, node key pin sha256:e3be2eeb1397dff0306520032fdab65020a686c03d39f345d0918639c14e06a8
+It becomes a one-node cluster with a new cluster ID and a new node key, and no listener.
+Stopping skep_cluster.
+Waiting for PIDS: 54504.
+Starting skep_cluster.
+This node is a one-node cluster again.
+  Cluster ID:   b4da4fc5-f62d-41ca-aaba-b227545b207a
+  Node key pin: sha256:6bfa2ecc0109d8af329aac529510d1987e66677bd68e6c3497ece57b767e11fc (new)
+  Listener:     none (no network port)
+If it has not been removed on a member of its old cluster yet, remove it there, as root:
+  skep-cluster remove star
+To join a cluster again: skep-cluster join-request -address ADDR
+exit=0
+-- star: join-request
+Stopping skep_cluster.
+Waiting for PIDS: 54687.
+Starting skep_cluster.
+Join request for this host:
+  Node ID:      2a098aca-9d7a-4c10-9b79-3850c7acec79
+  Node name:    star
+  Address:      10.79.20.83:8444
+  Node key pin: sha256:6bfa2ecc0109d8af329aac529510d1987e66677bd68e6c3497ece57b767e11fc
+
+skep-join-request:1:eyJub2RlX2lkIjoiMmEwOThhY2EtOWQ3YS00YzEwLTliNzktMzg1MGM3YWNlYzc5IiwibmFtZSI6InN0YXIiLCJhZGRyZXNzIjoiMTAuNzkuMjAuODM6ODQ0NCIsInBpbiI6InNoYTI1Njo2YmZhMmVjYzAxMDlkOGFmMzI5YWFjNTI5NTEwZDE5ODdlNjY2NzdiZDY4ZTZjMzQ5N2VjZTU3Yjc2N2UxMWZjIn0:a8bcdef4c614a602
+
+On a member of the cluster, compare the pin above with the one this host shows on its own console
+("skep-cluster status", line "Node key pin"), then admit it, as root:
+  skep-cluster admit skep-join-request:1:eyJub2RlX2lkIjoiMmEwOThhY2EtOWQ3YS00YzEwLTliNzktMzg1MGM3YWNlYzc5IiwibmFtZSI6InN0YXIiLCJhZGRyZXNzIjoiMTAuNzkuMjAuODM6ODQ0NCIsInBpbiI6InNoYTI1Njo2YmZhMmVjYzAxMDlkOGFmMzI5YWFjNTI5NTEwZDE5ODdlNjY2NzdiZDY4ZTZjMzQ5N2VjZTU3Yjc2N2UxMWZjIn0:a8bcdef4c614a602
+The admission it prints is valid for 30 minutes.
+exit=0
+-- star's own status pin (compare):
+Node key pin:  sha256:6bfa2ecc0109d8af329aac529510d1987e66677bd68e6c3497ece57b767e11fc
+-- smith: admit
+Admitted star (node ID 2a098aca-9d7a-4c10-9b79-3850c7acec79, address 10.79.20.83:8444)
+  pin sha256:6bfa2ecc0109d8af329aac529510d1987e66677bd68e6c3497ece57b767e11fc
+  until 2026-11-25T14:02:49Z (operation 8621d39e-5dd0-4217-b012-305b1217dd8b).
+
+Admission (nothing in it is secret):
+
+skep-admission:1:eyJjbHVzdGVyX2lkIjoiZmY3MTJjYjAtNThhNy00MWJhLTg3Y2YtNGJmZjZiMTU3OWQwIiwiZm9yIjp7Im5vZGVfaWQiOiIyYTA5OGFjYS05ZDdhLTRjMTAtOWI3OS0zODUwYzdhY2VjNzkiLCJuYW1lIjoic3RhciIsImFkZHJlc3MiOiIxMC43OS4yMC44Mzo4NDQ0IiwicGluIjoic2hhMjU2OjZiZmEyZWNjMDEwOWQ4YWYzMjlhYWM1Mjk1MTBkMTk4N2U2NjY3N2JkNjhlNmMzNDk3ZWNlNTdiNzY3ZTExZmMifSwibWVtYmVycyI6W3sibm9kZV9pZCI6IjRhZTRhMjE4LWIyYjAtNDc3ZC1iOGM1LWYzNzhjZDg0MjI5YiIsIm5hbWUiOiJsYW5ncmlzaGUuZ3JlZW5iZWFuLm9yZyIsImFkZHJlc3MiOiIxMC43OS4yMC44Mjo4NDQ0IiwicGluIjoic2hhMjU2OjgyNDBlMDQzZjQ4NmI1MGYwNWE3M2Q3OGNkNGNkMDU3NGNmNGI2YjE4MTRjNGY0M2JhNzFlNTRiMGJkZDE5ZTcifSx7Im5vZGVfaWQiOiJlODk0NDU2OS1kZGY4LTQ4MzAtOGY5OS00YWRlZTBhMDJkNTciLCJuYW1lIjoic21pdGguZ3JlZW5iZWFuLm9yZyIsImFkZHJlc3MiOiIxMC43OS4yMC44MTo4NDQ0IiwicGluIjoic2hhMjU2OjUyZDdmZjQ5NDdhOTIyMWEyZjQyNTA0NGRmZTMyMTVkYWMyNDIxMmQ1OTg4OGM2ZmRjZTNjNDM4ZDUwNGVlYzMifV0sImV4cGlyZXNfYXQiOjE3OTU2MTUzNjl9:c577b03d68f45bfb
+
+On star, as root:
+  skep-cluster join skep-admission:1:eyJjbHVzdGVyX2lkIjoiZmY3MTJjYjAtNThhNy00MWJhLTg3Y2YtNGJmZjZiMTU3OWQwIiwiZm9yIjp7Im5vZGVfaWQiOiIyYTA5OGFjYS05ZDdhLTRjMTAtOWI3OS0zODUwYzdhY2VjNzkiLCJuYW1lIjoic3RhciIsImFkZHJlc3MiOiIxMC43OS4yMC44Mzo4NDQ0IiwicGluIjoic2hhMjU2OjZiZmEyZWNjMDEwOWQ4YWYzMjlhYWM1Mjk1MTBkMTk4N2U2NjY3N2JkNjhlNmMzNDk3ZWNlNTdiNzY3ZTExZmMifSwibWVtYmVycyI6W3sibm9kZV9pZCI6IjRhZTRhMjE4LWIyYjAtNDc3ZC1iOGM1LWYzNzhjZDg0MjI5YiIsIm5hbWUiOiJsYW5ncmlzaGUuZ3JlZW5iZWFuLm9yZyIsImFkZHJlc3MiOiIxMC43OS4yMC44Mjo4NDQ0IiwicGluIjoic2hhMjU2OjgyNDBlMDQzZjQ4NmI1MGYwNWE3M2Q3OGNkNGNkMDU3NGNmNGI2YjE4MTRjNGY0M2JhNzFlNTRiMGJkZDE5ZTcifSx7Im5vZGVfaWQiOiJlODk0NDU2OS1kZGY4LTQ4MzAtOGY5OS00YWRlZTBhMDJkNTciLCJuYW1lIjoic21pdGguZ3JlZW5iZWFuLm9yZyIsImFkZHJlc3MiOiIxMC43OS4yMC44MTo4NDQ0IiwicGluIjoic2hhMjU2OjUyZDdmZjQ5NDdhOTIyMWEyZjQyNTA0NGRmZTMyMTVkYWMyNDIxMmQ1OTg4OGM2ZmRjZTNjNDM4ZDUwNGVlYzMifV0sImV4cGlyZXNfYXQiOjE3OTU2MTUzNjl9:c577b03d68f45bfb
+To withdraw it before it is used:
+  skep-cluster admit --withdraw star
+exit=0
+-- star: join
+This host will join the cluster
+  Cluster ID: ff712cb0-58a7-41ba-87cf-4bff6b1579d0
+with the members
+  langrishe.greenbean.org 4ae4a218-b2b0-477d-b8c5-f378cd84229b  10.79.20.82:8444
+                       pin sha256:8240e043f486b50f05a73d78cd4cd0574cf4b6b1814c4f43ba71e54b0bdd19e7
+  smith.greenbean.org  e8944569-ddf8-4830-8f99-4adee0a02d57  10.79.20.81:8444
+                       pin sha256:52d7ff4947a9221a2f425044dfe3215dac24212d59888c6fdce3c438d504eec3
+This host has no VMs and no jails. Its own one-node cluster is moved aside; its users are not changed in this build.
+Stopping skep_cluster.
+Waiting for PIDS: 54788.
+Starting skep_cluster.
+
+The cluster accepted this node (cluster ff712cb0-58a7-41ba-87cf-4bff6b1579d0).
+The join is past its point of no return: the one-node state stays moved aside (standalone.20261125T133248Z)
+and skep-cluster keeps working with the admission's members until it has joined.
+To give it up: on a member, "skep-cluster remove star"; then here "skep-cluster join --abandon".
+This node has applied its member entry: state member.
+exit=0
+healthy (3 voters on 10.79.20.81 10.79.20.82 10.79.20.83) after 4s
+-- 10.79.20.81
+Raft:          leader, term 27, commit 144, last 144
+  star  2a098aca-9d7a-4c10-9b79-3850c7acec79  member, voter  10.79.20.83:8444  sha256:6bfa2ecc0109d8af329aac529510d1987e66677bd68e6c3497ece57b767e11fc
+  langrishe.greenbean.org  4ae4a218-b2b0-477d-b8c5-f378cd84229b  member, voter  10.79.20.82:8444  sha256:8240e043f486b50f05a73d78cd4cd0574cf4b6b1814c4f43ba71e54b0bdd19e7
+  smith.greenbean.org  e8944569-ddf8-4830-8f99-4adee0a02d57  member, voter  10.79.20.81:8444  sha256:52d7ff4947a9221a2f425044dfe3215dac24212d59888c6fdce3c438d504eec3
+Health:        ok
+-- 10.79.20.82
+Raft:          follower, term 27, commit 144, last 144
+  star  2a098aca-9d7a-4c10-9b79-3850c7acec79  member, voter  10.79.20.83:8444  sha256:6bfa2ecc0109d8af329aac529510d1987e66677bd68e6c3497ece57b767e11fc
+  langrishe.greenbean.org  4ae4a218-b2b0-477d-b8c5-f378cd84229b  member, voter  10.79.20.82:8444  sha256:8240e043f486b50f05a73d78cd4cd0574cf4b6b1814c4f43ba71e54b0bdd19e7
+  smith.greenbean.org  e8944569-ddf8-4830-8f99-4adee0a02d57  member, voter  10.79.20.81:8444  sha256:52d7ff4947a9221a2f425044dfe3215dac24212d59888c6fdce3c438d504eec3
+Health:        ok
+-- 10.79.20.83
+Raft:          follower, term 27, commit 144, last 144
+  star  2a098aca-9d7a-4c10-9b79-3850c7acec79  member, voter  10.79.20.83:8444  sha256:6bfa2ecc0109d8af329aac529510d1987e66677bd68e6c3497ece57b767e11fc
+  langrishe.greenbean.org  4ae4a218-b2b0-477d-b8c5-f378cd84229b  member, voter  10.79.20.82:8444  sha256:8240e043f486b50f05a73d78cd4cd0574cf4b6b1814c4f43ba71e54b0bdd19e7
+  smith.greenbean.org  e8944569-ddf8-4830-8f99-4adee0a02d57  member, voter  10.79.20.81:8444  sha256:52d7ff4947a9221a2f425044dfe3215dac24212d59888c6fdce3c438d504eec3
+Health:        ok
+### star's audit after wipe and rejoin
+Records:         76 in 1 segment(s)
+First record:    seq 1, 2026-11-25T13:26:56.450Z, audit.started (epoch 1, index 121)
+Last record:     seq 76, 2026-11-25T13:32:57.041Z, node.join.finished
+exit=0
+   63 entry 1 128 member.key_add smith.greenbean.org applied  
+   64 entry 1 129 member.key_done smith.greenbean.org applied  
+   65 entry 1 130 member.key_add langrishe.greenbean.org applied  
+   66 entry 1 131 member.key_done langrishe.greenbean.org applied  
+   67 entry 1 132 member.key_add langrishe.greenbean.org applied  
+   68 entry 1 134 member.key_done langrishe.greenbean.org applied  
+   69 entry 1 135 member.key_add langrishe.greenbean.org applied  
+   70 entry 1 136 member.removing star applied  
+   71 entry 1 138 member.removed star applied  
+   72 entry 1 139 member.key_done langrishe.greenbean.org applied  
+   73 entry 1 140 pending.create star applied  
+   74 entry 1 141 member.join star applied  
+   75 entry 1 144 member.promoted star applied  
+   76 node.join.finished       ff712cb0-58a7-41ba-87cf-4bff6b1579d0
+### 9.8 records before (lines, duplicated entry keys):
+cat: /var/db/skep/cluster/audit/audit-*.jsonl: No such file or directory
+cat: /var/db/skep/cluster/audit/audit-*.jsonl: No such file or directory
+10.79.20.81: 0 0 
+cat: /var/db/skep/cluster/audit/audit-*.jsonl: No such file or directory
+cat: /var/db/skep/cluster/audit/audit-*.jsonl: No such file or directory
+10.79.20.82: 0 0 
+cat: /var/db/skep/cluster/audit/audit-*.jsonl: No such file or directory
+cat: /var/db/skep/cluster/audit/audit-*.jsonl: No such file or directory
+10.79.20.83: 0 0 
+### 9.8 (count helper fixed: the glob ran as aba) records before:
+10.79.20.81: 21
+10.79.20.82: 30
+10.79.20.83: 76
+leader: 10.79.20.81
+stop X=10.79.20.83, R=10.79.20.82, L=10.79.20.81
+Stopping skep_cluster.
+Waiting for PIDS: 54901.
+exit=0
+Stopping skep_cluster.
+Waiting for PIDS: 53933.
+exit=0
+Stopping skep_cluster.
+Waiting for PIDS: 48529.
+exit=0
+Starting skep_cluster.
+exit=0
+Starting skep_cluster.
+exit=0
+Starting skep_cluster.
+exit=0
+healthy (3 voters on 10.79.20.81 10.79.20.82 10.79.20.83) after 2s
+-- 10.79.20.81
+Raft:          leader, term 28, commit 146, last 146
+  star  2a098aca-9d7a-4c10-9b79-3850c7acec79  member, voter  10.79.20.83:8444  sha256:6bfa2ecc0109d8af329aac529510d1987e66677bd68e6c3497ece57b767e11fc
+  langrishe.greenbean.org  4ae4a218-b2b0-477d-b8c5-f378cd84229b  member, voter  10.79.20.82:8444  sha256:8240e043f486b50f05a73d78cd4cd0574cf4b6b1814c4f43ba71e54b0bdd19e7
+  smith.greenbean.org  e8944569-ddf8-4830-8f99-4adee0a02d57  member, voter  10.79.20.81:8444  sha256:52d7ff4947a9221a2f425044dfe3215dac24212d59888c6fdce3c438d504eec3
+Health:        ok
+Records:         21 in 1 segment(s)
+exit=0
+lines: 21
+-- 10.79.20.82
+Raft:          follower, term 28, commit 146, last 146
+  star  2a098aca-9d7a-4c10-9b79-3850c7acec79  member, voter  10.79.20.83:8444  sha256:6bfa2ecc0109d8af329aac529510d1987e66677bd68e6c3497ece57b767e11fc
+  langrishe.greenbean.org  4ae4a218-b2b0-477d-b8c5-f378cd84229b  member, voter  10.79.20.82:8444  sha256:8240e043f486b50f05a73d78cd4cd0574cf4b6b1814c4f43ba71e54b0bdd19e7
+  smith.greenbean.org  e8944569-ddf8-4830-8f99-4adee0a02d57  member, voter  10.79.20.81:8444  sha256:52d7ff4947a9221a2f425044dfe3215dac24212d59888c6fdce3c438d504eec3
+Health:        ok
+Records:         30 in 1 segment(s)
+exit=0
+lines: 30
+-- 10.79.20.83
+Raft:          follower, term 28, commit 146, last 146
+  star  2a098aca-9d7a-4c10-9b79-3850c7acec79  member, voter  10.79.20.83:8444  sha256:6bfa2ecc0109d8af329aac529510d1987e66677bd68e6c3497ece57b767e11fc
+  langrishe.greenbean.org  4ae4a218-b2b0-477d-b8c5-f378cd84229b  member, voter  10.79.20.82:8444  sha256:8240e043f486b50f05a73d78cd4cd0574cf4b6b1814c4f43ba71e54b0bdd19e7
+  smith.greenbean.org  e8944569-ddf8-4830-8f99-4adee0a02d57  member, voter  10.79.20.81:8444  sha256:52d7ff4947a9221a2f425044dfe3215dac24212d59888c6fdce3c438d504eec3
+Health:        ok
+Records:         76 in 1 segment(s)
+exit=0
+lines: 76
+smith: skep-agent=48234  skep-api=48321  skep-cluster=49370  vid=0 vmm=0
+langrishe: skep-agent=53638  skep-api=53725  skep-cluster=54727  vid=0 vmm=0
+star: skep-agent=53373  skep-api=53460  skep-cluster=55149  vid=0 vmm=0

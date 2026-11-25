@@ -142,8 +142,8 @@ type AuditEntry struct {
 // write of the applied-membership file does.
 type AuditWriter interface {
 	AuditEntry(AuditEntry) error
-	// AuditSnapshot gets the node IDs of the snapshot's members.
-	AuditSnapshot(epoch, index uint64, members []string) error
+	// AuditSnapshot gets the snapshot's member entries.
+	AuditSnapshot(epoch, index uint64, members []Member) error
 }
 
 // Event is a membership event of an applied entry, for the log line every
@@ -836,11 +836,7 @@ func (m *Machine) Restore(r io.Reader) error {
 		}
 	}
 	if m.audit != nil && st.clusterID != "" {
-		ids := make([]string, 0, len(s.Members))
-		for _, mem := range s.Members {
-			ids = append(ids, mem.ID)
-		}
-		if err := m.audit.AuditSnapshot(st.epoch, s.Applied, ids); err != nil {
+		if err := m.audit.AuditSnapshot(st.epoch, s.Applied, st.sortedMembers()); err != nil {
 			m.mu.Unlock()
 			return fmt.Errorf("clusterstate: restore: cannot write the cluster audit: %w", err)
 		}

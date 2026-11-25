@@ -21,7 +21,7 @@ func (f *fakeAudit) AuditEntry(a AuditEntry) error {
 	return nil
 }
 
-func (f *fakeAudit) AuditSnapshot(_, index uint64, _ []string) error {
+func (f *fakeAudit) AuditSnapshot(_, index uint64, _ []Member) error {
 	if f.fail != nil {
 		return f.fail
 	}

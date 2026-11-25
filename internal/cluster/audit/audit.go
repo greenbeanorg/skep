@@ -21,9 +21,11 @@
 // node.wipe.finished and node.join.abandoned carry the key to go on from
 // (the last index of the node's log at that moment); node.join.started
 // sets it to zero and starts the join's skip: no log entry is recorded
-// until the node's own member.join entry is applied, or a snapshot that
-// lists the node is installed, so the node's audit of a cluster starts at
-// its join (ADR 0013 B10).
+// until this join's own member.join entry is applied (its operation ID is
+// in the mark: a node that was a member of the same cluster before has
+// older member.join entries in the log), or a snapshot whose member entry
+// for the node carries that operation ID is installed, so the node's audit
+// of a cluster starts at its join (ADR 0013 B10).
 //
 // One writer at a time: Open takes an exclusive, non-blocking flock on the
 // audit's lock file. The running service holds it; the stages that write
@@ -210,8 +212,9 @@ type Log struct {
 	// mark.
 	highE, highI uint64
 	// skipNode is set during a join's skip: the node ID whose own
-	// member.join ends it.
+	// member.join ends it; skipOp is that entry's operation ID.
 	skipNode string
+	skipOp   string
 	// failAppend is a test hook: when set, appends fail with it.
 	failAppend error
 	// segLimit is MaxSegment; a test lowers it.
@@ -337,7 +340,7 @@ func (l *Log) readEnd() error {
 		l.seq, l.last = rep.Last.Seq, rep.Last.Hash
 	}
 	l.highE, l.highI = rep.HighEpoch, rep.HighIndex
-	l.skipNode = rep.SkipNode
+	l.skipNode, l.skipOp = rep.SkipNode, rep.SkipOp
 	if n := len(rep.Segments); n > 0 {
 		l.seg = rep.segNums[n-1]
 		path := filepath.Join(l.dir, SegmentName(l.seg))
@@ -452,9 +455,9 @@ func (l *Log) append(r Record) error {
 	switch {
 	case resetKinds[r.Kind]:
 		l.highE, l.highI = r.Epoch, r.Index
-		l.skipNode = ""
+		l.skipNode, l.skipOp = "", ""
 		if r.Kind == EventJoinMovedAside {
-			l.skipNode = r.Details["node_id"]
+			l.skipNode, l.skipOp = r.Details["node_id"], r.Details["join_op"]
 		}
 	case r.Index != 0 || r.Epoch != 0:
 		if after(r.Epoch, r.Index, l.highE, l.highI) {
@@ -477,13 +480,14 @@ var resetKinds = map[string]bool{
 // Mark writes a reset mark: kind is one of audit.started, node.init,
 // node.wipe.finished, node.join.abandoned (with the key to go on from, the
 // last index of the node's log) or node.join.started (key zero; details
-// must name the node, "node_id", whose own join ends the skip).
+// must name the node, "node_id", and this join's member.join operation
+// ID, "join_op", which ends the skip).
 func (l *Log) Mark(kind string, epoch, index uint64, details map[string]string) error {
 	if !resetKinds[kind] {
 		return fmt.Errorf("audit: %s is not a reset mark", kind)
 	}
-	if kind == EventJoinMovedAside && details["node_id"] == "" {
-		return errors.New("audit: the join mark needs the node ID")
+	if kind == EventJoinMovedAside && (details["node_id"] == "" || details["join_op"] == "") {
+		return errors.New("audit: the join mark needs the node ID and the join's operation ID")
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -520,10 +524,11 @@ func (l *Log) AuditEntry(a clusterstate.AuditEntry) error {
 		return nil
 	}
 	if l.skipNode != "" {
-		if a.Type != clusterstate.TypeMemberJoin || a.NodeID != l.skipNode || a.Outcome != OutcomeApplied {
+		if a.Type != clusterstate.TypeMemberJoin || a.NodeID != l.skipNode || a.Outcome != OutcomeApplied ||
+			(l.skipOp != "" && a.OpID != l.skipOp) {
 			return nil
 		}
-		l.skipNode = ""
+		l.skipNode, l.skipOp = "", ""
 	}
 	return l.append(Record{Kind: KindEntry, Epoch: a.Epoch, Index: a.Index, EntryType: a.Type, EntryVersion: a.Version,
 		EntryTime: a.At, Actor: a.Actor, OpID: a.OpID, Origin: a.Origin, RequestID: a.RequestID,
@@ -534,7 +539,7 @@ func (l *Log) AuditEntry(a clusterstate.AuditEntry) error {
 // past the audited index is marked by one snapshot.installed record.
 // During a join's skip, only a snapshot that lists the joining node is
 // marked (and ends the skip); an earlier one is history.
-func (l *Log) AuditSnapshot(epoch, index uint64, members []string) error {
+func (l *Log) AuditSnapshot(epoch, index uint64, members []clusterstate.Member) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if !after(epoch, index, l.highE, l.highI) {
@@ -543,12 +548,12 @@ func (l *Log) AuditSnapshot(epoch, index uint64, members []string) error {
 	if l.skipNode != "" {
 		listed := false
 		for _, m := range members {
-			listed = listed || m == l.skipNode
+			listed = listed || (m.ID == l.skipNode && (l.skipOp == "" || m.JoinOp == l.skipOp))
 		}
 		if !listed {
 			return nil
 		}
-		l.skipNode = ""
+		l.skipNode, l.skipOp = "", ""
 	}
 	return l.append(Record{Kind: KindSnapshot, Epoch: epoch, Index: index})
 }
@@ -600,6 +605,7 @@ type Report struct {
 	HighEpoch uint64 `json:"high_epoch"`
 	HighIndex uint64 `json:"high_index"`
 	SkipNode  string `json:"skip_node,omitempty"`
+	SkipOp    string `json:"skip_op,omitempty"`
 	Break     *Break `json:"break,omitempty"`
 
 	segNums   []int
@@ -693,12 +699,12 @@ func Verify(dir string) (Report, error) {
 			switch {
 			case resetKinds[r.Kind]:
 				hiE, hiI = r.Epoch, r.Index
-				rep.SkipNode = ""
+				rep.SkipNode, rep.SkipOp = "", ""
 				if r.Kind == EventJoinMovedAside {
-					rep.SkipNode = r.Details["node_id"]
+					rep.SkipNode, rep.SkipOp = r.Details["node_id"], r.Details["join_op"]
 				}
 			case r.Epoch != 0 || r.Index != 0:
-				rep.SkipNode = ""
+				rep.SkipNode, rep.SkipOp = "", ""
 				if after(hiE, hiI, r.Epoch, r.Index) {
 					return fail(fmt.Sprintf("(epoch %d, index %d) goes below (%d, %d)", r.Epoch, r.Index, hiE, hiI))
 				}

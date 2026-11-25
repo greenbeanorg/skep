@@ -265,16 +265,23 @@ func TestResetMarksAndJoinSkip(t *testing.T) {
 	if err := l.Mark(EventJoinMovedAside, 0, 0, nil); err == nil {
 		t.Fatal("a join mark without the node ID")
 	}
-	if err := l.Mark(EventJoinMovedAside, 0, 0, map[string]string{"node_id": "self"}); err != nil {
+	if err := l.Mark(EventJoinMovedAside, 0, 0, map[string]string{"node_id": "self"}); err == nil {
+		t.Fatal("a join mark without the join's operation ID")
+	}
+	if err := l.Mark(EventJoinMovedAside, 0, 0, map[string]string{"node_id": "self", "join_op": "join:self:2"}); err != nil {
 		t.Fatal(err)
 	}
 	_ = l.AuditEntry(entry(1, OutcomeApplied)) // the new cluster's history
-	_ = l.AuditSnapshot(1, 5, []string{"other"})
+	// An earlier join of the same node to this cluster is history too.
+	old := entry(2, OutcomeApplied)
+	old.Type, old.NodeID, old.OpID = clusterstate.TypeMemberJoin, "self", "join:self:1"
+	_ = l.AuditEntry(old)
+	_ = l.AuditSnapshot(1, 5, []clusterstate.Member{{ID: "other"}, {ID: "self", JoinOp: "join:self:1"}})
 	l.Close()
 	l = mustOpen(t, data, c) // the skip goes on after a reopen
 	_ = l.AuditEntry(entry(6, OutcomeApplied))
 	join := entry(7, OutcomeApplied)
-	join.Type, join.NodeID = clusterstate.TypeMemberJoin, "self"
+	join.Type, join.NodeID, join.OpID = clusterstate.TypeMemberJoin, "self", "join:self:2"
 	_ = l.AuditEntry(join)
 	_ = l.AuditEntry(entry(8, OutcomeApplied))
 	if err := l.Mark(EventJoinAbandoned, 1, 9, nil); err != nil { // back to the one-node log, last index 9
@@ -298,8 +305,8 @@ func TestResetMarksAndJoinSkip(t *testing.T) {
 	// A join skip ended by a snapshot that lists the node.
 	data2 := t.TempDir()
 	l = mustOpen(t, data2, c)
-	_ = l.Mark(EventJoinMovedAside, 0, 0, map[string]string{"node_id": "self"})
-	_ = l.AuditSnapshot(1, 40, []string{"other", "self"})
+	_ = l.Mark(EventJoinMovedAside, 0, 0, map[string]string{"node_id": "self", "join_op": "join:self:9"})
+	_ = l.AuditSnapshot(1, 40, []clusterstate.Member{{ID: "other"}, {ID: "self", JoinOp: "join:self:9"}})
 	_ = l.AuditEntry(entry(41, OutcomeApplied))
 	l.Close()
 	if rep, _ := Verify(Dir(data2)); rep.Records != 3 || rep.Last.Index != 41 || rep.SkipNode != "" {
