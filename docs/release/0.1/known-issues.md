@@ -77,14 +77,15 @@ procedure, and results recorded as it describes are welcome.
   released):** a host without VMs and jails can join another host's
   cluster (step 8b-1), and be removed, wiped (`leave --wipe`) or give up
   a join (`join --abandon`) (step 8b-2a), as a preview: users and guests
-  are not shared, `admit` and `remove` are root-only on a member, there is
-  no key rotation, no cluster audit (membership events are log lines) and
-  no clock-offset check; with a member down a join waits, and a removal
-  that leaves too few answering voters needs an override and waits for
-  them. The data directory layout changed in 8b-2a (`state/`, no
-  migration; a host on an 8b-1 build is moved by hand)
+  are not shared, `admit` and `remove` are root-only on a member; step
+  8b-2b adds node key rotation (`key rotate`, root, every node upgraded
+  first), a cluster audit (`audit verify`) and a clock-offset check; with
+  a member down a join and a key rotation wait, and a removal that leaves
+  too few answering voters needs an override and waits for them. The data
+  directory layout changed in 8b-2a (`state/`, no migration; a host on an
+  8b-1 build is moved by hand)
   ([Joining hosts into a cluster](../../administration/cluster.md),
-  [limits](../../architecture/skep-cluster.md#limits-of-8b-2a)).
+  [limits](../../architecture/skep-cluster.md#limits-of-8b-2a-and-8b-2b)).
 
 ## Installation and upgrade
 

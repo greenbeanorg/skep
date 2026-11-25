@@ -1,11 +1,11 @@
-# skep-cluster (Milestone 8, steps 8a, 8b-1 and 8b-2a)
+# skep-cluster (Milestone 8, steps 8a, 8b-1, 8b-2a and 8b-2b)
 
 `skep-cluster` is the third Skep service, next to `skep-agent` and
 `skep-api`. It holds the node's cluster key, the cluster membership and
 the replicated store, and runs as its own unprivileged account. The design
-is [ADR 0013](../decisions/0013-clustering.md) with its amendments 1 and 2
-(amendment 2 is Proposed with the 8b-2a PR); this page describes what is
-built.
+is [ADR 0013](../decisions/0013-clustering.md) with its amendments 1, 2
+and 3 (amendment 3 is Proposed with the 8b-2b PR); this page describes
+what is built.
 
 **Built so far:** every host is a one-node cluster (8a), and a host
 **without guests** can join another cluster (8b-1): `join-request`,
@@ -16,10 +16,13 @@ caught up and applied by every member, and the applied-membership file.
 Step 8b-2a adds **removal** (`remove`, three records driven by the leader
 loop), **`leave --wipe`**, **`join --abandon`**, **`listen -none`**, the
 `state/` directory with crash-safe file steps, and health after a
-removal. **Not built yet** (step 8b-2b and later): key rotation,
-clock-offset health, the cluster audit (each membership event is a log
-line for now), a per-key connection limit, joining a host with guests
-(8d), replicated users (8c). `skep-api`, `skep-agent`
+removal. Step 8b-2b adds **node key rotation** (`key rotate`, `key
+rotate --abort`), the **cannot-say byte** after the handshake, a
+**per-node connection limit**, **clock-offset health**, the **cluster
+audit** with `audit verify`, and the `key_refused` warning (see
+[Step 8b-2b](#step-8b-2b-key-rotation-cannot-say-limits-clock-audit)).
+**Not built yet**: joining a host with guests (8d), replicated users
+(8c), forwarding (8e). `skep-api`, `skep-agent`
 and `skep-setup` do not use `skep-cluster` yet and are unchanged; the
 public API is unchanged.
 
@@ -49,7 +52,7 @@ in-process only.
 | Service account | `skep-cluster`, UID and GID **410** | Created by the package's pre-install script, as the `skep` account (409) is. Not the `skep` account: `skep-api` must not be able to read the node key |
 | Service | `/usr/local/sbin/skep-cluster`, rc.d `skep_cluster` | Refuses to run as root. Not enabled by the package or by `skep-setup` |
 | Configuration | `/usr/local/etc/skep/cluster.json`, `root:skep-cluster`, `0640` | Written by the root-run commands (`init`, `listen`, `join-request`); the service reads it and cannot change it |
-| Data directory | `/var/db/skep/cluster`, `skep-cluster:skep-cluster`, `0700` | `node.key` (`0600`), `node.crt`, and `state/` (`0700`) holding `raft.db` (`0600`), `snapshots/`, `membership.json` (`0600`) and, on a removed node, `removed.json` (`0600`); while joining also `join.json` (`0600`) and `standalone.<UTC time>/` (`0700`, a renamed `state/`); while `leave --wipe` runs, `wipe.json` (`0600`). Nothing in it belongs to root |
+| Data directory | `/var/db/skep/cluster`, `skep-cluster:skep-cluster`, `0700` | `node.key` (`0600`), `node.crt`, `audit/` (`0700`, the cluster audit, segments `0600`), and `state/` (`0700`) holding `raft.db` (`0600`), `snapshots/`, `membership.json` (`0600`) and, on a removed node, `removed.json` (`0600`); while joining also `join.json` (`0600`) and `standalone.<UTC time>/` (`0700`, a renamed `state/`); while `leave --wipe` runs, `wipe.json` (`0600`); while the node rotates its key, `node.key.next` (`0600`) and `rotate.json` (`0600`). Nothing in it belongs to root |
 | Local API | Unix socket `/var/run/skep-cluster/cluster.sock` | Peer credentials checked; see the table below |
 | Node-to-node listener | TCP **8444** on the management address | Open only after `listen -address`, `join-request -address` or `init -address`. A single host opens no port |
 
@@ -108,6 +111,11 @@ three paths to move into `state/`.
 | `wipe.json` | refuses: "`leave --wipe` did not finish; run it again" |
 | `raft.db` directly in the data directory | refuses and names the paths to move |
 | `join.json` in phase `abandoning` | refuses: "`join --abandon` did not finish; run it again" |
+| `node.key.next` without `rotate.json` | deletes it, with a warning (8b-2b) |
+| `rotate.json` and `node.key.next` | goes on with the rotation |
+| `rotate.json`, no `node.key.next`, `node.key` with the new pin | switched: goes on at step 5 |
+| `rotate.json`, no `node.key.next`, the old pin, phase `aborting` | deletes `rotate.json` (the abort's last delete) |
+| `rotate.json`, no `node.key.next`, the old pin, phase `rotating` | refuses and names the three files |
 | `state/` | starts normally (a `removed.json` in it: only the local socket, below) |
 | no `state/`, `join.json` | starts on an empty `state/`: the join decides |
 | no `state/`, no `join.json`, one `standalone.*` | renames it back to `state/`, with a warning |
@@ -329,6 +337,17 @@ forbidden`.
 | `admit` | `POST /cluster/v1/admit` | yes | no |
 | `admit-withdraw` | `POST /cluster/v1/admit/withdraw` | yes | no |
 | `remove` | `POST /cluster/v1/remove` | yes | no |
+| `key-rotate` | `POST /cluster/v1/key/rotate` | yes | no |
+| `key-abort` | `POST /cluster/v1/key/abort` | yes | no |
+
+`key-rotate` and `key-abort` (step 8b-2b) are root-only and local: no
+operation of `skep-api` changes a pin; `key rotate --api` arrives with
+forwarding (8e). Their own errors: `409 rotation_in_progress` (this node
+or another member is rotating), `409 no_rotation` (abort without
+`rotate.json`), `409 refused` (abort once this node uses its new key; the
+leader or the state machine refused the add). The remove operation has
+its own time limit of 60 s (every other operation 15 s), and the
+command's client waits above it.
 
 `admit`, `admit-withdraw` and `remove` are root-only in this step
 (`skep-api` gets them with `cluster:manage` in 8c). Their errors: `400
@@ -398,6 +417,9 @@ phase.
 | `withdraw` (passed to the leader) | no | no | yes | no | |
 | `remove` (passed to the leader) | no | no | yes | no | |
 | `removed` (the notice to a removed node) | no | no | yes | no | |
+| `clock` (the node's time, for the clock check) | no | yes | yes | yes | |
+| `key-add` (passed to the leader) | no | no | yes | no | only for the caller's own node |
+| `key-abort` (passed to the leader) | no | no | yes | no | only for the caller's own node |
 
 The table is `raftnet.Operations`; the tests are driven from it. On a
 joining node that its own membership does not list yet, the admission's
@@ -604,9 +626,12 @@ member entry exists and pins the key on disk; not checked while joining),
 `join` (a join in progress and whom its promotion waits for, warning),
 `removal` (a removal in progress and what it waits for, warning),
 `removal_applied` (members that have not yet applied the last removal,
-warning), `joining` (this node's own join: critical when it was refused
-after an unknown outcome), and on a removed node only `removed`
-(critical). `skep-api`'s health does not include it yet.
+warning; nothing until the first status round since the start has
+ended), `key_refused` (every member that answers refuses this node's key,
+three rounds in a row, warning), `key_rotation` (what a rotation waits
+for, warning), `clock` (offsets over 5 s warning, over 15 s critical),
+`joining` (this node's own join: critical when it was refused after an
+unknown outcome), and on a removed node only `removed` (critical). `skep-api`'s health does not include it yet.
 
 ## hashicorp/raft v1.8.0: facts the design relies on
 
@@ -677,15 +702,174 @@ checklist in the update's PR:
 | 9 | The library's `consumeCh` handshake: unbuffered `RPC` with a buffered `RespChan` of 1 | Same |
 | 10 | Anything new in `net_transport.go` that the adapted copy lacks (read the whole diff) | v1.8.0 is the base |
 
-## Limits of 8b-2a
+## Step 8b-2b: key rotation, cannot-say, limits, clock, audit
+
+ADR 0013 amendment 3 is the decision record; this is how it is built.
+
+### Node key rotation (D1)
+
+**Entries.** `member.key_add {node_id, next_pin, at}` and
+`member.key_done {node_id, keep, add_index}` (version 1; an older build's
+state machine stops at them: upgrade every node before the first
+rotation). A member entry carries `next_pin` and `key_add_index` while its
+node rotates. `pending.create` and the leader's `admit` refuse while any
+member has a next pin (`409 rotation_in_progress`); `member.key_add`
+refuses while an admission is pending, a member is joining or another
+member has a next pin. `member.removed` takes both pins.
+
+**Files on the rotating node.** `node.key.next` (the next key, `0600`,
+written with `O_EXCL`, fsync, fsync of the directory; no certificate until
+the switch) and `rotate.json` (`{format, old_pin, new_pin, op_id, started,
+phase}`, phase `rotating` or `aborting`). The order: next key, record,
+`key-add` to the leader; the switch (rename of `node.key.next` to
+`node.key`, directory fsync, a new `node.crt` through the "certificate is
+not for this key" repair, `nodekey.Key.Adopt` so that the listener, the
+diallers and the transport, which hold the same key object, use the new
+key from their next handshake, and `Listener.CloseAll`); `rotate.json`
+deleted once this node applies its `member.key_done`. Every step can be
+repeated after a crash; the start rule table above says what a start does
+with each combination of the files. Crash points of steps 1–5 and of the
+abort are tested in-process (`TestRotationCrashPoints`).
+
+**Who decides.** The rotating node asks; the leader proposes. `key-add`
+and `key-abort` are member-key peer operations, and the leader takes the
+node from the key (`from.NodeID`), so a member can add or abort a next pin
+only for itself. `key-add` repeats with the same operation ID until the
+answer is known; a repeat whose next pin is already present is answered
+with its add index. `key-abort` makes a barrier first, so that "the add is
+not applied" means it never will be. The leader proposes `member.key_done`
+keep new in its loop (after removals, before expiries) once every member's
+highest answered applied index is at or past the add index and the node's
+most recent connection to or from the leader used the new pin
+(`raftnet.PinObserver`: inbound, the listener's handshake pin; outbound,
+the pin the dialler accepted). For the leader's own rotation it is its own
+key. The rotating node switches by its own memory of the same indexes.
+
+**Where a pin is compared.** `ByPin` (and so the listener's handshake, the
+per-RPC check and `connGroup`), `ByAddress` and the Raft dialler, the Skep
+RPC caller (`CallPins`) and the probes (`ProbeKeyPins`) all take either
+pin of a rotating node. Status prints both pins and which one each node
+was last seen using; health `key_rotation` (warning) says what a rotation
+waits for, on every member.
+
+### The cannot-say byte (D2) and the per-node limit (D5)
+
+After the handshake the listener's first byte is 0x01 (accepted), or 0x02
+("cannot say") followed by a close, or — for a key it refuses while it is
+up to date — the TLS handshake refusal as before. 0x02 is sent when the
+node does not accept the key and `cannotSay()` holds (state machine
+stopped, behind `membership.json`, or a joining node in phase `refused`),
+or when the key is over its connection limit. For an unaccepted key the
+handshake then completes so that the byte can be sent; that is the stated
+cost: any key that completes a TLS handshake can learn that the node is
+not up to date. `raftnet.KeyAnswer` classifies a call's error the same way
+as `ProbeKey` (accepted, refused, cannot say, no answer) without a second
+connection; `HandshakeError.Answered` says the TLS handshake with the
+expected key completed.
+
+Mixed builds (facts file, point 2): an 8b-2a dialler treats 0x02 as a
+failed connection; an 8b-2a probe reads 0x02 as "refuses", as it read the
+silent close it replaces; an 8b-2b node reads an 8b-2a listener's silent
+close as "refuses". No protocol version change.
+
+The listener counts accepted connections per node (`Options.Group`): 16
+per member, joining or removing node (by node ID, so both pins of a
+rotating node are one node), 4 per pending key; the 17th gets 0x02. The
+256 total and 64 handshakes stay. Measured normal use: at most 2 open
+connections of one node on another's listener (three nodes, in-process;
+`TestPoolUseUnderPerNodeLimit`).
+
+### key_refused (D6)
+
+Every status round now records what each member's listener answered to
+this node's key. After three consecutive rounds with at least one real
+refusal and no acceptance, health `key_refused` warns that the node was
+probably removed while it was down and names `leave --wipe` (`join
+--abandon` with `join.json`). It never puts the node in removed mode. A
+round asks the members of `membership.json` while the state machine has
+none yet.
+
+### Clock health (D3)
+
+`clock` is a peer operation (every key that may call `status`). The
+status round asks each member that answered `status` for its clock after
+its status; the offset is the remote time minus the midpoint of send and
+receive, the uncertainty half the round trip, and a sample with a round
+trip over 2 s is dropped (the last sample is kept, the reason shown).
+Health `clock`: warning over 5 s, critical over 15 s (|offset| minus the
+uncertainty). Status lists every member's offset, uncertainty and round
+trip, or "not known (older build or refused)" / "no answer" / "no sample
+yet". An 8b-2a node answers `clock` with `forbidden` (an operation it does
+not know); that cannot be told from a real refusal, so every failure reads
+"not known", and the status RPC alone decides "answers". Nothing is
+refused because of a clock.
+
+### The cluster audit (D4)
+
+Package `internal/cluster/audit`, directory `/var/db/skep/cluster/audit`
+(`0700`; segments `audit-NNNNNNNN.jsonl`, `0600`; a lock file `.lock`).
+The format, the chain and the keys are in amendment 3, point 6.
+
+- **Before applied.** `clusterstate.Machine` calls its `AuditWriter` for
+  every entry it handles — applied, refused at apply (with the reason) or
+  a duplicate — after the applied-membership file and before the index is
+  reported as applied; an error stalls the machine at that entry. `Restore`
+  calls it for a snapshot past the audited key.
+- **Start.** `serve` opens the audit before the store. An empty audit gets
+  `audit.started` at the last index of the local log (`store.LastIndex`,
+  which also counts a snapshot), so the replay of that log writes nothing.
+- **Keys per cluster** and the join's skip: amendment 3, point 6.
+  `init`, `wipe-finish` and the abandon stage write their mark with the
+  last index of the new or restored log (`service.StageMark`); the join
+  stage writes `node.join.started` with this node's ID.
+- **Local events** (`service.event`, `service.stageEvent`) are written
+  after the step they record; a failed write is logged (the service) or
+  printed on stderr (a stage) and changes nothing.
+- **One writer, the argument.** `audit.Open` takes an exclusive,
+  non-blocking `flock` on `audit/.lock` and fails with "another process is
+  writing this node's cluster audit" if it is held. The running service
+  opens it at start and holds it until it stops. The commands that write
+  (the stages `join`, `abandon`, `wipe-begin`, `wipe-finish`, and `init`
+  after it has given up root) run only after the root command has stopped
+  `skep_cluster` (`stopForStore`, which waits for the store's lock to be
+  free), or, for `init`, before the service was ever started; the stages
+  that run while the service runs (`abandon-check`, `wipe-info-files`)
+  write nothing. So at most one process writes at a time by construction,
+  and the lock turns a mistake into an error instead of two chains.
+- **Tail repair.** A last line without a newline (a write a crash cut off,
+  never reported as written) is removed at the next open, and
+  `audit.tail_repaired` records how many bytes went.
+- `skep-cluster audit verify [-dir DIR]` reads with `audit.Verify`: no
+  write, no create, no lock.
+- The membership log lines stay; the audit is the record.
+
+### Library facts (checked for step 8b-2b)
+
+- `LeadershipTransferToServer` does not check the target's suffrage
+  (`raft.go` `leaderLoop`); the hand-over picks a voter in state `member`
+  itself. The transfer is bounded by one election timeout and allowed
+  while a configuration change is uncommitted.
+- A joining node receives the log's entries, not a snapshot, while the
+  log is shorter than the snapshot threshold; hence the join's skip in the
+  audit.
+
+## Limits of 8b-2a and 8b-2b
 
 - Only a host **without VMs or jails** joins, and only a one-node host
   (`join-request` and `join` refuse otherwise). The host's users are not
   replaced (8c) and no drain is taken (8d). `remove` has no
   `--forget-guests` and no guest refusal (8d; the entry's guest list is
   always empty).
-- **No key rotation, clock-offset health, cluster audit or per-key
-  connection limit** (step 8b-2b). Each membership event is a log line.
+- A key rotation waits for every member: a member that stays down blocks
+  it until it returns, is removed, or the rotation is aborted (only while
+  the rotating node still uses its old key). One rotation in the cluster
+  at a time, and none while an admission is pending or a member joins.
+  `skep-api`'s node-to-node key (`--api`) arrives with 8e.
+- The cluster audit can be rewritten from the start by a compromised
+  `skep-cluster` on its own node, and a cut-off tail cannot be detected;
+  the other members' audits are the cross-check (no external anchor in
+  0.2).
+- The clock check only reports; `node_clock_skew` arrives with 8e.
 - With a member down, a join cannot finish (by design, amendment 1), and a
   removal that leaves too few answering voters is refused unless
   `-allow-unanswered`; such a removal may not finish until the member

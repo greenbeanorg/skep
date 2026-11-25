@@ -17,6 +17,10 @@
   document and records what the build of removal, `leave --wipe`, `join
   --abandon` and `listen -none` changed or added to the accepted text;
   the passages it changes are marked "Amended (amendment 2)".
+- **Amendment 3 (2026-11-25)** is **Proposed**. It records the build of
+  step 8b-2b (key rotation, the cannot-say byte, the per-node connection
+  limit, clock health, the cluster audit) and adds the entry-version rule
+  to B5. Andy accepts it by approving the merge of the step 8b-2b PR.
 - Date: 2026-11-23 (evaluation draft), 2026-11-24 (rewritten as the design)
 - Depends on: [ADR 0004](0004-privilege-boundary.md) (privilege boundary),
   [ADR 0005](0005-agent-task-engine.md) (task engine),
@@ -1935,4 +1939,239 @@ The order and crash points of B1, the promotion rule, the
 applied-membership file's rules, the trust model of B2 and the risk of
 amendment 1 point 6 (a member that was down during a removal still pins
 the removed node until it catches up; Skep 0.2 does not prevent it).
+
+## Amendment 3 (2026-11-25, Proposed)
+
+Written with the build of step 8b-2b, from the fixed decisions D1–D6 the
+review chat gave that run. **Status: Proposed.** Andy accepts it by
+approving the merge of the step 8b-2b PR. It changes the accepted text
+only where it says so. The facts it rests on are in
+[0013-evidence/8b2b-facts-20261125.md](0013-evidence/8b2b-facts-20261125.md).
+
+### 1. Rotating the node key (D1)
+
+- A member entry can hold a second pin, `next_pin`, with the index of the
+  entry that added it (`key_add_index`). **Both pins are accepted as that
+  node**: in the listener's handshake, in `ByPin` (and so in the per-RPC
+  check, which is otherwise unchanged), and by every dialler, which
+  accepts either pin of the node it dials and notes which one the node's
+  key had.
+- Two new entry types, version 1. `member.key_add {node_id, next_pin,
+  at}` is refused at apply for an unknown node, a node not in state
+  `member`, while any member has a next pin (one rotation in the cluster
+  at a time), while an admission is pending or a member is joining, and
+  for a next pin equal to any pin or next pin in the membership.
+  `member.key_done {node_id, keep: new|old, add_index}` is only for a
+  member with a next pin whose `key_add_index` is `add_index` (so an entry
+  of an earlier rotation never ends a later one): keep new makes the next
+  pin the pin, keep old drops the next pin. The leader writes it with the
+  predictable operation ID `keydone:<node ID>:<add index>:<new|old>`; once
+  one of the two is applied the other is refused (no next pin). The
+  envelope's operation ID of `member.key_add` is the rotating node's, the
+  same on every retry.
+- `member.removed` takes both pins with the entry. A removal is allowed
+  during a rotation (a rotation that waits for a member that is down must
+  not block removing that member); a removing member cannot start one.
+- **`pending.create` gains one refusal**: while any member has a next pin.
+  The leader also refuses `admit` before proposing (`409
+  rotation_in_progress`, naming the member). The admission and the join
+  answer carry one pin per node, and their formats do not change.
+- **Who proposes.** The rotating node's service asks the leader with the
+  peer operations `key-add` and `key-abort` (member keys only; the leader
+  takes the node from the key, so a member can only rotate or abort its
+  own key). The leader proposes `member.key_done` keep new in its loop
+  (one step after removals, before expiries) when every member's highest
+  answered applied index (amendment 2, F5) is at or past the add entry's
+  index, and the rotating node presented its new key in the leader's most
+  recent successful connection to it or from it. For the leader's own
+  rotation, "presented" is its own key.
+- **On the rotating node**, in this order: (1) the new key is made and
+  written to `node.key.next` (0600, fsync, fsync of the directory); (2)
+  `rotate.json` records `{format, old_pin, new_pin, op_id, started,
+  phase: rotating}`; (3) the leader is asked (`key-add`; an unknown outcome
+  is asked again every 10 s with the same operation ID); a refusal deletes
+  `node.key.next`, then `rotate.json`, and nothing else changed; (4) when
+  this node's own memory shows every member (itself included) at or past
+  the add entry's index, `node.key.next` is renamed to `node.key`
+  (directory fsync), a certificate is issued for it, the listener and the
+  diallers use it from their next handshake, and the listener's open
+  connections are closed; the old private key is gone from the disk at
+  the rename, which is intended: every member has durably applied the new
+  pin; (5) when this node applies `member.key_done` for itself,
+  `rotate.json` is deleted. **Abort**: phase `aborting` is written to
+  `rotate.json` first (step 4 then never runs), the leader is asked
+  (`key-abort`); after a barrier it proposes `member.key_done` keep old
+  for a next pin that is present, or answers that the add was never
+  applied (and never will be); then `node.key.next` and `rotate.json` are
+  deleted. An abort is refused (`409 refused`) once `node.key` has the
+  new pin, by the node and by the leader (a key-abort from the new key).
+- **Start rule additions** (after the existing rules): `wipe.json` still
+  wins, and `wipe-finish` also deletes `node.key.next`, then
+  `rotate.json`, before `state/`. `node.key.next` without `rotate.json`:
+  deleted with a warning. `rotate.json` with `node.key.next`: go on.
+  `rotate.json` without `node.key.next` and `node.key` with the new pin:
+  switched, go on at step 5. Without `node.key.next` and with the old pin:
+  phase aborting finishes the abort's deletes; phase rotating refuses to
+  start and names the three files. `join-request`, `join` and `listen
+  -none` refuse while `rotate.json` exists.
+- **Durability**: `state/membership.json` holds `next_pin` before that
+  index is reported as applied; it is written in **format 2 only while a
+  next pin exists** (format 1 otherwise, so the file stays readable by an
+  earlier build). A snapshot that holds a next pin has **format 4**,
+  written only while one is present, as format 3 is for removals.
+- Connections made with a pin that `member.key_done` dropped are closed at
+  that apply, and the pin is refused in the handshake afterwards.
+- A one-node cluster rotates at once.
+- `skep-cluster key rotate [-wait D]` (exit 0 when the old pin is gone on
+  this node's applied membership, 3 when the wait ended first, printing
+  what it waits for), `skep-cluster key rotate --abort`, and `--api`
+  refused ("arrives with forwarding, step 8e"). Root, local, through the
+  socket (`POST /cluster/v1/key/rotate`, `POST /cluster/v1/key/abort`);
+  no API operation changes a pin. Health `key_rotation` (warning) on every
+  member says what a rotation waits for; status prints both pins and
+  which one each node was last seen using.
+- **Mixed builds**: an older build's state machine stops at the new
+  entry types (B5: stop, never skip). Upgrade every node before the first
+  rotation.
+
+**B5 (amended, amendment 3): the entry-version rule.** After 0.2 is
+released, a change to how an existing entry type is applied needs a new
+version of that entry type; a build applies an entry only up to the
+version it declares. The added refusal in `pending.create` changes how an
+existing entry type is applied without a new version. It is acceptable
+only because **no release contains it** (0.2 is unreleased) and **no
+existing log can hold a `pending.create` applied while a next pin
+existed** (before this step there was no next pin), so every node, on any
+build, applies every existing log the same way. From the 0.2 release on,
+such a change is a new version.
+
+### 2. A third answer after the handshake (D2)
+
+The listener sends one byte **0x02 ("cannot say")** and closes, in place
+of a silent close, when it does not accept the key **and** its state
+machine is stopped, or has not reached the index of
+`state/membership.json`, or it is a joining node in phase `refused`, or
+the key is over its connection limit (point 3). In every other case a
+key that is not accepted gets the handshake refusal as before, which now
+means "this node is up to date and refuses the key". `ProbeKey` returns
+one of four: no answer, accepts, refuses, cannot say; every dialler treats
+0x02 as a failed connection. The removed notice's check, `join --abandon`
+(both stages) and `key_refused` (point 4) count "cannot say" exactly as
+"no answer": a notice is believed, and an abandon restores, only with at
+least one real refusal and no acceptance.
+
+Mixed builds (facts, point 2): an old dialler treats 0x02 as a failed
+connection, and an old probe reads it as "refuses", as it read the silent
+close that 0x02 replaces; a new dialler reads an old listener's silent
+close as "refuses", as today. No protocol version change. The cost: any
+key that completes a TLS handshake, known or not, can learn that this
+node is not up to date; nothing else is told.
+
+### 3. The per-node connection limit (D5)
+
+Accepted connections on 8444 are limited per node, not only in total: 16
+per member node (both pins of a rotating node count as one node; joining
+and removing keys count as their node), 4 per pending key. The total of
+256 and the 64 handshakes stay. A connection over the limit gets 0x02 and
+is closed; connections already open are not touched. Measured normal use
+in-process (three nodes, status rounds every 300 ms, writes): at most 2
+open connections of one node on another's listener.
+
+### 4. `key_refused` (D6)
+
+A health check `key_refused`, a warning and never more: after three
+consecutive status rounds in which at least one node this node accepts
+gave a real refusal of this node's key and none accepted it, health says
+the node was probably removed while it was down and names `skep-cluster
+leave --wipe` (or `join --abandon` when `join.json` exists). The node never
+enters removed mode because of it. A node whose state machine has no
+members yet asks the members of `state/membership.json`. Not reported on a
+node that is alone.
+
+### 5. Clock health (D3)
+
+A new peer operation `clock`, open to every key that may call `status`,
+answers the node's time in Unix milliseconds. It is its own operation so
+that an older build answers `status` as before and its clock reads "not
+known". Every status round asks each member that answered `status` for
+its clock: offset = remote time minus the midpoint of the local send and
+receive, uncertainty = half the round trip; a sample with a round trip
+over 2 s is dropped (the last sample is kept and the reason shown).
+Health `clock`: a warning when |offset| minus the uncertainty is over
+5 s, critical over 15 s, naming each member and its offset from this
+node's point of view; a member without a sample (none yet, an older build,
+which answers `forbidden` for an operation it does not know, or no answer)
+is "not known", and that alone is no warning. Nothing is refused because
+of a clock in this step (`503 node_clock_skew` is step 8e).
+
+### 6. The cluster audit (D4; B10 as built)
+
+- Each node's `skep-cluster` writes its own audit in
+  `/var/db/skep/cluster/audit/` (0700, the service account), outside
+  `state/`, so a join's move-aside and a wipe keep it: the audit belongs
+  to the node, and its chain goes on across joins, abandons and wipes.
+  **B10 amended: the audit is JSON lines in segment files, not a
+  database.**
+- Format: `audit-<8-digit number>.jsonl`; each record has `seq` (strictly
+  rising, never reused), `local_time`, `kind`, and for a log entry its
+  epoch, index, entry type and version, the entry's own time where it has
+  one, actor, op ID, origin, request ID, the node, name, address and pins
+  it names, and the outcome (`applied`, `refused` with the reason, or
+  `duplicate`); `prev_hash` and `hash` (SHA-256 over the record's
+  canonical JSON encoding without `hash`). A segment's first record
+  carries the last hash of the segment before it; a segment is sealed when
+  its successor exists. A new segment starts when the UTC month changes or
+  the file passes 16 MiB.
+- The record of an entry is written and synced (file, and the directory
+  for a new segment) before the index is reported as applied; a failed
+  write stops the state machine at that entry, as a failed write of
+  `membership.json` does.
+- **Keyed by (epoch, index) within a cluster.** Raft log indices start
+  again in another cluster, and `hashicorp/raft` sends a joining node the
+  log's entries (not a snapshot) while the log is short, so the key starts
+  again at the records that change the node's cluster: `audit.started`
+  (an empty audit at start, at the last index of the local log),
+  `node.init`, `node.wipe.finished` and `node.join.abandoned` carry the
+  key to go on from (the last index of the node's log then);
+  `node.join.started` (written by the join stage after the move-aside)
+  sets it to zero and starts the **join's skip**: no entry is recorded
+  until the node's own `member.join` is applied, or a snapshot that lists
+  it is installed. So a node's audit of a cluster starts at its join (B10).
+  A snapshot installed past the audited key is marked by one
+  `snapshot.installed` record.
+- Local events, without epoch and index: init, join started, join
+  finished, join abandoned, removed (with the how text), wipe begun and
+  finished (old and new cluster ID, old and new pin), listen address set
+  and cleared (when the service changes its own records), each step of
+  this node's key rotation, a removed notice dropped after its check, and
+  a repaired tail (a cut-off last line removed at open). Stages that run
+  with the service stopped write them through the same package after the
+  step they record (a failed write is printed and changes nothing);
+  `abandon-check` and `wipe-info-files` write nothing.
+- **One writer**: the audit is opened with an exclusive, non-blocking
+  `flock`; the running service holds it, and every writing stage runs only
+  with the service stopped.
+- `skep-cluster audit verify [-dir DIR]`: root, local, read-only (opens
+  nothing for writing, creates nothing, takes no lock), with the service
+  running or stopped. It checks every hash, that every line is exactly the
+  record's canonical encoding, every link between records and between
+  segments, that `seq` rises by one, and that (epoch, index) never goes
+  down between reset marks; it prints the record count, the sealed
+  segments, the first and last record, and for a break the file, line and
+  reason. Exit codes as `skep-agent audit verify`: 0, 1, 2.
+- Limits: the audit is written by the unprivileged service that also
+  parses peer traffic, so a compromised `skep-cluster` can rewrite its own
+  node's audit from the start, and a cut-off tail cannot be detected; the
+  other members' audits are the cross-check. No external anchor in 0.2
+  (backlog).
+
+### 7. Follow-ups of the 8b-2a review
+
+The hand-over before a leader's own removal names its target (a voter in
+state `member` that answered the status round, with the highest applied
+index; `LeadershipTransferToServer`); with none, `503 handover_failed`
+and nothing written. The remove operation has its own 60 s limit.
+`removal_applied` says nothing until the first status round since the
+start has ended. `leave --wipe` works with an unreadable `node.key` (the
+marker records it and the key is always replaced).
 

@@ -372,7 +372,7 @@ and the two rc.d services were validated on `hearst`, a lab VM nested
 under KVM, on 2026-11-12 (`tests/integration/peercred`,
 `tests/integration/rcd`).
 
-### skep-cluster and the cluster (Milestone 8, steps 8a, 8b-1 and 8b-2a)
+### skep-cluster and the cluster (Milestone 8, steps 8a, 8b-1, 8b-2a and 8b-2b)
 
 [ADR 0013](../decisions/0013-clustering.md) adds a third process,
 `skep-cluster`, with its own account (`skep-cluster`, UID/GID 410). What is
@@ -438,7 +438,7 @@ pin.
   the receiver's latest Raft configuration and carry that node's address.
   The TCP source address is not compared (a multi-homed host may connect
   from another address). The dialler accepts only the pin of the node it
-  dials. Raft's inbound handler is Skep's own adaptation of the library's
+  dials (either pin of a rotating node). Raft's inbound handler is Skep's own adaptation of the library's
   (the library's does not let the receiver check the sender); it is
   compared with upstream at every library update.
 - **A joining node trusts only its admission** until the cluster's
@@ -513,9 +513,57 @@ A removal that would leave fewer answering voters than a majority is
 refused unless the administrator overrides it with the cluster ID typed
 back.
 
-**Not built yet:** key rotation, the cluster audit (membership events
-are log lines with actor, operation ID and origin), clock-offset health,
-a per-key connection limit, replicated users, forwarding.
+**Key rotation (step 8b-2b, amendment 3).** `skep-cluster key rotate`
+replaces a node's key without stopping anything: a second pin is added to
+its member entry, both pins are accepted as that node, the node switches
+once every member has applied the new pin, and the leader drops the old
+pin once it has seen the node use the new key; connections made with the
+old pin are then closed and the old key is refused in the handshake. The
+old private key leaves the disk at the switch.
+
+- **What a compromised member can do with `key-add` and `key-abort`.** The
+  leader takes the node from the caller's key, so a member can start or
+  abort a rotation **only of its own key**: it cannot add a pin to another
+  node's entry, end another node's rotation, or make the cluster accept a
+  key for another node. Root on a member could already use that member's
+  key; giving its own entry a second key it controls adds nothing beyond
+  that. What it can do is keep a rotation of its own open (an abort, or
+  never switching), which blocks admissions and other rotations until it
+  is removed; removal is allowed during a rotation and takes both pins.
+- Rotating does not make a compromised key safe by itself: if a node's
+  key was stolen, remove the node (or wipe it) — a thief with the old key
+  is refused only once the rotation has ended.
+
+**The cannot-say byte and the per-node limit (step 8b-2b).** A node whose
+state machine is stopped or behind its applied-membership file, or a
+joining node whose join was refused, cannot tell whether it would accept
+a key; it now answers such a key with one byte, 0x02, after the TLS
+handshake, instead of a refusal, so that its silence is not read as "this
+key is refused" by the removed notice's check, `join --abandon` or
+`key_refused` (they count it as no answer). **The cost:** any key that
+completes a TLS handshake, known or not, can learn that the node is not
+up to date; nothing else is told. Accepted connections are also limited
+per node (16 per member node, both pins counting as one; 4 per pending
+key) besides the 256 in total, so one member's key cannot take every
+connection slot; a connection over the limit gets 0x02.
+
+**The cluster audit (step 8b-2b, ADR 0013 B10 as amended).** Each node's
+`skep-cluster` records every replicated entry it applies or refuses, and
+its own local steps, in `/var/db/skep/cluster/audit` (hash-chained JSON
+lines, written before the entry counts as applied); `skep-cluster audit
+verify` checks it. **Its limits:** it is written by the unprivileged
+service that also parses peer traffic, so a compromised `skep-cluster`
+(or root) on a node can rewrite that node's audit from the start, and a
+cut-off tail cannot be detected; the **other members' audits are the
+cross-check**, since each records the same entries. There is no external
+anchor in 0.2 (backlog).
+
+**Clock health.** Each node measures the other members' clock offsets
+and warns (5 s) or reports critical (15 s); nothing is refused because
+of a clock until forwarding (8e).
+
+**Not built yet:** replicated users (8c), forwarding (8e), skep-api's
+node-to-node key.
 
 ## Host operations and confinement (Milestone 6)
 
