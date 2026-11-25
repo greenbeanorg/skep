@@ -179,8 +179,10 @@ func printWipeHint(e env, name string) {
 }
 
 // runLeave is "skep-cluster leave --wipe" (ADR 0013 B1; decision D8 of
-// step 8b-2a): root, local. It stops the service, confirms the cluster
-// ID, and, as the service account, makes this host a one-node cluster with
+// step 8b-2a): root, local. It confirms the cluster ID (read from the
+// files with the service running when they tell it, so that a refusal
+// stops nothing), stops the service, and, as the service account, makes
+// this host a one-node cluster with
 // a new cluster ID and a new node key, the same node ID, no listen address
 // and no open port. A marker written first and removed last makes it safe
 // to run again after a crash at any point; the second run does not ask.
@@ -218,9 +220,6 @@ func runLeave(ctx context.Context, args []string, e env) error {
 	if acct.UID == 0 {
 		return errors.New("the service account must not be root")
 	}
-	if err := stopForStore(ctx, e, *socket); err != nil {
-		return err
-	}
 	stage := func(action string) (stageResult, error) {
 		res, err := runStage(ctx, e, acct.UID, acct.GID, []string{action, "-config", *configPath, "-data-dir", *dataDir})
 		if err == nil && res.Outcome != "ok" {
@@ -232,12 +231,28 @@ func runLeave(ctx context.Context, args []string, e env) error {
 		return errors.Join(err, checkNoRootFiles(e, *dataDir),
 			errors.New("skep_cluster is left stopped; run \"skep-cluster leave --wipe\" again, or start it with \"service skep_cluster start\""))
 	}
-	info, err := stage("wipe-info")
-	if err != nil {
+	restart := func(err error) error {
 		if serr := startAndWait(ctx, e, *socket); serr != nil {
 			fmt.Fprintf(e.stderr, "skep-cluster: %v\n", serr)
 		}
 		return errors.Join(err, checkNoRootFiles(e, *dataDir))
+	}
+	// The cluster ID is read from the files with the service running, so
+	// that a wrong or missing confirmation stops nothing. The service is
+	// stopped first only when the store alone can tell, or for a resume.
+	info, err := stage("wipe-info-files")
+	if err != nil {
+		return errors.Join(err, checkNoRootFiles(e, *dataDir))
+	}
+	stopped := false
+	if info.ClusterID == "" || info.Resume {
+		if err := stopForStore(ctx, e, *socket); err != nil {
+			return err
+		}
+		stopped = true
+		if info, err = stage("wipe-info"); err != nil {
+			return restart(err)
+		}
 	}
 	if info.Resume {
 		fmt.Fprintf(e.stdout, "A wipe of this node was begun and did not finish; finishing it (new cluster %s).\n", termSafe(info.ClusterID))
@@ -246,10 +261,24 @@ func runLeave(ctx context.Context, args []string, e env) error {
 		fmt.Fprintf(e.stdout, "  cluster %s, node key pin %s\n", termSafe(info.ClusterID), termSafe(info.Pin))
 		fmt.Fprintf(e.stdout, "It becomes a one-node cluster with a new cluster ID and a new node key, and no listener.\n")
 		if err := confirmClusterID(e, "Wipe this node's cluster state?", info.ClusterID, *clusterID); err != nil {
-			if serr := startAndWait(ctx, e, *socket); serr != nil {
-				fmt.Fprintf(e.stderr, "skep-cluster: %v\n", serr)
+			if !stopped {
+				return errors.Join(err, checkNoRootFiles(e, *dataDir))
 			}
+			return restart(err)
+		}
+	}
+	if !stopped {
+		if err := stopForStore(ctx, e, *socket); err != nil {
 			return err
+		}
+		// What was confirmed must still be what is there.
+		again, err := stage("wipe-info")
+		if err == nil && (again.ClusterID != info.ClusterID || again.Resume) {
+			err = fmt.Errorf("refused: the cluster ID changed from %s to %s while the confirmation was asked; nothing was changed",
+				termSafe(info.ClusterID), termSafe(again.ClusterID))
+		}
+		if err != nil {
+			return restart(err)
 		}
 	}
 	if _, err := stage("wipe-begin"); err != nil {
@@ -279,10 +308,13 @@ func runLeave(ctx context.Context, args []string, e env) error {
 
 // runAbandon is "skep-cluster join --abandon" (ADR 0013 B1 step 3.7;
 // decision D9 of step 8b-2a): root, local, only with a join in progress.
-// The service is stopped; the stage, as the service account, asks the
-// nodes and does the file steps. This command believes only the stage's
-// outcome, for what it prints; its own root effects (stopping and starting
-// the service) do not depend on it.
+// A first stage, as the service account with the service running, refuses
+// what it can know already (no join, nothing to put back, a node that
+// accepts the key, no answer), and then nothing is stopped. Otherwise the
+// service is stopped; the stage asks the nodes again and does the file
+// steps. This command believes the stages only for what it prints and for
+// leaving the service alone; stopping and starting it is its only root
+// effect.
 func runAbandon(ctx context.Context, e env, configPath, dataDir, socket, account string) error {
 	if e.euid != 0 {
 		return errNeedsRoot("join --abandon")
@@ -297,6 +329,16 @@ func runAbandon(ctx context.Context, e env, configPath, dataDir, socket, account
 	if _, err := clusterconf.Load(configPath); err != nil {
 		return err
 	}
+	// A refusal that can be known with the service running stops nothing:
+	// no join.json, nothing to put back, or a node that accepts the key or
+	// no answer at all (the stage writes nothing).
+	pre, err := runStage(ctx, e, acct.UID, acct.GID, []string{"abandon-check", "-config", configPath, "-data-dir", dataDir})
+	if err != nil {
+		return errors.Join(err, checkNoRootFiles(e, dataDir))
+	}
+	if pre.Outcome != "proceed" {
+		return abandonOutcome(e, pre, nil, checkNoRootFiles(e, dataDir))
+	}
 	if err := stopForStore(ctx, e, socket); err != nil {
 		return err
 	}
@@ -306,6 +348,12 @@ func runAbandon(ctx context.Context, e env, configPath, dataDir, socket, account
 	if serr != nil {
 		return errors.Join(serr, startErr, rootErr)
 	}
+	return abandonOutcome(e, res, startErr, rootErr)
+}
+
+// abandonOutcome prints a stage's outcome of "join --abandon"; startErr
+// and rootErr are joined to the result.
+func abandonOutcome(e env, res stageResult, startErr, rootErr error) error {
 	for _, p := range res.Attempts {
 		fmt.Fprintf(e.stdout, "  %s\n", termSafe(p))
 	}
@@ -316,7 +364,7 @@ func runAbandon(ctx context.Context, e env, configPath, dataDir, socket, account
 		}
 		fmt.Fprintf(e.stdout, "The join is given up: this host's one-node cluster is back (pin %s).\n", termSafe(res.Pin))
 		return errors.Join(startErr, rootErr)
-	case "no_join":
+	case "no_join", "no_standalone":
 		return errors.Join(fmt.Errorf("refused: %s", termSafe(res.Message)), startErr, rootErr)
 	case "accepted":
 		fmt.Fprintf(e.stdout, "Refused: %s still accept(s) this host's key, so the cluster still counts this host.\n", termSafe(strings.Join(res.Members, ", ")))
@@ -332,10 +380,11 @@ func runAbandon(ctx context.Context, e env, configPath, dataDir, socket, account
 }
 
 // runListenNone is "skep-cluster listen -none" (decision D13 of step
-// 8b-2a): root, local. It is refused unless this node is alone in its
-// cluster with nothing pending, read from the store with the service
-// stopped (a decision with a root effect is not taken on the running
-// service's word). Then it removes the listen address from cluster.json
+// 8b-2a): root, local. A refusal the running service's status shows is
+// given without a stop. Otherwise it is refused unless this node is alone
+// in its cluster with nothing pending, read from the store with the
+// service stopped (a decision with a root effect is not taken on the
+// running service's word). Then it removes the listen address from cluster.json
 // and starts the service, which updates its own records and opens no port.
 func runListenNone(ctx context.Context, e env, configPath, dataDir, socket, account string) error {
 	cfg, err := clusterconf.Load(configPath)
@@ -352,6 +401,15 @@ func runListenNone(ctx context.Context, e env, configPath, dataDir, socket, acco
 	}
 	if acct.UID == 0 {
 		return errors.New("the service account must not be root")
+	}
+	// A refusal the running service can show stops nothing (believing the
+	// socket for a refusal has no root effect). Only a node it shows alone
+	// with nothing pending, or a socket that does not answer, goes on to
+	// the store, read with the service stopped.
+	if st, err := localapi.NewClient(socket).Status(ctx); err == nil {
+		if why := notAlone(st); why != "" {
+			return errors.Join(errors.New("refused: "+why+"; nothing was changed"), checkNoRootFiles(e, dataDir))
+		}
 	}
 	if err := stopForStore(ctx, e, socket); err != nil {
 		return err
@@ -402,6 +460,22 @@ func runListenNone(ctx context.Context, e env, configPath, dataDir, socket, acco
 	return nil
 }
 
+// notAlone says why the running service's status refuses "listen -none",
+// or "" when it does not.
+func notAlone(st localapi.Status) string {
+	switch {
+	case st.Removed != nil:
+		return "this node was removed from its cluster; run \"skep-cluster leave --wipe\""
+	case st.Join != nil:
+		return "this node is joining a cluster"
+	case len(st.Members) > 1:
+		return fmt.Sprintf("the cluster has %d members", len(st.Members))
+	case len(st.Pendings) > 0:
+		return fmt.Sprintf("%d admission(s) are pending; withdraw them first (\"skep-cluster admit --withdraw NAME\")", len(st.Pendings))
+	}
+	return ""
+}
+
 // stageReadState is the stage of "listen -none": alone, one member,
 // nothing pending, not joining.
 func stageReadState(configPath, dataDir string) stageResult {
@@ -443,12 +517,18 @@ func stageReadState(configPath, dataDir string) stageResult {
 	return stageResult{Outcome: "ok", Servers: len(servers), ClusterID: view.ClusterID}
 }
 
-func stageWipeInfo(configPath, dataDir string) stageResult {
+// stageWipeInfo is the "wipe-info" stage, and with filesOnly the
+// "wipe-info-files" stage that runs while the service runs (an empty
+// cluster ID: only the store can tell).
+func stageWipeInfo(configPath, dataDir string, filesOnly bool) stageResult {
 	cfg, err := clusterconf.Load(configPath)
 	if err != nil {
 		return fail(err.Error())
 	}
 	id, resume, err := service.WipeInfo(dataDir, cfg.NodeID)
+	if filesOnly {
+		id, resume, err = service.WipeInfoFiles(dataDir)
+	}
 	if err != nil {
 		return fail(err.Error())
 	}
@@ -479,7 +559,10 @@ func stageWipeFinish(ctx context.Context, configPath, dataDir string) stageResul
 	return stageResult{Outcome: "ok", ClusterID: id, Pin: pin}
 }
 
-func stageAbandon(ctx context.Context, configPath, dataDir string) stageResult {
+// stageAbandon is the "abandon" stage, and with check the
+// "abandon-check" stage that runs while the service runs and writes
+// nothing.
+func stageAbandon(configPath, dataDir string, check bool) stageResult {
 	cfg, err := clusterconf.Load(configPath)
 	if err != nil {
 		return fail(err.Error())
@@ -488,7 +571,11 @@ func stageAbandon(ctx context.Context, configPath, dataDir string) stageResult {
 	if err != nil {
 		return fail(err.Error())
 	}
-	out := service.StageAbandon(ctx, dataDir, cfg, key, 10*time.Second)
+	run := service.StageAbandon
+	if check {
+		run = service.CheckAbandon
+	}
+	out := run(dataDir, cfg, key, 10*time.Second)
 	return stageResult{Outcome: out.Outcome, Message: out.Message, Attempts: out.Probes, Members: out.AcceptedBy,
 		Standalone: out.Standalone, Resume: out.Resumed, Pin: key.Pin(), Name: cfg.NodeName}
 }

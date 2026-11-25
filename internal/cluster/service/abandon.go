@@ -1,7 +1,6 @@
 package service
 
 import (
-	"context"
 	"fmt"
 	"path/filepath"
 	"time"
@@ -14,8 +13,10 @@ import (
 )
 
 // AbandonOutcome is the result of StageAbandon. Outcome is one of
-// "no_join", "accepted" (a node still accepts this host's key), "no_answer"
-// (no node answered), "restored", "stopped" (a test hook) or "error".
+// "no_join", "no_standalone" (the one-node state to put back is gone),
+// "accepted" (a node still accepts this host's key), "no_answer" (no node
+// answered), "restored", "stopped" (a test hook) or "error"; CheckAbandon
+// gives "proceed" instead of going on to the file steps.
 type AbandonOutcome struct {
 	Outcome    string
 	Message    string
@@ -43,11 +44,21 @@ const (
 // node's log) is deleted, standalone.<UTC time> is renamed to state/, and
 // join.json is removed last. With phase "abandoning" already written it
 // finishes those steps without asking again.
-func StageAbandon(ctx context.Context, dataDir string, cfg clusterconf.Config, key *nodekey.Key, timeout time.Duration) AbandonOutcome {
-	return stageAbandon(ctx, dataDir, cfg, key, timeout, nil)
+func StageAbandon(dataDir string, cfg clusterconf.Config, key *nodekey.Key, timeout time.Duration) AbandonOutcome {
+	return stageAbandon(dataDir, cfg, key, timeout, false, nil)
 }
 
-func stageAbandon(ctx context.Context, dataDir string, cfg clusterconf.Config, key *nodekey.Key, timeout time.Duration, stop func(string) bool) AbandonOutcome {
+// CheckAbandon is StageAbandon's reading part, run as the service account
+// while the service still runs, so that "join --abandon" stops nothing for
+// a refusal it can know already: it reads join.json, checks the one-node
+// state to put back and probes the nodes, and writes nothing. "proceed"
+// (also on a resume in phase abandoning) means the command may stop the
+// service and run StageAbandon, which probes again and decides.
+func CheckAbandon(dataDir string, cfg clusterconf.Config, key *nodekey.Key, timeout time.Duration) AbandonOutcome {
+	return stageAbandon(dataDir, cfg, key, timeout, true, nil)
+}
+
+func stageAbandon(dataDir string, cfg clusterconf.Config, key *nodekey.Key, timeout time.Duration, check bool, stop func(string) bool) AbandonOutcome {
 	stopped := func(p string) bool { return stop != nil && stop(p) }
 	js, err := joinstate.Read(dataDir)
 	if err != nil {
@@ -59,7 +70,25 @@ func stageAbandon(ctx context.Context, dataDir string, cfg clusterconf.Config, k
 	out := AbandonOutcome{Standalone: js.Standalone}
 	if js.Phase == joinstate.PhaseAbandoning {
 		out.Resumed = true
+		if check {
+			out.Outcome = "proceed"
+			return out
+		}
 	} else {
+		// Nothing to put back: refuse before asking anyone or writing
+		// anything (state/ may hold the cluster's state).
+		hasAside := false
+		if layout.IsStandaloneName(js.Standalone) {
+			if hasAside, err = layout.Exists(filepath.Join(dataDir, js.Standalone)); err != nil {
+				return AbandonOutcome{Outcome: "error", Message: err.Error()}
+			}
+		}
+		if !hasAside {
+			out.Outcome = "no_standalone"
+			out.Message = fmt.Sprintf("join.json names no moved-aside one-node state that exists (%q): the one-node state is gone, "+
+				"so the join cannot be given up; nothing was changed. \"skep-cluster leave --wipe\" is the way out", js.Standalone)
+			return out
+		}
 		answered := 0
 		for _, n := range js.AllNodes(cfg.NodeID) {
 			res, perr := raftnet.ProbeKey(n.Address, n.Pin, key.Certificate, timeout)
@@ -84,6 +113,9 @@ func stageAbandon(ctx context.Context, dataDir string, cfg clusterconf.Config, k
 		case answered == 0:
 			out.Outcome = "no_answer"
 			out.Message = "no node of the admission or of the join answer answered; nothing was changed"
+			return out
+		case check:
+			out.Outcome = "proceed"
 			return out
 		}
 		js.Phase = joinstate.PhaseAbandoning
@@ -134,5 +166,3 @@ func stageAbandon(ctx context.Context, dataDir string, cfg clusterconf.Config, k
 	out.Outcome = "restored"
 	return out
 }
-
-var _ = context.Background

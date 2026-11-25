@@ -142,19 +142,16 @@ func (s *Service) ghostSweep(view clusterstate.View, servers []store.Server) boo
 		if _, ok := memberOf(view, sv.ID); ok {
 			continue
 		}
-		err := s.getStore().RemoveServer(sv.ID)
+		if err := s.getStore().RemoveServer(sv.ID); err != nil {
+			s.log.Warn("cluster membership: removing a Raft server without a member entry failed; it will be tried again", "event", "ghost removal failed",
+				"node_id", sv.ID, "address", sv.Address, "voter", sv.Voter, "actor", clusterstate.ActorSystem, "origin", s.cfg.NodeID, "error", err.Error())
+			return true
+		}
 		s.log.Warn("cluster membership: a Raft server without a member entry was removed", "event", "ghost removed",
-			"node_id", sv.ID, "address", sv.Address, "voter", sv.Voter, "actor", clusterstate.ActorSystem, "origin", s.cfg.NodeID, "error", errString(err))
+			"node_id", sv.ID, "address", sv.Address, "voter", sv.Voter, "actor", clusterstate.ActorSystem, "origin", s.cfg.NodeID)
 		return true
 	}
 	return false
-}
-
-func errString(err error) string {
-	if err == nil {
-		return ""
-	}
-	return err.Error()
 }
 
 func memberOf(view clusterstate.View, id string) (clusterstate.Member, bool) {

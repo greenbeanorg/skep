@@ -117,6 +117,16 @@ type Service struct {
 	// answers is the last status round: per member, its state machine's
 	// applied index as it answered, or the error.
 	answers map[string]statusResult
+	// highest is, per member, the highest applied index it has ever
+	// answered a status round with since this node started (decision
+	// D12: a member that applied a removal is not named later).
+	highest map[string]uint64
+	// statusBusy is set while a status round runs in its goroutine.
+	statusBusy bool
+	// noticeBusy is set while a removed notice is being checked.
+	noticeBusy bool
+	// runCtx is Run's context, for work started outside the step loop.
+	runCtx context.Context
 	// removed is set once this node knows it was removed.
 	removed *RemovedRecord
 	// standaloneChecked is set once the start's clean-up of a leftover
@@ -194,7 +204,7 @@ func New(o Options) *Service {
 	}
 	s := &Service{cfg: o.Config, key: o.Key, dataDir: o.DataDir, machine: o.Machine, writer: o.Writer,
 		now: o.Now, log: o.Logger, every: o.Interval, leaderInt: o.LeaderInterval, started: o.Now(),
-		join: o.Join, waits: map[string][]string{}, answers: map[string]statusResult{}, removed: o.Removed}
+		join: o.Join, waits: map[string][]string{}, answers: map[string]statusResult{}, highest: map[string]uint64{}, removed: o.Removed}
 	s.caller = raftnet.Caller{NodeID: o.Config.NodeID, Certificate: s.certificate}
 	return s
 }
@@ -237,6 +247,9 @@ func (s *Service) joinState() *joinstate.State {
 
 // Run does the background work until ctx ends.
 func (s *Service) Run(ctx context.Context) {
+	s.mu.Lock()
+	s.runCtx = ctx
+	s.mu.Unlock()
 	t := time.NewTicker(s.every)
 	defer t.Stop()
 	for {
@@ -419,9 +432,14 @@ func (s *Service) renew() {
 func (s *Service) Health(context.Context) models.Health {
 	h := models.Health{Status: models.HealthOK, Version: version.Get().Version, UptimeSeconds: int64(s.now().Sub(s.started).Seconds())}
 	if r := s.removedRecord(); r != nil {
+		next := "\"skep-cluster leave --wipe\""
+		if s.joinState() != nil {
+			// A joining node: abandon puts its one-node state back.
+			next = "\"skep-cluster join --abandon\" (which puts this host's one-node cluster back)"
+		}
 		h.Record("removed", true, fmt.Sprintf("this node was removed from cluster %s (%s, %s): its Raft instance and its listener are shut. "+
-			"Make sure it was removed on a member (\"skep-cluster remove %s\"), then run \"skep-cluster leave --wipe\" as root on this node",
-			r.ClusterID, r.How, r.At, s.cfg.NodeName))
+			"Make sure it was removed on a member (\"skep-cluster remove %s\"), then run %s as root on this node",
+			r.ClusterID, r.How, r.At, s.cfg.NodeName, next))
 		return h
 	}
 	st := s.getStore()
@@ -555,10 +573,14 @@ func joinNames(n []string) string {
 func (s *Service) Status(context.Context) localapi.Status {
 	v := version.Get()
 	if r := s.removedRecord(); r != nil {
-		return localapi.Status{NodeID: s.cfg.NodeID, NodeName: s.cfg.NodeName, ClusterID: r.ClusterID, Pin: s.key.Pin(),
+		out := localapi.Status{NodeID: s.cfg.NodeID, NodeName: s.cfg.NodeName, ClusterID: r.ClusterID, Pin: s.key.Pin(),
 			CertificateNotAfter: s.key.NotAfter().UTC(), ListenAddress: s.cfg.PeerAddress(), AcceptedBy: "none (removed)",
 			Raft: store.Stats{State: "shutdown"}, Members: []clusterstate.Member{}, Pendings: []clusterstate.Pending{},
 			Removed: &localapi.RemovedStatus{ClusterID: r.ClusterID, At: r.At, How: r.How}, Build: v.Version + "+" + v.Commit}
+		if js := s.joinState(); js != nil {
+			out.Join = &localapi.JoinStatus{Phase: js.Phase, ClusterID: js.Admission.ClusterID, Message: js.Message}
+		}
+		return out
 	}
 	st := s.getStore()
 	view := s.machine.View()

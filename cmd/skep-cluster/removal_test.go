@@ -67,13 +67,14 @@ func TestLeaveWipe(t *testing.T) {
 		t.Fatalf("not root: %v", err)
 	}
 	// A wrong cluster ID, and no terminal without -cluster-id: refused,
-	// nothing changed, the service started again.
+	// nothing changed, and the service was not stopped (F2: the cluster
+	// ID comes from the files while it runs).
 	for _, extra := range [][]string{{"-wipe", "-cluster-id", "7d1c2a9e-1b0f-4f3e-9a51-2c6b8e0d4f10"}, {"-wipe"}} {
 		w.serviceActions = nil
 		if err := run(context.Background(), args(extra...), w.env(0)); err == nil {
 			t.Fatalf("%v: accepted", extra)
 		}
-		if got := strings.Join(w.serviceActions, ","); got != "stop,start" {
+		if got := strings.Join(w.serviceActions, ","); got != "" {
 			t.Fatalf("%v: service actions %s", extra, got)
 		}
 		if k, _ := nodekey.Load(w.dataDir); k.Pin() != oldKey.Pin() {
@@ -95,7 +96,7 @@ func TestLeaveWipe(t *testing.T) {
 	for _, s := range w.stages {
 		actions = append(actions, s[1])
 	}
-	if strings.Join(actions, ",") != "wipe-info,wipe-begin,wipe-finish" {
+	if strings.Join(actions, ",") != "wipe-info-files,wipe-info,wipe-begin,wipe-finish" {
 		t.Fatalf("stages %v", actions)
 	}
 	if c := readConfig(t, w.config); c.ListenAddress != "" || c.NodeID != agentNode {
@@ -211,8 +212,8 @@ func ghostNode(t *testing.T) (*nodekey.Key, joincode.Node) {
 	return k, joincode.Node{NodeID: id, Name: "ghost", Address: "127.0.0.9:8444", Pin: k.Pin()}
 }
 
-// join --abandon on a host without a join in progress: refused, the
-// service started again.
+// join --abandon on a host without a join in progress: refused, and the
+// service was not stopped (F2).
 func TestAbandonWithoutAJoin(t *testing.T) {
 	w := newWorld(t)
 	if err := w.init(0, "-address", "127.0.0.1"); err != nil {
@@ -223,7 +224,7 @@ func TestAbandonWithoutAJoin(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "no join in progress") {
 		t.Fatalf("abandon: %v", err)
 	}
-	if got := strings.Join(w.serviceActions, ","); got != "stop,start" {
+	if got := strings.Join(w.serviceActions, ","); got != "" {
 		t.Fatalf("service actions %s", got)
 	}
 	if err := run(context.Background(), []string{"join", "-abandon", "x"}, w.env(0)); err == nil {

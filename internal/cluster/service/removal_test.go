@@ -264,7 +264,7 @@ func TestRemoveAJoiningMemberAndAbandon(t *testing.T) {
 	}
 	// Before the removal, join --abandon refuses: members accept its key.
 	h.stop(j)
-	out := StageAbandon(context.Background(), j.dir, j.cfg, j.key, 3*time.Second)
+	out := StageAbandon(j.dir, j.cfg, j.key, 3*time.Second)
 	if out.Outcome != "accepted" || len(out.AcceptedBy) == 0 {
 		t.Fatalf("abandon while accepted: %+v", out)
 	}
@@ -278,7 +278,7 @@ func TestRemoveAJoiningMemberAndAbandon(t *testing.T) {
 	h.eventually("wu knows it was removed", 30*time.Second, func() bool { return removedMode(j) })
 	// join --abandon: the members answer and refuse its key now.
 	h.stop(j)
-	out = StageAbandon(context.Background(), j.dir, j.cfg, j.key, 3*time.Second)
+	out = StageAbandon(j.dir, j.cfg, j.key, 3*time.Second)
 	if out.Outcome != "restored" {
 		t.Fatalf("abandon after the removal: %+v", out)
 	}
@@ -672,7 +672,7 @@ func TestAbandonCrashPoints(t *testing.T) {
 				n := n
 				h.eventually(n.name+" refuses wu's key", 10*time.Second, func() bool { return refusedIn(n, j) })
 			}
-			out := stageAbandon(context.Background(), j.dir, j.cfg, j.key, 3*time.Second, func(p string) bool { return p == point })
+			out := stageAbandon(j.dir, j.cfg, j.key, 3*time.Second, false, func(p string) bool { return p == point })
 			if out.Outcome != "stopped" {
 				t.Fatalf("stop at %q: %+v", point, out)
 			}
@@ -683,7 +683,7 @@ func TestAbandonCrashPoints(t *testing.T) {
 			for _, n := range h.running() {
 				h.stop(n)
 			}
-			out = StageAbandon(context.Background(), j.dir, j.cfg, j.key, time.Second)
+			out = StageAbandon(j.dir, j.cfg, j.key, time.Second)
 			if out.Outcome != "restored" || !out.Resumed || len(out.Probes) != 0 {
 				t.Fatalf("rerun: %+v", out)
 			}
@@ -699,7 +699,7 @@ func TestAbandonCrashPoints(t *testing.T) {
 func TestAbandonRefusals(t *testing.T) {
 	h := newHarness(t)
 	n := h.node("smith")
-	if out := StageAbandon(context.Background(), n.dir, n.cfg, n.key, time.Second); out.Outcome != "no_join" {
+	if out := StageAbandon(n.dir, n.cfg, n.key, time.Second); out.Outcome != "no_join" {
 		t.Fatalf("without a join: %+v", out)
 	}
 	_, _, gn := ghost(t, "ghost", "127.0.88.9")
@@ -711,7 +711,7 @@ func TestAbandonRefusals(t *testing.T) {
 	if err := joinstate.Write(n.dir, joinstate.State{Phase: joinstate.PhaseAccepted, OpID: newID(t), Admission: adm, Standalone: "standalone.20260101T000000Z"}); err != nil {
 		t.Fatal(err)
 	}
-	out := StageAbandon(context.Background(), n.dir, n.cfg, n.key, time.Second)
+	out := StageAbandon(n.dir, n.cfg, n.key, time.Second)
 	if out.Outcome != "no_answer" {
 		t.Fatalf("nobody answers: %+v", out)
 	}

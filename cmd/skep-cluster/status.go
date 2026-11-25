@@ -53,7 +53,11 @@ func runStatus(ctx context.Context, args []string, e env) error {
 		fmt.Fprintf(e.stdout, "REMOVED:       from cluster %s, %s (%s)\n", termSafe(r.ClusterID), termSafe(r.How), termSafe(r.At))
 		fmt.Fprintf(e.stdout, "Raft:          shut; listener: none\n")
 		fmt.Fprintf(e.stdout, "Build:         %s\n", termSafe(st.Build))
-		fmt.Fprintf(e.stdout, "Run \"skep-cluster leave --wipe\" as root (after removing this node on a member, if that was not done).\n")
+		if st.Join != nil {
+			fmt.Fprintf(e.stdout, "This node was joining: run \"skep-cluster join --abandon\" as root, which puts its one-node cluster back (after removing this node on a member, if that was not done).\n")
+		} else {
+			fmt.Fprintf(e.stdout, "Run \"skep-cluster leave --wipe\" as root (after removing this node on a member, if that was not done).\n")
+		}
 		printHealth(e, h)
 		return nil
 	}

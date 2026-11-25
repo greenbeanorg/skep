@@ -405,6 +405,11 @@ func (s *state) apply(e Entry, index uint64) (change, error) {
 			return change{}, errors.New("a pending entry needs an expiry time")
 		}
 		for _, mem := range s.sortedMembers() {
+			// An admission lists every member, the one being removed
+			// too, and the joining node would accept that key.
+			if mem.State == StateRemoving {
+				return change{}, fmt.Errorf("member %s is being removed: no admission until its removal has finished", mem.Name)
+			}
 			if mem.Address == "" {
 				return change{}, fmt.Errorf("member %s has no address: nobody could join it", mem.Name)
 			}

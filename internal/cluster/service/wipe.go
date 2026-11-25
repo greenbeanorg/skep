@@ -165,6 +165,16 @@ func writeFileAtomic(dir, name string, v any) error {
 // already under way (the marker exists), in which case the ID is the new
 // one and nothing is asked again.
 func WipeInfo(dataDir, nodeID string) (clusterID string, resume bool, err error) {
+	return wipeInfo(dataDir, nodeID, false)
+}
+
+// WipeInfoFiles is WipeInfo from the files alone, which can be read while
+// the service runs; an empty ID without an error: only the store can tell.
+func WipeInfoFiles(dataDir string) (clusterID string, resume bool, err error) {
+	return wipeInfo(dataDir, "", true)
+}
+
+func wipeInfo(dataDir, nodeID string, filesOnly bool) (clusterID string, resume bool, err error) {
 	if err := layout.CheckOldLayout(dataDir); err != nil {
 		return "", false, err
 	}
@@ -182,6 +192,9 @@ func WipeInfo(dataDir, nodeID string) (clusterID string, resume bool, err error)
 	}
 	if js, err := joinstate.Read(dataDir); err == nil && js != nil {
 		return js.Admission.ClusterID, false, nil
+	}
+	if filesOnly {
+		return "", false, nil
 	}
 	if store.Exists(layout.State(dataDir)) {
 		v, _, err := store.ReadState(layout.State(dataDir), nodeID)

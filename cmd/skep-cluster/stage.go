@@ -44,13 +44,17 @@ func runStageCmd(ctx context.Context, args []string, e env) error {
 	case "read-state":
 		res = stageReadState(*configPath, *dataDir)
 	case "wipe-info":
-		res = stageWipeInfo(*configPath, *dataDir)
+		res = stageWipeInfo(*configPath, *dataDir, false)
+	case "wipe-info-files":
+		res = stageWipeInfo(*configPath, *dataDir, true)
 	case "wipe-begin":
 		res = stageWipeBegin(*dataDir)
 	case "wipe-finish":
 		res = stageWipeFinish(ctx, *configPath, *dataDir)
 	case "abandon":
-		res = stageAbandon(ctx, *configPath, *dataDir)
+		res = stageAbandon(*configPath, *dataDir, false)
+	case "abandon-check":
+		res = stageAbandon(*configPath, *dataDir, true)
 	default:
 		return fmt.Errorf("stage: unknown action %q", args[0])
 	}

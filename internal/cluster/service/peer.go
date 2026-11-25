@@ -517,6 +517,14 @@ func (s *Service) admitAsLeader(request, actor, origin, opID string) (localapi.A
 	if err != nil {
 		return localapi.AdmitResult{}, &localapi.OpError{HTTPStatus: http.StatusBadRequest, Code: "invalid_request", Message: err.Error()}
 	}
+	// An admission printed during a removal would list the member being
+	// removed, and the joining node would accept its key (also checked
+	// at apply).
+	for _, m := range s.machine.View().Members {
+		if m.State == clusterstate.StateRemoving {
+			return localapi.AdmitResult{}, refusedErr(fmt.Sprintf("%s is being removed; no admission until its removal has finished; nothing was written", m.Name))
+		}
+	}
 	expires := s.now().Add(PendingLifetime).Unix()
 	e, err := clusterstate.NewEntry(clusterstate.TypePendingCreate, opID, actor, origin, clusterstate.PendingCreate{
 		NodeID: req.NodeID, Name: req.Name, Address: req.Address, Pin: req.Pin, ExpiresAt: expires})

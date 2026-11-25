@@ -21,7 +21,6 @@ import (
 	"github.com/greenbeanorg/skep/internal/cluster/layout"
 	"github.com/greenbeanorg/skep/internal/cluster/localapi"
 	"github.com/greenbeanorg/skep/internal/cluster/raftnet"
-	"github.com/greenbeanorg/skep/internal/cluster/store"
 	"github.com/greenbeanorg/skep/internal/ids"
 )
 
@@ -36,7 +35,8 @@ type RemovedRecord struct {
 	NodeID    string `json:"node_id"`
 	// At is when this node learned it (its own clock, RFC 3339).
 	At string `json:"at"`
-	// How says how it learned it: "notice from <name> (<node ID>)" or
+	// How says how it learned it: "notice from <name>, confirmed by <n>
+	// members refusing this key" or
 	// "its own log: state removing and no longer in the Raft
 	// configuration" or "its own log: no member entry".
 	How string `json:"how"`
@@ -222,9 +222,19 @@ type RemovedNotice struct {
 	NodeID    string `json:"node_id"`
 }
 
+// The check of a removed notice: up to noticeRounds rounds of probes,
+// noticePause apart (the other members apply the final entry a moment
+// after the leader does), each probe bounded by noticeProbeTimeout.
+const (
+	noticeRounds       = 3
+	noticePause        = 2 * time.Second
+	noticeProbeTimeout = 3 * time.Second
+)
+
 // handleRemovedNotice: the transport has checked that the sender's key is
 // a member key this node accepts. The notice must name this node and its
-// cluster.
+// cluster. A valid notice is not believed on the sender's word: it only
+// starts a check (checkNotice), off the RPC's goroutine, one at a time.
 func (s *Service) handleRemovedNotice(from raftnet.Peer, n RemovedNotice) (any, error) {
 	clusterID := s.machine.View().ClusterID
 	if js := s.joinState(); js != nil && clusterID == "" {
@@ -233,8 +243,75 @@ func (s *Service) handleRemovedNotice(from raftnet.Peer, n RemovedNotice) (any, 
 	if n.NodeID != s.cfg.NodeID || n.ClusterID == "" || n.ClusterID != clusterID {
 		return nil, &raftnet.PeerError{Code: raftnet.CodeRefused, Message: "the notice is not for this node in this cluster"}
 	}
-	s.enterRemoved(clusterID, "notice from "+from.Name+" ("+from.NodeID+")")
+	s.mu.Lock()
+	busy := s.noticeBusy
+	s.noticeBusy = true
+	ctx := s.runCtx
+	s.mu.Unlock()
+	if busy {
+		s.log.Info("a removed notice arrived while another is being checked; it is dropped", "from", from.Name, "node_id", from.NodeID)
+		return struct{}{}, nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	go s.checkNotice(ctx, clusterID, from)
 	return struct{}{}, nil
+}
+
+// checkNotice believes a removed notice only when this node's own key is
+// refused: it probes, with its own key, every other node it accepts now,
+// the sender included, and enters removed mode only if at least one
+// answers and none that answers accepts the key. Otherwise it tries again
+// after noticePause, up to noticeRounds rounds, then drops the notice.
+func (s *Service) checkNotice(ctx context.Context, clusterID string, from raftnet.Peer) {
+	defer func() {
+		s.mu.Lock()
+		s.noticeBusy = false
+		s.mu.Unlock()
+	}()
+	for round := 1; round <= noticeRounds; round++ {
+		if round > 1 {
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(noticePause):
+			}
+		}
+		if s.isRemoved() || ctx.Err() != nil {
+			return
+		}
+		refused, accepted := s.probeOwnKey(from)
+		if refused > 0 && len(accepted) == 0 {
+			s.enterRemoved(clusterID, fmt.Sprintf("notice from %s, confirmed by %d members refusing this key", from.Name, refused))
+			return
+		}
+		s.log.Info("a removed notice is not confirmed yet", "from", from.Name, "round", round, "refused_by", refused, "accepted_by", joinNames(accepted))
+	}
+	s.log.Warn("a removed notice was dropped: no round had a node refuse this node's key with none accepting it",
+		"from", from.Name, "node_id", from.NodeID, "rounds", noticeRounds)
+}
+
+// probeOwnKey probes every node this node accepts now (not pending ones),
+// and the sender, with this node's own key. It returns how many answered
+// and refused the key, and the names of those that accept it.
+func (s *Service) probeOwnKey(from raftnet.Peer) (int, []string) {
+	refused := 0
+	var accepted []string
+	seen := map[string]bool{s.cfg.NodeID: true}
+	for _, p := range append(s.acceptedNow().peers, from) {
+		if p.Kind == raftnet.KindPending || seen[p.NodeID] || p.Address == "" {
+			continue
+		}
+		seen[p.NodeID] = true
+		switch res, _ := raftnet.ProbeKey(p.Address, p.Pin, s.certificate, noticeProbeTimeout); res {
+		case raftnet.ProbeRefused:
+			refused++
+		case raftnet.ProbeAccepted:
+			accepted = append(accepted, p.Name)
+		}
+	}
+	return refused, accepted
 }
 
 // statusResult is one member's answer in the last status round.
@@ -253,18 +330,34 @@ type statusResult struct {
 func (s *Service) statusStep(ctx context.Context) {
 	now := s.now()
 	s.mu.Lock()
-	due := !now.Before(s.nextStatus)
-	if due {
-		s.nextStatus = now.Add(s.leaderInt)
-	}
-	s.mu.Unlock()
-	if !due {
+	if now.Before(s.nextStatus) || s.statusBusy {
+		s.mu.Unlock()
 		return
 	}
-	res := s.statusRound(ctx, s.machine.View().Members)
-	s.mu.Lock()
-	s.answers = res
+	s.nextStatus = now.Add(s.leaderInt)
+	s.statusBusy = true
 	s.mu.Unlock()
+	// In its own goroutine, so that the once-a-second work is not held
+	// for statusTimeout while a member does not answer.
+	members := s.machine.View().Members
+	go func() {
+		res := s.statusRound(ctx, members)
+		s.mu.Lock()
+		s.answers = res
+		s.noteApplied(res)
+		s.statusBusy = false
+		s.mu.Unlock()
+	}()
+}
+
+// noteApplied keeps, per member, the highest applied index it has ever
+// answered with (since this node started). s.mu is held.
+func (s *Service) noteApplied(res map[string]statusResult) {
+	for id, r := range res {
+		if h, ok := s.highest[id]; r.err == nil && (!ok || r.applied > h) {
+			s.highest[id] = r.applied
+		}
+	}
 }
 
 // statusRound asks the given members at once.
@@ -286,15 +379,20 @@ func (s *Service) statusRound(ctx context.Context, members []clusterstate.Member
 	return out
 }
 
-// unappliedRemoval returns the names of the members whose state machine
-// has not reached the last removal (or did not answer), from the last
-// status round.
+// unappliedRemoval returns the names of the members that have not been
+// seen to apply the last removal, by the highest applied index each has
+// ever answered with since this node started: a member that applied it
+// and is down later is not named.
 func (s *Service) unappliedRemoval(view clusterstate.View) []string {
 	if view.RemovedIndex == 0 {
 		return nil
 	}
 	s.mu.Lock()
 	answers := s.answers
+	highest := make(map[string]uint64, len(s.highest))
+	for id, h := range s.highest {
+		highest[id] = h
+	}
 	s.mu.Unlock()
 	var out []string
 	for _, m := range view.Members {
@@ -302,17 +400,20 @@ func (s *Service) unappliedRemoval(view clusterstate.View) []string {
 			continue // it is being removed itself
 		}
 		r, ok := answers[m.ID]
+		hi, heard := highest[m.ID]
 		if m.ID == s.cfg.NodeID {
 			applied, stalled := s.machine.AppliedIndex()
 			r, ok = statusResult{applied: applied, stalled: stalled}, true
+			hi, heard = applied, true
 		}
 		switch {
-		case !ok || r.err != nil:
-			out = append(out, m.Name+" (no answer)")
-		case r.stalled:
-			out = append(out, m.Name+" (state machine stopped)")
-		case r.applied < view.RemovedIndex:
-			out = append(out, fmt.Sprintf("%s (applied %d, the removal is %d)", m.Name, r.applied, view.RemovedIndex))
+		case heard && hi >= view.RemovedIndex:
+		case !heard:
+			out = append(out, m.Name+" (no answer since this node started)")
+		case ok && r.err == nil && r.stalled:
+			out = append(out, fmt.Sprintf("%s (applied %d, the removal is %d; state machine stopped)", m.Name, hi, view.RemovedIndex))
+		default:
+			out = append(out, fmt.Sprintf("%s (applied %d, the removal is %d)", m.Name, hi, view.RemovedIndex))
 		}
 	}
 	return out
@@ -515,6 +616,7 @@ func (s *Service) removeAsLeader(ctx context.Context, req forwardRemove, origin 
 	for id, r := range answers {
 		s.answers[id] = r
 	}
+	s.noteApplied(answers)
 	s.mu.Unlock()
 	var silent []string
 	answered := 0
@@ -606,5 +708,3 @@ func decodeNotice(body json.RawMessage) (RemovedNotice, error) {
 	err := dec.Decode(&n)
 	return n, err
 }
-
-var _ = store.ErrNotLeader
