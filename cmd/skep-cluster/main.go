@@ -47,13 +47,13 @@ func main() {
 	case err == nil:
 	case errors.As(err, &exitErr):
 		if exitErr.msg != "" {
-			fmt.Fprintln(os.Stderr, "skep-cluster:", exitErr.msg)
+			fmt.Fprintln(os.Stderr, "skep-cluster:", termSafeLines(exitErr.msg))
 		}
 		os.Exit(exitErr.code)
 	case errors.Is(err, flag.ErrHelp):
 		os.Exit(2)
 	default:
-		fmt.Fprintln(os.Stderr, "skep-cluster:", err)
+		fmt.Fprintln(os.Stderr, "skep-cluster:", termSafeLines(err.Error()))
 		os.Exit(1)
 	}
 }

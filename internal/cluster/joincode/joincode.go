@@ -17,8 +17,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/netip"
 	"strings"
 
+	"github.com/greenbeanorg/skep/internal/cluster/clusterconf"
 	"github.com/greenbeanorg/skep/internal/cluster/clusterstate"
 )
 
@@ -81,8 +83,20 @@ func (a Admission) validate() error {
 	if len(a.Members) == 0 || len(a.Members) > 64 {
 		return fmt.Errorf("an admission lists 1 to 64 members, not %d", len(a.Members))
 	}
+	if err := CheckNodes(append([]Node{a.For}, a.Members...)); err != nil {
+		return err
+	}
+	if a.ExpiresAt <= 0 {
+		return errors.New("the admission has no expiry time")
+	}
+	return nil
+}
+
+// CheckNodes validates nodes as an admission's are: each valid, and no node
+// ID, name, address or pin twice.
+func CheckNodes(nodes []Node) error {
 	seen := map[string]bool{}
-	for _, m := range append([]Node{a.For}, a.Members...) {
+	for _, m := range nodes {
 		if err := m.validate(); err != nil {
 			return fmt.Errorf("member: %w", err)
 		}
@@ -93,8 +107,16 @@ func (a Admission) validate() error {
 			seen[k] = true
 		}
 	}
-	if a.ExpiresAt <= 0 {
-		return errors.New("the admission has no expiry time")
+	return nil
+}
+
+// CheckPorts refuses an address whose port is not 8444 (admit and join; the
+// state machine's CheckAddress does not, for the loopback tests).
+func CheckPorts(nodes ...Node) error {
+	for _, n := range nodes {
+		if ap, err := netip.ParseAddrPort(n.Address); err != nil || ap.Port() != clusterconf.Port {
+			return fmt.Errorf("address %q of %s: port %d is not skep-cluster's port %d", n.Address, n.Name, ap.Port(), clusterconf.Port)
+		}
 	}
 	return nil
 }

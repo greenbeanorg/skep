@@ -57,8 +57,9 @@ func (s *Service) HandlePeer(ctx context.Context, op string, from raftnet.Peer, 
 		return StatusAnswer{NodeID: s.cfg.NodeID, AppliedIndex: applied, Stalled: stalled}, nil
 	case raftnet.OpJoin:
 		var req JoinRequest
-		if err := strictJSON(body, &req); err != nil || !opIDRE.MatchString(req.OpID) {
-			return nil, &raftnet.PeerError{Code: raftnet.CodeInvalidRequest, Message: "the join request needs an operation ID"}
+		// The operation ID must be a lower-case UUID (a node ID's form).
+		if err := strictJSON(body, &req); err != nil || !clusterstate.ValidNodeID(req.OpID) {
+			return nil, &raftnet.PeerError{Code: raftnet.CodeInvalidRequest, Message: "the join request needs an operation ID that is a lower-case UUID"}
 		}
 		return s.handleJoin(from, req)
 	case raftnet.OpAdmit:
@@ -162,7 +163,7 @@ func (s *Service) handleJoin(from raftnet.Peer, req JoinRequest) (any, error) {
 	case now >= pending.ExpiresAt:
 		return nil, &raftnet.PeerError{Code: raftnet.CodeRefused, Message: "the pending entry of this node has expired"}
 	}
-	e, err := clusterstate.NewEntry(clusterstate.TypeMemberJoin, req.OpID, "node:"+from.NodeID, s.cfg.NodeID,
+	e, err := clusterstate.NewEntry(clusterstate.TypeMemberJoin, joinOpID(from.NodeID, req.OpID), "node:"+from.NodeID, s.cfg.NodeID,
 		clusterstate.MemberJoin{NodeID: from.NodeID, Pin: from.Pin, At: now})
 	if err != nil {
 		return nil, &raftnet.PeerError{Code: raftnet.CodeInvalidRequest, Message: err.Error()}
@@ -179,11 +180,18 @@ func (s *Service) handleJoin(from raftnet.Peer, req JoinRequest) (any, error) {
 	case err != nil:
 		return nil, &raftnet.PeerError{Code: raftnet.CodeOutcomeUnknown, Message: err.Error()}
 	}
+	// Accepted only if this node's member entry with this key exists.
+	if mem, ok := s.machine.Member(from.NodeID); !ok || mem.Pin != from.Pin {
+		return nil, &raftnet.PeerError{Code: raftnet.CodeRefused, Message: "the join was written, but there is no member entry for this node with this key"}
+	}
 	if !res.Duplicate {
 		s.joinStepDone(1, from.NodeID)
 	}
 	return s.joinAnswer(), nil
 }
+
+// joinOpID is the operation ID of the member.join entry of a join call.
+func joinOpID(nodeID, callOpID string) string { return "join:" + nodeID + ":" + callOpID }
 
 // Join outcomes.
 const (
@@ -212,7 +220,8 @@ type JoinOutcome struct {
 // of the admission and of earlier answers only, following a redirect to the
 // leader only when it names one of them at its known address (ADR 0013 B1;
 // D8 of the 8b-1 run). rounds is how many times every member is tried.
-func JoinCall(ctx context.Context, caller raftnet.Caller, peers []joincode.Node, opID string, rounds int, pause time.Duration, log *slog.Logger) JoinOutcome {
+// An answer that fails checkAnswer makes the outcome unknown.
+func JoinCall(ctx context.Context, caller raftnet.Caller, peers []joincode.Node, clusterID, opID string, rounds int, pause time.Duration, log *slog.Logger) JoinOutcome {
 	known := map[string]joincode.Node{}
 	for _, p := range peers {
 		known[p.NodeID] = p
@@ -229,9 +238,18 @@ func JoinCall(ctx context.Context, caller raftnet.Caller, peers []joincode.Node,
 				err := caller.Call(cctx, target.Address, target.Pin, raftnet.OpJoin, JoinRequest{OpID: opID}, &ans)
 				cancel()
 				if err == nil {
-					out.Attempts = append(out.Attempts, target.Name+": accepted")
-					out.Result, out.Answer = JoinAccepted, &ans
-					return out
+					cerr := checkAnswer(ans, clusterID)
+					if cerr == nil {
+						out.Attempts = append(out.Attempts, target.Name+": accepted")
+						out.Result, out.Answer = JoinAccepted, &ans
+						return out
+					}
+					out.Attempts = append(out.Attempts, target.Name+" ("+target.Address+"): the answer is not used: "+cerr.Error())
+					if log != nil {
+						log.Warn("join call answer not used", "member", target.Name, "address", target.Address, "error", cerr.Error())
+					}
+					unknown = true
+					break
 				}
 				out.Attempts = append(out.Attempts, target.Name+" ("+target.Address+"): "+err.Error())
 				if log != nil {
@@ -290,6 +308,17 @@ func JoinCall(ctx context.Context, caller raftnet.Caller, peers []joincode.Node,
 	return out
 }
 
+// checkAnswer: the admission's cluster, 1 to 64 nodes, each valid.
+func checkAnswer(a JoinAnswer, clusterID string) error {
+	if a.ClusterID != clusterID {
+		return fmt.Errorf("the answer is for cluster %q, the admission for %s", a.ClusterID, clusterID)
+	}
+	if len(a.Members) == 0 || len(a.Members) > 64 {
+		return fmt.Errorf("the answer lists %d members, not 1 to 64", len(a.Members))
+	}
+	return joincode.CheckNodes(a.Members)
+}
+
 // joinStep is a joining node's work: repeat a join call whose outcome is
 // unknown, and finish the join once this node has applied a membership
 // that lists it as a member.
@@ -327,7 +356,7 @@ func (s *Service) joinStep(ctx context.Context) {
 	if !due {
 		return
 	}
-	out := JoinCall(ctx, s.caller, js.Peers(s.cfg.NodeID), js.OpID, 1, 0, s.log)
+	out := JoinCall(ctx, s.caller, js.Peers(s.cfg.NodeID), js.Admission.ClusterID, js.OpID, 1, 0, s.log)
 	switch out.Result {
 	case JoinAccepted:
 		js.Phase, js.Answer, js.Message = joinstate.PhaseAccepted, out.Answer.Members, ""
@@ -454,6 +483,9 @@ func applyError(err error) error {
 
 func (s *Service) admitAsLeader(request, actor, origin, opID string) (localapi.AdmitResult, error) {
 	req, err := joincode.ParseRequest(request)
+	if err == nil {
+		err = joincode.CheckPorts(req.Node)
+	}
 	if err != nil {
 		return localapi.AdmitResult{}, &localapi.OpError{HTTPStatus: http.StatusBadRequest, Code: "invalid_request", Message: err.Error()}
 	}

@@ -6,8 +6,10 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net"
 	"net/netip"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -91,11 +93,30 @@ type rig struct {
 	trans   *Transport
 	ln      *peerlistener.Listener
 	address map[string]string // node ID -> claimed address
+	logs    *lockedBuffer
+}
+
+// lockedBuffer collects the receiver's log lines.
+type lockedBuffer struct {
+	mu sync.Mutex
+	b  strings.Builder
+}
+
+func (l *lockedBuffer) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.Write(p)
+}
+
+func (l *lockedBuffer) String() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.String()
 }
 
 func newRig(t *testing.T) *rig {
 	t.Helper()
-	r := &rig{server: newKey(t, idServer), keys: map[string]*nodekey.Key{}, got: make(chan raft.RPC, 16),
+	r := &rig{server: newKey(t, idServer), keys: map[string]*nodekey.Key{}, got: make(chan raft.RPC, 16), logs: &lockedBuffer{},
 		address: map[string]string{idMember: "127.0.0.1:18001", idJoining: "127.0.0.1:18002", idPending: "127.0.0.1:18003"}}
 	r.trust = &fakeTrust{peers: map[string]Peer{}, servers: map[string]bool{idMember: true, idJoining: true}}
 	for id, kind := range map[string]Kind{idMember: KindMember, idJoining: KindJoining, idPending: KindPending} {
@@ -110,7 +131,8 @@ func newRig(t *testing.T) *rig {
 	}
 	r.addr = ln.Addr().String()
 	ln.Close()
-	r.trans, err = New(Options{LocalAddress: r.addr, Certificate: r.server.Certificate, Trust: r.trust, Peer: echoPeer{}})
+	r.trans, err = New(Options{LocalAddress: r.addr, Certificate: r.server.Certificate, Trust: r.trust, Peer: echoPeer{},
+		Logger: slog.New(slog.NewTextHandler(r.logs, nil))})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -413,5 +435,49 @@ func TestSizeLimits(t *testing.T) {
 	}
 	if err := readFrame(strings.NewReader("\xff\xff\xff\xff"), new(map[string]any)); err == nil {
 		t.Fatal("an oversized frame was read")
+	}
+}
+
+// A pending key whose first byte is a Raft RPC type is refused before any
+// RPC is read or decoded: the receiver logs it and closes the connection at
+// once, although the RPC's body never comes.
+func TestPendingKeyRefusedBeforeAnyRaftRPCIsRead(t *testing.T) {
+	r := newRig(t)
+	raw, err := net.Dial("tcp", r.addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tc := tls.Client(raw, ClientTLSConfig(r.server.Pin(), r.keys[idPending].Certificate))
+	defer tc.Close()
+	_ = tc.SetDeadline(time.Now().Add(5 * time.Second))
+	if err := tc.Handshake(); err != nil {
+		t.Fatal(err)
+	}
+	if err := confirmAccepted(tc, 5*time.Second); err != nil {
+		t.Fatalf("the pending key's connection was not accepted: %v", err)
+	}
+	// Only the type byte: a receiver that went on to decode the RPC would
+	// wait for its body (up to rpcTimeout) instead of closing.
+	if _, err := tc.Write([]byte{rpcAppendEntries}); err != nil {
+		t.Fatal(err)
+	}
+	_ = tc.SetReadDeadline(time.Now().Add(3 * time.Second))
+	if _, err := tc.Read(make([]byte, 1)); err == nil || errors.Is(err, os.ErrDeadlineExceeded) {
+		t.Fatalf("read after the type byte: %v, want the connection closed", err)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for !strings.Contains(r.logs.String(), "raft connection refused before any rpc was read") {
+		if time.Now().After(deadline) {
+			t.Fatalf("no refusal line in the receiver's log:\n%s", r.logs.String())
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if strings.Contains(r.logs.String(), "raft rpc refused") {
+		t.Fatalf("an rpc of the pending key was decoded:\n%s", r.logs.String())
+	}
+	select {
+	case rpc := <-r.got:
+		t.Fatalf("an rpc of the pending key reached the library: %T", rpc.Command)
+	default:
 	}
 }

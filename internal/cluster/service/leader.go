@@ -30,9 +30,12 @@ func (s *Service) leaderStep(ctx context.Context) {
 	st := s.getStore()
 	isLeader := st.IsLeader()
 	now := s.now()
+	// wasLeader is set only after a successful barrier (retried each round).
 	s.mu.Lock()
 	gained := isLeader && !s.wasLeader
-	s.wasLeader = isLeader
+	if !isLeader {
+		s.wasLeader = false
+	}
 	due := isLeader && (gained || !now.Before(s.nextLeader))
 	if due {
 		s.nextLeader = now.Add(s.leaderInt)
@@ -47,6 +50,9 @@ func (s *Service) leaderStep(ctx context.Context) {
 			s.log.Warn("leader: barrier failed; the work waits for the next round", "error", err)
 			return
 		}
+		s.mu.Lock()
+		s.wasLeader = true
+		s.mu.Unlock()
 		s.log.Info("leader: this node is the leader; checking unfinished joins and due expiries")
 	}
 	view := s.machine.View()

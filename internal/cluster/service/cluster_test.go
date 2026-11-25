@@ -142,6 +142,9 @@ func (h *harness) node(name string) *tnode {
 func (h *harness) start(n *tnode) {
 	h.t.Helper()
 	log := slog.New(slog.NewTextHandler(io.MultiWriter(n.logs, testWriter{h.t, n.name}), &slog.HandlerOptions{Level: slog.LevelInfo}))
+	if err := RecoverStandalone(n.dir, log); err != nil {
+		h.t.Fatal(err)
+	}
 	writer, err := membership.NewWriter(n.dir)
 	if err != nil {
 		h.t.Fatal(err)

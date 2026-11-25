@@ -189,6 +189,18 @@ func (t *Transport) checkSender(pin string, hdr raft.RPCHeader, heartbeat bool) 
 	return nil
 }
 
+// mayMakeRaftRPCs: the key is accepted and its kind may make Raft RPCs.
+func (t *Transport) mayMakeRaftRPCs(pin string) error {
+	p, ok := t.trust.ByPin(pin)
+	if !ok {
+		return errors.New("the key is no longer accepted")
+	}
+	if _, ok := Allowed(OpRaft, p.Kind); !ok {
+		return fmt.Errorf("a %s key may not make Raft RPCs", p.Kind)
+	}
+	return nil
+}
+
 func (t *Transport) refused(conn net.Conn, pin string, rpcType uint8, hdr raft.RPCHeader, err error) {
 	t.log.Warn("node listener: raft rpc refused", "remote", conn.RemoteAddr().String(), "pin", pin,
 		"rpc_type", rpcType, "header_id", string(hdr.ID), "error", err.Error())
@@ -211,6 +223,11 @@ func (t *Transport) Serve(conn *tls.Conn, pin string) {
 	}
 	switch {
 	case isRaftType(first[0]):
+		// A pending key is refused before any RPC is read or decoded.
+		if err := t.mayMakeRaftRPCs(pin); err != nil {
+			t.log.Warn("node listener: raft connection refused before any rpc was read", "remote", conn.RemoteAddr().String(), "pin", pin, "error", err.Error())
+			return
+		}
 		t.serveRaft(conn, br, r, pin)
 	case first[0] == peerRPCMagic:
 		_, _ = r.ReadByte()

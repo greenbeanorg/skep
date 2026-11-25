@@ -1,15 +1,14 @@
-// This Source Code Form is subject to the terms of the Mozilla Public
-// License, v. 2.0. If a copy of the MPL was not distributed with this
-// file, You can obtain one at https://mozilla.org/MPL/2.0/.
-//
-// Copyright IBM Corp. 2013, 2025 (the original handleConn and
-// handleCommand in net_transport.go of github.com/hashicorp/raft v1.8.0).
-// Adapted for Skep, 2026: serveRaft and handleRaftRPC below.
+// Copyright IBM Corp. 2013, 2025
+// SPDX-License-Identifier: MPL-2.0
+
+// Adapted for Skep, 2026: serveRaft and handleRaftRPC below, from
+// handleConn and handleCommand in net_transport.go of hashicorp/raft v1.8.0.
 //
 // What differs from upstream (compare at every library update; the
 // checklist is in docs/architecture/skep-cluster.md):
 //   - the connection is a TLS 1.3 connection the node-to-node listener
 //     accepted, and the pin of its key is known;
+//   - a pending key is refused before its first RPC is read (Serve);
 //   - after each RPC is decoded, and before it reaches the library, the
 //     sender is checked (checkSender): protocol version 3, the header's
 //     node ID belongs to the key's pin and to a kind of key allowed to make

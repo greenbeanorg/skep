@@ -6,7 +6,9 @@ import (
 	"flag"
 	"fmt"
 	"slices"
+	"strings"
 	"time"
+	"unicode"
 
 	"github.com/greenbeanorg/skep/internal/cluster/clusterconf"
 	"github.com/greenbeanorg/skep/internal/cluster/localapi"
@@ -44,15 +46,15 @@ func runStatus(ctx context.Context, args []string, e env) error {
 		fmt.Fprintln(e.stdout, string(b))
 		return nil
 	}
-	fmt.Fprintf(e.stdout, "Node ID:       %s\n", st.NodeID)
-	fmt.Fprintf(e.stdout, "Node name:     %s\n", st.NodeName)
-	fmt.Fprintf(e.stdout, "Cluster ID:    %s\n", st.ClusterID)
-	fmt.Fprintf(e.stdout, "Node key pin:  %s\n", st.Pin)
+	fmt.Fprintf(e.stdout, "Node ID:       %s\n", termSafe(st.NodeID))
+	fmt.Fprintf(e.stdout, "Node name:     %s\n", termSafe(st.NodeName))
+	fmt.Fprintf(e.stdout, "Cluster ID:    %s\n", termSafe(st.ClusterID))
+	fmt.Fprintf(e.stdout, "Node key pin:  %s\n", termSafe(st.Pin))
 	fmt.Fprintf(e.stdout, "Certificate:   valid until %s\n", st.CertificateNotAfter.Format(time.RFC3339))
-	fmt.Fprintf(e.stdout, "Raft:          %s, term %d, commit %d, last %d\n", st.Raft.State, st.Raft.Term, st.Raft.CommitIndex, st.Raft.LastIndex)
+	fmt.Fprintf(e.stdout, "Raft:          %s, term %d, commit %d, last %d\n", termSafe(st.Raft.State), st.Raft.Term, st.Raft.CommitIndex, st.Raft.LastIndex)
 	switch sm := st.StateMachine; {
 	case sm.Stalled != nil:
-		fmt.Fprintf(e.stdout, "State machine: STOPPED at log index %d (applied up to %d): %s\n", sm.Stalled.Index, sm.AppliedIndex, sm.Stalled.Reason)
+		fmt.Fprintf(e.stdout, "State machine: STOPPED at log index %d (applied up to %d): %s\n", sm.Stalled.Index, sm.AppliedIndex, termSafe(sm.Stalled.Reason))
 	case sm.UpToDate && sm.AppliedIndex < st.Raft.AppliedIndex:
 		// "applied 7 of 10" with only the library's own entries in
 		// between is no lag (8a fix round finding).
@@ -62,11 +64,11 @@ func runStatus(ctx context.Context, args []string, e env) error {
 	default:
 		fmt.Fprintf(e.stdout, "State machine: applied %d, catching up (Raft applied %d, commit %d)\n", sm.AppliedIndex, st.Raft.AppliedIndex, st.Raft.CommitIndex)
 	}
-	fmt.Fprintf(e.stdout, "Keys accepted: by the %s\n", st.AcceptedBy)
+	fmt.Fprintf(e.stdout, "Keys accepted: by the %s\n", termSafe(st.AcceptedBy))
 	if j := st.Join; j != nil {
-		fmt.Fprintf(e.stdout, "Joining:       cluster %s, %s", j.ClusterID, j.Phase)
+		fmt.Fprintf(e.stdout, "Joining:       cluster %s, %s", termSafe(j.ClusterID), termSafe(j.Phase))
 		if j.Message != "" {
-			fmt.Fprintf(e.stdout, " (%s)", j.Message)
+			fmt.Fprintf(e.stdout, " (%s)", termSafe(j.Message))
 		}
 		fmt.Fprintln(e.stdout)
 	}
@@ -74,11 +76,11 @@ func runStatus(ctx context.Context, args []string, e env) error {
 	case st.ListenAddress == "":
 		fmt.Fprintf(e.stdout, "Listener:      none (single host, no network port)\n")
 	case st.Listening:
-		fmt.Fprintf(e.stdout, "Listener:      %s (open)\n", st.ListenAddress)
+		fmt.Fprintf(e.stdout, "Listener:      %s (open)\n", termSafe(st.ListenAddress))
 	default:
-		fmt.Fprintf(e.stdout, "Listener:      %s (NOT open)\n", st.ListenAddress)
+		fmt.Fprintf(e.stdout, "Listener:      %s (NOT open)\n", termSafe(st.ListenAddress))
 	}
-	fmt.Fprintf(e.stdout, "Build:         %s\n", st.Build)
+	fmt.Fprintf(e.stdout, "Build:         %s\n", termSafe(st.Build))
 	fmt.Fprintf(e.stdout, "Members (%d):\n", len(st.Members))
 	for _, m := range st.Members {
 		addr := m.Address
@@ -94,12 +96,12 @@ func runStatus(ctx context.Context, args []string, e env) error {
 				}
 			}
 		}
-		fmt.Fprintf(e.stdout, "  %s  %s  %s, %s  %s  %s\n", m.Name, m.ID, m.State, role, addr, m.Pin)
+		fmt.Fprintf(e.stdout, "  %s  %s  %s, %s  %s  %s\n", termSafe(m.Name), termSafe(m.ID), termSafe(m.State), role, termSafe(addr), termSafe(m.Pin))
 	}
 	if len(st.Pendings) > 0 {
 		fmt.Fprintf(e.stdout, "Pending admissions (%d):\n", len(st.Pendings))
 		for _, p := range st.Pendings {
-			fmt.Fprintf(e.stdout, "  %s  %s  %s  %s  until %s\n", p.Name, p.NodeID, p.Address, p.Pin, time.Unix(p.ExpiresAt, 0).UTC().Format(time.RFC3339))
+			fmt.Fprintf(e.stdout, "  %s  %s  %s  %s  until %s\n", termSafe(p.Name), termSafe(p.NodeID), termSafe(p.Address), termSafe(p.Pin), time.Unix(p.ExpiresAt, 0).UTC().Format(time.RFC3339))
 		}
 	}
 	printHealth(e, h)
@@ -107,7 +109,7 @@ func runStatus(ctx context.Context, args []string, e env) error {
 }
 
 func printHealth(e env, h models.Health) {
-	fmt.Fprintf(e.stdout, "Health:        %s\n", h.Status)
+	fmt.Fprintf(e.stdout, "Health:        %s\n", termSafe(string(h.Status)))
 	names := make([]string, 0, len(h.Checks))
 	for n := range h.Checks {
 		names = append(names, n)
@@ -115,7 +117,7 @@ func printHealth(e env, h models.Health) {
 	slices.Sort(names)
 	for _, n := range names {
 		if c := h.Checks[n]; c.Status != models.HealthOK {
-			fmt.Fprintf(e.stdout, "  %s: %s: %s\n", n, c.Status, c.Error)
+			fmt.Fprintf(e.stdout, "  %s: %s: %s\n", termSafe(n), termSafe(string(c.Status)), termSafe(c.Error))
 		}
 	}
 }
@@ -148,4 +150,24 @@ func runHealth(ctx context.Context, args []string, e env) error {
 		return &exitCodeError{code: 1}
 	}
 	return nil
+}
+
+// termSafe replaces control characters (newlines too) with "?": for every
+// string from another node or the stage that a command prints.
+func termSafe(s string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return '?'
+		}
+		return r
+	}, s)
+}
+
+// termSafeLines is termSafe per line, keeping the line breaks.
+func termSafeLines(s string) string {
+	lines := strings.Split(s, "\n")
+	for i := range lines {
+		lines[i] = termSafe(lines[i])
+	}
+	return strings.Join(lines, "\n")
 }

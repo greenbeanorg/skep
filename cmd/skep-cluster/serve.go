@@ -69,6 +69,10 @@ func runServe(ctx context.Context, args []string, e env) error {
 		log.Warn("the node certificate could not be used; a new one was issued with the same key, the pin is unchanged",
 			"reason", repaired.Error(), "pin", key.Pin(), "not_after", key.NotAfter())
 	}
+	// The join stage's start rule (put a moved-aside one-node state back).
+	if err := service.RecoverStandalone(*dataDir, log); err != nil {
+		return err
+	}
 	// The applied-membership file (ADR 0013 amendment 1) is read before
 	// the store starts: until the state machine reaches its index, the
 	// node accepts keys by it.

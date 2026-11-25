@@ -235,9 +235,9 @@ func runJoinRequest(ctx context.Context, args []string, e env) error {
 	}
 	res, err := runStage(ctx, e, acct.UID, acct.GID, []string{"read", "-config", *configPath, "-data-dir", *dataDir})
 	if err == nil && res.Outcome == "not_alone" {
-		err = errors.New("refused: " + res.Message)
+		err = errors.New("refused: " + termSafe(res.Message))
 	} else if err == nil && res.Outcome != "ok" {
-		err = errors.New(res.Message)
+		err = errors.New(termSafe(res.Message))
 	}
 	if err != nil {
 		if serr := startAndWait(ctx, e, *socket); serr != nil {
@@ -318,7 +318,7 @@ func runAdmit(ctx context.Context, args []string, e env) error {
 		if err := checkNoRootFiles(e, *dataDir); err != nil {
 			return err
 		}
-		fmt.Fprintf(e.stdout, "Withdrawn: the pending admission of %s (node ID %s) is removed (operation %s).\n", res.Name, res.NodeID, res.OpID)
+		fmt.Fprintf(e.stdout, "Withdrawn: the pending admission of %s (node ID %s) is removed (operation %s).\n", termSafe(res.Name), termSafe(res.NodeID), termSafe(res.OpID))
 		return nil
 	}
 	if flags.NArg() != 1 {
@@ -328,6 +328,9 @@ func runAdmit(ctx context.Context, args []string, e env) error {
 	if err != nil {
 		return err
 	}
+	if err := joincode.CheckPorts(req.Node); err != nil {
+		return fmt.Errorf("refused: %w", err)
+	}
 	res, err := client.Admit(ctx, flags.Arg(0))
 	if err != nil {
 		return errors.Join(err, checkNoRootFiles(e, *dataDir))
@@ -336,9 +339,9 @@ func runAdmit(ctx context.Context, args []string, e env) error {
 		return err
 	}
 	fmt.Fprintf(e.stdout, "Admitted %s (node ID %s, address %s)\n  pin %s\n", req.Name, req.NodeID, req.Address, req.Pin)
-	fmt.Fprintf(e.stdout, "  until %s (operation %s).\n", time.Unix(res.ExpiresAt, 0).UTC().Format(time.RFC3339), res.OpID)
-	fmt.Fprintf(e.stdout, "\nAdmission (nothing in it is secret):\n\n%s\n\n", res.Admission)
-	fmt.Fprintf(e.stdout, "On %s, as root:\n  skep-cluster join %s\n", req.Name, res.Admission)
+	fmt.Fprintf(e.stdout, "  until %s (operation %s).\n", time.Unix(res.ExpiresAt, 0).UTC().Format(time.RFC3339), termSafe(res.OpID))
+	fmt.Fprintf(e.stdout, "\nAdmission (nothing in it is secret):\n\n%s\n\n", termSafe(res.Admission))
+	fmt.Fprintf(e.stdout, "On %s, as root:\n  skep-cluster join %s\n", req.Name, termSafe(res.Admission))
 	fmt.Fprintf(e.stdout, "To withdraw it before it is used:\n  skep-cluster admit --withdraw %s\n", req.Name)
 	return nil
 }
@@ -399,6 +402,9 @@ func runJoin(ctx context.Context, args []string, e env) error {
 	if err != nil {
 		return err
 	}
+	if err := joincode.CheckPorts(append([]joincode.Node{adm.For}, adm.Members...)...); err != nil {
+		return fmt.Errorf("refused: %w; nothing was changed", err)
+	}
 	cfg, err := clusterconf.Load(*configPath)
 	if err != nil {
 		return err
@@ -440,27 +446,27 @@ func runJoin(ctx context.Context, args []string, e env) error {
 	}
 	switch res.Outcome {
 	case "not_alone":
-		return errors.Join(fmt.Errorf("refused: %s; nothing was changed", res.Message), startErr, rootErr)
+		return errors.Join(fmt.Errorf("refused: %s; nothing was changed", termSafe(res.Message)), startErr, rootErr)
 	case "refused", "unreached":
 		fmt.Fprintf(e.stdout, "\nThe join failed before the cluster added this node:\n")
 		for _, a := range res.Attempts {
-			fmt.Fprintf(e.stdout, "  %s\n", a)
+			fmt.Fprintf(e.stdout, "  %s\n", termSafe(a))
 		}
-		fmt.Fprintf(e.stdout, "Nothing was written in the cluster. This host's one-node cluster is back (pin %s).\n", res.Pin)
-		return errors.Join(fmt.Errorf("join failed: %s", res.Message), startErr, rootErr)
+		fmt.Fprintf(e.stdout, "Nothing was written in the cluster. This host's one-node cluster is back (pin %s).\n", termSafe(res.Pin))
+		return errors.Join(fmt.Errorf("join failed: %s", termSafe(res.Message)), startErr, rootErr)
 	case "accepted", "unknown":
 	default:
-		return errors.Join(fmt.Errorf("the join stage reported %q: %s", res.Outcome, res.Message), startErr, rootErr)
+		return errors.Join(fmt.Errorf("the join stage reported %q: %s", res.Outcome, termSafe(res.Message)), startErr, rootErr)
 	}
 	if res.Outcome == "accepted" {
-		fmt.Fprintf(e.stdout, "\nThe cluster accepted this node (cluster %s).\n", res.ClusterID)
+		fmt.Fprintf(e.stdout, "\nThe cluster accepted this node (cluster %s).\n", termSafe(res.ClusterID))
 	} else {
 		fmt.Fprintf(e.stdout, "\nThe join request was sent and no answer came: its outcome is unknown.\n")
 		for _, a := range res.Attempts {
-			fmt.Fprintf(e.stdout, "  %s\n", a)
+			fmt.Fprintf(e.stdout, "  %s\n", termSafe(a))
 		}
 	}
-	fmt.Fprintf(e.stdout, "The join is past its point of no return: the one-node state stays moved aside (%s)\n", res.Standalone)
+	fmt.Fprintf(e.stdout, "The join is past its point of no return: the one-node state stays moved aside (%s)\n", termSafe(res.Standalone))
 	fmt.Fprintf(e.stdout, "and skep-cluster keeps working with the admission's members until it has joined.\n")
 	fmt.Fprintf(e.stdout, "This build has no command to give up a join.\n")
 	if startErr != nil || rootErr != nil {

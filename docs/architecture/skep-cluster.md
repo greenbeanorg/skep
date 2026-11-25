@@ -110,9 +110,13 @@ belongs to root.
   the listener and the member entry's address, checks that the running
   service shows the pin the stage read, and prints the request.
 - **`admit`** and **`admit --withdraw`** call the local API (root only, D2
-  of the run). The service passes them to the leader, see below.
+  of the run). The service passes them to the leader, see below. `admit`
+  refuses a request whose address has a port other than **8444**, in the
+  command and again in the leader's side of the service's `Admit` (also
+  when a member passed it to the leader), as `invalid_request`.
 - **`join ADMISSION`**, as root: decodes the admission and refuses one for
-  another host (ID, name, address); refuses a host with guests or without
+  another host (ID, name, address), and one in which any address (the
+  admitted node's or a member's) has a port other than **8444**; refuses a host with guests or without
   an answering agent; prints the cluster ID and every member (name, ID,
   address, pin) and asks for `yes` on `/dev/tty`, or, with no terminal,
   needs `-cluster-id` equal to the admission's (there is no `-yes`); stops
@@ -125,9 +129,21 @@ belongs to root.
   3. it calls the join operation on the admission's members (below);
   4. **only when it knows join step 1 was not applied** (every handshake
      failed and nothing was sent, or a leader refused, or no member had a
-     leader) it puts the one-node state back and removes `join.json`;
-     after an accepted call it records the answer (phase `accepted`), and
-     after an unknown outcome (sent, no answer) phase `unknown`.
+     leader) it **removes `join.json` first** (with the directory fsync)
+     and **then** puts the one-node state back; after an accepted call
+     whose answer passed the check (below) it records the answer (phase
+     `accepted`), and after an unknown outcome (sent, no answer, or an
+     answer that failed the check) phase `unknown`.
+
+  **The start rule.** Before the store is opened, `skep-cluster` (the
+  service) looks at the data directory: with `join.json` present, or with
+  a `raft.db`, it does nothing (with `join.json` nothing is ever put
+  back). With neither and **exactly one** `standalone.*/`, it puts that
+  state back and logs a warning naming the directory: this is a stage
+  stopped after the move aside and before `join.json` was written, or
+  after `join.json` was removed and before the put-back; both are certain
+  to have sent nothing that was applied. With neither and **more than
+  one** `standalone.*/`, it refuses to start and names them.
 
   Root then starts `skep_cluster` in every case and runs the root-file
   check. **What root believes from the stage** is only its outcome, for
@@ -143,10 +159,25 @@ belongs to root.
   members of the join call's answer once it has one. A redirect to the
   leader (`not_leader`) is followed only when it names a node of that list
   at the address the list gives (D8 of the run).
+- **The join call's operation ID** is a lower-case UUID (a new one per
+  join, the same on every repeat); the leader refuses anything else as
+  `invalid_request`. The `member.join` entry's operation ID is
+  `join:<node ID>:<that UUID>`, so a joining key can never match another
+  entry's operation ID. After the write, **also when it was a duplicate**,
+  the leader answers accepted only if a member entry for that node with
+  that pin exists; otherwise it answers `refused`.
+- **The joining side checks the answer before it uses or stores it**: its
+  cluster ID is the admission's, it lists 1 to 64 nodes, and every node
+  passes the validation an admission's nodes pass (ID, name, address,
+  pin, none twice). An answer that fails is not stored and makes the
+  outcome **unknown** (the request was sent and may be applied): the
+  one-node state is never put back for it. The service's repeat of the
+  call checks the same.
 - A refusal from a leader, a handshake failure (nothing sent) and "no
   leader" are each certain to have applied nothing. A request sent without
-  an answer, or a leader's `outcome_unknown`, makes the outcome unknown,
-  and a later refusal in the same command does not undo that.
+  an answer, a leader's `outcome_unknown`, or an answer that fails the
+  check makes the outcome unknown, and a later refusal in the same command
+  does not undo that.
 - The service starts on an empty store when `join.json` exists. Until its
   accepted membership lists this node it accepts **only the admission's
   and the answer's keys** (as members) and applies no Raft-configuration
@@ -167,7 +198,15 @@ kind and version, the check (a truncated or mistyped paste is reported as
 damaged), no unknown JSON field, every value validated, no duplicate ID,
 name, address or pin. Nothing in either is secret.
 
-- Request: node ID, name, address (`ip:8444`), node-key pin.
+- Request: node ID, name, address (`ip:8444`), node-key pin. `admit` and
+  `join` refuse any address whose port is not 8444; the state machine's
+  address check does not fix the port (so that the multi-node tests run on
+  loopback), and skep-cluster itself always writes 8444.
+- **Terminal output.** Every string that comes from another node or from
+  the stage (error messages, attempt lists, names and fields in answers
+  and in `status`) has its control characters replaced by `?` before
+  `join`, `join-request`, `admit`, `status` or `health` prints it; an
+  error of several lines keeps its line breaks and each line is cleaned.
 - Admission: cluster ID, the admitted node (as in its request), every
   current member entry (ID, name, address, pin; `joining` ones included),
   the pending entry's expiry. No API pin in either: `skep-api`'s
@@ -222,6 +261,11 @@ phase.
 - One port carries both protocols: a connection whose first byte is one of
   the library's RPC types carries Raft RPCs; one that starts with `S`
   carries one Skep RPC (4-byte length, JSON, answered the same way).
+- **A key that may not make Raft RPCs (a pending key) is refused before
+  any RPC is read or decoded**: when the first byte is a Raft RPC type, the
+  receiver looks the key up, and if its kind may not make Raft RPCs it
+  logs `raft connection refused before any rpc was read` and closes the
+  connection. The per-RPC check below stays as it is.
 - **On every RPC** (ADR 0013 B1, "Per-RPC identity"): the header's node ID
   has an entry whose pin is this connection's key; that kind of key may
   call the operation (table below); for a Raft RPC also the header's
@@ -345,7 +389,9 @@ directory, `fsync`, `rename`, `fsync` of the directory.
   every entry between the two indexes is one of the library's own, it
   prints "up to date, last Skep entry 7 (entries 8-10 are Raft's own)".
 - **The leader's work**, when it gains leadership (after a barrier) and
-  every 10 s: propose the expiry of every pending entry its clock has
+  every 10 s. A node counts as having gained leadership only once its
+  barrier has succeeded; a failed barrier is tried again in the next round
+  (every second) before any leader work. Then: propose the expiry of every pending entry its clock has
   passed, and for every member in state `joining`: not a Raft server → join
   step 2 (`AddNonvoter`); a non-voter → step 3 when the joiner's applied
   index is within one snapshot threshold (8192) of the leader's commit
@@ -396,7 +442,9 @@ None of these fails; no finding against the ADR.
 
 `internal/cluster/raftnet/net_handler.go` is adapted from the library's
 `net_transport.go` (`handleConn`, `handleCommand`) and stays under
-MPL-2.0 (its header says so). **At every update of `hashicorp/raft`**,
+MPL-2.0: its header is upstream's header unchanged (`Copyright IBM Corp.
+2013, 2025` and `SPDX-License-Identifier: MPL-2.0`, as in v1.8.0's
+`net_transport.go`), followed by Skep's adaptation note. **At every update of `hashicorp/raft`**,
 before the update is merged, compare it with upstream and fill in this
 checklist in the update's PR:
 
