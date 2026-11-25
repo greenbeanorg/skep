@@ -11,7 +11,7 @@ S=10.79.20.81; L=10.79.20.82; T=10.79.20.83
 SC=/usr/local/sbin/skep-cluster
 DD=/var/db/skep/cluster
 CID=ff712cb0-58a7-41ba-87cf-4bff6b1579d0
-on() { local h=$1; shift; ssh -o BatchMode=yes -o ConnectTimeout=10 aba@$h "$@"; }
+on() { local h=$1; shift; ssh -n -o BatchMode=yes -o ConnectTimeout=10 aba@$h "$@"; }
 h() { echo; echo "=== $(date -u +%H:%M:%SZ) $* ==="; }
 name() { case $1 in $S) echo smith;; $L) echo langrishe;; $T) echo star;; esac; }
 nodename() { on "$1" "sudo $SC status" | sed -n 's/^Node name: *//p'; }
@@ -53,11 +53,12 @@ case ${1:-} in
 	on "$R" "sudo $SC key rotate --abort"; echo "abort-exit=$? (0 expected)"
 	sleep 3
 	echo "R's pin after the abort: $(pin "$R") (before $old)"
-	for x in $LD $R; do echo "-- on $(name $x):"; on $x "sudo $SC status" | grep "$(nodename "$R")" ; done
+	rn=$(nodename "$R")
+	for x in $LD $R; do echo "-- on $(name $x):"; on $x "sudo $SC status" | grep "  $rn " ; done
 	echo "R's data directory: $(files "$R" | tr '\n' ' ')"
 	svc "$X" start
 	$D wait3; health3
-	echo "-- on X: $(on "$X" "sudo $SC status" | grep "$(nodename "$R")")" ;;
+	echo "-- on X: $(on "$X" "sudo $SC status" | grep "  $rn ")" ;;
 4.4)
 	h "4.4 remove X with all up, leave --wipe, join-request, admit, join"; roles
 	xn=$(nodename "$X"); xip=$X
