@@ -1339,7 +1339,10 @@ paths:
         minute, and when the session has ended, expired, or been revoked
         the WebSocket closes with code 4001. Keystrokes count as use of
         the session (at most once a minute); output from the guest does
-        not, so an unattended console idles out.
+        not, so an unattended console idles out. At the same check, a
+        console the quorum gate would now refuse to open (the node has no
+        quorum, or the session is degraded) closes with code 4002 and a
+        reason the client can show, recorded as `request.no_quorum`.
 
         Attachment and detachment are recorded in the access audit log and
         in the agent's operation audit log (`vm.console.attach`,

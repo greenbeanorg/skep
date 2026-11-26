@@ -8,6 +8,7 @@ import (
 	"github.com/coder/websocket"
 
 	"github.com/greenbeanorg/skep/internal/audit"
+	"github.com/greenbeanorg/skep/internal/auth"
 	"github.com/greenbeanorg/skep/internal/httpkit"
 	"github.com/greenbeanorg/skep/pkg/models"
 )
@@ -31,6 +32,12 @@ const (
 	// statusSessionEnded is the close code a client sees when the session
 	// behind its console has ended, expired, or been revoked.
 	statusSessionEnded websocket.StatusCode = 4001
+	// statusNoQuorum is the close code a client sees when the quorum gate
+	// would now refuse to open the console: the node has no quorum, or
+	// the session is degraded (F5 of the 8d-1 review).
+	statusNoQuorum websocket.StatusCode = 4002
+	// consoleRoute is the console's route, as the access audit names it.
+	consoleRoute = Prefix + "/vms/{id}/console/serial"
 )
 
 // Audit actions of the console.
@@ -132,7 +139,7 @@ func (h *handler) vmConsole(w http.ResponseWriter, r *http.Request) {
 
 	check := time.NewTicker(h.consoleCheck)
 	defer check.Stop()
-	why := ""
+	why, quorumWhy := "", ""
 loop:
 	for {
 		select {
@@ -141,15 +148,31 @@ loop:
 		case <-check.C:
 			// The session is checked without counting as use: an open
 			// console on an unattended screen idles out like any page.
-			if _, err := h.auth.AuthenticateBackground(ctx, token, kind); err != nil {
+			cur, err := h.auth.AuthenticateBackground(ctx, token, kind)
+			if err != nil {
 				why = "session"
+				break loop
+			}
+			// The gate's own rule, as if the console were opened now: a
+			// password changed elsewhere cannot reach a node cut off.
+			if quorumWhy = h.quorumRefusal(needsQuorum, cur, true); quorumWhy != "" {
+				why = "no_quorum"
 				break loop
 			}
 		}
 	}
+	who, _ := identityFrom(r.Context())
 	switch why {
 	case "session":
 		closeCode, closeReason = statusSessionEnded, "the session has ended"
+	case "no_quorum":
+		closeCode, closeReason = statusNoQuorum, "this node has no quorum: the console is closed"
+		if quorumWhy == "degraded_session" {
+			closeReason = "this session is degraded (opened without quorum): log in again"
+		}
+		h.writeAudit(r, audit.AccessEntry{ActorID: who.User.ID, ActorName: who.User.Username, Action: ActionNoQuorum, Outcome: audit.Failure,
+			ResourceType: models.VMResource, ResourceID: id,
+			Details: map[string]any{"method": http.MethodGet, "route": consoleRoute, "reason": quorumWhy, "outcome": auth.OutcomeNotWritten}})
 	case "agent":
 		closeReason = "the console closed"
 	}
@@ -157,7 +180,6 @@ loop:
 	_ = agentConn.Close(websocket.StatusNormalClosure, "")
 	cancel()
 
-	who, _ := identityFrom(r.Context())
 	h.writeAudit(r, audit.AccessEntry{
 		ActorID: who.User.ID, ActorName: who.User.Username, Action: actionConsoleDetach,
 		ResourceType: models.VMResource, ResourceID: id, Outcome: audit.Success,

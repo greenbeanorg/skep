@@ -426,21 +426,9 @@ const ActionNoQuorum = "request.no_quorum"
 // While there is no quorum every answer to an authenticated request
 // carries Skep-Quorum: none. It reports whether the request may go on.
 func (h *handler) quorumGate(w http.ResponseWriter, r *http.Request, rt route) bool {
-	quorum := h.quorum == nil || h.quorum()
 	id, authenticated := identityFrom(r.Context())
-	reason := ""
-	switch {
-	case rt.quorum == quorumUndeclared:
-		// Deny by default, whatever the quorum: a test fails on such a
-		// route.
-		reason = "undeclared"
-	case rt.quorum == servedWithoutQuorum:
-		return true
-	case !quorum:
-		reason = "no_quorum"
-	case authenticated && id.Session.Degraded:
-		reason = "degraded_session"
-	default:
+	reason := h.quorumRefusal(rt.quorum, id, authenticated)
+	if reason == "" {
 		return true
 	}
 	msg := "this node has no quorum: only reading, logging in and out, power actions and task cancellation are served; nothing was written"
@@ -458,6 +446,26 @@ func (h *handler) quorumGate(w http.ResponseWriter, r *http.Request, rt route) b
 	e.Details["reason"] = reason
 	httpkit.WriteErrorDetails(w, r, http.StatusServiceUnavailable, e.Code, e.Message, e.Details)
 	return false
+}
+
+// quorumRefusal is the gate's rule: why a route with rule q is refused
+// now for the identity (authenticated or not), or "" when it is served.
+// The serial console's periodic check uses it too (F5 of the 8d-1
+// review).
+func (h *handler) quorumRefusal(q quorumRule, id auth.Identity, authenticated bool) string {
+	switch {
+	case q == quorumUndeclared:
+		// Deny by default, whatever the quorum: a test fails on such a
+		// route.
+		return "undeclared"
+	case q == servedWithoutQuorum:
+		return ""
+	case h.quorum != nil && !h.quorum():
+		return "no_quorum"
+	case authenticated && id.Session.Degraded:
+		return "degraded_session"
+	}
+	return ""
 }
 
 // requireAlso checks a permission that depends on the body of a request,

@@ -15,6 +15,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -56,6 +57,8 @@ type stack struct {
 	// confinement.
 	fake *hostfake.Fake
 	conf hostops.Confinement
+	// noQuorum makes the API's quorum false (F5 of the 8d-1 review).
+	noQuorum atomic.Bool
 }
 
 // agentServerTimeout is the agent server's per-request limit in these
@@ -196,7 +199,7 @@ func newStack(t *testing.T) *stack {
 	}
 	t.Cleanup(client.Close)
 	s.handler = api.NewHandler(api.Options{Backend: client, Auth: authn, Users: users, Audit: access, AuditLog: access, Logger: quiet(),
-		ConsoleSessionCheck: 200 * time.Millisecond})
+		ConsoleSessionCheck: 200 * time.Millisecond, Quorum: func() bool { return !s.noQuorum.Load() }})
 
 	for _, role := range []string{auth.RoleAdmin, auth.RoleOperator, auth.RoleViewer} {
 		u, err := users.Create(ctx, auth.Actor{Name: "local:0"}, auth.NewUser{Username: "e2e-" + role, Password: password, RoleID: role})

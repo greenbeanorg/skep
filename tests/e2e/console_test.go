@@ -3,6 +3,7 @@ package e2e
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -172,4 +173,71 @@ func TestConsoleOutlivesServerDeadlines(t *testing.T) {
 		t.Fatal(err)
 	}
 	readUntil(t, c, "still here")
+}
+
+// TestConsoleClosesWithoutQuorum (F5 of the 8d-1 review): an open console
+// closes at its session check when the quorum gate would refuse to open
+// it now, with code 4002 and a reason, and one request.no_quorum entry;
+// once when the node loses quorum, once when the session is degraded.
+func TestConsoleClosesWithoutQuorum(t *testing.T) {
+	s := newStack(t)
+	srv := httptest.NewServer(s.handler)
+	t.Cleanup(srv.Close)
+
+	create := []byte(`{"name":"q1","cpu_count":1,"memory":"512M","disks":[{"size":"1G","pool":"devpool","thin":true}],"nics":[{"bridge":"bridge0"}]}`)
+	rec := s.call(http.MethodPost, "/api/v1/vms", auth.RoleOperator, create, "")
+	var created models.VMCreated
+	json.Unmarshal(rec.Body.Bytes(), &created)
+	s.waitStatus(t, created.Task.ID, models.TaskSucceeded)
+	id := created.VM.ID
+	rec = s.call(http.MethodPost, "/api/v1/vms/"+id+"/actions", auth.RoleOperator, []byte(`{"action":"start"}`), "")
+	var task models.Task
+	json.Unmarshal(rec.Body.Bytes(), &task)
+	s.waitStatus(t, task.ID, models.TaskSucceeded)
+
+	waitClose := func(c *websocket.Conn, want string) {
+		t.Helper()
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		for {
+			if _, _, err := c.Read(ctx); err != nil {
+				var ce websocket.CloseError
+				if !errors.As(err, &ce) || ce.Code != 4002 || !strings.Contains(ce.Reason, want) {
+					t.Errorf("the console closed with %v, want 4002 %q", err, want)
+				}
+				return
+			}
+		}
+	}
+	noQuorum := func(reason string) int {
+		return s.count(t, s.apiDB, `SELECT COUNT(*) FROM audit_log WHERE action = 'request.no_quorum' AND resource_id = ?
+			AND json_extract(details, '$.reason') = ? AND json_extract(details, '$.route') = '/api/v1/vms/{id}/console/serial'`, id, reason)
+	}
+
+	// The node loses quorum.
+	c, _, err := dialConsole(t, srv, s.tokens[auth.RoleOperator], id, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	readUntil(t, c, "simulated serial console of VM "+id)
+	s.noQuorum.Store(true)
+	waitClose(c, "no quorum")
+	if n := noQuorum("no_quorum"); n != 1 {
+		t.Errorf("%d request.no_quorum entries (no_quorum), want 1", n)
+	}
+	s.noQuorum.Store(false)
+
+	// The session is degraded (quorum is back).
+	c, _, err = dialConsole(t, srv, s.tokens[auth.RoleAdmin], id, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	readUntil(t, c, "simulated serial console of VM "+id)
+	if _, err := s.apiDB.Exec(`UPDATE sessions SET degraded = 1 WHERE token_hash = ?`, auth.HashToken(s.tokens[auth.RoleAdmin])); err != nil {
+		t.Fatal(err)
+	}
+	waitClose(c, "degraded")
+	if n := noQuorum("degraded_session"); n != 1 {
+		t.Errorf("%d request.no_quorum entries (degraded_session), want 1", n)
+	}
 }
