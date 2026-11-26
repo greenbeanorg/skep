@@ -2445,11 +2445,11 @@ built in step 8d, with the guest inventory that tells which guests a node
 owns.
 
 
-## Amendment 5 (2026-11-25, Proposed)
+## Amendment 5 (2026-11-25, Accepted)
 
 Written with the build of step 8c-2, from the fixed decisions D1 to D29
-the review chat gave that run. **Status: Proposed**: Andy
-accepts it by merging the step 8c-2 PR. The facts it rests on are in
+the review chat gave that run. **Status: Accepted 2026-11-26 with PR
+#116.** The facts it rests on are in
 [0013-evidence/8c2-facts-20261125.md](0013-evidence/8c2-facts-20261125.md).
 It changes no replicated entry type, no apply rule and no node-to-node
 message (V8 of the run).

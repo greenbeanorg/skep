@@ -681,10 +681,10 @@ what it says; where they differ for 0.1, this amendment wins.
   are needed then.
 - The work is a row in the [backlog](../backlog.md).
 
-## Amendment (2026-11-25, Proposed): skep_cluster (ADR 0013 step 8c-2)
+## Amendment (2026-11-25, Accepted): skep_cluster (ADR 0013 step 8c-2)
 
 Written with step 8c-2 of ADR 0013 (its amendment 5 lists the decisions
-D1–D29). **Status: Proposed**; Andy accepts it by merging that PR.
+D1–D29). **Status: Accepted 2026-11-26 with PR #116.**
 
 - **Upgrade may add one rc.conf line, with a journal.** Decision 5's
   upgrade changed no host file; from 8c-2 it adds
