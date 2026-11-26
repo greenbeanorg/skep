@@ -349,6 +349,15 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		log.Warn("nested virtualization: "+problem, "sysctl", nestedcheck.VIDSysctl)
 		checks[models.CheckNestedInterrupts] = func(context.Context) string { return nestedcheck.HostProblem() }
 	}
+	// The drain (step 8d-1, D6): not critical; it says the reason and
+	// the expiry while one is active.
+	checks[models.CheckDrain] = func(ctx context.Context) string {
+		d, active, unfinished := engine.CurrentDrain(ctx)
+		if !active {
+			return ""
+		}
+		return fmt.Sprintf("draining for %s until %s; no new task is accepted (%d unfinished)", d.Reason, d.ExpiresAt.UTC().Format(time.RFC3339), unfinished)
+	}
 	svc, err := agent.NewService(agent.Options{
 		Bhyve:      vms.Capabilities,
 		Containers: containerSvc.Capabilities,
@@ -463,7 +472,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 
 	// The internal API on the Unix socket is the agent's only listener:
 	// skep-api reaches the agent through it, and nothing else does.
-	socket, err := listenSocket(cfg, log)
+	socket, apiUIDs, err := listenSocket(cfg, log)
 	if err != nil {
 		return err
 	}
@@ -474,6 +483,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		Templates:      templateSvc,
 		Containers:     containerSvc,
 		Metrics:        sampler,
+		Engine:         engine,
+		APIUIDs:        apiUIDs,
 		RequestTimeout: cfg.Socket.RequestTimeout.Std(),
 		Logger:         log,
 	})
@@ -565,17 +576,24 @@ func newArchive(db *sql.DB, cfg config.Config, nodeID string, log *slog.Logger) 
 }
 
 // listenSocket creates the agent socket with the configured group and
-// peer allow-list.
-func listenSocket(cfg config.Config, log *slog.Logger) (*internalapi.Listener, error) {
+// peer allow-list. It also returns the allowed UIDs other than root: the
+// API account, for the operation table (step 8d-1, D2).
+func listenSocket(cfg config.Config, log *slog.Logger) (*internalapi.Listener, []uint32, error) {
 	uids, err := sysaccount.UIDs(cfg.Socket.AllowedUsers)
 	if err != nil {
-		return nil, fmt.Errorf("socket.allowed_users: %w", err)
+		return nil, nil, fmt.Errorf("socket.allowed_users: %w", err)
+	}
+	apiUIDs := []uint32{}
+	for _, u := range uids {
+		if u != 0 {
+			apiUIDs = append(apiUIDs, u)
+		}
 	}
 	gid, mode := -1, fs.FileMode(0o600)
 	if cfg.Socket.Group != "" {
 		g, err := sysaccount.GID(cfg.Socket.Group)
 		if err != nil {
-			return nil, fmt.Errorf("socket.group: %w", err)
+			return nil, nil, fmt.Errorf("socket.group: %w", err)
 		}
 		gid, mode = int(g), 0o660
 	}
@@ -583,7 +601,7 @@ func listenSocket(cfg config.Config, log *slog.Logger) (*internalapi.Listener, e
 		// In production the rc.d script creates the run directory as
 		// root:skep 0750. In dev mode it lives in the data directory.
 		if err := os.MkdirAll(filepath.Dir(cfg.Socket.Path), 0o700); err != nil {
-			return nil, fmt.Errorf("create the socket directory: %w", err)
+			return nil, nil, fmt.Errorf("create the socket directory: %w", err)
 		}
 	}
 	ln, err := internalapi.Listen(internalapi.ListenOptions{
@@ -595,11 +613,11 @@ func listenSocket(cfg config.Config, log *slog.Logger) (*internalapi.Listener, e
 		Logger:         log,
 	})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	log.Info("internal API listening", "socket", cfg.Socket.Path, "base_path", agentproto.Prefix,
 		"mode", fmt.Sprintf("%04o", mode), "group", cfg.Socket.Group, "allowed_uids", uids)
-	return ln, nil
+	return ln, apiUIDs, nil
 }
 
 // serve runs the internal API on the agent socket until ctx is cancelled

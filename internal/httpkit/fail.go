@@ -18,6 +18,8 @@ var StatusForCode = map[string]int{
 	models.CodeNotCancellable:       http.StatusConflict,
 	models.CodeQueueFull:            http.StatusServiceUnavailable,
 	models.CodeShuttingDown:         http.StatusServiceUnavailable,
+	models.CodeNodeDraining:         http.StatusServiceUnavailable,
+	models.CodeDrainActive:          http.StatusConflict,
 	models.CodeAgentUnavailable:     http.StatusServiceUnavailable,
 	models.CodeAgentVersionMismatch: http.StatusServiceUnavailable,
 

@@ -59,6 +59,14 @@ type Options struct {
 	Containers ContainerBackend
 	// Metrics is the resource sampler. Nil leaves the metrics route out.
 	Metrics MetricsBackend
+	// Engine is the task engine's drain and lookup by idempotency key.
+	// Nil leaves the drain and task-by-key routes out.
+	Engine EngineBackend
+	// APIUIDs are the UIDs of the API account, the caller of the
+	// operations whose API column says yes. Nil: every peer the listener
+	// admitted that is not root (the agent passes its allow-list without
+	// root).
+	APIUIDs []uint32
 	// RequestTimeout bounds the time spent on one request.
 	RequestTimeout time.Duration
 	// Logger defaults to slog.Default().
@@ -75,6 +83,8 @@ type handler struct {
 	templates  TemplateBackend
 	containers ContainerBackend
 	metrics    MetricsBackend
+	engine     EngineBackend
+	apiUIDs    []uint32
 	log        *slog.Logger
 }
 
@@ -86,31 +96,40 @@ func NewHandler(backend Backend, opts Options) http.Handler {
 	if log == nil {
 		log = slog.Default()
 	}
-	h := &handler{backend: backend, vms: opts.VMs, console: opts.Console, storage: opts.Storage, templates: opts.Templates, containers: opts.Containers, metrics: opts.Metrics, log: log}
+	h := &handler{backend: backend, vms: opts.VMs, console: opts.Console, storage: opts.Storage, templates: opts.Templates,
+		containers: opts.Containers, metrics: opts.Metrics, engine: opts.Engine, apiUIDs: opts.APIUIDs, log: log}
 
-	mux := http.NewServeMux()
-	mux.Handle(agentproto.Prefix+"/health", httpkit.ReadOnly(h.health))
-	mux.Handle(agentproto.Prefix+"/system", httpkit.ReadOnly(h.system))
-	mux.Handle(agentproto.Prefix+"/nodes/{id}/hardware", httpkit.ReadOnly(h.nodeHardware))
-	mux.Handle(agentproto.Prefix+"/tasks", httpkit.ReadOnly(h.tasks))
-	mux.Handle(agentproto.Prefix+"/tasks/{id}", httpkit.ReadOnly(h.task))
-	mux.Handle(agentproto.Prefix+"/tasks/{id}/cancel", httpkit.Methods(h.cancelTask, http.MethodPost))
+	// The handlers by path; mount registers only what the operation
+	// table names, each method behind its caller check (D2).
+	byPath := map[string]http.HandlerFunc{
+		"/health":              h.health,
+		"/system":              h.system,
+		"/nodes/{id}/hardware": h.nodeHardware,
+		"/tasks":               h.tasks,
+		"/tasks/{id}":          h.task,
+		"/tasks/{id}/cancel":   h.cancelTask,
+	}
+	add := func(path string, fn http.HandlerFunc) { byPath[path] = fn }
+	if h.engine != nil {
+		add("/tasks/by-key/{key}", h.taskByKey)
+		add("/drain", h.drain)
+	}
 	if h.vms != nil {
-		h.registerVMs(mux)
+		h.registerVMs(add)
 	}
 	if h.storage != nil {
-		mux.Handle(agentproto.Prefix+"/storage/datasets", httpkit.ReadOnly(h.storageDatasets))
+		add("/storage/datasets", h.storageDatasets)
 	}
 	if h.templates != nil {
-		h.registerTemplates(mux)
+		h.registerTemplates(add)
 	}
 	if h.containers != nil {
-		h.registerContainers(mux)
+		h.registerContainers(add)
 	}
 	if h.metrics != nil {
-		mux.Handle(agentproto.Prefix+"/metrics", httpkit.ReadOnly(h.nodeMetrics))
+		add("/metrics", h.nodeMetrics)
 	}
-	mux.HandleFunc("/", httpkit.NotFound)
+	mux := h.mount(byPath)
 
 	var root http.Handler = mux
 	root = withCaller(root)

@@ -161,7 +161,7 @@ func (h *handler) auditVM(r *http.Request, action, id string, task *models.Task,
 			entry.Details = map[string]any{"error_code": me.Code}
 			// Refused by a rule, not malformed and not broken.
 			if me.Code != models.CodeInvalidRequest && me.Code != models.CodeAgentUnavailable &&
-				me.Code != models.CodeQueueFull && me.Code != models.CodeShuttingDown {
+				me.Code != models.CodeQueueFull && me.Code != models.CodeShuttingDown && me.Code != models.CodeNodeDraining {
 				entry.Outcome = audit.Denied
 			}
 		case errors.Is(err, models.ErrNotFound):

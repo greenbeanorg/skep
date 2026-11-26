@@ -76,6 +76,8 @@ type Engine struct {
 	state   engineState
 	defs    map[string]Definition
 	running map[string]*runState
+	// drain is the active drain, if any (drain.go).
+	drain *Drain
 }
 
 // New returns an Engine. Register task types, then call Start.
@@ -248,6 +250,22 @@ func (e *Engine) Submit(ctx context.Context, req Request) (task Task, created bo
 
 	if e.state != stateStarted {
 		rerr := &models.Error{Code: models.CodeShuttingDown, Message: "the agent is not accepting tasks"}
+		e.refuse(ctx, req, audit.Failure, rerr)
+		return Task{}, false, rerr
+	}
+	// A drain (D4) refuses new tasks; like a full queue, it still answers
+	// an idempotent replay, which creates nothing.
+	if d, draining := e.activeDrainLocked(ctx); draining {
+		if req.IdempotencyKey != "" {
+			existing, found, err := e.store.GetByKey(ctx, req.IdempotencyKey)
+			if err != nil {
+				return Task{}, false, err
+			}
+			if found && existing.RequestHash == t.RequestHash {
+				return existing, false, nil
+			}
+		}
+		rerr := drainRefusal(d)
 		e.refuse(ctx, req, audit.Failure, rerr)
 		return Task{}, false, rerr
 	}

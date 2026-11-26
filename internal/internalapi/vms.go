@@ -36,20 +36,19 @@ type VMBackend interface {
 
 // registerVMs adds the VM and storage routes. Like every route of the
 // internal API they carry typed values only: no command, no path.
-func (h *handler) registerVMs(mux *http.ServeMux) {
-	mux.Handle(agentproto.Prefix+"/vms", httpkit.Methods(h.vmCollection, http.MethodGet, http.MethodHead, http.MethodPost))
-	mux.Handle(agentproto.Prefix+"/vms/{id}", httpkit.Methods(h.vmItem,
-		http.MethodGet, http.MethodHead, http.MethodPut, http.MethodDelete))
-	mux.Handle(agentproto.Prefix+"/vms/{id}/actions", httpkit.Methods(h.vmAction, http.MethodPost))
+func (h *handler) registerVMs(add func(string, http.HandlerFunc)) {
+	add("/vms", h.vmCollection)
+	add("/vms/{id}", h.vmItem)
+	add("/vms/{id}/actions", h.vmAction)
 	if h.console != nil {
-		mux.Handle(agentproto.Prefix+"/vms/{id}/console/serial", httpkit.Methods(h.vmConsole, http.MethodGet))
+		add("/vms/{id}/console/serial", h.vmConsole)
 	}
-	mux.Handle(agentproto.Prefix+"/vms/{id}/snapshots", httpkit.Methods(h.snapshotCollection, http.MethodGet, http.MethodHead, http.MethodPost))
-	mux.Handle(agentproto.Prefix+"/vms/{id}/snapshots/{sid}", httpkit.Methods(h.snapshotItem, http.MethodGet, http.MethodHead, http.MethodDelete))
-	mux.Handle(agentproto.Prefix+"/vms/{id}/snapshots/{sid}/rollback", httpkit.Methods(h.snapshotRollback, http.MethodPost))
-	mux.Handle(agentproto.Prefix+"/vms/{id}/clone", httpkit.Methods(h.vmClone, http.MethodPost))
-	mux.Handle(agentproto.Prefix+"/storage/pools", httpkit.ReadOnly(h.storagePools))
-	mux.Handle(agentproto.Prefix+"/storage/media", httpkit.ReadOnly(h.storageMedia))
+	add("/vms/{id}/snapshots", h.snapshotCollection)
+	add("/vms/{id}/snapshots/{sid}", h.snapshotItem)
+	add("/vms/{id}/snapshots/{sid}/rollback", h.snapshotRollback)
+	add("/vms/{id}/clone", h.vmClone)
+	add("/storage/pools", h.storagePools)
+	add("/storage/media", h.storageMedia)
 }
 
 // submission builds who a write is for from the request: the actor from

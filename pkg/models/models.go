@@ -489,6 +489,11 @@ const (
 	CodeNotCancellable      = "not_cancellable"
 	CodeQueueFull           = "queue_full"
 	CodeShuttingDown        = "shutting_down"
+	// CodeNodeDraining: the agent is draining (step 8d-1, D9); no new
+	// task is accepted until the drain is cleared or expires.
+	CodeNodeDraining = "node_draining"
+	// CodeDrainActive: a drain with another reason is active.
+	CodeDrainActive = "drain_active"
 	// CodeAgentUnavailable means skep-api could not reach the host agent.
 	CodeAgentUnavailable = "agent_unavailable"
 	// CodeAgentVersionMismatch means the agent is another build than

@@ -199,6 +199,15 @@ func (c *Client) Task(ctx context.Context, id string) (models.TaskDetail, error)
 	return detail, err
 }
 
+// TaskByKey returns the task the agent created with an idempotency key
+// (step 8d-1, D7); models.ErrNotFound without one. It is not in the public
+// API: reconciliation reads the task of a reservation with it.
+func (c *Client) TaskByKey(ctx context.Context, key string) (models.Task, error) {
+	var task models.Task
+	err := c.do(ctx, http.MethodGet, "/tasks/by-key/"+url.PathEscape(key), nil, nil, &task)
+	return task, err
+}
+
 // CancelTask asks the agent to cancel a task for the caller in ctx and
 // returns the task as it is after the request.
 func (c *Client) CancelTask(ctx context.Context, id string) (models.Task, error) {
