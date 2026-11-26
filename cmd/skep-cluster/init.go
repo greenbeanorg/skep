@@ -20,7 +20,6 @@ import (
 	"github.com/greenbeanorg/skep/internal/agentproto"
 	"github.com/greenbeanorg/skep/internal/cluster/audit"
 	"github.com/greenbeanorg/skep/internal/cluster/clusterconf"
-	"github.com/greenbeanorg/skep/internal/cluster/joinstate"
 	"github.com/greenbeanorg/skep/internal/cluster/layout"
 	"github.com/greenbeanorg/skep/internal/cluster/nodekey"
 	"github.com/greenbeanorg/skep/internal/cluster/service"
@@ -212,8 +211,11 @@ func runInit(ctx context.Context, args []string, e env) error {
 // not a never-initialised host, so that neither "not-initialised" nor a
 // new one-node cluster hides what a join, a wipe or a key rotation left
 // (F2 of the 8c-2 review). Without a store: join.json, a moved-aside
-// one-node state or rotate.json; always: a wipe marker or a join in phase
-// abandoning, on which the service refuses to start. It only reads.
+// one-node state or rotate.json; always: a wipe marker. It runs as root
+// and opens no file in the service account's directory: it looks at names
+// with lstat only. A join.json beside a store is initialised whatever its
+// phase; the service's start rule, run as the account, refuses a join in
+// phase abandoning.
 func dataDirInUse(dataDir string, hasStore bool) error {
 	at := func(name string) (string, bool, error) {
 		p := filepath.Join(dataDir, name)
@@ -227,19 +229,15 @@ func dataDirInUse(dataDir string, hasStore bool) error {
 		}
 		return err
 	}
-	p, joining, err := at(layout.JoinFile)
-	if err != nil {
-		return err
-	}
-	if joining {
-		js, rerr := joinstate.Read(dataDir)
-		if !hasStore || rerr != nil || (js != nil && js.Phase == joinstate.PhaseAbandoning) {
-			return fmt.Errorf("%s exists: this host is joining a cluster, or a join stopped; end it with \"skep-cluster join --abandon\" as root "+
-				"(it puts this host's one-node cluster back), or start skep_cluster to let the join go on.%s", p, unchanged)
-		}
-	}
 	if hasStore {
 		return nil
+	}
+	if p, ok, err := at(layout.JoinFile); err != nil || ok {
+		if err == nil {
+			err = fmt.Errorf("%s exists: this host is joining a cluster, or a join stopped; end it with \"skep-cluster join --abandon\" as root "+
+				"(it puts this host's one-node cluster back), or start skep_cluster to let the join go on.%s", p, unchanged)
+		}
+		return err
 	}
 	aside, err := layout.Standalones(dataDir)
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {

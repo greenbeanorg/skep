@@ -194,10 +194,17 @@ shows `NAME` and says the name could not be shown.
   | In `/var/db/skep/cluster` | Answer names |
   |---|---|
   | `wipe.json` (with or without a store) | `skep-cluster leave --wipe` again |
-  | `join.json` and no `state/`, or a join in phase `abandoning` | `skep-cluster join --abandon` (or start `skep_cluster` to let the join go on) |
+  | `join.json` and no `state/` | `skep-cluster join --abandon` (or start `skep_cluster` to let the join go on) |
   | one `standalone.*` directory, no `state/`, no `join.json` | start `skep_cluster`: it puts the one-node cluster back |
   | several `standalone.*` directories, no `state/`, no `join.json` | the service refuses to start with them: keep one, move the others out |
   | `rotate.json` and no `state/` | delete it and `node.key.next` if no member lists this node's next pin |
+
+  `init -check` runs as root and opens no file in that directory: it looks
+  at the names with `lstat` only, so a symbolic link or a FIFO there is not
+  followed or waited on. A `join.json` beside `state/` is `initialised`
+  whatever its phase; a join left in phase `abandoning` is refused by the
+  service's start rule (run as the account), so `apply` fails at the start
+  with that text.
 
   A store with `rotate.json` (a key rotation under way) or with
   `join.json` (a join in progress) is `initialised`.

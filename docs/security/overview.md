@@ -579,7 +579,8 @@ cross-check**, since each records the same entries. There is no external
 anchor in 0.2 (backlog). `audit verify` runs as root over a directory the
 service account owns, so it follows no symbolic link and waits on no FIFO
 (every segment is opened with `O_NOFOLLOW|O_NONBLOCK` and checked with
-`fstat`). A failed append is undone, so it cannot leave a broken chain; a
+`fstat`). `skep-cluster init` and `init -check`, also root, open no file
+there at all: they look at names with `lstat` only. A failed append is undone, so it cannot leave a broken chain; a
 broken audit stops the service, which prints the way out (move it aside,
 keep it, begin a new one).
 

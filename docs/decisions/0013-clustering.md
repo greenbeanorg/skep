@@ -2601,12 +2601,15 @@ admit, withdraw and remove through the API on the three lab nodes.
   it saw instead of "one of N members"; `upgrade` waits up to 30 s while
   the member list is only not current yet.
 - **F2 `init` and `init -check`** refuse a data directory that a join, a
-  wipe or a key rotation left (`wipe.json`; `join.json` without `state/`
-  or in phase `abandoning`; a `standalone.*` directory without `state/`
+  wipe or a key rotation left (`wipe.json`; `join.json` without `state/`;
+  a `standalone.*` directory without `state/`
   and `join.json`; `rotate.json` without `state/`), naming the state and
   what ends it, and change nothing. `not-initialised` is only a host with
   none of them and no store. A store with `rotate.json` or `join.json` is
-  `initialised` (a rotation or a join under way).
+  `initialised` (a rotation or a join under way), whatever `join.json`
+  holds: init runs as root and opens no file in the account's directory
+  (only `lstat` on names), and the service's start rule, run as the
+  account, refuses a join in phase `abandoning`.
 - **F3** A degraded session is refused on `POST /cluster/admissions`,
   `DELETE /cluster/admissions/{name}` and `POST
   /cluster/members/{name}/remove` before anything is sent (`503
