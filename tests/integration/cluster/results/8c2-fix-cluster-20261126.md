@@ -15,3 +15,14 @@ merrick.
 | L5 end | three voters in state member, health ok, nothing pending, `audit verify` 0 on all three, vid tunable 0 on all three, nothing root-owned in `/var/db/skep/cluster`; leader star |
 
 End state: smith, langrishe, star on 0.1.0+73a8218; leader star.
+
+## Merge-run check (2026-11-26): init -check opens no file as root, build 5cb6e3b
+
+Rolling `skep-setup upgrade -yes -keep 50` from 73a8218 to **5cb6e3b**
+(leader star read first and upgraded last). Raw log:
+`~/skep-test-logs/20261126T095844Z-8c2merge-lab-upgrade.log` on merrick.
+
+- smith: upgrade exit 0; three voters member, health ok; `audit verify` 0; vid 0; import state done; `init -check` "initialised".
+- langrishe: upgrade exit 0; three voters member, health ok; `audit verify` 0; vid 0; import state superseded; `init -check` "initialised".
+- star (leader before, upgraded last; leadership moved to langrishe): upgrade exit 0; three voters member, health ok; `audit verify` 0; vid 0; import state superseded; `init -check` "initialised".
+- blazanov (single host): upgrade exit 0; one-node cluster leader, health ok; vid 0; import state done; `init -check` "initialised".
