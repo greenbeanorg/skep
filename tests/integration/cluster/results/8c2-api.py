@@ -20,6 +20,7 @@ Usage:
   8c1-api.py create HOST USER NAME PWFILE ROLE  creates a user, the password read from PWFILE
   8c1-api.py setpw HOST USER ID PWFILE       sets a user's password from PWFILE
   8c2-api.py audit HOST USER ACTION          prints the newest access audit entries with ACTION
+  8c2-api.py admit HOST USER REQFILE OUTFILE  admits the join request in REQFILE; the admission goes to OUTFILE (0600)
 """
 import json, os, ssl, subprocess, sys, time, urllib.error, urllib.request
 
@@ -135,6 +136,18 @@ def main():
         st, b = call(host, method, path, body, tokens().get(host + "/" + user))
         body = None
         print(f"{host} {method} {path} as {user}: {st} {json.dumps(clean(b))[:600]}")
+    elif cmd == "admit":
+        # 8c2fix: the admission goes to a 0600 file, never to the output.
+        host, user, reqfile, outfile = sys.argv[2:6]
+        with open(reqfile) as f:
+            req = f.read().strip()
+        st, b = call(host, "POST", "/cluster/admissions", {"request": req}, tokens().get(host + "/" + user))
+        if st == 200:
+            fd = os.open(outfile, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, "w") as f:
+                f.write(b["admission"])
+            b = {k: v for k, v in b.items() if k != "admission"}
+        print(f"{host} POST /cluster/admissions as {user}: {st} {json.dumps(clean(b))[:600]}")
     elif cmd == "audit":
         host, user, action = sys.argv[2:5]
         st, b = call(host, "GET", "/audit?limit=100", None, tokens().get(host + "/" + user))

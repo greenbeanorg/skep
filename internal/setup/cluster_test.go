@@ -207,7 +207,7 @@ func (r errRunner) Run(context.Context, Cmd) (string, error) { return "", r.err 
 // F7 of the 8c-2 review: multi-line output of skep-cluster's and skep-api's
 // commands is cleaned line by line and keeps its line breaks.
 func TestCommandOutputIsCleanedLineByLine(t *testing.T) {
-	if got := CleanLines("one\x1b[31m\r\ntwo‮\n\nthree"); got != "one?[31m\ntwo?\n\nthree" {
+	if got := CleanLines("one\x1b[31m\r\ntwo\u202e\n\nthree"); got != "one?[31m\ntwo?\n\nthree" {
 		t.Fatalf("%q", got)
 	}
 	_, err := HostCluster{Root: "/", Runner: errRunner{errors.New("exit status 1: skep-cluster: line one\nline\x1b two")}}.Initialised(context.Background())
