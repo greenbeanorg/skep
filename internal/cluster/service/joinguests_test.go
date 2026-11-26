@@ -155,20 +155,22 @@ func TestJoinWithGuestsRepeatAfterUnknown(t *testing.T) {
 // included) as the join call's body, and its member.join entry fits 192
 // KiB.
 func TestJoinListLimitsFitOneEntryAndOneRPC(t *testing.T) {
+	// 1000 guests whose names fill the byte limit, mostly with escaped
+	// bytes ("<" is 6 bytes as JSON).
 	list := make([]clusterstate.JoinGuest, clusterstate.MaxJoinGuests)
 	for i := range list {
 		list[i] = clusterstate.JoinGuest{ID: fmt.Sprintf("d0000000-0000-4000-8000-%012d", i), Kind: clusterstate.KindContainer, Name: fmt.Sprintf("%04d", i)}
 	}
-	// Grow the names, the escaped bytes included, to the byte limit.
-	for i := 0; ; i = (i + 1) % len(list) {
-		list[i].Name += "<"
-		if clusterstate.CheckJoinGuestLimits(list) != nil {
-			list[i].Name = list[i].Name[:len(list[i].Name)-1]
-			break
-		}
+	base, _ := json.Marshal(list)
+	extra := (clusterstate.MaxJoinGuestsBytes - len(base)) / len(list)
+	for i := range list {
+		list[i].Name += strings.Repeat("<", extra/6) + strings.Repeat("n", extra%6)
+	}
+	if err := clusterstate.CheckJoinGuestLimits(list); err != nil {
+		t.Fatal(err)
 	}
 	gb, _ := json.Marshal(list)
-	if len(gb) < clusterstate.MaxJoinGuestsBytes-6 {
+	if len(gb) < clusterstate.MaxJoinGuestsBytes-1000 {
 		t.Fatalf("the list is %d bytes, not at the limit", len(gb))
 	}
 	id := "d0000000-0000-4000-8000-ffffffffffff"

@@ -1,10 +1,14 @@
 package joinstate
 
 import (
+	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/greenbeanorg/skep/internal/cluster/clusterstate"
 	"github.com/greenbeanorg/skep/internal/cluster/joincode"
 )
 
@@ -113,5 +117,52 @@ func TestStateRoundTrip(t *testing.T) {
 	Remove(dir)
 	if s, err := Read(dir); s != nil || err != nil {
 		t.Fatal(s, err)
+	}
+}
+
+// D14 of step 8d-2: join.json records the guest list (omitted when empty);
+// the largest list D4 allows, indented, is read back; a list that breaks
+// the rules is neither written nor read.
+func TestStateRecordsTheGuests(t *testing.T) {
+	dir := t.TempDir()
+	adm := joincode.Admission{ClusterID: "7d1c2a9e-1b0f-4f3e-9a51-2c6b8e0d4f10"}
+	s := State{Phase: PhaseCalling, OpID: "op", Admission: adm, Standalone: "standalone.x"}
+	if err := Write(dir, s); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(filepath.Join(dir, FileName)); strings.Contains(string(b), "guests") {
+		t.Fatalf("an empty list is written: %s", b)
+	}
+	// 1000 guests whose names fill the byte limit.
+	list := make([]clusterstate.JoinGuest, clusterstate.MaxJoinGuests)
+	for i := range list {
+		list[i] = clusterstate.JoinGuest{ID: fmt.Sprintf("0a0a0a0a-0000-4000-8000-%012d", i), Kind: clusterstate.KindVM, Name: fmt.Sprintf("%04d", i)}
+	}
+	base, _ := json.Marshal(list)
+	extra := (clusterstate.MaxJoinGuestsBytes - len(base)) / len(list)
+	for i := range list {
+		list[i].Name += strings.Repeat("n", extra)
+	}
+	if b, _ := json.Marshal(list); len(b) > clusterstate.MaxJoinGuestsBytes || len(b) < clusterstate.MaxJoinGuestsBytes-1000 {
+		t.Fatalf("the list is %d bytes", len(b))
+	}
+	s.Guests = list
+	if err := Write(dir, s); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Read(dir)
+	if err != nil || len(got.Guests) != len(list) || got.Guests[999] != list[999] {
+		t.Fatalf("read back: %v", err)
+	}
+	s.Guests = []clusterstate.JoinGuest{list[0], list[0]}
+	if err := Write(dir, s); err == nil {
+		t.Fatal("a list with an ID twice was written")
+	}
+	// A file that holds such a list (written by hand) is not read.
+	b, _ := os.ReadFile(filepath.Join(dir, FileName))
+	bad := strings.Replace(string(b), list[1].ID, list[0].ID, 1)
+	os.WriteFile(filepath.Join(dir, FileName), []byte(bad), 0o600)
+	if _, err := Read(dir); err == nil {
+		t.Fatal("a list with an ID twice was read")
 	}
 }

@@ -761,8 +761,9 @@ func TestJoinCommandsAndTheHostsGuests(t *testing.T) {
 	w := newWorld(t)
 	clusterconf.Write(w.config, clusterconf.Config{NodeID: agentNode, NodeName: "smith", ListenAddress: "127.0.0.1"}, -1, -1)
 	w.guests = []clusterstate.JoinGuest{{ID: guestA, Kind: "vm", Name: "db1"}}
+	g := serviceWithStatus(t, w, localapi.Status{})
 	_ = run(context.Background(), []string{"join-request", "-address", "127.0.0.1", "-config", w.config, "-data-dir", w.dataDir,
-		"-socket", filepath.Join(w.dir, "none.sock"), "-agent-socket", "/agent.sock"}, w.env(0))
+		"-socket", g.path, "-agent-socket", "/agent.sock"}, w.env(0))
 	if w.guestReads != 0 || len(w.drainCalls) != 0 {
 		t.Fatalf("join-request asked the agent: %d reads, drain %v", w.guestReads, w.drainCalls)
 	}
