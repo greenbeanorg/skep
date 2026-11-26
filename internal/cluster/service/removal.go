@@ -787,12 +787,29 @@ func (s *Service) removeAsLeader(ctx context.Context, req forwardRemove, origin 
 			case <-time.After(100 * time.Millisecond):
 			}
 		}
+		// A new leader answers peer operations only after the barrier of
+		// its term (amendment 3, point 9): until then it says
+		// "unavailable", and nothing was written. Pass the removal on
+		// again, with the same operation ID, for up to 10 s (found on
+		// the lab in step 8c-2: the first answer came before the
+		// barrier).
 		var res localapi.RemoveResult
-		err := s.toLeader(ctx, raftnet.OpRemove, req, &res)
-		if err == nil {
-			res.HandedOver = true
+		retryUntil := time.Now().Add(10 * time.Second)
+		for {
+			err := s.toLeader(ctx, raftnet.OpRemove, req, &res)
+			if err == nil {
+				res.HandedOver = true
+				return res, nil
+			}
+			if !handoverRetryable(err) || time.Now().After(retryUntil) {
+				return res, err
+			}
+			select {
+			case <-ctx.Done():
+				return res, err
+			case <-time.After(200 * time.Millisecond):
+			}
 		}
-		return res, err
 	}
 	e, err := clusterstate.NewEntry(clusterstate.TypeMemberRemoving, req.OpID, req.Actor, origin,
 		clusterstate.MemberRemoving{NodeID: x.ID, ForgetGuests: []string{}})
@@ -830,4 +847,19 @@ func decodeNotice(body json.RawMessage) (RemovedNotice, error) {
 	dec.DisallowUnknownFields()
 	err := dec.Decode(&n)
 	return n, err
+}
+
+// handoverRetryable reports whether a removal passed on to the new leader
+// after a hand-over may be passed on again: answers that say nothing was
+// written while the new leader is not ready yet.
+func handoverRetryable(err error) bool {
+	var oe *localapi.OpError
+	if !errors.As(err, &oe) {
+		return false
+	}
+	switch oe.Code {
+	case raftnet.CodeUnavailable, raftnet.CodeNotLeader, "no_leader":
+		return true
+	}
+	return false
 }

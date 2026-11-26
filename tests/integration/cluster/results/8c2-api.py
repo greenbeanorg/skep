@@ -19,6 +19,7 @@ Usage:
   8c1-api.py users HOST USER                 prints "id username role disabled" lines
   8c1-api.py create HOST USER NAME PWFILE ROLE  creates a user, the password read from PWFILE
   8c1-api.py setpw HOST USER ID PWFILE       sets a user's password from PWFILE
+  8c2-api.py audit HOST USER ACTION          prints the newest access audit entries with ACTION
 """
 import json, os, ssl, subprocess, sys, time, urllib.error, urllib.request
 
@@ -134,6 +135,15 @@ def main():
         st, b = call(host, method, path, body, tokens().get(host + "/" + user))
         body = None
         print(f"{host} {method} {path} as {user}: {st} {json.dumps(clean(b))[:600]}")
+    elif cmd == "audit":
+        host, user, action = sys.argv[2:5]
+        st, b = call(host, "GET", "/audit?limit=100", None, tokens().get(host + "/" + user))
+        if st != 200:
+            print(f"{host} audit: {st} {json.dumps(clean(b))}")
+            return
+        for e in b["items"]:
+            if e["action"] == action:
+                print(f"{host} audit {e['occurred_at']} {e['actor_name']} {e['action']} {e['outcome']} {e.get('resource_id','')} {json.dumps(e.get('details'))}")
     else:
         sys.exit(__doc__)
 

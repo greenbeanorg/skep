@@ -57,3 +57,17 @@ func TestRemoveClusterIDMismatch(t *testing.T) {
 		t.Fatalf("%+v %v", res, err)
 	}
 }
+
+// Step 8c-2 lab: after a hand-over the removal is passed on again while
+// the new leader says nothing was written.
+func TestHandoverRetryable(t *testing.T) {
+	for code, want := range map[string]bool{"unavailable": true, "not_leader": true, "no_leader": true,
+		"outcome_unknown": false, "not_committed": false, "refused": false, "cluster_id_mismatch": false} {
+		if got := handoverRetryable(&localapi.OpError{Code: code}); got != want {
+			t.Errorf("%s: %v", code, got)
+		}
+	}
+	if handoverRetryable(context.Canceled) {
+		t.Error("a plain error is not retried")
+	}
+}
