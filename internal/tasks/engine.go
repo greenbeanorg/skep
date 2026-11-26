@@ -76,8 +76,16 @@ type Engine struct {
 	state   engineState
 	defs    map[string]Definition
 	running map[string]*runState
+	// unfinished holds the tasks this engine accepted and has not yet
+	// brought to a terminal state (F6 of the 8d-1 review): added in
+	// Submit with the insert, removed where the terminal state is
+	// recorded. A set, so that removing twice is harmless.
+	unfinished map[string]struct{}
 	// drain is the active drain, if any (drain.go).
 	drain *Drain
+	// dequeued, when set (tests only, before Start), runs in a worker
+	// between taking a task off the queue and running it.
+	dequeued func(id string)
 }
 
 // New returns an Engine. Register task types, then call Start.
@@ -113,6 +121,7 @@ func New(opts Options) (*Engine, error) {
 		baseCancel: cancel,
 		defs:       map[string]Definition{},
 		running:    map[string]*runState{},
+		unfinished: map[string]struct{}{},
 	}, nil
 }
 
@@ -158,6 +167,8 @@ func (e *Engine) Start(ctx context.Context) error {
 		e.log.Warn("task interrupted by agent restart",
 			"task_id", t.ID, "type", t.Type, "resource_type", t.ResourceType, "resource_id", t.ResourceID)
 	}
+	// Every task in the store is terminal now: none is unfinished.
+	e.unfinished = map[string]struct{}{}
 
 	for range e.workers {
 		e.wg.Add(1)
@@ -297,6 +308,7 @@ func (e *Engine) Submit(ctx context.Context, req Request) (task Task, created bo
 	if !created {
 		return stored, false, nil
 	}
+	e.unfinished[stored.ID] = struct{}{}
 	e.queue <- stored.ID // never blocks: capacity was checked under mu
 	e.log.Info("task accepted", "task_id", stored.ID, "type", stored.Type,
 		"actor_id", stored.Actor.ID, "resource_type", stored.ResourceType, "resource_id", stored.ResourceID)
@@ -438,6 +450,7 @@ func (e *Engine) Cancel(ctx context.Context, id string, req CancelRequest) (Task
 				return Task{}, err
 			}
 			if ok {
+				e.finished(id)
 				e.log.Info("task cancelled before it started", "task_id", id, "cancelled_by", req.Actor.ID)
 				return cancelled, nil
 			}
@@ -501,8 +514,19 @@ func (e *Engine) List(ctx context.Context, opts models.TaskListOptions) ([]Task,
 func (e *Engine) worker() {
 	defer e.wg.Done()
 	for id := range e.queue {
+		if e.dequeued != nil {
+			e.dequeued(id)
+		}
 		e.runOne(id)
 	}
+}
+
+// finished removes a task from the unfinished ones: its terminal state is
+// recorded, or nothing in this process will record one.
+func (e *Engine) finished(id string) {
+	e.mu.Lock()
+	delete(e.unfinished, id)
+	e.mu.Unlock()
 }
 
 // storeCtx returns a context for recording an outcome. It is independent
@@ -511,8 +535,12 @@ func storeCtx() (context.Context, context.CancelFunc) {
 	return context.WithTimeout(context.Background(), storeTimeout)
 }
 
-// runOne runs one queued task to a terminal state.
+// runOne runs one queued task to a terminal state. However it returns,
+// the task is no longer unfinished: its terminal state is recorded (here,
+// or by Cancel while it was pending), or a store error left it for the
+// next Start to interrupt.
 func (e *Engine) runOne(id string) {
+	defer e.finished(id) // runs last, after every transition below
 	sctx, scancel := storeCtx()
 	defer scancel()
 

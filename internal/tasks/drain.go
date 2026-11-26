@@ -110,8 +110,10 @@ func (e *Engine) activeDrainLocked(ctx context.Context) (Drain, bool) {
 	return Drain{}, false
 }
 
-// unfinishedLocked counts the tasks waiting for a worker or running.
-func (e *Engine) unfinishedLocked() int { return len(e.queue) + len(e.running) }
+// unfinishedLocked counts the tasks accepted and not yet terminal,
+// including one a worker has taken off the queue and not yet started (F6
+// of the 8d-1 review). e.mu is held.
+func (e *Engine) unfinishedLocked() int { return len(e.unfinished) }
 
 func (e *Engine) auditDrainLocked(ctx context.Context, action string, by DrainActor, d Drain) {
 	entry := audit.Entry{ActorID: by.Actor.ID, ActorName: by.Actor.Name, PeerUID: by.PeerUID, Action: action,

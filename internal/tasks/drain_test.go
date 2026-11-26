@@ -2,6 +2,7 @@ package tasks_test
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"path/filepath"
@@ -139,5 +140,117 @@ func TestDrainRenewExpireClearAndAudit(t *testing.T) {
 	rows := d.auditRows(`action = ?`, tasks.ActionDrainSet)
 	if rows[0].actorName != "root" || rows[0].peerUID != 0 {
 		t.Errorf("set entry: %+v", rows[0])
+	}
+}
+
+// heldEngine is a one-worker engine whose worker stops after taking its
+// first task off the queue, until release is closed; held receives the
+// ID of every task taken off the queue.
+func heldEngine(t *testing.T) (f *fixture, held chan string, release chan struct{}) {
+	db := openDB(t, filepath.Join(t.TempDir(), "agent.db"))
+	f = &fixture{t: t, db: db}
+	e, err := tasks.New(tasks.Options{Store: database.NewTaskStore(db), Audit: database.NewAuditLog(db), NodeID: localNode(t, db),
+		Workers: 1, QueueSize: 8, Logger: slog.New(slog.NewTextHandler(io.Discard, nil))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.Register(tasks.Definition{Type: "test.ok", Timeout: time.Minute, Cancellable: true,
+		Run: func(context.Context, tasks.Task, tasks.Reporter) (any, error) { return nil, nil }}); err != nil {
+		t.Fatal(err)
+	}
+	held, release = make(chan string, 4), make(chan struct{})
+	var once sync.Once
+	tasks.SetDequeuedHook(e, func(id string) {
+		held <- id
+		once.Do(func() { <-release })
+	})
+	if err := e.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = e.Shutdown(ctx)
+	})
+	f.engine = e
+	return f, held, release
+}
+
+func unfinishedOf(e *tasks.Engine) int { _, _, n := e.CurrentDrain(context.Background()); return n }
+
+// F6 of the 8d-1 review: a task a worker has taken off the queue and not
+// yet started is unfinished; so is one queued behind it, until it is
+// cancelled; a finished task is not.
+func TestDrainCountsATaskBetweenQueueAndRunning(t *testing.T) {
+	f, held, release := heldEngine(t)
+	e, ctx := f.engine, context.Background()
+	unfinished := func() int { return unfinishedOf(e) }
+
+	first := f.submit(tasks.Request{Type: "test.ok"})
+	if id := <-held; id != first.ID {
+		t.Fatalf("held %s, want %s", id, first.ID)
+	}
+	// Off the queue, not in running: still counted.
+	if n := unfinished(); n != 1 {
+		t.Fatalf("unfinished with the task between the queue and running: %d, want 1", n)
+	}
+	second := f.submit(tasks.Request{Type: "test.ok"})
+	if n := unfinished(); n != 2 {
+		t.Fatalf("unfinished with one held and one queued: %d, want 2", n)
+	}
+	// Cancelled while pending: no longer counted, at once.
+	if _, err := e.Cancel(ctx, second.ID, tasks.CancelRequest{Actor: andy, PeerUID: peerUID}); err != nil {
+		t.Fatal(err)
+	}
+	if n := unfinished(); n != 1 {
+		t.Fatalf("unfinished after cancelling the queued task: %d, want 1", n)
+	}
+	close(release)
+	f.wait(first.ID, models.TaskSucceeded)
+	deadline := time.Now().Add(5 * time.Second)
+	for unfinished() != 0 {
+		if time.Now().After(deadline) {
+			t.Fatalf("unfinished after both ended: %d, want 0", unfinished())
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+}
+
+// F6: tasks still queued at shutdown are interrupted and no longer
+// counted.
+func TestDrainCountAfterShutdown(t *testing.T) {
+	f, held, release := heldEngine(t)
+	first := f.submit(tasks.Request{Type: "test.ok"})
+	<-held
+	second := f.submit(tasks.Request{Type: "test.ok"})
+	if n := unfinishedOf(f.engine); n != 2 {
+		t.Fatalf("unfinished: %d, want 2", n)
+	}
+	done := make(chan error, 1)
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		done <- f.engine.Shutdown(ctx)
+	}()
+	// Release the worker only once the engine is stopping.
+	for {
+		_, _, err := f.engine.Submit(context.Background(), tasks.Request{Type: "test.ok", Actor: andy, PeerUID: peerUID})
+		var me *models.Error
+		if errors.As(err, &me) && me.Code == models.CodeShuttingDown {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{first.ID, second.ID} {
+		if task, err := f.engine.Get(context.Background(), id); err != nil || task.Status != models.TaskInterrupted {
+			t.Errorf("%s: %+v %v", id, task.Status, err)
+		}
+	}
+	if n := unfinishedOf(f.engine); n != 0 {
+		t.Fatalf("unfinished after shutdown: %d, want 0", n)
 	}
 }
