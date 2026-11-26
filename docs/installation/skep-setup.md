@@ -415,7 +415,8 @@ it:
    amendment aa). After 30 s without an answer upgrade prints one line
    saying so (look for `jail_stop_completing` in `/var/log/daemon.log`);
 9. reads the import state of the host's users (`skep-api admin list
-   --import-state`, as `skep`, waiting up to 30 s). Not `pending`: it is
+   --import-state`, as `skep`, waiting up to 30 s, also while it still
+   reads `unmigrated` because `skep_api` has not migrated yet). Not `pending`: it is
    printed. `pending` on a node that is alone in its cluster: it runs
    `skep-api admin import-users` (never with `--yes`) and succeeds only if
    the state then reads `done`. `pending` in a cluster of several nodes: it

@@ -2576,3 +2576,19 @@ cluster with its users imported. The lab test of 8c (login on any node, a
 password change revoking sessions on all, a cut-off node's login rules)
 ran in 8c-1; 8c-2 adds the single-host install and upgrade (blazanov) and
 admit, withdraw and remove through the API on the three lab nodes.
+
+### 4. Found on the lab, fixed in the same PR (decisions for review)
+
+- **Removing the leader passes the removal on again after the hand-over.**
+  The new leader answers peer operations only after its term's barrier
+  (amendment 3, point 9); the first attempt could get `unavailable` and
+  fail with nothing written (through the API, and as a race behind root's
+  command). The old leader now repeats it, with the same operation ID,
+  for up to 10 s while the answer says nothing was written
+  (`unavailable`, `not_leader`, `no_leader`). A leader-side change only.
+- **Upgrade waits out `unmigrated`.** Right after `skep_api` starts, the
+  import state can read `unmigrated` until the service has migrated; D13
+  treats it as "not ready yet" within its 30 s wait.
+- **remove's hint names `onestart`** for a host whose `skep_cluster_enable`
+  is not YES.
+
