@@ -29,11 +29,11 @@ type TemplateBackend interface {
 
 func (h *handler) templateRoutes() []route {
 	return []route{
-		{http.MethodGet, "/storage/template-sources", auth.PermStorageRead, nil, h.templateSources},
-		{http.MethodGet, "/storage/templates", auth.PermStorageRead, nil, h.listTemplates},
-		{http.MethodPost, "/storage/templates", auth.PermStorageWrite, nil, h.createTemplate},
-		{http.MethodGet, "/storage/templates/{id}", auth.PermStorageRead, nil, h.getTemplate},
-		{http.MethodDelete, "/storage/templates/{id}", auth.PermStorageWrite, nil, h.deleteTemplate},
+		{http.MethodGet, "/storage/template-sources", auth.PermStorageRead, nil, h.templateSources, servedWithoutQuorum},
+		{http.MethodGet, "/storage/templates", auth.PermStorageRead, nil, h.listTemplates, servedWithoutQuorum},
+		{http.MethodPost, "/storage/templates", auth.PermStorageWrite, nil, h.createTemplate, needsQuorum},
+		{http.MethodGet, "/storage/templates/{id}", auth.PermStorageRead, nil, h.getTemplate, servedWithoutQuorum},
+		{http.MethodDelete, "/storage/templates/{id}", auth.PermStorageWrite, nil, h.deleteTemplate, needsQuorum},
 	}
 }
 

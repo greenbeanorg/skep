@@ -40,6 +40,10 @@ var ErrUnavailable = &models.Error{
 	Message: "the host agent is not reachable; node operations are unavailable",
 }
 
+// ErrNotSent is wrapped beside ErrUnavailable when the socket could not be
+// dialled: nothing was sent, so the agent did nothing (step 8d-1, D27).
+var ErrNotSent = errors.New("agentclient: nothing was sent to the agent")
+
 // Options configures a Client.
 type Options struct {
 	// SocketPath is the agent's Unix socket.
@@ -257,6 +261,9 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 		}
 		if ctxErr := ctx.Err(); ctxErr != nil && errors.Is(err, ctxErr) && !isDialError(err) {
 			return ctxErr
+		}
+		if isDialError(err) {
+			return fmt.Errorf("%w: %w (%v)", ErrUnavailable, ErrNotSent, err)
 		}
 		return fmt.Errorf("%w (%v)", ErrUnavailable, err)
 	}

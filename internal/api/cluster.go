@@ -51,10 +51,12 @@ const removeWriteLimit = memberapi.RemoveTimeout + 30*time.Second
 
 func (h *handler) clusterRoutes() []route {
 	return []route{
-		{http.MethodGet, "/cluster", auth.PermSystemRead, nil, h.clusterView},
-		{http.MethodPost, "/cluster/admissions", auth.PermClusterManage, nil, h.clusterAdmit},
-		{http.MethodDelete, "/cluster/admissions/{name}", auth.PermClusterManage, nil, h.clusterWithdraw},
-		{http.MethodPost, "/cluster/members/{name}/remove", auth.PermClusterManage, nil, h.clusterRemove},
+		{http.MethodGet, "/cluster", auth.PermSystemRead, nil, h.clusterView, servedWithoutQuorum},
+		// The guest inventory names VMs and jails (D34).
+		{http.MethodGet, "/cluster/guests", auth.PermSystemRead, []string{auth.PermVMRead, auth.PermContainerRead}, h.clusterGuests, servedWithoutQuorum},
+		{http.MethodPost, "/cluster/admissions", auth.PermClusterManage, nil, h.clusterAdmit, needsQuorum},
+		{http.MethodDelete, "/cluster/admissions/{name}", auth.PermClusterManage, nil, h.clusterWithdraw, needsQuorum},
+		{http.MethodPost, "/cluster/members/{name}/remove", auth.PermClusterManage, nil, h.clusterRemove, needsQuorum},
 	}
 }
 
@@ -183,19 +185,6 @@ func memberEntry(r *http.Request, action, nodeID, name string) audit.AccessEntry
 		Details: map[string]any{"node_name": name, "node_id": nodeID}}
 }
 
-// degradedRefused refuses a member operation from a degraded session (a
-// login without quorum) before anything is sent to skep-cluster, even if
-// quorum is back by now (F3 of the 8c-2 review), and audits it as a
-// failure. It reports whether it refused.
-func (h *handler) degradedRefused(w http.ResponseWriter, r *http.Request, entry audit.AccessEntry) bool {
-	if who, _ := identityFrom(r.Context()); !who.Session.Degraded {
-		return false
-	}
-	h.writeClusterFailure(w, r, entry, auth.NoQuorum(auth.OutcomeNotWritten,
-		"a degraded session cannot change the cluster's membership; log in again once this node has quorum"))
-	return true
-}
-
 // socketActor is the actor and request ID passed to the socket (D22).
 func socketActor(r *http.Request) (string, string) {
 	who, _ := identityFrom(r.Context())
@@ -263,9 +252,6 @@ func (h *handler) clusterAdmit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	entry := memberEntry(r, ActionClusterAdmit, jr.NodeID, jr.Name)
-	if h.degradedRefused(w, r, entry) {
-		return
-	}
 	actor, requestID := socketActor(r)
 	res, err := h.cluster.Admit(r.Context(), memberapi.AdmitRequest{Request: strings.TrimSpace(req.Request), Actor: actor, RequestID: requestID})
 	if err != nil {
@@ -294,9 +280,6 @@ func (h *handler) clusterWithdraw(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	entry := memberEntry(r, ActionClusterWithdraw, "", name)
-	if h.degradedRefused(w, r, entry) {
-		return
-	}
 	actor, requestID := socketActor(r)
 	res, err := h.cluster.Withdraw(r.Context(), memberapi.WithdrawRequest{Name: name, Actor: actor, RequestID: requestID})
 	if err != nil {
@@ -326,9 +309,6 @@ func (h *handler) clusterRemove(w http.ResponseWriter, r *http.Request) {
 	_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(removeWriteLimit))
 	entry := memberEntry(r, ActionClusterRemove, "", name)
 	entry.Details["cluster_id"] = req.ClusterID
-	if h.degradedRefused(w, r, entry) {
-		return
-	}
 	actor, requestID := socketActor(r)
 	res, err := h.cluster.Remove(r.Context(), memberapi.RemoveRequest{Name: name, ClusterID: req.ClusterID, Actor: actor, RequestID: requestID})
 	if err != nil {

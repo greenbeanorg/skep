@@ -9,6 +9,7 @@ import (
 	"github.com/greenbeanorg/skep/internal/agentproto"
 	"github.com/greenbeanorg/skep/internal/audit"
 	"github.com/greenbeanorg/skep/internal/auth"
+	"github.com/greenbeanorg/skep/internal/cluster/clusterstate"
 	"github.com/greenbeanorg/skep/internal/httpkit"
 	"github.com/greenbeanorg/skep/pkg/models"
 )
@@ -41,25 +42,25 @@ type VMBackend interface {
 // decisions 9 and 10).
 func (h *handler) vmRoutes() []route {
 	return []route{
-		{http.MethodGet, "/vms", auth.PermVMRead, nil, h.listVMs},
-		{http.MethodPost, "/vms", auth.PermVMWrite, nil, h.createVM},
-		{http.MethodGet, "/vms/{id}", auth.PermVMRead, nil, h.getVM},
-		{http.MethodPut, "/vms/{id}", auth.PermVMWrite, nil, h.updateVM},
-		{http.MethodDelete, "/vms/{id}", auth.PermVMDelete, nil, h.deleteVM},
-		{http.MethodPost, "/vms/{id}/actions", auth.PermVMPower, nil, h.vmAction},
-		{http.MethodGet, "/vms/{id}/console/serial", auth.PermVMConsole, nil, h.vmConsole},
-		{http.MethodGet, "/vms/{id}/snapshots", auth.PermVMRead, nil, h.listSnapshots},
-		{http.MethodPost, "/vms/{id}/snapshots", auth.PermVMSnapshot, nil, h.createSnapshot},
-		{http.MethodGet, "/vms/{id}/snapshots/{sid}", auth.PermVMRead, nil, h.getSnapshot},
-		{http.MethodDelete, "/vms/{id}/snapshots/{sid}", auth.PermVMSnapshot, nil, h.deleteSnapshot},
-		{http.MethodPost, "/vms/{id}/snapshots/{sid}/rollback", auth.PermVMSnapshot, nil, h.rollbackSnapshot},
-		{http.MethodPost, "/vms/{id}/clone", auth.PermVMWrite, []string{auth.PermVMSnapshot}, h.cloneVM},
-		{http.MethodGet, "/storage/pools", auth.PermStorageRead, nil, h.listPools},
-		{http.MethodGet, "/storage/datasets", auth.PermStorageRead, nil, h.listDatasets},
-		{http.MethodGet, "/storage/media", auth.PermStorageRead, nil, h.listMedia},
+		{http.MethodGet, "/vms", auth.PermVMRead, nil, h.listVMs, servedWithoutQuorum},
+		{http.MethodPost, "/vms", auth.PermVMWrite, nil, h.createVM, needsQuorum},
+		{http.MethodGet, "/vms/{id}", auth.PermVMRead, nil, h.getVM, servedWithoutQuorum},
+		{http.MethodPut, "/vms/{id}", auth.PermVMWrite, nil, h.updateVM, needsQuorum},
+		{http.MethodDelete, "/vms/{id}", auth.PermVMDelete, nil, h.deleteVM, needsQuorum},
+		{http.MethodPost, "/vms/{id}/actions", auth.PermVMPower, nil, h.vmAction, servedWithoutQuorum},
+		{http.MethodGet, "/vms/{id}/console/serial", auth.PermVMConsole, nil, h.vmConsole, needsQuorum},
+		{http.MethodGet, "/vms/{id}/snapshots", auth.PermVMRead, nil, h.listSnapshots, servedWithoutQuorum},
+		{http.MethodPost, "/vms/{id}/snapshots", auth.PermVMSnapshot, nil, h.createSnapshot, needsQuorum},
+		{http.MethodGet, "/vms/{id}/snapshots/{sid}", auth.PermVMRead, nil, h.getSnapshot, servedWithoutQuorum},
+		{http.MethodDelete, "/vms/{id}/snapshots/{sid}", auth.PermVMSnapshot, nil, h.deleteSnapshot, needsQuorum},
+		{http.MethodPost, "/vms/{id}/snapshots/{sid}/rollback", auth.PermVMSnapshot, nil, h.rollbackSnapshot, needsQuorum},
+		{http.MethodPost, "/vms/{id}/clone", auth.PermVMWrite, []string{auth.PermVMSnapshot}, h.cloneVM, needsQuorum},
+		{http.MethodGet, "/storage/pools", auth.PermStorageRead, nil, h.listPools, servedWithoutQuorum},
+		{http.MethodGet, "/storage/datasets", auth.PermStorageRead, nil, h.listDatasets, servedWithoutQuorum},
+		{http.MethodGet, "/storage/media", auth.PermStorageRead, nil, h.listMedia, servedWithoutQuorum},
 		// The metrics name VMs, jails, and pools, so they need what
 		// reading each needs (ADR 0010 decision 15).
-		{http.MethodGet, "/metrics", auth.PermSystemRead, []string{auth.PermVMRead, auth.PermStorageRead, auth.PermContainerRead}, h.metrics},
+		{http.MethodGet, "/metrics", auth.PermSystemRead, []string{auth.PermVMRead, auth.PermStorageRead, auth.PermContainerRead}, h.metrics, servedWithoutQuorum},
 	}
 }
 
@@ -161,7 +162,8 @@ func (h *handler) auditVM(r *http.Request, action, id string, task *models.Task,
 			entry.Details = map[string]any{"error_code": me.Code}
 			// Refused by a rule, not malformed and not broken.
 			if me.Code != models.CodeInvalidRequest && me.Code != models.CodeAgentUnavailable &&
-				me.Code != models.CodeQueueFull && me.Code != models.CodeShuttingDown && me.Code != models.CodeNodeDraining {
+				me.Code != models.CodeQueueFull && me.Code != models.CodeShuttingDown && me.Code != models.CodeNodeDraining &&
+				me.Code != auth.CodeNoQuorum {
 				entry.Outcome = audit.Denied
 			}
 		case errors.Is(err, models.ErrNotFound):
@@ -214,7 +216,14 @@ func (h *handler) createVM(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	r, key, ok := h.reserveGuest(w, r, clusterstate.KindVM, req.Name, func(r *http.Request, err error) {
+		h.auditVM(r, models.TaskVMCreate, "", nil, err)
+	})
+	if !ok {
+		return
+	}
 	created, err := h.vms.CreateVM(r.Context(), req)
+	h.settleGuest(r, clusterstate.KindVM, req.Name, key, created.VM.ID, created.Task, err)
 	if err != nil {
 		h.auditVM(r, models.TaskVMCreate, "", nil, err)
 		h.fail(w, r, err)
@@ -265,6 +274,7 @@ func (h *handler) deleteVM(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err)
 		return
 	}
+	h.watchGuestTask(task)
 	httpkit.WriteJSON(w, r, http.StatusAccepted, task)
 }
 
