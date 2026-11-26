@@ -992,8 +992,7 @@ while no node of the cluster has a guest.**
 
 ## Step 8d-2: a join with guests, `remove --forget-guests`
 
-ADR 0013 amendment 7 (Proposed; accepted by approving the merge of the
-step 8d-2 PR); facts in
+ADR 0013 amendment 7 (Accepted 2026-11-26 (Andy) with PR #118); facts in
 [0013-evidence/8d2-facts-20261126.md](../decisions/0013-evidence/8d2-facts-20261126.md).
 
 **Entries.** Two new versions, no new type:

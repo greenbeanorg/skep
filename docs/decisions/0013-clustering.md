@@ -40,6 +40,12 @@
   8d into 8d-1 and 8d-2, and adds a fourth in-place change to B5. It is at
   the end of this document; the passages it changes are marked "Amended
   (amendment 6)".
+- **Amendment 7 (2026-11-26)** is **Accepted** (2026-11-26, Andy, PR
+  #118): step 8d-2. It records a join with guests as `member.join`
+  version 2, `remove --forget-guests` as `member.removing` version 2 with
+  counts, the fifth in-place change to B5, and the two limits of a join's
+  guest list. It is at the end of this document; the passages it changes
+  are marked "Amended (amendment 7)".
 - Date: 2026-11-23 (evaluation draft), 2026-11-24 (rewritten as the design)
 - Depends on: [ADR 0004](0004-privilege-boundary.md) (privilege boundary),
   [ADR 0005](0005-agent-task-engine.md) (task engine),
@@ -2895,11 +2901,11 @@ guests, and there is no older build to stall).
   (`models.ValidGuestName`) before it reserves it: `400 invalid_request`,
   nothing written or sent.
 
-## Amendment 7 (2026-11-26, Proposed)
+## Amendment 7 (2026-11-26, Accepted)
 
 Written with the build of step 8d-2, from the fixed decisions D1 to D27
-the review chat gave that run. **Status: Proposed; accepted by approving
-the merge of the step 8d-2 PR.** The facts it rests on are in
+the review chat gave that run. **Status: Accepted 2026-11-26 (Andy) with
+PR #118,** by approving the merge of the step 8d-2 PR. The facts it rests on are in
 [0013-evidence/8d2-facts-20261126.md](0013-evidence/8d2-facts-20261126.md).
 The passages it changes are marked "Amended (amendment 7)".
 
@@ -2939,9 +2945,12 @@ operator release a reservation of a live member** (backlog).
   service, back with `join.json`, refuses guest writes (`this node is
   joining`), a guest deleted on the host leaves the inventory by its
   reconciliation once it is a member, and a join that failed before step 1
-  leaves the host its own one-node cluster. (Held through `-wait`, a join
-  waiting on a member that is down would keep the agent refusing every
-  task, the start and stop of its guests included, for as long as `-wait`.)
+  leaves the host its own one-node cluster. (Held until the command returns,
+  the drain would last through `-wait`, which holds while this node has
+  not yet applied its member entry, for example after a join call whose
+  outcome is unknown while the members cannot be reached; for that long
+  the agent would refuse every task, the start and stop of its guests
+  included.)
 - The stage checks the list again and records it in `join.json` with the
   file's first write, so every repeat of the join call (by the stage, or
   by the service in phase `unknown`) sends the same list with the same
