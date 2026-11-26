@@ -560,3 +560,17 @@ func TestCapabilitiesReportLockedMemoryTotal(t *testing.T) {
 		t.Fatalf("configured total = %d", caps.MaxLockedMemoryBytes)
 	}
 }
+
+// F7 of the 8d-1 review: the API's name check (models.ValidGuestName) is
+// this package's rule.
+func TestNameRuleIsTheModels(t *testing.T) {
+	names := []string{"", "a b", "web1", "Web.1_x-y", strings.Repeat("a", 62), strings.Repeat("a", 63), strings.Repeat("a", 64), "é", "aé"}
+	for b := 0; b < 256; b++ {
+		names = append(names, string([]byte{byte(b)}), "a"+string([]byte{byte(b)}))
+	}
+	for _, name := range names {
+		if nameRE.MatchString(name) != models.ValidGuestName(name) {
+			t.Errorf("%q: containers %v, models %v", name, nameRE.MatchString(name), models.ValidGuestName(name))
+		}
+	}
+}

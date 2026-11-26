@@ -52,11 +52,19 @@ func guestActor(r *http.Request) (string, string) {
 }
 
 // reserveGuest is D27 (1) and (2): the key, then the name's reservation.
-// A failed reserve answers the error (D28) and the agent is not called.
-// It returns the request to call the agent with, and the key.
+// A name that fails the agents' rule is refused first, with nothing
+// written or sent (F7 of the 8d-1 review). A failed reserve answers the
+// error (D28) and the agent is not called. It returns the request to call
+// the agent with, and the key.
 func (h *handler) reserveGuest(w http.ResponseWriter, r *http.Request, kind, name string, audit func(*http.Request, error)) (*http.Request, string, bool) {
 	if h.guests == nil {
 		return r, "", true
+	}
+	if !models.ValidGuestName(name) {
+		me := models.Invalid(models.GuestNameRule)
+		audit(r, me)
+		httpkit.WriteError(w, r, http.StatusBadRequest, me.Code, me.Message)
+		return r, "", false
 	}
 	r, key, err := guestKey(r)
 	if err != nil {
@@ -129,16 +137,29 @@ func (h *handler) settleGuest(r *http.Request, kind, name, key, id string, task 
 	}
 	switch {
 	case agentErr == nil:
+		// guest.add carries the name the agent reports for the guest it
+		// has just read, not the request's (F3 of the 8d-1 review).
+		var got string
 		var err error
 		if kind == clusterstate.KindVM {
-			_, err = h.vms.VM(ctx, id)
+			var v models.VM
+			v, err = h.vms.VM(ctx, id)
+			got = v.Name
 		} else {
-			_, err = h.containers.Container(ctx, id)
+			var c models.Container
+			c, err = h.containers.Container(ctx, id)
+			got = c.Name
 		}
 		switch {
 		case err == nil:
-			_, werr := h.guests.Add(ctx, id, kind, name, task.ID, actor, rid)
+			_, werr := h.guests.Add(ctx, id, kind, got, task.ID, actor, rid)
 			log("guest.add", werr)
+			if got != name {
+				h.log.WarnContext(ctx, "guest inventory: the agent reports another name than the request's; the reservation of the requested name is released",
+					"kind", kind, "name", name, "agent_name", got, "guest_id", id)
+				_, werr := h.guests.Release(ctx, kind, name, key, actor, rid)
+				log("guest.release", werr)
+			}
 		case errors.Is(err, models.ErrNotFound):
 			_, werr := h.guests.Release(ctx, kind, name, key, actor, rid)
 			log("guest.release", werr)

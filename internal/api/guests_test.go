@@ -62,6 +62,8 @@ type fakeGuests struct {
 	refuse error
 	lose   bool
 	n      int
+	// rename, when set, is the name the host gives a created guest.
+	rename string
 }
 
 func newFakeGuests() *fakeGuests {
@@ -90,6 +92,9 @@ func (f *fakeGuests) CreateContainer(ctx context.Context, req models.ContainerCr
 	}
 	f.n++
 	c := models.Container{ID: fmt.Sprintf("d0000000-0000-4000-8000-%012d", f.n), Name: req.Name}
+	if f.rename != "" {
+		c.Name = f.rename
+	}
 	t := models.Task{ID: fmt.Sprintf("e0000000-0000-4000-8000-%012d", f.n), Status: models.TaskPending}
 	f.cts[c.ID], f.tasks[caller.IdempotencyKey] = c, t
 	if f.lose {
@@ -376,5 +381,41 @@ func TestClusterGuests(t *testing.T) {
 	g.sock.Down = true
 	if rec := g.e.serve(g.h, request{method: http.MethodGet, path: Prefix + "/cluster/guests", role: auth.RoleViewer}); rec.Code != http.StatusServiceUnavailable {
 		t.Errorf("socket down: %d", rec.Code)
+	}
+}
+
+// F3 of the 8d-1 review: guest.add carries the name the agent reports;
+// when it differs, the requested name's reservation is released.
+func TestCreateAddsTheAgentsName(t *testing.T) {
+	g := newGuestRig(t, shared(t))
+	g.host.rename = "web1-agent"
+	code, _, created := g.create(t, "web1", "")
+	inv := g.inventory()
+	if code != http.StatusAccepted || len(inv.Guests) != 1 || inv.Guests[0].ID != created.Container.ID ||
+		inv.Guests[0].Name != "web1-agent" || len(inv.Reservations) != 0 {
+		t.Fatalf("create: %d %+v", code, inv)
+	}
+}
+
+// F7 of the 8d-1 review: a name that fails the agents' rule is 400
+// invalid_request before anything is written or sent, audited as the
+// create path audits an invalid request.
+func TestCreateChecksTheNameFirst(t *testing.T) {
+	e := freshEnv(t)
+	g := newGuestRig(t, e)
+	for _, name := range []string{"", "a b", "-x", strings.Repeat("a", 64)} {
+		code, eb, _ := g.create(t, name, "")
+		if code != http.StatusBadRequest || eb.Code != models.CodeInvalidRequest {
+			t.Errorf("%q: %d %+v", name, code, eb)
+		}
+	}
+	if g.host.calls != 0 || g.sock.Calls != 0 {
+		t.Fatalf("an invalid name reached the agent (%d) or skep-cluster (%d)", g.host.calls, g.sock.Calls)
+	}
+	if en := lastAudit(t, e, models.TaskContainerCreate); en.Outcome != "failure" || en.Details["error_code"] != models.CodeInvalidRequest {
+		t.Errorf("audit: %+v", en)
+	}
+	if code, _, _ := g.create(t, strings.Repeat("a", 63), ""); code != http.StatusAccepted {
+		t.Errorf("a valid 63-character name: %d", code)
 	}
 }
