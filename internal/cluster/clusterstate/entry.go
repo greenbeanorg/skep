@@ -86,17 +86,19 @@ const (
 )
 
 // Supported is, per entry type, the highest version this build applies.
-// Until the feature-level operation exists (step 8g) every build writes
-// version 1 of each type.
+// Until the feature-level operation exists (step 8g) a build writes
+// version 1 of each type, except version 2 of member.join for a host that
+// joins with guests and of member.removing for a member whose guests are
+// forgotten (step 8d-2, D1; ADR 0013 amendment 7).
 var Supported = map[string]int{
 	TypeClusterInit:     1,
 	TypeMemberAddress:   1,
 	TypePendingCreate:   1,
 	TypePendingWithdraw: 1,
 	TypePendingExpire:   1,
-	TypeMemberJoin:      1,
+	TypeMemberJoin:      2,
 	TypeMemberPromoted:  1,
-	TypeMemberRemoving:  1,
+	TypeMemberRemoving:  2,
 	TypeMemberRemoved:   1,
 	TypeMemberKeyAdd:    1,
 	TypeMemberKeyDone:   1,
@@ -162,14 +164,30 @@ type PendingExpire struct {
 // the proposing leader's clock: the pending entry must not have expired by
 // then.
 //
-// Step 8d adds the joining host's guest list (ID, name, kind) as version 2
-// of this type, so the name check and the inventory write stay in this one
-// entry (ADR 0013 B3); version 1 means "no guests", which is all a host
-// may have in step 8b.
+// Version 1 means "no guests": a version 1 entry with a guests field is
+// malformed. A host that joins with guests is version 2 (MemberJoinV2).
 type MemberJoin struct {
 	NodeID string `json:"node_id"`
 	Pin    string `json:"pin"`
 	At     int64  `json:"at"`
+}
+
+// MemberJoinV2 is the data of TypeMemberJoin, version 2 (step 8d-2, D2):
+// join step 1 of a host that joins with guests. The name check and the
+// inventory write are in this one entry (ADR 0013 B3). Guests holds 1 to
+// MaxJoinGuests guests; an empty list is refused.
+type MemberJoinV2 struct {
+	NodeID string      `json:"node_id"`
+	Pin    string      `json:"pin"`
+	At     int64       `json:"at"`
+	Guests []JoinGuest `json:"guests"`
+}
+
+// JoinGuest is one guest of a joining host: its ID, kind and name.
+type JoinGuest struct {
+	ID   string `json:"id"`
+	Kind string `json:"kind"`
+	Name string `json:"name"`
 }
 
 // MemberPromoted is the data of TypeMemberPromoted, version 1 (join step 4).
@@ -178,14 +196,23 @@ type MemberPromoted struct {
 }
 
 // MemberRemoving is the data of TypeMemberRemoving, version 1 (removal
-// step 0). ForgetGuests is the guest-list field of ADR 0013 B13 (the guest
-// entries named with --forget-guests); version 1 carries it always empty,
-// and a non-empty one is refused at apply. Step 8d, which adds the guest
-// inventory, writes the guests in version 2 of this type, so that a build
-// of this step stops at such an entry instead of applying it differently.
+// step 0): the removal of a member that owns no guest and no reservation.
+// ForgetGuests is always empty; a non-empty one is refused at apply.
 type MemberRemoving struct {
 	NodeID       string   `json:"node_id"`
 	ForgetGuests []string `json:"forget_guests"`
+}
+
+// MemberRemovingV2 is the data of TypeMemberRemoving, version 2 (step
+// 8d-2, D5): the removal of a member whose guests and reservations the
+// cluster forgets ("skep-cluster remove --forget-guests"). Guests and
+// Reservations are the counts the operator confirmed: the entry is refused
+// unless the member owns exactly that many. Counts stand in for B13's list
+// of IDs, which at up to MaxGuests entries does not fit one entry.
+type MemberRemovingV2 struct {
+	NodeID       string `json:"node_id"`
+	Guests       int    `json:"guests"`
+	Reservations int    `json:"reservations"`
 }
 
 // MemberRemoved is the data of TypeMemberRemoved, version 1 (removal step
@@ -222,14 +249,24 @@ func KeyDoneOpID(nodeID string, addIndex uint64, keep string) string {
 
 // NewEntry builds a version 1 entry of the given type.
 func NewEntry(typ, opID, actor, origin string, data any) (Entry, error) {
-	if _, ok := Supported[typ]; !ok {
+	return NewEntryVersion(typ, 1, opID, actor, origin, data)
+}
+
+// NewEntryVersion builds an entry of the given type and version, which
+// this build must support (D1 of step 8d-2).
+func NewEntryVersion(typ string, version int, opID, actor, origin string, data any) (Entry, error) {
+	max, ok := Supported[typ]
+	if !ok {
 		return Entry{}, fmt.Errorf("clusterstate: unknown entry type %q", typ)
+	}
+	if version < 1 || version > max {
+		return Entry{}, fmt.Errorf("clusterstate: entry type %q has no version %d in this build", typ, version)
 	}
 	raw, err := json.Marshal(data)
 	if err != nil {
 		return Entry{}, err
 	}
-	e := Entry{Type: typ, Version: 1, OpID: opID, Actor: actor, Origin: origin, Data: raw}
+	e := Entry{Type: typ, Version: version, OpID: opID, Actor: actor, Origin: origin, Data: raw}
 	if err := e.validate(); err != nil {
 		return Entry{}, err
 	}

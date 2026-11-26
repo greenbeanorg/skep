@@ -290,7 +290,11 @@ func TestRemoveAJoiningMemberAndAbandon(t *testing.T) {
 		t.Fatal("a moved-aside state is left")
 	}
 	h.start(j)
-	h.eventually("wu leads its own one-node cluster again", 20*time.Second, func() bool { return j.st != nil && j.st.IsLeader() })
+	// D26 of step 8d-2: leading comes before the log is replayed; wait
+	// for the state machine's view too.
+	h.eventually("wu leads its own one-node cluster again", 20*time.Second, func() bool {
+		return j.st != nil && j.st.IsLeader() && j.svc.machine.View().ClusterID != ""
+	})
 	if v := j.svc.machine.View(); v.ClusterID != ownCluster || j.key.Pin() != ownPin || len(v.Members) != 1 {
 		t.Fatalf("after abandon: %+v", v)
 	}

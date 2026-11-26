@@ -23,9 +23,12 @@ import (
 
 var opIDRE = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,128}$`)
 
-// JoinRequest is the body of the join call.
+// JoinRequest is the body of the join call. Guests is the joining host's
+// guest list (step 8d-2, D15), omitted when it has none: a leader of an
+// earlier build answers a body with it as invalid_request.
 type JoinRequest struct {
-	OpID string `json:"op_id"`
+	OpID   string                   `json:"op_id"`
+	Guests []clusterstate.JoinGuest `json:"guests,omitempty"`
 }
 
 // JoinAnswer is the join call's answer: the cluster and every current
@@ -204,8 +207,24 @@ func (s *Service) handleJoin(from raftnet.Peer, req JoinRequest) (any, error) {
 	case now >= pending.ExpiresAt:
 		return nil, &raftnet.PeerError{Code: raftnet.CodeRefused, Message: "the pending entry of this node has expired"}
 	}
-	e, err := clusterstate.NewEntry(clusterstate.TypeMemberJoin, joinOpID(from.NodeID, req.OpID), "node:"+from.NodeID, s.cfg.NodeID,
-		clusterstate.MemberJoin{NodeID: from.NodeID, Pin: from.Pin, At: now})
+	// Step 8d-2, D16: a host with guests: D4's limits and D3's checks
+	// b to f against this state machine, with the apply rule's text;
+	// then version 2 with the list. Without guests, version 1 as before.
+	var e clusterstate.Entry
+	var err error
+	if len(req.Guests) > 0 {
+		if err := clusterstate.CheckJoinGuestLimits(req.Guests); err != nil {
+			return nil, &raftnet.PeerError{Code: raftnet.CodeRefused, Message: err.Error()}
+		}
+		if err := s.machine.JoinGuestsRefusal(req.Guests); err != nil {
+			return nil, &raftnet.PeerError{Code: raftnet.CodeRefused, Message: err.Error()}
+		}
+		e, err = clusterstate.NewEntryVersion(clusterstate.TypeMemberJoin, 2, joinOpID(from.NodeID, req.OpID), "node:"+from.NodeID, s.cfg.NodeID,
+			clusterstate.MemberJoinV2{NodeID: from.NodeID, Pin: from.Pin, At: now, Guests: req.Guests})
+	} else {
+		e, err = clusterstate.NewEntry(clusterstate.TypeMemberJoin, joinOpID(from.NodeID, req.OpID), "node:"+from.NodeID, s.cfg.NodeID,
+			clusterstate.MemberJoin{NodeID: from.NodeID, Pin: from.Pin, At: now})
+	}
 	if err != nil {
 		return nil, &raftnet.PeerError{Code: raftnet.CodeInvalidRequest, Message: err.Error()}
 	}
@@ -262,7 +281,7 @@ type JoinOutcome struct {
 // leader only when it names one of them at its known address (ADR 0013 B1;
 // D8 of the 8b-1 run). rounds is how many times every member is tried.
 // An answer that fails checkAnswer makes the outcome unknown.
-func JoinCall(ctx context.Context, caller raftnet.Caller, peers []joincode.Node, clusterID, opID string, rounds int, pause time.Duration, log *slog.Logger) JoinOutcome {
+func JoinCall(ctx context.Context, caller raftnet.Caller, peers []joincode.Node, clusterID, opID string, guests []clusterstate.JoinGuest, rounds int, pause time.Duration, log *slog.Logger) JoinOutcome {
 	known := map[string]joincode.Node{}
 	for _, p := range peers {
 		known[p.NodeID] = p
@@ -276,7 +295,7 @@ func JoinCall(ctx context.Context, caller raftnet.Caller, peers []joincode.Node,
 			for hops := 0; ; hops++ {
 				cctx, cancel := context.WithTimeout(ctx, raftnet.PeerTimeout)
 				var ans JoinAnswer
-				err := caller.Call(cctx, target.Address, target.Pin, raftnet.OpJoin, JoinRequest{OpID: opID}, &ans)
+				err := caller.Call(cctx, target.Address, target.Pin, raftnet.OpJoin, JoinRequest{OpID: opID, Guests: guests}, &ans)
 				cancel()
 				if err == nil {
 					cerr := checkAnswer(ans, clusterID)
@@ -406,7 +425,7 @@ func (s *Service) joinStep(ctx context.Context) {
 	if !due {
 		return
 	}
-	out := JoinCall(ctx, s.caller, js.Peers(s.cfg.NodeID), js.Admission.ClusterID, js.OpID, 1, 0, s.log)
+	out := JoinCall(ctx, s.caller, js.Peers(s.cfg.NodeID), js.Admission.ClusterID, js.OpID, js.Guests, 1, 0, s.log)
 	switch out.Result {
 	case JoinAccepted:
 		js.Phase, js.Answer, js.Message = joinstate.PhaseAccepted, out.Answer.Members, ""

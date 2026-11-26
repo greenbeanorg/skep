@@ -5,8 +5,8 @@ Every Skep host is a one-node cluster (`skep-cluster`, see
 a host to another host's cluster, removes it again, and gives up a join,
 with the commands of Milestone 8, steps 8b-1 and 8b-2a, and through the
 API and `skepctl` from step 8c-2 ([below](#through-the-api-and-skepctl-step-8c-2)).
-**This is a preview:** only a host without VMs and jails can join. Do it
-on test hosts.
+**This is a preview.** Since step 8d-2 a host's VMs and jails join with
+it, under names that must be free in the cluster. Do it on test hosts.
 
 Both sides exchange **key pins** before the first connection: the new
 host's request carries its pin, the member's admission carries the pin of
@@ -33,8 +33,11 @@ management address). On the founding node, once:
 skep-cluster listen -address 10.79.20.81
 ```
 
-The new host must have no VMs and no jails, and `skep_agent` must be
-running there (the commands ask it).
+`skep_agent` must be running on the new host: `join` asks it for the
+host's VMs and jails, which join with it (step 8d-2; see "Joining a host
+that has guests" below). Upgrade every node of the cluster to the same
+build first: a build before step 8d-2 stops at the entry of a join with
+guests.
 
 ## 1. On the new host: the request
 
@@ -99,7 +102,10 @@ This host will join the cluster
 with the members
   smith                e894...  10.79.20.81:8444
                        pin sha256:2a50...
-This host has no VMs and no jails. Its own one-node cluster is moved aside.
+2 guests of this host join with it; their names must be free in the cluster (a name already taken there refuses the join).
+Its own one-node cluster is moved aside.
+This host's guests join with it: 0 VMs and 2 jails.
+  Jails: j1 j2
 This host's users (name, role):
   andy admin
 The cluster's users replace them: these accounts exist here after the join only if the cluster has them, and every session on this host ends.
@@ -110,9 +116,20 @@ Without a terminal (a script), give the cluster ID instead of answering:
 `skep-cluster join -cluster-id 61d2a433-... skep-admission:1:...`. It
 must equal the admission's. There is no "yes to everything" flag.
 
-`join` stops `skep_cluster`, moves the host's one-node state into
-`/var/db/skep/cluster/standalone.<UTC time>/`, calls the cluster, and
-starts the service again.
+After the confirmation `join` sets the agent's drain (no new task is
+accepted on the host from the confirmation until the service has been
+started again after the join call; `GET /internal/v1/drain` shows it),
+waits for the agent's unfinished tasks (`-task-wait`, default
+60 s), reads the guest list again (that list joins; if it changed, the
+new counts are printed), stops `skep_cluster`, moves the host's one-node
+state into `/var/db/skep/cluster/standalone.<UTC time>/`, calls the
+cluster, starts the service again, and clears the drain at once, before
+it prints the outcome and waits for the member entry: the drain is needed
+only until the call is made, since the service, back with the join's
+state, refuses guest writes ("this node is joining"). A refusal after
+the drain was set says "the drain was set and cleared; nothing else was
+changed". If the command is killed, the drain expires by itself after 60
+seconds.
 
 - **If the join fails before the cluster added the host** (wrong or stale
   admission, every member unreachable, refused), it says so, lists each
@@ -143,6 +160,39 @@ a voter when it has caught up **and every member** has applied its entry.
 With a member down, the join waits until that member is back; `skep-cluster
 health` on every member says which one. When it is a member, the moved-aside
 state is deleted.
+
+## Joining a host that has guests
+
+A host's VMs and jails join with it (at most 1000): the cluster's
+inventory lists them, owned by the new member, from the moment the
+cluster adds it. Their names must be free in the cluster: VM names and
+jail names are each unique in the cluster.
+
+- **A name conflict** refuses the join before the cluster adds the host,
+  and the host's one-node cluster is back:
+
+  ```
+  The join failed before the cluster added this node:
+    smith.greenbean.org: refused: the container name "web1" belongs to a guest of node star
+  Nothing was written in the cluster. This host's one-node cluster is back (pin sha256:d644...).
+  skep-cluster: join failed: smith.greenbean.org: refused: the container name "web1" belongs to a guest of node star
+  ```
+
+  It names the first guest of this host whose name is taken and the node
+  that holds it, nothing else of the cluster. **A guest cannot be
+  renamed:** delete one of the two guests (on this host through its own
+  API, or the other on its node), then run `join` again with the same
+  admission while it is valid (30 minutes; otherwise ask for a new one).
+- **While it is joining** (until every member has applied its entry and
+  it is a voter) the host's API has no quorum: reads and start, stop and
+  restart of its guests only. Its guest writes are refused (`this node is
+  joining`). A guest deleted on it meanwhile leaves the inventory once it
+  is a member (its reconciliation).
+- **To give up** a join with guests: on a member `skep-cluster remove
+  --forget-guests NAME` (the command prints it), then `skep-cluster join
+  --abandon` on the host, whose own inventory lists its guests again.
+- Limits: at most 1000 guests and 160 KiB of names (far beyond what the
+  agents' 63-byte names reach); a host with more cannot join in 0.2.
 
 ## Check
 
@@ -198,6 +248,41 @@ On star, as root, before it can join a cluster again:
   back.
 
   Its guests keep running. It cannot join again until it is wiped.
+- **A member that owns guests or name reservations** is refused, naming
+  what it owns and the command:
+
+  ```
+  skep-cluster: skep-cluster answered 409 refused: the leader smith.greenbean.org answered: blazanov.greenbean.org owns 2 guests
+  and 0 name reservations in the inventory; it cannot be removed while it owns any. To remove it and make the cluster forget
+  them, run "skep-cluster remove --forget-guests blazanov.greenbean.org" as root on a member. Nothing was written
+  ```
+
+  With `--forget-guests` the command lists them and asks for their
+  number:
+
+  ```
+  # skep-cluster remove --forget-guests blazanov.greenbean.org
+  blazanov.greenbean.org owns 2 guests and 0 name reservations in the cluster's inventory:
+    container j1  5b0e...
+    container j2  9c41...
+  The cluster forgets these entries. The guests themselves are not touched: they keep running on blazanov.greenbean.org.
+  After "skep-cluster leave --wipe" there, that host lists them in its own inventory again.
+  Type the number of entries to forget (2) to confirm: 2
+  Removing blazanov.greenbean.org ...
+  ```
+
+  Without a terminal give `-forget-count 2`. A wrong number changes
+  nothing. If the member's guests changed between the listing and the
+  removal, the leader refuses ("confirmed for ..., and it owns ... now;
+  nothing was written"): run the command again. The removal's entries
+  carry the counts and are audited on every member; the entry that
+  removes the member removes its guests and reservations from the
+  inventory. **What happens to the guests:** nothing on their host. They
+  keep running and its agent still has them; after `skep-cluster leave
+  --wipe` there (or `join --abandon` for a host that was joining), that
+  host's own inventory lists them again within a minute. `--forget-guests`
+  is root's on a member only: the API and `skepctl` answer `409
+  cluster_refused` naming the command.
 - **Refusals:** a name that is not a member (`not_found`); a member that is
   already being removed; any member while **another** member is joining
   (remove the joining member, or wait for its join); and a removal after
@@ -259,7 +344,17 @@ This node is a one-node cluster again.
 If it has not been removed on a member of its old cluster yet, remove it there, as root:
   skep-cluster remove star
 To join a cluster again: skep-cluster join-request -address ADDR
+This host has no users now: nobody can log in to skep-api until an administrator is created.
+skep-api takes up to about a minute to follow the new one-node cluster. When "skep-api admin list" prints no user,
+create one, as root (before that it answers "already exists"):
+  skep-api admin create --username NAME
 ```
+
+Nobody can log in until an administrator is created. `skep-api` takes up
+to about a minute to follow the new one-node cluster: when
+`skep-api admin list` prints no user, run
+`skep-api admin create --username NAME`; before that it answers
+"already exists" and changes nothing.
 
 Without a terminal give `-cluster-id ID` (the current cluster ID). The
 command asks for the confirmation **before** it stops `skep_cluster`, so a
@@ -457,9 +552,9 @@ itself.
 
 ## What you cannot do yet
 
-- Join a host that has VMs or jails, or remove a member that owns guests
-  or name reservations (the removal is refused, `409 cluster_refused`);
-  `--forget-guests` comes with step 8d-2.
+- Release a name reservation of a live member by hand, rename a guest, or
+  remove a member that owns guests through the API (`--forget-guests` is
+  root's command on a member).
 - Admit or remove through the web interface (`skepctl` and the API can,
   from step 8c-2).
 - Change the address of a clustered node.
@@ -577,7 +672,9 @@ node's own users, says that the cluster's replace them, and does it with
 its own); `skep-cluster join` refuses a host whose import is still
 pending (run `skep-api admin import-users` first, so that its users are
 not lost), and goes on, saying so, when it cannot read that state. After
-`leave --wipe` a host has no users until `skep-api admin create` runs.
+`leave --wipe` a host has no users until `skep-api admin create` runs
+(once `skep-api admin list` prints no user, up to about a minute after
+the wipe; before that it answers "already exists").
 
 A node that has lost its leader still applies what its own state machine
 holds (a committed part of the log): a user disabled or a password

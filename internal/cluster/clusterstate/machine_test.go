@@ -142,7 +142,11 @@ func TestUnknownEntryStopsTheMachine(t *testing.T) {
 	cases := map[string][]byte{
 		"unknown type":   []byte(`{"type":"guest.create","version":1,"op_id":"x","actor":"a","origin":"n","data":{}}`),
 		"newer version":  []byte(`{"type":"member.address","version":2,"op_id":"x","actor":"a","origin":"n","data":{}}`),
-		"newer join":     []byte(`{"type":"member.join","version":2,"op_id":"x","actor":"a","origin":"n","data":{}}`),
+		"newer join":     []byte(`{"type":"member.join","version":3,"op_id":"x","actor":"a","origin":"n","data":{}}`),
+		"newer removing": []byte(`{"type":"member.removing","version":3,"op_id":"x","actor":"a","origin":"n","data":{}}`),
+		// D2 of step 8d-2: a version 1 join with guests is malformed.
+		"join 1 guests":  []byte(`{"type":"member.join","version":1,"op_id":"x","actor":"a","origin":"n","data":{"node_id":"n","pin":"p","at":1,"guests":[]}}`),
+		"removing 2 v1":  []byte(`{"type":"member.removing","version":2,"op_id":"x","actor":"a","origin":"n","data":{"node_id":"n","forget_guests":[]}}`),
 		"no type":        []byte(`{"version":1,"op_id":"x","actor":"a","origin":"n","data":{}}`),
 		"not JSON":       []byte(`garbage`),
 		"two values":     []byte(`{"type":"member.address","version":1,"op_id":"x","actor":"a","origin":"n","data":{}} {}`),

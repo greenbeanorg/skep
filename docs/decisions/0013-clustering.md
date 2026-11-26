@@ -40,6 +40,12 @@
   8d into 8d-1 and 8d-2, and adds a fourth in-place change to B5. It is at
   the end of this document; the passages it changes are marked "Amended
   (amendment 6)".
+- **Amendment 7 (2026-11-26)** is **Accepted** (2026-11-26, Andy, PR
+  #118): step 8d-2. It records a join with guests as `member.join`
+  version 2, `remove --forget-guests` as `member.removing` version 2 with
+  counts, the fifth in-place change to B5, and the two limits of a join's
+  guest list. It is at the end of this document; the passages it changes
+  are marked "Amended (amendment 7)".
 - Date: 2026-11-23 (evaluation draft), 2026-11-24 (rewritten as the design)
 - Depends on: [ADR 0004](0004-privilege-boundary.md) (privilege boundary),
   [ADR 0005](0005-agent-task-engine.md) (task engine),
@@ -735,6 +741,8 @@ removal, and stops naming it once it has returned and caught up.
 
 **Amended (amendment 6):** see amendment 6, section 7: through the guest inventory a compromised `skep-api` or member can reserve names up to the 10000 limit and add or remove entries of its own node only.
 
+**Amended (amendment 7):** root on a member can make the cluster forget another member's guests by removing it (`--forget-guests`), which changes nothing on that member's host (amendment 7, section 8).
+
 ### B3. Joining a host that already has guests and users (proposed; answered in Part C)
 
 **Options:**
@@ -804,6 +812,12 @@ removal, and stops naming it once it has returned and caught up.
   - **Rollback** is the previous package plus the `api.db` backup taken
     before the migration. User and role changes made since the upgrade
     are lost, because 0.1 does not read the replicated store.
+
+**Amended (amendment 7): guests as built** (step 8d-2): `member.join`
+version 2 carries the list; at most 1000 guests and 160 KiB; a refusal
+names the joining host's first conflicting guest and the holder's node;
+the drain lasts while `skep-cluster join` runs, not until the join has
+ended (amendment 7, sections 1 and 2).
 
 **Risks:** an operator loses a local account they relied on (mitigated by
 the listing, the confirmation and the export); a guest created on the
@@ -1462,6 +1476,12 @@ leader stopped after step 0 and after `RemoveServer` of a removal with
 `--forget-guests`: the new leader removes the node and exactly the
 guest entries step 0 named, with no second command; a new guest entry
 owned by a `removing` member is refused (step 8d).
+
+**Amended (amendment 7): as built in step 8d-2** the removal's first
+entry (`member.removing` version 2) carries the counts the operator
+confirmed, not the guest entries' list, and `member.removed` removes
+every guest and reservation the node owns; the count typed back is
+guests plus reservations (amendment 7, sections 3 and 4).
 
 ## Part C — Answers (Andy, 2026-11-24)
 
@@ -2880,3 +2900,217 @@ guests, and there is no older build to stall).
 - F7: the API checks a new guest's name with the agents' rule
   (`models.ValidGuestName`) before it reserves it: `400 invalid_request`,
   nothing written or sent.
+
+## Amendment 7 (2026-11-26, Accepted)
+
+Written with the build of step 8d-2, from the fixed decisions D1 to D27
+the review chat gave that run. **Status: Accepted 2026-11-26 (Andy) with
+PR #118,** by approving the merge of the step 8d-2 PR. The facts it rests on are in
+[0013-evidence/8d2-facts-20261126.md](0013-evidence/8d2-facts-20261126.md).
+The passages it changes are marked "Amended (amendment 7)".
+
+It closes two of the three limits amendment 6 section 1 left: **a host
+that has guests can join**, and **a member that owns guests or name
+reservations can be removed** with `--forget-guests`, which covers its
+reservations as well as its guests. The third stays: **nothing lets an
+operator release a reservation of a live member** (backlog).
+
+### 1. B3 as built: a join with guests
+
+- `skep-cluster join-request` no longer asks the agent about guests.
+- `skep-cluster join`, in order: its checks of the admission and the
+  host, unchanged; it reads the host's VMs and jails from the agent's list
+  operations as root (every page of 200, by the agent's cursor; at most
+  1000 guests), without a drain, to show them; the pending-import
+  refusal; it prints the admission, the guests (counts and the first 20
+  names of each kind) and the host's users, and confirms as before. Then
+  it **sets the agent's drain** (reason `join`, actor
+  `skep-cluster-join`), renews it every 20 seconds, waits for the agent's
+  unfinished tasks to reach 0 (`-task-wait`, default 60 s), and **reads
+  the list again: that list joins**. It stops the service, runs the stage
+  with the list on its standard input (one JSON object, read strictly and
+  bounded at 256 KiB; no guest name is ever on a command line), starts the
+  service whatever the outcome, and **clears the drain as soon as the
+  service has been started again**, before it prints the outcome and
+  before it waits for the member entry (`-wait`); every earlier path that
+  set it clears it too. A failed renewal before the service is stopped clears the
+  drain and refuses; after that it is printed and the join goes on (no
+  guest can be created through the API while the service is stopped, and
+  reconciliation settles the rest once the node is a member). A command
+  that is killed leaves a drain that expires by itself after 60 seconds.
+  **Amended (amendment 7): B3's "the drain is released only when the join
+  has ended either way" is not built:** the drain lasts from the
+  confirmation until the service has been started again after the join
+  call, because it is needed only until the call is made: from then on the
+  service, back with `join.json`, refuses guest writes (`this node is
+  joining`), a guest deleted on the host leaves the inventory by its
+  reconciliation once it is a member, and a join that failed before step 1
+  leaves the host its own one-node cluster. (Held until the command returns,
+  the drain would last through `-wait`, which holds while this node has
+  not yet applied its member entry, for example after a join call whose
+  outcome is unknown while the members cannot be reached; for that long
+  the agent would refuse every task, the start and stop of its guests
+  included.)
+- The stage checks the list again and records it in `join.json` with the
+  file's first write, so every repeat of the join call (by the stage, or
+  by the service in phase `unknown`) sends the same list with the same
+  operation ID.
+- The join call's body is `{op_id, guests}`, `guests` omitted when empty.
+  The leader, after its barrier and the checks it made before, checks the
+  two limits (section 2) and the apply rules b to f below against its own
+  state machine, with the apply rule's text, then proposes **`member.join`
+  version 2** with the list. Without guests it writes version 1, exactly
+  as before: a cluster without guests writes the same log as before this
+  step (a test compares main's log byte for byte).
+- **Applying `member.join` version 2** (`{node_id, pin, at, guests:
+  [{id, kind, name}]}`): every check of version 1, in the same order,
+  then, each a refusal that is the same on every node: (a) 1 to 1000
+  guests (`invalid`); (b) each a lower-case UUID, kind `vm` or
+  `container`, a valid name (`invalid`); (c) no ID and no kind and name
+  twice in the list (`invalid`); (d) no ID the inventory already has
+  (`invalid`, naming the ID); (e) no kind and name a guest or reservation
+  of the cluster holds (`name_taken`, naming the first such guest of the
+  list and the holder's node, in `guest.reserve`'s words); (f) guests,
+  reservations and the list stay within 10000 (`too_many_guests`). Then,
+  with the member entry (state `joining`), every guest is added: owner
+  the joining node, no key, no task ID, added at the entry's index and
+  time. A version 1 entry with a `guests` field is malformed (the machine
+  stops); a version 2 entry without guests is refused (a). **Amended
+  (amendment 7): a refusal names the first conflicting guest of the
+  joining host and the holder's node name, not the cluster's guest.** The
+  pending key learns which node holds one of its names; nothing else of
+  the inventory. An admitted host can repeat the join call for as long as
+  its admission is valid, so with guessed names it can learn, one name per
+  refused call, which of them are taken in the cluster and on which node;
+  a call without a conflict joins it. This is the cost B3 accepted ("the
+  only cluster data a pending key ever sees"), and its bound is the
+  admission (30 minutes, withdrawn by any removal) and the operator's
+  check of the host's pin.
+- A name conflict refuses the join and puts the host's one-node state
+  back (the join failed before step 1). The operator deletes one of the
+  two guests (a guest cannot be renamed) and joins again with the same
+  admission while it is valid.
+
+### 2. The two limits of a join's guest list
+
+At most **1000 guests**, and the JSON encoding of the guests array at
+most **160 KiB**. Both are checked by the root command before anything
+changes, by the stage, and by the leader before it proposes; the count is
+checked again at apply. Why: the list travels in **one entry** and in
+**one Skep RPC**. With 160 KiB of guests the `member.join` entry is at
+most about 164 KB, within the 192 KiB users.import already uses for one
+entry, and the join call, envelope included, about 164 KB, within the RPC
+limit of 256 KiB (F6; a test builds the largest list and checks both).
+1000 guests with the agents' names (at most 63 bytes) are about 137 KB;
+the byte limit matters only for names the agents never make. A host with
+more than 1000 guests cannot join in 0.2.
+
+### 3. B13 as built: `remove --forget-guests`, with counts
+
+- `skep-cluster remove --forget-guests [-forget-count N] NAME` (root, on
+  a member) reads the status and the inventory (`guests-read`, open to
+  root from this step), counts and shows what the member owns (at most 50
+  guests and 20 reservations), says that the cluster forgets these
+  entries, that the guests themselves are not touched and keep running on
+  that host, and that after `leave --wipe` there the host lists them in
+  its own inventory again; then the operator types the number of entries
+  (guests plus reservations), or gives `-forget-count`. A wrong number
+  changes nothing. A member that owns nothing is removed as a plain
+  removal.
+- The request carries `forget_guests` and the confirmed counts. **Only
+  root's request**: on the socket the API account's `forget_guests` is
+  `403 forbidden`, and the public API is not changed (a member that owns
+  guests is `409 cluster_refused`, whose text names the root command).
+- The leader, where it refused such a member before (before the status
+  round and any hand-over), counts what the member owns in its own state
+  machine. Without the flag and owning something: refused, naming the
+  counts and the command. With counts that are not exactly the member's:
+  refused, naming both, nothing written. With matching counts: **one
+  `member.removing` version 2 `{node_id, guests, reservations}`**. A
+  leader that hands over passes the request on unchanged and the new
+  leader makes the same checks.
+- **Applying `member.removing` version 2:** every check of version 1
+  except "owns a guest or a reservation", which is replaced by: refused
+  unless the node owns exactly `guests` guests and `reservations`
+  reservations; refused as `invalid` when both are 0 (version 1 is the
+  removal of a member that owns nothing). Version 1 is applied exactly as
+  before.
+- **Amended (amendment 7): counts in place of B13's list of guest
+  entries.** A member may own up to 10000 entries; their IDs and names do
+  not fit one entry (section 2). The counts make the operator's
+  confirmation part of the entry, and apply refuses when the member owns
+  anything else, so what is forgotten is what was shown. The names are in
+  the audit already: each guest's `guest.add` or `member.join` record
+  named it.
+- B13's "no new guests on a node being removed" is built by amendment 6:
+  a guest entry's owner must be in state `member`.
+
+### 4. `member.removed`: the fifth change made in place (B5)
+
+**Amended (amendment 7): `member.removed` (version 1) removes, after the
+member entry, every guest and reservation whose owner is that node, and
+sets the guests index to its own index when it removed any.** This is the
+**fifth change to how an existing entry type is applied made in place**
+(B5; the fourth was amendment 6 section 5). Why it is safe: an owner that
+is not in state `member` can add nothing (amendment 6), so a `removing`
+member owns something only after a `member.removing` version 2; a build
+before this step **stops at that entry**, before it reaches the
+`member.removed`. In every log without one, `member.removed` finds nothing
+to remove and does what it did. No new state: the member entry, snapshot
+format 6 and `membership.json` are unchanged; a snapshot taken between the
+two entries holds the guests, and restored, the `member.removed` removes
+the same ones (tested).
+
+### 5. The cluster audit
+
+A `member.join` version 2 record names its guests in a new field
+`guests` (a list of `{id, kind, name}`); a `member.removing` version 2
+record carries `guest_count` and `reservation_count`; a `member.removed`
+record carries the same two fields with what it removed, when that is not
+zero. Each field is omitted when empty, so every record of an earlier
+build is written and verified as before (a test verifies main's segment
+with this build and appends the new fields). A build before this step
+cannot verify a record with a new field (its `verify` decodes strictly):
+the same rule as every field added before.
+
+### 6. Mixed builds
+
+- A build before this step **stops at a version 2 entry** (B5: stop, never
+  skip). So **every node is upgraded to this build before the first join
+  with guests and before the first `--forget-guests`.**
+- The join call: an 8d-1 member answers a body with `guests` as
+  `invalid_request` (its strict decoding, F7), so a joining host with
+  guests that reaches only 8d-1 members ends "unreached" and gets its
+  one-node state back. An 8d-2 leader takes a body without `guests` as a
+  host without guests.
+- A removal passed on with the new fields to an 8d-1 leader is
+  `invalid_request`, nothing written.
+- A build before this step cannot read a `join.json` that holds guests:
+  only a downgrade in the middle of a join meets that.
+
+### 7. What a joining node cannot do (D18)
+
+Nothing new is built for the time a node is in state `joining`. Its API
+has no quorum (reads and power actions only); its guest writes are
+refused (`this node is joining`); its own guests cannot be renamed or
+added to in the inventory. A guest deleted on it meanwhile is removed
+from the inventory by its reconciliation once it is a member. A joining
+member that brought guests is removed with `--forget-guests`, then `join
+--abandon` on it puts its one-node cluster back.
+
+### 8. B2
+
+**Amended (amendment 7):** unchanged, but for one sentence: root on a
+member can make the cluster forget another member's guests by removing it
+(`--forget-guests`), which changes nothing on that member's host: its
+guests keep running and its agent still has them.
+
+### 9. Not built (backlog)
+
+An operator's way to release a name reservation of a live member;
+renaming a guest; `--forget-guests` in the public API.
+
+The agent's drain clear (`DELETE /internal/v1/drain`) removes a drain of
+any reason; the join clears only a drain it believes is its own, but
+after a lost answer it cannot know. Step 8f, which adds the upgrade
+drain, makes the clear name the reason it clears (backlog).

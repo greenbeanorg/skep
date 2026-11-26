@@ -133,6 +133,31 @@ func (f *fakeMembers) Remove(_ context.Context, req memberapi.RemoveRequest) (me
 	return memberapi.RemoveResult{Name: req.Name, NodeID: "n9", OpID: "op3", ClusterID: req.ClusterID, HandedOver: true}, f.err
 }
 
+// Step 8d-2, D23: the removal of a member that owns guests through the
+// public API is the leader's refusal, passed on as 409 cluster_refused
+// with its text naming root's command; skep-api never asks to forget
+// guests.
+func TestClusterRemoveOfAMemberThatOwnsGuests(t *testing.T) {
+	e := freshEnv(t)
+	text := "the leader smith answered: wu owns 2 guests and 0 name reservations in the inventory; it cannot be removed while it owns any. " +
+		"To remove it and make the cluster forget them, run \"skep-cluster remove --forget-guests wu\" as root on a member. Nothing was written"
+	f := &fakeMembers{err: &memberapi.Error{HTTPStatus: 409, Code: "refused", Message: text}}
+	h := e.clusterHandler(f)
+	rec := e.serve(h, request{method: http.MethodPost, path: Prefix + "/cluster/members/wu/remove", role: auth.RoleAdmin,
+		body: `{"cluster_id":"00000000-0000-4000-8000-000000000009"}`})
+	eb := errorOf(t, rec.Body.Bytes())
+	if rec.Code != http.StatusConflict || eb.Code != CodeClusterRefused || !strings.Contains(eb.Message, "skep-cluster remove --forget-guests wu") {
+		t.Fatalf("remove: %d %s", rec.Code, rec.Body)
+	}
+	if f.removed.ForgetGuests || f.removed.Guests != 0 || f.removed.Reservations != 0 {
+		t.Fatalf("skep-api asked to forget guests: %+v", f.removed)
+	}
+	if rec := e.serve(h, request{method: http.MethodPost, path: Prefix + "/cluster/members/wu/remove", role: auth.RoleAdmin,
+		body: `{"cluster_id":"00000000-0000-4000-8000-000000000009","forget_guests":true}`}); rec.Code != http.StatusBadRequest {
+		t.Fatalf("a public request with forget_guests: %d %s", rec.Code, rec.Body)
+	}
+}
+
 // D25: every answer of the socket has its public error; skep-api sends
 // each operation once, with the user as the actor and a request ID (D22).
 func TestClusterErrorMapping(t *testing.T) {

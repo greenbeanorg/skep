@@ -9,14 +9,12 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"net"
-	"net/http"
 	"os"
 	"strings"
 	"time"
 
-	"github.com/greenbeanorg/skep/internal/agentproto"
 	"github.com/greenbeanorg/skep/internal/cluster/clusterconf"
+	"github.com/greenbeanorg/skep/internal/cluster/clusterstate"
 	"github.com/greenbeanorg/skep/internal/cluster/joincode"
 	"github.com/greenbeanorg/skep/internal/cluster/localapi"
 	"github.com/greenbeanorg/skep/internal/cluster/store"
@@ -29,65 +27,6 @@ const joinActor = "skep-cluster-join"
 // stageCommand is the hidden command the root-run commands start, as the
 // service account, for everything they do inside the data directory.
 const stageCommand = "internal-stage"
-
-// agentGuests reads how many VMs and jails the host has from skep-agent's
-// read operations, as root (ADR 0013 B3; decision D1 of the 8b-1 run). Only
-// root-run commands call it; the service never connects to the agent.
-func agentGuests(ctx context.Context, socket string) (vms, jails int, err error) {
-	hc := &http.Client{Timeout: 10 * time.Second, Transport: &http.Transport{
-		DisableKeepAlives: true,
-		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-			return (&net.Dialer{Timeout: 5 * time.Second}).DialContext(ctx, "unix", socket)
-		}}}
-	count := func(path string) (int, error) {
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://agent"+agentproto.Prefix+path, nil)
-		if err != nil {
-			return 0, err
-		}
-		agentproto.Caller{ActorID: joinActor, ActorName: joinActor}.SetHeaders(req.Header)
-		resp, err := hc.Do(req)
-		if err != nil {
-			return 0, fmt.Errorf("cannot reach skep-agent on %s (is skep_agent running?): %w", socket, err)
-		}
-		defer resp.Body.Close()
-		if resp.StatusCode != http.StatusOK {
-			return 0, fmt.Errorf("skep-agent answered %s to %s", resp.Status, path)
-		}
-		var list struct {
-			Items      []json.RawMessage `json:"items"`
-			NextCursor string            `json:"next_cursor"`
-		}
-		if err := json.NewDecoder(io.LimitReader(resp.Body, 4<<20)).Decode(&list); err != nil {
-			return 0, fmt.Errorf("skep-agent's answer to %s: %w", path, err)
-		}
-		n := len(list.Items)
-		if list.NextCursor != "" {
-			n++ // at least one more page
-		}
-		return n, nil
-	}
-	if vms, err = count("/vms?limit=1"); err != nil {
-		return 0, 0, err
-	}
-	if jails, err = count("/containers?limit=1"); err != nil {
-		return 0, 0, err
-	}
-	return vms, jails, nil
-}
-
-// refuseGuests refuses a host that has a guest, or whose agent does not
-// answer (decision D1 of the 8b-1 run: no join with guests before step
-// 8d).
-func refuseGuests(ctx context.Context, e env, socket, cmd string) error {
-	vms, jails, err := e.agentGuests(ctx, socket)
-	if err != nil {
-		return fmt.Errorf("refused: %s needs the guest list from skep-agent: %w", cmd, err)
-	}
-	if vms > 0 || jails > 0 {
-		return fmt.Errorf("refused: this host has VMs or jails (at least %d VMs, %d jails); in this build only a host without guests can join a cluster", vms, jails)
-	}
-	return nil
-}
 
 // stageResult is what the service-account stage reports to the root-run
 // command, as one JSON line on its stdout.
@@ -155,8 +94,10 @@ func startAndWait(ctx context.Context, e env, socket string) error {
 }
 
 // runStage runs a stage as the service account and decodes its result.
-func runStage(ctx context.Context, e env, uid, gid uint32, args []string) (stageResult, error) {
-	out, err := e.runAsAccount(ctx, uid, gid, append([]string{stageCommand}, args...))
+// Only the join stage gets a standard input (its guest list, D13); every
+// other stage gets none (nil).
+func runStage(ctx context.Context, e env, uid, gid uint32, args []string, stdin []byte) (stageResult, error) {
+	out, err := e.runAsAccount(ctx, uid, gid, append([]string{stageCommand}, args...), stdin)
 	var res stageResult
 	line := strings.TrimSpace(string(out))
 	if i := strings.LastIndexByte(line, '\n'); i >= 0 {
@@ -191,13 +132,16 @@ func runJoinRequest(ctx context.Context, args []string, e env) error {
 	flags := flag.NewFlagSet("skep-cluster join-request", flag.ContinueOnError)
 	flags.SetOutput(e.stderr)
 	var (
-		address     = flags.String("address", "", "this host's management address for the node-to-node listener (required)")
-		configPath  = flags.String("config", clusterconf.DefaultPath, "path to cluster.json")
-		dataDir     = flags.String("data-dir", clusterconf.DefaultDataDir, "directory of the node key and the cluster store")
-		socket      = flags.String("socket", clusterconf.DefaultSocket, "Unix socket of the service")
-		agentSocket = flags.String("agent-socket", clusterconf.DefaultAgentSocket, "Unix socket of skep-agent")
-		account     = flags.String("account", clusterconf.Account, "the service account")
+		address    = flags.String("address", "", "this host's management address for the node-to-node listener (required)")
+		configPath = flags.String("config", clusterconf.DefaultPath, "path to cluster.json")
+		dataDir    = flags.String("data-dir", clusterconf.DefaultDataDir, "directory of the node key and the cluster store")
+		socket     = flags.String("socket", clusterconf.DefaultSocket, "Unix socket of the service")
+		account    = flags.String("account", clusterconf.Account, "the service account")
 	)
+	// Step 8d-2, D9: join-request no longer asks the agent about guests;
+	// the flag is still accepted, so that scripts that pass it keep
+	// working.
+	_ = flags.String("agent-socket", clusterconf.DefaultAgentSocket, "not used since step 8d-2 (accepted for compatibility)")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
@@ -231,16 +175,13 @@ func runJoinRequest(ctx context.Context, args []string, e env) error {
 	if acct.UID == 0 {
 		return errors.New("the service account must not be root")
 	}
-	if err := refuseGuests(ctx, e, *agentSocket, "join-request"); err != nil {
-		return err
-	}
 
 	// "Is this node alone" is read from the store with the service
 	// stopped, by a process running as the service account.
 	if err := stopForStore(ctx, e, *socket); err != nil {
 		return err
 	}
-	res, err := runStage(ctx, e, acct.UID, acct.GID, []string{"read", "-config", *configPath, "-data-dir", *dataDir})
+	res, err := runStage(ctx, e, acct.UID, acct.GID, []string{"read", "-config", *configPath, "-data-dir", *dataDir}, nil)
 	if err == nil && res.Outcome == "not_alone" {
 		err = errors.New("refused: " + termSafe(res.Message))
 	} else if err == nil && res.Outcome != "ok" {
@@ -353,12 +294,16 @@ func runAdmit(ctx context.Context, args []string, e env) error {
 	return nil
 }
 
-func printAdmission(w io.Writer, adm joincode.Admission) {
+func printAdmission(w io.Writer, adm joincode.Admission, guests int) {
 	fmt.Fprintf(w, "This host will join the cluster\n  Cluster ID: %s\nwith the members\n", adm.ClusterID)
 	for _, m := range adm.Members {
 		fmt.Fprintf(w, "  %-20s %s  %s\n                       pin %s\n", m.Name, m.NodeID, m.Address, m.Pin)
 	}
-	fmt.Fprintf(w, "This host has no VMs and no jails. Its own one-node cluster is moved aside.\n")
+	if guests > 0 {
+		// Step 8d-2, D17.
+		fmt.Fprintf(w, "%d guests of this host join with it; their names must be free in the cluster (a name already taken there refuses the join).\n", guests)
+	}
+	fmt.Fprintf(w, "Its own one-node cluster is moved aside.\n")
 }
 
 // printHostUsers lists the host's own users (D21 of step 8c-1): the
@@ -430,6 +375,7 @@ func runJoin(ctx context.Context, args []string, e env) error {
 		agentSocket = flags.String("agent-socket", clusterconf.DefaultAgentSocket, "Unix socket of skep-agent")
 		account     = flags.String("account", clusterconf.Account, "the service account")
 		wait        = flags.Duration("wait", 90*time.Second, "how long to wait for this node to apply its member entry")
+		taskWait    = flags.Duration("task-wait", 60*time.Second, "how long to wait for skep-agent's unfinished tasks once its drain is set")
 		abandon     = flags.Bool("abandon", false, "give up a join that is past its point of no return (after removing this host on a member)")
 	)
 	if err := flags.Parse(args); err != nil {
@@ -473,16 +419,64 @@ func runJoin(ctx context.Context, args []string, e env) error {
 	if acct.UID == 0 {
 		return errors.New("the service account must not be root")
 	}
-	if err := refuseGuests(ctx, e, *agentSocket, "join"); err != nil {
-		return err
+	// Step 8d-2, D10 step 2: the host's guests, read without a drain to
+	// show them. Nothing is changed by a refusal here.
+	shown, err := e.agentGuestList(ctx, *agentSocket)
+	if err != nil {
+		return fmt.Errorf("refused: join needs the guest list from skep-agent: %s; nothing was changed", termSafe(err.Error()))
+	}
+	if err := checkHostGuests(shown); err != nil {
+		return fmt.Errorf("refused: %s; nothing was changed", termSafe(err.Error()))
 	}
 	if err := refusePendingImport(ctx, e); err != nil {
 		return err
 	}
-	printAdmission(e.stdout, adm)
+	printAdmission(e.stdout, adm, len(shown))
+	printGuests(e.stdout, shown)
 	printHostUsers(ctx, e, e.stdout)
 	if err := confirmJoin(e, adm, *clusterID); err != nil {
 		return err
+	}
+
+	// D10 step 5 (D11): the drain, then the agent's unfinished tasks.
+	// From here every path clears the drain (drain.clear, once); the
+	// deferred call is the backstop of a path that returns early.
+	drain, err := setJoinDrain(ctx, e, *agentSocket)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if cerr := drain.clear(ctx); cerr != nil {
+			fmt.Fprintf(e.stderr, "skep-cluster: %v\n", cerr)
+		}
+	}()
+	refuseDrained := func(why string) error {
+		if cerr := drain.clear(ctx); cerr != nil {
+			return fmt.Errorf("refused: %s; the drain was set and clearing it failed: %v; nothing else was changed", why, cerr)
+		}
+		return fmt.Errorf("refused: %s; the drain was set and cleared; nothing else was changed", why)
+	}
+	if err := drain.waitTasks(ctx, *taskWait); err != nil {
+		return refuseDrained(err.Error())
+	}
+	// D10 step 6: the list that joins, read with the drain set.
+	guests, err := e.agentGuestList(ctx, *agentSocket)
+	if err != nil {
+		return refuseDrained("reading the guest list from skep-agent again failed: " + termSafe(err.Error()))
+	}
+	if err := checkHostGuests(guests); err != nil {
+		return refuseDrained(termSafe(err.Error()))
+	}
+	if !sameGuests(shown, guests) {
+		vms, jails := countKinds(guests)
+		fmt.Fprintf(e.stdout, "The host's guests changed since they were shown: %d VMs and %d jails join with it.\n", vms, jails)
+	}
+	if rerr := drain.renewFailed(); rerr != nil {
+		return refuseDrained("renewing skep-agent's drain failed: " + termSafe(rerr.Error()))
+	}
+	input, err := json.Marshal(stageInput{Guests: append([]clusterstate.JoinGuest{}, guests...)})
+	if err != nil {
+		return refuseDrained(err.Error())
 	}
 
 	// The join call is made by the stage that runs as the service
@@ -491,11 +485,23 @@ func runJoin(ctx context.Context, args []string, e env) error {
 	// the state back only when it knows join step 1 was not applied.
 	// This command believes only the stage's outcome, and its own root
 	// effects (stopping and starting the service) do not depend on it.
+	// The guest list goes to the stage on its standard input (D13).
+	drain.serviceStopped()
 	if err := stopForStore(ctx, e, *socket); err != nil {
 		return err
 	}
-	res, serr := runStage(ctx, e, acct.UID, acct.GID, []string{"join", "-config", *configPath, "-data-dir", *dataDir, "-admission", line})
+	res, serr := runStage(ctx, e, acct.UID, acct.GID, []string{"join", "-config", *configPath, "-data-dir", *dataDir, "-admission", line}, input)
 	startErr := startAndWait(ctx, e, *socket)
+	// The drain is cleared here, whatever the stage's outcome and whether
+	// or not the service started, not after waitJoined: it is needed only
+	// until the join call is made. With join.json the service refuses
+	// guest writes ("this node is joining"), a guest deleted on the host
+	// leaves the inventory by its reconciliation once it is a member, and
+	// a join that failed before step 1 leaves the host its own one-node
+	// cluster. The deferred call stays the backstop of earlier returns.
+	if cerr := drain.clear(ctx); cerr != nil {
+		fmt.Fprintf(e.stderr, "skep-cluster: %v\n", cerr)
+	}
 	rootErr := checkNoRootFiles(e, *dataDir)
 	if serr != nil {
 		return errors.Join(serr, startErr, rootErr,
@@ -525,7 +531,11 @@ func runJoin(ctx context.Context, args []string, e env) error {
 	}
 	fmt.Fprintf(e.stdout, "The join is past its point of no return: the one-node state stays moved aside (%s)\n", termSafe(res.Standalone))
 	fmt.Fprintf(e.stdout, "and skep-cluster keeps working with the admission's members until it has joined.\n")
-	fmt.Fprintf(e.stdout, "To give it up: on a member, \"skep-cluster remove %s\"; then here \"skep-cluster join --abandon\".\n", cfg.NodeName)
+	removeCmd := "skep-cluster remove " + cfg.NodeName
+	if len(guests) > 0 {
+		removeCmd = "skep-cluster remove --forget-guests " + cfg.NodeName
+	}
+	fmt.Fprintf(e.stdout, "To give it up: on a member, \"%s\"; then here \"skep-cluster join --abandon\".\n", removeCmd)
 	if startErr != nil || rootErr != nil {
 		return errors.Join(startErr, rootErr)
 	}

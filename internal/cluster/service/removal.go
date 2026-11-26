@@ -611,6 +611,22 @@ type forwardRemove struct {
 	OpID            string `json:"op_id"`
 	AllowUnanswered bool   `json:"allow_unanswered,omitempty"`
 	ClusterID       string `json:"cluster_id,omitempty"`
+	// Step 8d-2, D21: root's removal of a member that owns guests, with
+	// the counts the operator confirmed. A leader of an earlier build
+	// answers a body with these fields as invalid_request.
+	ForgetGuests bool `json:"forget_guests,omitempty"`
+	Guests       int  `json:"guests,omitempty"`
+	Reservations int  `json:"reservations,omitempty"`
+}
+
+// checkForget checks the forget fields of a removal: counts only with
+// forget_guests, and never below 0.
+func checkForget(forget bool, guests, reservations int) error {
+	if guests < 0 || reservations < 0 || (!forget && guests+reservations > 0) {
+		return &localapi.OpError{HTTPStatus: http.StatusBadRequest, Code: "invalid_request",
+			Message: "the counts of guests and reservations to forget go with forget_guests and are never below 0"}
+	}
+	return nil
 }
 
 // removedError is the refusal of an operation on a removed node. A node
@@ -636,6 +652,9 @@ func (s *Service) Remove(ctx context.Context, req localapi.RemoveRequest, actor 
 	if !clusterstate.ValidName(req.Name) {
 		return localapi.RemoveResult{}, &localapi.OpError{HTTPStatus: http.StatusBadRequest, Code: "invalid_request", Message: "not a valid node name"}
 	}
+	if err := checkForget(req.ForgetGuests, req.Guests, req.Reservations); err != nil {
+		return localapi.RemoveResult{}, err
+	}
 	if req.AllowUnanswered && !clusterstate.ValidNodeID(req.ClusterID) {
 		return localapi.RemoveResult{}, &localapi.OpError{HTTPStatus: http.StatusBadRequest, Code: "invalid_request",
 			Message: "allow_unanswered needs the cluster ID typed back"}
@@ -653,7 +672,8 @@ func (s *Service) Remove(ctx context.Context, req localapi.RemoveRequest, actor 
 	if err != nil {
 		return localapi.RemoveResult{}, err
 	}
-	fw := forwardRemove{Name: req.Name, Actor: actor, OpID: opID, AllowUnanswered: req.AllowUnanswered, ClusterID: req.ClusterID}
+	fw := forwardRemove{Name: req.Name, Actor: actor, OpID: opID, AllowUnanswered: req.AllowUnanswered, ClusterID: req.ClusterID,
+		ForgetGuests: req.ForgetGuests, Guests: req.Guests, Reservations: req.Reservations}
 	if s.getStore().IsLeader() {
 		return s.removeAsLeader(ctx, fw, s.cfg.NodeID)
 	}
@@ -715,23 +735,18 @@ func (s *Service) removeAsLeader(ctx context.Context, req forwardRemove, origin 
 			return localapi.RemoveResult{}, refusedErr(fmt.Sprintf("%s is joining; %s cannot be removed until that join has finished or %s is removed", m.Name, x.Name, m.Name))
 		}
 	}
-	// Step 8d-1, D17, also checked at apply: a member that owns guests
-	// or name reservations cannot be removed. Checked before the status
-	// round and any hand-over, so a refusal changes nothing.
-	guests, reservations := 0, 0
-	inv := s.machine.Guests()
-	for _, g := range inv.Guests {
-		if g.Owner == x.ID {
-			guests++
-		}
-	}
-	for _, r := range inv.Reservations {
-		if r.Owner == x.ID {
-			reservations++
-		}
-	}
-	if guests+reservations > 0 {
-		return localapi.RemoveResult{}, refusedErr(fmt.Sprintf("%s owns %d guests and %d name reservations in the inventory; it cannot be removed while it owns any (step 8d-2 brings --forget-guests). Nothing was written", x.Name, guests, reservations))
+	// Step 8d-2, D22, also checked at apply: what x owns, counted in
+	// this state machine (by every leader, the one a removal is handed
+	// over to included). Checked before the status round and any
+	// hand-over, so a refusal changes nothing.
+	guests, reservations := s.machine.GuestsOwnedBy(x.ID)
+	switch {
+	case !req.ForgetGuests && guests+reservations > 0:
+		return localapi.RemoveResult{}, refusedErr(fmt.Sprintf("%s owns %d guests and %d name reservations in the inventory; it cannot be removed while it owns any. "+
+			"To remove it and make the cluster forget them, run \"skep-cluster remove --forget-guests %s\" as root on a member. Nothing was written", x.Name, guests, reservations, x.Name))
+	case req.ForgetGuests && (req.Guests != guests || req.Reservations != reservations):
+		return localapi.RemoveResult{}, refusedErr(fmt.Sprintf("the removal of %s was confirmed for %d guests and %d name reservations, and it owns %d guests and %d name reservations now; nothing was written; run the command again",
+			x.Name, req.Guests, req.Reservations, guests, reservations))
 	}
 	if err := clusterIDMismatch(req.ClusterID, view.ClusterID); err != nil {
 		return localapi.RemoveResult{}, err
@@ -842,8 +857,16 @@ func (s *Service) removeAsLeader(ctx context.Context, req forwardRemove, origin 
 			}
 		}
 	}
-	e, err := clusterstate.NewEntry(clusterstate.TypeMemberRemoving, req.OpID, req.Actor, origin,
-		clusterstate.MemberRemoving{NodeID: x.ID, ForgetGuests: []string{}})
+	// Version 2 with the confirmed counts when x owns something (D22),
+	// version 1 as before when it owns nothing.
+	var e clusterstate.Entry
+	if guests+reservations > 0 {
+		e, err = clusterstate.NewEntryVersion(clusterstate.TypeMemberRemoving, 2, req.OpID, req.Actor, origin,
+			clusterstate.MemberRemovingV2{NodeID: x.ID, Guests: guests, Reservations: reservations})
+	} else {
+		e, err = clusterstate.NewEntry(clusterstate.TypeMemberRemoving, req.OpID, req.Actor, origin,
+			clusterstate.MemberRemoving{NodeID: x.ID, ForgetGuests: []string{}})
+	}
 	if err != nil {
 		return localapi.RemoveResult{}, err
 	}
@@ -861,7 +884,8 @@ func (s *Service) removeAsLeader(ctx context.Context, req forwardRemove, origin 
 // handleRemove is the leader's side of a removal passed by a member.
 func (s *Service) handleRemove(ctx context.Context, from raftnet.Peer, body json.RawMessage) (any, error) {
 	var req forwardRemove
-	if err := strictJSON(body, &req); err != nil || !opIDRE.MatchString(req.OpID) || req.Actor == "" || !clusterstate.ValidName(req.Name) {
+	if err := strictJSON(body, &req); err != nil || !opIDRE.MatchString(req.OpID) || req.Actor == "" || !clusterstate.ValidName(req.Name) ||
+		checkForget(req.ForgetGuests, req.Guests, req.Reservations) != nil {
 		return nil, &raftnet.PeerError{Code: raftnet.CodeInvalidRequest, Message: "the remove request is not valid"}
 	}
 	if hint, ok := s.notLeader(); ok {

@@ -67,6 +67,17 @@ Until step 8d-2, a host that has guests cannot join a cluster, and a
 member that owns guests cannot be removed (the removal is refused: `409
 cluster_refused`).
 
+## To step 8d-2 or later: a join with guests, `remove --forget-guests`
+
+A build before step 8d-2 stops at the entry of a join with guests and at
+the entry of a removal that forgets guests (ADR 0013 amendment 7). Upgrade
+**every node of a cluster** before the first join of a host that has
+guests and before the first `skep-cluster remove --forget-guests`. A
+joining host with guests whose cluster has only earlier builds is refused
+("unreached") and gets its one-node cluster back. Do not downgrade a host
+in the middle of a join with guests: an earlier build cannot read its
+`join.json`.
+
 ## To step 8c-1 or later (main, the unreleased cluster preview): the users move into the cluster
 
 From step 8c-1 the users are `skep-cluster`'s (ADR 0013 amendment 4).

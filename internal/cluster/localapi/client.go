@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/greenbeanorg/skep/internal/cluster/guestapi"
 	"github.com/greenbeanorg/skep/pkg/models"
 )
 
@@ -52,6 +53,10 @@ func (e *StatusError) Error() string {
 var ErrUnavailable = errors.New("skep-cluster is not reachable on its socket (is the service running, and are you root?)")
 
 func (c *Client) get(ctx context.Context, path string, okStatus func(int) bool, out any) error {
+	return c.getLimit(ctx, path, 4<<20, okStatus, out)
+}
+
+func (c *Client) getLimit(ctx context.Context, path string, limit int64, okStatus func(int) bool, out any) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://skep-cluster"+path, nil)
 	if err != nil {
 		return err
@@ -61,7 +66,7 @@ func (c *Client) get(ctx context.Context, path string, okStatus func(int) bool, 
 		return fmt.Errorf("%w: %v", ErrUnavailable, err)
 	}
 	defer resp.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, limit))
 	if err != nil {
 		return fmt.Errorf("%w: %v", ErrUnavailable, err)
 	}
@@ -150,6 +155,15 @@ func (c *Client) Status(ctx context.Context) (Status, error) {
 	var s Status
 	err := c.get(ctx, PathStatus, is200, &s)
 	return s, err
+}
+
+// GuestsRead returns the guest inventory (root and the API account; step
+// 8d-2, D19). Up to 16 MiB of the answer is read: 10000 guests and
+// reservations with their longest names.
+func (c *Client) GuestsRead(ctx context.Context) (guestapi.GuestsAnswer, error) {
+	var a guestapi.GuestsAnswer
+	err := c.getLimit(ctx, PathGuestsRead, 16<<20, is200, &a)
+	return a, err
 }
 
 // RaftConfiguration returns the Raft configuration (root only).

@@ -1425,7 +1425,11 @@ export interface paths {
          *     itself. Removing the leader hands the leadership over first
          *     (`handed_over`); afterwards that node's API answers `503
          *     no_quorum`. The removed host keeps its guests running and needs
-         *     `skep-cluster leave --wipe` before it can join again.
+         *     `skep-cluster leave --wipe` before it can join again. A member
+         *     that owns guests or name reservations is refused with `409
+         *     cluster_refused`, whose message names the root command `skep-cluster
+         *     remove --forget-guests NAME`: the API cannot make the cluster
+         *     forget guests.
          */
         post: operations["removeMember"];
         delete?: never;

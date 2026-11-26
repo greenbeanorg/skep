@@ -96,8 +96,9 @@ var Operations = []Operation{
 	{Name: "users-write", Method: http.MethodPost, Path: PathUsersWrite, Root: false, API: true},
 	// The guest inventory (step 8d-1, D22, D23): skep-api's reads and
 	// its writes. The owner of an entry is this node, set by the
-	// service; the request has no owner field.
-	{Name: "guests-read", Method: http.MethodGet, Path: PathGuestsRead, Root: false, API: true},
+	// service; the request has no owner field. Root reads it too, for
+	// "skep-cluster remove --forget-guests" (step 8d-2, D19).
+	{Name: "guests-read", Method: http.MethodGet, Path: PathGuestsRead, Root: true, API: true},
 	{Name: "guests-write", Method: http.MethodPost, Path: PathGuestsWrite, Root: false, API: true},
 }
 
@@ -294,6 +295,9 @@ func NewHandler(b Backend, o HandlerOptions) http.Handler {
 				switch {
 				case req.AllowUnanswered:
 					httpkit.WriteError(w, r, http.StatusForbidden, CodeForbidden, "allow_unanswered is not open to this caller; only root's command may remove a member without the remaining voters' answers")
+					return
+				case req.ForgetGuests:
+					httpkit.WriteError(w, r, http.StatusForbidden, CodeForbidden, "forget_guests is not open to this caller; only root's command may remove a member that owns guests")
 					return
 				case req.ClusterID == "":
 					httpkit.WriteError(w, r, http.StatusBadRequest, "invalid_request", "a removal by the API must carry the cluster ID")

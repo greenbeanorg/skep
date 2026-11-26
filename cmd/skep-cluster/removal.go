@@ -6,11 +6,13 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/greenbeanorg/skep/internal/cluster/clusterconf"
 	"github.com/greenbeanorg/skep/internal/cluster/clusterstate"
+	"github.com/greenbeanorg/skep/internal/cluster/guestapi"
 	"github.com/greenbeanorg/skep/internal/cluster/joinstate"
 	"github.com/greenbeanorg/skep/internal/cluster/layout"
 	"github.com/greenbeanorg/skep/internal/cluster/localapi"
@@ -57,9 +59,16 @@ func runRemove(ctx context.Context, args []string, e env) error {
 		allowUnanswered = flags.Bool("allow-unanswered", false, "remove the node although too few of the remaining voters answer (the cluster then accepts no changes until they return); needs the cluster ID confirmed")
 		clusterID       = flags.String("cluster-id", "", "with -allow-unanswered, confirm the cluster without a terminal")
 		wait            = flags.Duration("wait", 2*time.Minute, "how long to wait for the removal to finish")
+		forgetGuests    = flags.Bool("forget-guests", false, "remove a member that owns guests or name reservations: the cluster forgets them (the guests keep running on that host)")
+		forgetCount     = flags.Int("forget-count", 0, "with --forget-guests, confirm the number of entries to forget without a terminal")
 	)
 	if err := flags.Parse(args); err != nil {
 		return err
+	}
+	countGiven := false
+	flags.Visit(func(f *flag.Flag) { countGiven = countGiven || f.Name == "forget-count" })
+	if countGiven && !*forgetGuests {
+		return errors.New("-forget-count is only for --forget-guests")
 	}
 	if e.euid != 0 {
 		return errNeedsRoot("remove")
@@ -80,6 +89,11 @@ func runRemove(ctx context.Context, args []string, e env) error {
 		return err
 	}
 	req := localapi.RemoveRequest{Name: name}
+	if *forgetGuests {
+		if err := confirmForget(ctx, e, client, st, &req, countGiven, *forgetCount); err != nil {
+			return err
+		}
+	}
 	if *allowUnanswered {
 		what := fmt.Sprintf("Removing %s without an answer from enough of the remaining voters: the cluster may accept no changes until they return.", termSafe(name))
 		if err := confirmClusterID(e, what, st.ClusterID, *clusterID); err != nil {
@@ -103,6 +117,83 @@ func runRemove(ctx context.Context, args []string, e env) error {
 	rootErr := checkNoRootFiles(e, *dataDir)
 	err = waitRemoved(ctx, e, client, res, st.NodeID, *wait)
 	return errors.Join(err, rootErr)
+}
+
+// confirmForget is "--forget-guests" (step 8d-2, D20): it counts what the
+// member owns in this node's inventory, shows it, and has the operator
+// confirm the number of entries the cluster forgets (on the terminal, or
+// -forget-count). The confirmed counts go in the request; the leader
+// compares them with what the member owns then. A member that owns
+// nothing is removed as a plain removal; a name that is not a member's is
+// left to the service, which gives its usual error.
+func confirmForget(ctx context.Context, e env, client *localapi.Client, st localapi.Status, req *localapi.RemoveRequest, countGiven bool, count int) error {
+	var id string
+	for _, m := range st.Members {
+		if m.Name == req.Name {
+			id = m.ID
+		}
+	}
+	if id == "" {
+		return nil
+	}
+	inv, err := client.GuestsRead(ctx)
+	if err != nil {
+		return err
+	}
+	if inv.Joining || inv.Removed {
+		return nil // the service refuses the removal on this node
+	}
+	var guests []guestapi.GuestInfo
+	var reservations []guestapi.ReservationInfo
+	for _, g := range inv.Guests {
+		if g.Owner == id {
+			guests = append(guests, g)
+		}
+	}
+	for _, r := range inv.Reservations {
+		if r.Owner == id {
+			reservations = append(reservations, r)
+		}
+	}
+	total := len(guests) + len(reservations)
+	if total == 0 {
+		fmt.Fprintf(e.stdout, "%s owns no guests and no name reservations in the inventory: it is removed as a plain removal.\n", termSafe(req.Name))
+		return nil
+	}
+	fmt.Fprintf(e.stdout, "%s owns %d guests and %d name reservations in the cluster's inventory:\n", termSafe(req.Name), len(guests), len(reservations))
+	for i, g := range guests {
+		if i == 50 {
+			fmt.Fprintf(e.stdout, "  and %d more guests\n", len(guests)-50)
+			break
+		}
+		fmt.Fprintf(e.stdout, "  %-9s %s  %s\n", termSafe(g.Kind), termSafe(g.Name), termSafe(g.ID))
+	}
+	for i, r := range reservations {
+		if i == 20 {
+			fmt.Fprintf(e.stdout, "  and %d more name reservations\n", len(reservations)-20)
+			break
+		}
+		fmt.Fprintf(e.stdout, "  %-9s %s  (name reservation)\n", termSafe(r.Kind), termSafe(r.Name))
+	}
+	fmt.Fprintf(e.stdout, "The cluster forgets these entries. The guests themselves are not touched: they keep running on %s.\n", termSafe(req.Name))
+	fmt.Fprintf(e.stdout, "After \"skep-cluster leave --wipe\" there, that host lists them in its own inventory again.\n")
+	if !countGiven {
+		tty, err := e.openTTY()
+		if err != nil {
+			return fmt.Errorf("refused: there is no terminal to confirm on (%v); give -forget-count %d to confirm without one; nothing was changed", err, total)
+		}
+		defer tty.Close()
+		fmt.Fprintf(tty, "Type the number of entries to forget (%d) to confirm: ", total)
+		answer, _ := bufio.NewReader(tty).ReadString('\n')
+		if count, err = strconv.Atoi(strings.TrimSpace(answer)); err != nil {
+			count = -1
+		}
+	}
+	if count != total {
+		return fmt.Errorf("refused: the number confirmed is not the %d entries %s owns; nothing was changed", total, termSafe(req.Name))
+	}
+	req.ForgetGuests, req.Guests, req.Reservations = true, len(guests), len(reservations)
+	return nil
 }
 
 // waitRemoved waits until the member entry is gone (or this node itself is
@@ -221,7 +312,7 @@ func runLeave(ctx context.Context, args []string, e env) error {
 		return errors.New("the service account must not be root")
 	}
 	stage := func(action string) (stageResult, error) {
-		res, err := runStage(ctx, e, acct.UID, acct.GID, []string{action, "-config", *configPath, "-data-dir", *dataDir})
+		res, err := runStage(ctx, e, acct.UID, acct.GID, []string{action, "-config", *configPath, "-data-dir", *dataDir}, nil)
 		if err == nil && res.Outcome != "ok" {
 			err = errors.New(termSafe(res.Message))
 		}
@@ -308,8 +399,11 @@ func runLeave(ctx context.Context, args []string, e env) error {
 	fmt.Fprintf(e.stdout, "If it has not been removed on a member of its old cluster yet, remove it there, as root:\n  skep-cluster remove %s\n", cfg.NodeName)
 	fmt.Fprintf(e.stdout, "To join a cluster again: skep-cluster join-request -address ADDR\n")
 	// D21 of step 8c-1: the new cluster has no users, and skep-api's copy
-	// follows it.
-	fmt.Fprintf(e.stdout, "This host has no users now: nobody can log in to skep-api until an administrator is created, as root:\n  skep-api admin create --username NAME\n")
+	// follows it, which takes up to about a minute (the lab's case H of
+	// step 8d-2): before that "admin create" answers "already exists".
+	fmt.Fprintf(e.stdout, "This host has no users now: nobody can log in to skep-api until an administrator is created.\n")
+	fmt.Fprintf(e.stdout, "skep-api takes up to about a minute to follow the new one-node cluster. When \"skep-api admin list\" prints no user,\n")
+	fmt.Fprintf(e.stdout, "create one, as root (before that it answers \"already exists\"):\n  skep-api admin create --username NAME\n")
 	return errors.Join(startErr, rootErr)
 }
 
@@ -339,7 +433,7 @@ func runAbandon(ctx context.Context, e env, configPath, dataDir, socket, account
 	// A refusal that can be known with the service running stops nothing:
 	// no join.json, nothing to put back, or a node that accepts the key or
 	// no answer at all (the stage writes nothing).
-	pre, err := runStage(ctx, e, acct.UID, acct.GID, []string{"abandon-check", "-config", configPath, "-data-dir", dataDir})
+	pre, err := runStage(ctx, e, acct.UID, acct.GID, []string{"abandon-check", "-config", configPath, "-data-dir", dataDir}, nil)
 	if err != nil {
 		return errors.Join(err, checkNoRootFiles(e, dataDir))
 	}
@@ -349,7 +443,7 @@ func runAbandon(ctx context.Context, e env, configPath, dataDir, socket, account
 	if err := stopForStore(ctx, e, socket); err != nil {
 		return err
 	}
-	res, serr := runStage(ctx, e, acct.UID, acct.GID, []string{"abandon", "-config", configPath, "-data-dir", dataDir})
+	res, serr := runStage(ctx, e, acct.UID, acct.GID, []string{"abandon", "-config", configPath, "-data-dir", dataDir}, nil)
 	startErr := startAndWait(ctx, e, socket)
 	rootErr := checkNoRootFiles(e, dataDir)
 	if serr != nil {
@@ -421,7 +515,7 @@ func runListenNone(ctx context.Context, e env, configPath, dataDir, socket, acco
 	if err := stopForStore(ctx, e, socket); err != nil {
 		return err
 	}
-	res, err := runStage(ctx, e, acct.UID, acct.GID, []string{"read-state", "-config", configPath, "-data-dir", dataDir})
+	res, err := runStage(ctx, e, acct.UID, acct.GID, []string{"read-state", "-config", configPath, "-data-dir", dataDir}, nil)
 	if err == nil && res.Outcome == "not_alone" {
 		err = errors.New("refused: " + termSafe(res.Message) + "; nothing was changed")
 	} else if err == nil && res.Outcome != "ok" {

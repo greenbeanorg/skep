@@ -350,7 +350,7 @@ func TestJoinerLearnsANewerMemberFromTheAnswer(t *testing.T) {
 		t.Fatal(out)
 	}
 	h.joined(lang, 60*time.Second)
-	out := StageJoin(context.Background(), late.dir, late.cfg, late.key, old, time.Now(), 100*time.Millisecond)
+	out := StageJoin(context.Background(), late.dir, late.cfg, late.key, old, nil, time.Now(), 100*time.Millisecond)
 	if out.Outcome != JoinAccepted {
 		t.Fatalf("join with the older admission: %+v", out)
 	}
@@ -390,7 +390,7 @@ func TestFailedAndUnknownJoins(t *testing.T) {
 	wrong := adm
 	wrong.Members = []joincode.Node{adm.Members[0]}
 	wrong.Members[0].Pin = pinOf(t)
-	out := StageJoin(context.Background(), j.dir, j.cfg, j.key, wrong, time.Now(), 50*time.Millisecond)
+	out := StageJoin(context.Background(), j.dir, j.cfg, j.key, wrong, nil, time.Now(), 50*time.Millisecond)
 	if out.Outcome != JoinUnreached {
 		t.Fatalf("wrong pin: %+v", out)
 	}
@@ -415,7 +415,7 @@ func TestFailedAndUnknownJoins(t *testing.T) {
 	silent := startSilentMember(t, "127.0.88.20:8444")
 	unk := adm
 	unk.Members = []joincode.Node{{NodeID: newID(t), Name: "silent", Address: "127.0.88.20:8444", Pin: silent.Pin()}}
-	out = StageJoin(context.Background(), j.dir, j.cfg, j.key, unk, time.Now(), 50*time.Millisecond)
+	out = StageJoin(context.Background(), j.dir, j.cfg, j.key, unk, nil, time.Now(), 50*time.Millisecond)
 	if out.Outcome != JoinUnknown {
 		t.Fatalf("silent member: %+v", out)
 	}
@@ -792,7 +792,7 @@ func TestJoinAnswerIsChecked(t *testing.T) {
 		adm := joincode.Admission{ClusterID: cid, ExpiresAt: time.Now().Add(time.Hour).Unix(),
 			For:     joincode.Node{NodeID: j.id, Name: j.name, Address: j.cfg.PeerAddress(), Pin: j.key.Pin()},
 			Members: []joincode.Node{{NodeID: newID(t), Name: "leader", Address: lAddr, Pin: lead.key.Pin()}}}
-		out := StageJoin(context.Background(), j.dir, j.cfg, j.key, adm, time.Now(), 10*time.Millisecond)
+		out := StageJoin(context.Background(), j.dir, j.cfg, j.key, adm, nil, time.Now(), 10*time.Millisecond)
 		if out.Outcome != JoinUnknown || out.Answer != nil {
 			t.Fatalf("%s: %+v, want unknown without an answer", c.name, out)
 		}
@@ -849,7 +849,7 @@ func TestJoinStageCrashWindows(t *testing.T) {
 			// A wrong pin for the member: known not applied.
 			adm.Members[0].Pin = pinOf(t)
 		}
-		out := stageJoin(context.Background(), j.dir, j.cfg, j.key, adm, time.Now(), 10*time.Millisecond, func(p string) bool { return p == point })
+		out := stageJoin(context.Background(), j.dir, j.cfg, j.key, adm, nil, time.Now(), 10*time.Millisecond, func(p string) bool { return p == point })
 		if out.Outcome != "stopped" {
 			t.Fatalf("%s: %+v", point, out)
 		}

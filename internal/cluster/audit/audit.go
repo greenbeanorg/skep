@@ -147,6 +147,13 @@ type Record struct {
 	GuestKind  string `json:"guest_kind,omitempty"`
 	GuestName  string `json:"guest_name,omitempty"`
 	GuestOwner string `json:"guest_owner,omitempty"`
+	// A member entry's guests (step 8d-2, D7): a member.join version 2
+	// names its guests; a member.removing version 2 carries the counts it
+	// forgets, a member.removed the counts it removed. Omitted when
+	// empty, so every record of an earlier build still verifies.
+	Guests           []clusterstate.JoinGuest `json:"guests,omitempty"`
+	GuestCount       int                      `json:"guest_count,omitempty"`
+	ReservationCount int                      `json:"reservation_count,omitempty"`
 	// Outcome is applied, refused or duplicate; Reason is why it was
 	// refused and Code the refusal's code, where it has one.
 	Outcome string `json:"outcome,omitempty"`
@@ -620,7 +627,8 @@ func (l *Log) AuditEntry(a clusterstate.AuditEntry) error {
 		EntryTime: a.At, Actor: a.Actor, OpID: a.OpID, Origin: a.Origin, RequestID: a.RequestID,
 		NodeID: a.NodeID, Name: a.Name, Address: a.Address, Pins: a.Pins, Outcome: a.Outcome, Reason: a.Reason,
 		UserID: a.UserID, Username: a.Username, Role: a.Role, UserDisabled: a.UserDisabled, Count: a.Count,
-		Usernames: a.Usernames, Code: a.Code, GuestID: a.GuestID, GuestKind: a.GuestKind, GuestName: a.GuestName, GuestOwner: a.GuestOwner})
+		Usernames: a.Usernames, Code: a.Code, GuestID: a.GuestID, GuestKind: a.GuestKind, GuestName: a.GuestName, GuestOwner: a.GuestOwner,
+		Guests: a.Guests, GuestCount: a.GuestCount, ReservationCount: a.ReservationCount})
 }
 
 // AuditSnapshot implements clusterstate.AuditWriter: a snapshot installed

@@ -14,6 +14,7 @@
 //	skep-cluster join ADMISSION              join a cluster (root)
 //	skep-cluster join --abandon              give up a join past its point of no return (root)
 //	skep-cluster remove NAME                 remove a member (root)
+//	skep-cluster remove --forget-guests NAME remove a member that owns guests; the cluster forgets them (root)
 //	skep-cluster leave --wipe                make this node a new one-node cluster with a new key (root)
 //	skep-cluster listen -none                close the listener of a node that is alone (root)
 //	skep-cluster key rotate [-wait D]        rotate this node's key (root)
@@ -23,11 +24,13 @@
 //	skep-cluster health                      show the service's health
 //	skep-cluster version
 //
-// Every host is a one-node cluster until it joins another (ADR 0013, step
-// 8b: only a host without guests joins).
+// Every host is a one-node cluster until it joins another; its guests
+// join with it, under names that must be free in the cluster (ADR 0013,
+// step 8d-2).
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"flag"
@@ -44,6 +47,7 @@ import (
 	"time"
 
 	"github.com/greenbeanorg/skep/internal/cluster/clusterconf"
+	"github.com/greenbeanorg/skep/internal/cluster/clusterstate"
 
 	"github.com/greenbeanorg/skep/internal/privdrop"
 	"github.com/greenbeanorg/skep/internal/sysaccount"
@@ -104,10 +108,18 @@ type env struct {
 	// serviceCtl runs "service skep_cluster stop" or "start".
 	serviceCtl func(ctx context.Context, action string) error
 	// runAsAccount runs this program with args as the given user and
-	// group (no supplementary groups) and returns its stdout.
-	runAsAccount func(ctx context.Context, uid, gid uint32, args []string) ([]byte, error)
-	// agentGuests counts the host's VMs and jails from skep-agent.
-	agentGuests func(ctx context.Context, socket string) (vms, jails int, err error)
+	// group (no supplementary groups), with stdin as its standard input
+	// (none when nil), and returns its stdout.
+	runAsAccount func(ctx context.Context, uid, gid uint32, args []string, stdin []byte) ([]byte, error)
+	// stdin is this program's standard input (the join stage's guest
+	// list, D13 of step 8d-2).
+	stdin io.Reader
+	// agentGuestList reads the host's VMs and jails from skep-agent as
+	// root (D12).
+	agentGuestList func(ctx context.Context, socket string) ([]clusterstate.JoinGuest, error)
+	// agentDrain sets (POST), reads (GET) or clears (DELETE) skep-agent's
+	// drain with the reason "join", as root (D11).
+	agentDrain func(ctx context.Context, socket, method string) (drainAnswer, error)
 	// openTTY opens the controlling terminal.
 	openTTY func() (io.ReadWriteCloser, error)
 	// hostUsers lists the host's users from skep-api's api.db (one
@@ -152,8 +164,10 @@ func realEnv() env {
 			cmd.Stdout, cmd.Stderr = os.Stderr, os.Stderr
 			return cmd.Run()
 		},
-		runAsAccount: runAsAccount,
-		agentGuests:  agentGuests,
+		runAsAccount:   runAsAccount,
+		stdin:          os.Stdin,
+		agentGuestList: agentGuestList,
+		agentDrain:     agentDrain,
 		openTTY: func() (io.ReadWriteCloser, error) {
 			return os.OpenFile("/dev/tty", os.O_RDWR, 0)
 		},
@@ -223,8 +237,9 @@ func hostAdmin(ctx context.Context, args ...string) ([]string, error) {
 // runAsAccount runs this same executable, with a fixed environment, as the
 // service account. Its arguments come from the root-run command, which
 // validated them; the admission line is passed as one argument, never
-// through a shell.
-func runAsAccount(ctx context.Context, uid, gid uint32, args []string) ([]byte, error) {
+// through a shell. stdin, when not nil, is its standard input (the join's
+// guest list: no guest name is ever on its command line).
+func runAsAccount(ctx context.Context, uid, gid uint32, args []string, stdin []byte) ([]byte, error) {
 	if uid == 0 {
 		return nil, errors.New("refusing to run the stage as root")
 	}
@@ -236,6 +251,9 @@ func runAsAccount(ctx context.Context, uid, gid uint32, args []string) ([]byte, 
 	cmd.Env = []string{"PATH=/usr/bin:/bin:/usr/sbin:/sbin", "LC_ALL=C"}
 	cmd.Dir = "/"
 	cmd.Stderr = os.Stderr
+	if stdin != nil {
+		cmd.Stdin = bytes.NewReader(stdin)
+	}
 	cmd.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: uid, Gid: gid, Groups: []uint32{}}}
 	return cmd.Output()
 }
@@ -315,9 +333,10 @@ const usage = `usage:
   skep-cluster admit REQUEST                                   admit a host; prints its admission (root, on a member)
   skep-cluster admit -withdraw NAME                            withdraw a pending admission (root, on a member)
   skep-cluster listen -none                                    close the listener; only while alone with nothing pending (root)
-  skep-cluster join [-cluster-id ID] ADMISSION                 join the cluster of an admission (root)
+  skep-cluster join [-cluster-id ID] [-task-wait D] ADMISSION  join the cluster of an admission, with this host's guests (root)
   skep-cluster join --abandon                                  give up a join past its point of no return (root)
   skep-cluster remove [-allow-unanswered [-cluster-id ID]] NAME  remove a member (root, on a member)
+  skep-cluster remove --forget-guests [-forget-count N] NAME   remove a member that owns guests; the cluster forgets them (root)
   skep-cluster leave --wipe [-cluster-id ID]                   wipe: a new one-node cluster, new key, no listener (root)
   skep-cluster key rotate [-wait D]                            rotate this node's key (root, on a member)
   skep-cluster key rotate --abort                              abort it, while this node still uses its old key (root)

@@ -168,7 +168,7 @@ func TestOperationTable(t *testing.T) {
 		"key-abort":          {true, false},
 		"users-read":         {false, true},
 		"users-write":        {false, true},
-		"guests-read":        {false, true},
+		"guests-read":        {true, true}, // root since step 8d-2 (D19)
 		"guests-write":       {false, true},
 	}
 	writes := map[string]bool{"admit": true, "admit-withdraw": true, "remove": true, "key-rotate": true, "key-abort": true, "users-write": true, "guests-write": true}
@@ -377,6 +377,9 @@ func TestMemberOperationCallers(t *testing.T) {
 		{"api remove", api, PathRemove, `{"name":"wu","actor":"user:andy","request_id":"r1","cluster_id":"c1"}`, 200, `"op_id":"user:andy"`},
 		{"api remove without cluster id", api, PathRemove, `{"name":"wu","actor":"user:andy","request_id":"r1"}`, 400, "cluster ID"},
 		{"api allow_unanswered", api, PathRemove, `{"name":"wu","actor":"user:andy","request_id":"r1","cluster_id":"c1","allow_unanswered":true}`, 403, "allow_unanswered"},
+		// Step 8d-2, D21: forget_guests is root's alone.
+		{"api forget_guests", api, PathRemove, `{"name":"wu","actor":"user:andy","request_id":"r1","cluster_id":"c1","forget_guests":true,"guests":2}`, 403, "only root's command may remove a member that owns guests"},
+		{"root forget_guests", root, PathRemove, `{"name":"wu","forget_guests":true,"guests":2,"reservations":1}`, 200, `"op_id":"root"`},
 		{"root admit", root, PathAdmit, `{"request":"x"}`, 200, `"op_id":"root"`},
 		{"root with an actor", root, PathAdmit, `{"request":"x","actor":"user:andy"}`, 400, "root's requests name no actor"},
 		{"root with a request id", root, PathRemove, `{"name":"wu","request_id":"r1"}`, 400, "root's requests name no actor"},

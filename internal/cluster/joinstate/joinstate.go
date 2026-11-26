@@ -62,9 +62,16 @@ type State struct {
 	Standalone string `json:"standalone"`
 	// Message is the last refusal, for health.
 	Message string `json:"message,omitempty"`
+	// Guests is the host's guest list the join call carries (step 8d-2,
+	// D14), the same on every repeat; omitted when the host has none.
+	// A build before step 8d-2 cannot read a join.json that holds it.
+	Guests []clusterstate.JoinGuest `json:"guests,omitempty"`
 }
 
 const format = 1
+
+// maxFile is the most of join.json that Read reads.
+const maxFile = 512 << 10
 
 // Peers returns the nodes a joining node accepts and may dial, without
 // itself: the join call's answer once one has been accepted (it replaces
@@ -99,6 +106,12 @@ func (s State) validate() error {
 	if s.Standalone == "" || filepath.Base(s.Standalone) != s.Standalone {
 		return fmt.Errorf("standalone directory %q is not a name in the data directory", s.Standalone)
 	}
+	if len(s.Guests) > 0 {
+		if err := clusterstate.CheckJoinGuestLimits(s.Guests); err != nil {
+			return err
+		}
+		return clusterstate.CheckJoinGuests(s.Guests)
+	}
 	return nil
 }
 
@@ -112,9 +125,15 @@ func Read(dir string) (*State, error) {
 		return nil, err
 	}
 	defer fh.Close()
-	b, err := io.ReadAll(io.LimitReader(fh, 256<<10))
+	// 512 KiB (step 8d-2, D14): the guest list is at most 160 KiB as
+	// JSON, more indented. One byte more is read to tell a file over the
+	// limit from a damaged one.
+	b, err := io.ReadAll(io.LimitReader(fh, maxFile+1))
 	if err != nil {
 		return nil, err
+	}
+	if len(b) > maxFile {
+		return nil, fmt.Errorf("%s is larger than 512 KiB", FileName)
 	}
 	dec := json.NewDecoder(bytes.NewReader(b))
 	dec.DisallowUnknownFields()

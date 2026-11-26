@@ -302,7 +302,7 @@ func (h *harness) admit(m, j *tnode) joincode.Admission {
 func (h *harness) join(j *tnode, adm joincode.Admission) StageOutcome {
 	h.t.Helper()
 	h.stop(j)
-	out := StageJoin(context.Background(), j.dir, j.cfg, j.key, adm, time.Now(), 100*time.Millisecond)
+	out := StageJoin(context.Background(), j.dir, j.cfg, j.key, adm, nil, time.Now(), 100*time.Millisecond)
 	h.start(j)
 	return out
 }
@@ -465,7 +465,7 @@ func TestJoinTwoNodes(t *testing.T) {
 	}
 	adm := joincode.Admission{ClusterID: smith.cfg.NodeID, For: joincode.Node{NodeID: smith.id, Name: smith.name, Address: smith.cfg.PeerAddress(), Pin: smith.key.Pin()},
 		Members: []joincode.Node{{NodeID: lang.id, Name: lang.name, Address: lang.cfg.PeerAddress(), Pin: lang.key.Pin()}}, ExpiresAt: 1}
-	if out := StageJoin(context.Background(), smith.dir, smith.cfg, smith.key, adm, time.Now(), 0); out.Outcome != "not_alone" {
+	if out := StageJoin(context.Background(), smith.dir, smith.cfg, smith.key, adm, nil, time.Now(), 0); out.Outcome != "not_alone" {
 		t.Fatalf("join on a node of two: %+v", out)
 	}
 	if _, err := os.Stat(filepath.Join(smith.state(), store.DBFile)); err != nil {
