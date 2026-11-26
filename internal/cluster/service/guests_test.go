@@ -7,6 +7,7 @@ import (
 
 	"github.com/greenbeanorg/skep/internal/cluster/clusterstate"
 	"github.com/greenbeanorg/skep/internal/cluster/guestapi"
+	"github.com/greenbeanorg/skep/internal/cluster/localapi"
 	"github.com/greenbeanorg/skep/internal/cluster/raftnet"
 )
 
@@ -74,5 +75,29 @@ func TestGuestOwnerIsTheCallersNode(t *testing.T) {
 	bad.Actor = "root"
 	if _, err := x.svc.GuestsWrite(ctx, bad); opCode(err) != raftnet.CodeInvalidRequest {
 		t.Fatalf("actor root: %v", err)
+	}
+}
+
+// D17: removing a member that owns a guest is refused before the status
+// round and any hand-over: the leader stays, the term does not change.
+func TestRemovalRefusedWhileOwningGuests(t *testing.T) {
+	h := newHarness(t)
+	defer h.stopAll()
+	h.cluster("smith", "langrishe", "star")
+	ctx := context.Background()
+	l := h.leader()
+	if _, err := l.svc.GuestsWrite(ctx, guestReq(clusterstate.TypeGuestReserve, "g-1", `{"kind":"container","name":"web1","key":"k-1"}`)); err != nil {
+		t.Fatal(err)
+	}
+	term := l.st.Stats().Term
+	x := follower(h)
+	_, err := x.svc.Remove(ctx, localapi.RemoveRequest{Name: l.name, ClusterID: l.svc.machine.View().ClusterID}, "root")
+	if opCode(err) != "refused" || h.leader() != l || l.st.Stats().Term != term {
+		t.Fatalf("removal of the leader that owns a reservation: %v (leader %v, term %d→%d)", err, h.leader() == l, term, l.st.Stats().Term)
+	}
+	for _, m := range l.svc.machine.View().Members {
+		if m.State != clusterstate.StateMember {
+			t.Fatalf("member %s is %s", m.Name, m.State)
+		}
 	}
 }
