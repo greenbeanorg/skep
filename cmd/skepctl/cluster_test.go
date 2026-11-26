@@ -62,7 +62,7 @@ func TestClusterCommands(t *testing.T) {
 func TestClusterPrintCleans(t *testing.T) {
 	var b strings.Builder
 	printCluster(&b, models.Cluster{ClusterID: "c\x1b[2J", NodeName: "n\u202e", Members: []models.ClusterMember{{Name: "a\nb"}}})
-	if strings.ContainsAny(b.String(), "\x1b‮") || strings.Contains(b.String(), "a\nb") {
+	if strings.ContainsAny(b.String(), "\x1b\u202e") || strings.Contains(b.String(), "a\nb") {
 		t.Fatalf("%q", b.String())
 	}
 }
