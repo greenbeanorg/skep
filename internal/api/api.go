@@ -86,6 +86,10 @@ type Options struct {
 	// believed. Empty, the default, means the header is ignored and the
 	// source address is always the TCP peer.
 	TrustedProxies []netip.Prefix
+	// Cluster is skep-cluster's socket for GET /cluster and the member
+	// operations (step 8c-2). Nil: every one of them answers 503
+	// no_quorum.
+	Cluster ClusterBackend
 	// UI serves every path outside /api: the web interface
 	// (internal/webui). It sets its own security headers. Nil, the
 	// default, answers those paths with the JSON 404. An unknown path
@@ -110,6 +114,7 @@ type handler struct {
 	log          *slog.Logger
 	tls          func() models.TLSInfo
 	proxies      []netip.Prefix
+	cluster      ClusterBackend
 }
 
 // AuditReader reads pages of the access audit log.
@@ -166,7 +171,7 @@ func (h *handler) routes() []route {
 		{http.MethodDelete, "/users/{id}", auth.PermUserManage, nil, h.deleteUser},
 		{http.MethodGet, "/roles", auth.PermRoleRead, nil, h.listRoles},
 		{http.MethodGet, "/audit", auth.PermAuditRead, nil, h.listAudit},
-	}, append(append(h.vmRoutes(), h.templateRoutes()...), h.containerRoutes()...)...)
+	}, append(append(append(h.vmRoutes(), h.templateRoutes()...), h.containerRoutes()...), h.clusterRoutes()...)...)
 }
 
 // NewHandler returns the API as an http.Handler, wrapped in the request ID,
@@ -179,6 +184,10 @@ func NewHandler(opts Options) http.Handler {
 	h := &handler{
 		backend: opts.Backend, auth: opts.Auth, users: opts.Users, audit: opts.Audit, history: opts.AuditLog,
 		checks: opts.Checks, log: log, tls: opts.TLS, proxies: opts.TrustedProxies,
+	}
+	h.cluster = opts.Cluster
+	if h.cluster == nil {
+		h.cluster = noCluster{}
 	}
 	h.consoleCheck = opts.ConsoleSessionCheck
 	if h.consoleCheck <= 0 {

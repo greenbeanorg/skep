@@ -23,6 +23,7 @@ import (
 	"github.com/greenbeanorg/skep/internal/apidb"
 	"github.com/greenbeanorg/skep/internal/auth"
 	"github.com/greenbeanorg/skep/internal/cluster/clustertest"
+	"github.com/greenbeanorg/skep/internal/cluster/memberapi"
 	"github.com/greenbeanorg/skep/internal/ctlstate"
 	"github.com/greenbeanorg/skep/internal/database"
 	"github.com/greenbeanorg/skep/internal/termpass"
@@ -121,7 +122,8 @@ func newStackWith(t *testing.T, cert **tls.Certificate) *stack {
 	}
 	access := apidb.NewAccessLog(db)
 	// The users live in a real one-node skep-cluster (step 8c-1).
-	ustack := clustertest.Start(t).Users(t, db)
+	node := clustertest.Start(t)
+	ustack := node.Users(t, db)
 	store := ustack.Store
 	users := auth.NewUsers(store, ustack.Writer, hasher, access, quiet)
 	throttle := auth.DefaultThrottleConfig()
@@ -142,6 +144,7 @@ func newStackWith(t *testing.T, cert **tls.Certificate) *stack {
 	vms := &fakeVMs{}
 	h := api.NewHandler(api.Options{
 		Backend: fakeBackend{}, VMs: vms, Auth: authn, Users: users, Audit: access, AuditLog: access, Logger: quiet,
+		Cluster: memberapi.NewClient(node.Socket),
 	})
 	s := &stack{db: db, authn: authn, fakeVMs: vms}
 	s.srv = httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -193,6 +196,8 @@ type terminal struct {
 	passwords []string
 	confirm   *bool // nil: no terminal
 	prompts   []string
+	// lines answer readLine; none: no terminal.
+	lines []string
 }
 
 func (term *terminal) env(stateDir string, stdin string, stdout, stderr io.Writer) env {
@@ -213,6 +218,15 @@ func (term *terminal) env(stateDir string, stdin string, stdout, stderr io.Write
 				return false, termpass.ErrNoTerminal
 			}
 			return *term.confirm, nil
+		},
+		readLine: func(_ context.Context, prompt string) (string, error) {
+			term.prompts = append(term.prompts, prompt)
+			if len(term.lines) == 0 {
+				return "", termpass.ErrNoTerminal
+			}
+			l := term.lines[0]
+			term.lines = term.lines[1:]
+			return l, nil
 		},
 	}
 }

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/greenbeanorg/skep/internal/cluster/clusterstate"
+	"github.com/greenbeanorg/skep/internal/cluster/memberapi"
 	"github.com/greenbeanorg/skep/internal/cluster/store"
 	"github.com/greenbeanorg/skep/internal/cluster/userapi"
 	"github.com/greenbeanorg/skep/internal/httpkit"
@@ -39,6 +40,20 @@ const (
 // admit.
 const CodeForbidden = "forbidden"
 
+// The member messages are package memberapi's (step 8c-2, D21), which
+// skep-api imports without the rest of this package.
+type (
+	AdmitRequest    = memberapi.AdmitRequest
+	AdmitResult     = memberapi.AdmitResult
+	WithdrawRequest = memberapi.WithdrawRequest
+	WithdrawResult  = memberapi.WithdrawResult
+	RemoveRequest   = memberapi.RemoveRequest
+	RemoveResult    = memberapi.RemoveResult
+	JoinStatus      = memberapi.JoinStatus
+	RemovedStatus   = memberapi.RemovedStatus
+	ClockStatus     = memberapi.ClockStatus
+)
+
 // Operation is one operation of the local API and who may call it.
 type Operation struct {
 	Name   string
@@ -58,14 +73,14 @@ var Operations = []Operation{
 	// The Raft configuration is what "skep-cluster listen" (root)
 	// checks before it changes anything. skep-api has no use for it.
 	{Name: "raft-configuration", Method: http.MethodGet, Path: PathRaftConfiguration, Root: true, API: false},
-	// Admitting a host and withdrawing an admission are root-only in
-	// step 8b; skep-api gets them, with cluster:manage, in step 8c
-	// (ADR 0013 B2).
-	{Name: "admit", Method: http.MethodPost, Path: PathAdmit, Root: true, API: false},
-	{Name: "admit-withdraw", Method: http.MethodPost, Path: PathWithdraw, Root: true, API: false},
-	// Removing a member is root-only in step 8b-2a, like admit; skep-api
-	// gets it with cluster:manage in step 8c (decision D3).
-	{Name: "remove", Method: http.MethodPost, Path: PathRemove, Root: true, API: false},
+	// Admitting a host, withdrawing an admission and removing a member:
+	// root's commands, and skep-api's with cluster:manage (step 8c-2,
+	// D22). For the API account the request names the user as its actor
+	// and carries a request ID; allow_unanswered is root's alone (D23)
+	// and a removal must carry the cluster ID (D24).
+	{Name: "admit", Method: http.MethodPost, Path: PathAdmit, Root: true, API: true},
+	{Name: "admit-withdraw", Method: http.MethodPost, Path: PathWithdraw, Root: true, API: true},
+	{Name: "remove", Method: http.MethodPost, Path: PathRemove, Root: true, API: true},
 	// Rotating this node's key and aborting it: root only, local; no
 	// operation of skep-api changes a pin (step 8b-2b, D1; "--api"
 	// arrives with forwarding, step 8e).
@@ -110,67 +125,6 @@ type KeySeen struct {
 	At     time.Time `json:"at"`
 }
 
-// AdmitRequest is the body of the admit operation.
-type AdmitRequest struct {
-	// Request is the line "skep-cluster join-request" printed.
-	Request string `json:"request"`
-}
-
-// AdmitResult is the answer of the admit operation.
-type AdmitResult struct {
-	// Admission is the line to paste into "skep-cluster join".
-	Admission string `json:"admission"`
-	ClusterID string `json:"cluster_id"`
-	NodeID    string `json:"node_id"`
-	Name      string `json:"name"`
-	Pin       string `json:"pin"`
-	ExpiresAt int64  `json:"expires_at"`
-	OpID      string `json:"op_id"`
-}
-
-// WithdrawRequest is the body of the admit-withdraw operation.
-type WithdrawRequest struct {
-	Name string `json:"name"`
-}
-
-// WithdrawResult is its answer.
-type WithdrawResult struct {
-	NodeID string `json:"node_id"`
-	Name   string `json:"name"`
-	OpID   string `json:"op_id"`
-}
-
-// RemoveRequest is the body of the remove operation.
-type RemoveRequest struct {
-	Name string `json:"name"`
-	// AllowUnanswered removes the member although too few of the
-	// remaining voters answered a status round (decision D7c). It needs
-	// ClusterID, typed back by the administrator.
-	AllowUnanswered bool   `json:"allow_unanswered,omitempty"`
-	ClusterID       string `json:"cluster_id,omitempty"`
-}
-
-// RemoveResult is its answer: the first entry (removing) is committed.
-type RemoveResult struct {
-	NodeID    string `json:"node_id"`
-	Name      string `json:"name"`
-	OpID      string `json:"op_id"`
-	ClusterID string `json:"cluster_id"`
-	// HandedOver is true when the node was the leader and handed the
-	// leadership over first (decision D6).
-	HandedOver bool `json:"handed_over,omitempty"`
-	// Unanswered names the remaining voters that did not answer the
-	// status round of the removal (only with AllowUnanswered).
-	Unanswered []string `json:"unanswered,omitempty"`
-}
-
-// RemovedStatus is Status for a node that was removed.
-type RemovedStatus struct {
-	ClusterID string `json:"cluster_id"`
-	At        string `json:"at"`
-	How       string `json:"how"`
-}
-
 // OpError is an error answer of an operation that changes something.
 type OpError struct {
 	HTTPStatus int
@@ -179,13 +133,6 @@ type OpError struct {
 }
 
 func (e *OpError) Error() string { return e.Code + ": " + e.Message }
-
-// JoinStatus is a joining node's part of Status.
-type JoinStatus struct {
-	Phase     string `json:"phase"`
-	ClusterID string `json:"cluster_id"`
-	Message   string `json:"message,omitempty"`
-}
 
 // Status is the answer of the status operation. Everything in it is
 // public within the cluster: IDs, names, addresses and key pins.
@@ -237,22 +184,6 @@ type Status struct {
 	// KeysSeen is, per other member, the pin it last used with this node.
 	KeysSeen []KeySeen `json:"keys_seen,omitempty"`
 	Build    string    `json:"build"`
-}
-
-// ClockStatus is one member's clock as this node measured it.
-type ClockStatus struct {
-	NodeID string `json:"node_id"`
-	Name   string `json:"name"`
-	// Known is false while there is no sample: none yet, a build
-	// without the clock operation, or no answer (Note says which).
-	Known bool `json:"known"`
-	// OffsetMillis is the member's time minus this node's, at the
-	// midpoint of the request; UncertaintyMillis is half the round trip.
-	OffsetMillis      int64     `json:"offset_ms,omitempty"`
-	UncertaintyMillis int64     `json:"uncertainty_ms,omitempty"`
-	RoundTripMillis   int64     `json:"round_trip_ms,omitempty"`
-	At                time.Time `json:"at,omitempty"`
-	Note              string    `json:"note,omitempty"`
 }
 
 // StateMachineStatus is the state machine's part of Status.
@@ -331,7 +262,11 @@ func NewHandler(b Backend, o HandlerOptions) http.Handler {
 			if !decodeBody(w, r, &req) {
 				return
 			}
-			res, err := b.Admit(r.Context(), req.Request, actorOf(r))
+			actor, ok := callerActor(w, r, log, "admit", req.Actor, req.RequestID)
+			if !ok {
+				return
+			}
+			res, err := b.Admit(r.Context(), req.Request, actor)
 			writeResult(w, r, res, err)
 		},
 		PathRemove: func(w http.ResponseWriter, r *http.Request) {
@@ -339,7 +274,22 @@ func NewHandler(b Backend, o HandlerOptions) http.Handler {
 			if !decodeBody(w, r, &req) {
 				return
 			}
-			res, err := b.Remove(r.Context(), req, actorOf(r))
+			actor, ok := callerActor(w, r, log, "remove", req.Actor, req.RequestID)
+			if !ok {
+				return
+			}
+			if actor != "root" {
+				switch {
+				case req.AllowUnanswered:
+					httpkit.WriteError(w, r, http.StatusForbidden, CodeForbidden, "allow_unanswered is not open to this caller; only root's command may remove a member without the remaining voters' answers")
+					return
+				case req.ClusterID == "":
+					httpkit.WriteError(w, r, http.StatusBadRequest, "invalid_request", "a removal by the API must carry the cluster ID")
+					return
+				}
+			}
+			req.Actor, req.RequestID = "", ""
+			res, err := b.Remove(r.Context(), req, actor)
 			writeResult(w, r, res, err)
 		},
 		PathKeyRotate: func(w http.ResponseWriter, r *http.Request) {
@@ -380,7 +330,11 @@ func NewHandler(b Backend, o HandlerOptions) http.Handler {
 			if !decodeBody(w, r, &req) {
 				return
 			}
-			res, err := b.Withdraw(r.Context(), req.Name, actorOf(r))
+			actor, ok := callerActor(w, r, log, "admit-withdraw", req.Actor, req.RequestID)
+			if !ok {
+				return
+			}
+			res, err := b.Withdraw(r.Context(), req.Name, actor)
 			writeResult(w, r, res, err)
 		},
 	}
@@ -459,6 +413,28 @@ func actorOf(r *http.Request) string {
 		return "root"
 	}
 	return "unknown"
+}
+
+// callerActor is the actor of a member operation (D22 of step 8c-2): for
+// root "root", and a request that names an actor or a request ID is
+// refused; for the API account the actor it names, which must be
+// "user:<username>", with a request ID, both logged. Anything else is
+// refused before the operation runs.
+func callerActor(w http.ResponseWriter, r *http.Request, log *slog.Logger, op, actor, requestID string) (string, bool) {
+	if actorOf(r) == "root" {
+		if actor != "" || requestID != "" {
+			httpkit.WriteError(w, r, http.StatusBadRequest, "invalid_request", "root's requests name no actor and no request ID: the actor is root")
+			return "", false
+		}
+		return "root", true
+	}
+	if !memberapi.ValidUserActor(actor) || !memberapi.ValidRequestID(requestID) {
+		httpkit.WriteError(w, r, http.StatusBadRequest, "invalid_request", "this caller's request must name the user (actor \"user:NAME\") and carry a request ID")
+		return "", false
+	}
+	log.Info("cluster socket: member operation for skep-api", "operation", op, "actor", actor,
+		"api_request_id", requestID, "request_id", httpkit.RequestID(r.Context()))
+	return actor, true
 }
 
 func decodeBody(w http.ResponseWriter, r *http.Request, v any) bool {

@@ -644,6 +644,11 @@ func (s *Service) Remove(ctx context.Context, req localapi.RemoveRequest, actor 
 		return localapi.RemoveResult{}, &localapi.OpError{HTTPStatus: http.StatusConflict, Code: "joining",
 			Message: "this node is joining a cluster; remove on a member"}
 	}
+	// D24 of step 8c-2: a cluster ID given with a removal is compared
+	// here, and again on the leader.
+	if err := clusterIDMismatch(req.ClusterID, s.machine.View().ClusterID); err != nil {
+		return localapi.RemoveResult{}, err
+	}
 	opID, err := ids.NewUUID()
 	if err != nil {
 		return localapi.RemoveResult{}, err
@@ -655,6 +660,20 @@ func (s *Service) Remove(ctx context.Context, req localapi.RemoveRequest, actor 
 	var res localapi.RemoveResult
 	err = s.toLeader(ctx, raftnet.OpRemove, fw, &res)
 	return res, err
+}
+
+// CodeClusterIDMismatch is the refusal of a removal whose cluster ID is
+// not this cluster's (D24 of step 8c-2).
+const CodeClusterIDMismatch = "cluster_id_mismatch"
+
+// clusterIDMismatch compares a removal's cluster ID, when one was given,
+// with this cluster's.
+func clusterIDMismatch(given, have string) error {
+	if given == "" || given == have {
+		return nil
+	}
+	return &localapi.OpError{HTTPStatus: http.StatusConflict, Code: CodeClusterIDMismatch,
+		Message: fmt.Sprintf("the cluster ID given (%s) is not this cluster's (%s); nothing was written", given, have)}
 }
 
 func refusedErr(msg string) *localapi.OpError {
@@ -690,8 +709,8 @@ func (s *Service) removeAsLeader(ctx context.Context, req forwardRemove, origin 
 			return localapi.RemoveResult{}, refusedErr(fmt.Sprintf("%s is joining; %s cannot be removed until that join has finished or %s is removed", m.Name, x.Name, m.Name))
 		}
 	}
-	if req.AllowUnanswered && req.ClusterID != view.ClusterID {
-		return localapi.RemoveResult{}, refusedErr(fmt.Sprintf("the cluster ID typed back (%s) is not this cluster's (%s); nothing was written", req.ClusterID, view.ClusterID))
+	if err := clusterIDMismatch(req.ClusterID, view.ClusterID); err != nil {
+		return localapi.RemoveResult{}, err
 	}
 	// D7c: without x, a majority of the remaining voters must have
 	// answered a status round, which is made now.

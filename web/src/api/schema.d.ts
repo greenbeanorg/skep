@@ -1289,6 +1289,113 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/cluster": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * This node's view of its cluster
+         * @description Requires `system:read`. What this node's `skep-cluster` knows: the
+         *     cluster ID, the members (with their key pins and whether they
+         *     vote), the pending admissions, what removals and key rotations
+         *     wait for, the members' clocks and the service's health. Nothing in
+         *     it is secret. Without `skep-cluster` on this node: `503
+         *     no_quorum`.
+         */
+        get: operations["getCluster"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/cluster/admissions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Admit a host to the cluster
+         * @description Requires `cluster:manage`. `request` is the line `skep-cluster
+         *     join-request` printed on the host (at most 2 KiB). The answer is
+         *     the admission line to paste into `skep-cluster join` there;
+         *     compare the pin with the one the host shows on its own console
+         *     first. This node needs a listen address (`skep-cluster listen
+         *     -address ADDR` as root): otherwise `409 cluster_refused`. Sent
+         *     once; never repeated by skep-api.
+         */
+        post: operations["admitHost"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/cluster/admissions/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The admitted host's node name. */
+                name: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Withdraw a pending admission
+         * @description Requires `cluster:manage`. No such admission is `404 not_found`.
+         */
+        delete: operations["withdrawAdmission"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/cluster/members/{name}/remove": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The member's node name. */
+                name: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Remove a member from the cluster
+         * @description Requires `cluster:manage`. `cluster_id` is required and must be
+         *     the cluster's (compared on this node and again on the leader):
+         *     otherwise `409 cluster_id_mismatch` and nothing is written. When
+         *     too few of the remaining voters answer now, `409
+         *     voters_unanswered` and nothing is written; the API offers no
+         *     override. The answer comes once the first entry of the removal is
+         *     committed (up to about 90 s); the leader finishes the removal by
+         *     itself. Removing the leader hands the leadership over first
+         *     (`handed_over`); afterwards that node's API answers `503
+         *     no_quorum`. The removed host keeps its guests running and needs
+         *     `skep-cluster leave --wipe` before it can join again.
+         */
+        post: operations["removeMember"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/metrics": {
         parameters: {
             query?: never;
@@ -2051,6 +2158,105 @@ export interface components {
             pools: string[];
             bridges: string[];
         };
+        Cluster: {
+            cluster_id: string;
+            node_id: string;
+            node_name: string;
+            /** @description Whether this node knows a leader now. */
+            leader_known: boolean;
+            /**
+             * Format: int64
+             * @description The log index the replicated state machine stopped at (an entry this build cannot apply).
+             */
+            state_machine_stopped_at?: number;
+            members: components["schemas"]["ClusterMember"][];
+            pending_admissions: components["schemas"]["ClusterPending"][];
+            /** @description Per member being removed, what its removal waits for. */
+            removals?: string[];
+            /** @description Per member rotating its key, what the rotation waits for. */
+            rotations?: string[];
+            /** @description Members that have not applied the last removal yet. */
+            unapplied_removal?: string[];
+            clocks?: components["schemas"]["ClusterClock"][];
+            health: components["schemas"]["Health"];
+            joining?: {
+                phase: string;
+                cluster_id: string;
+                message?: string;
+            };
+            removed?: {
+                cluster_id: string;
+                at: string;
+                how: string;
+            };
+            build: string;
+        };
+        ClusterMember: {
+            id: string;
+            name: string;
+            /** @description member, joining or removing. */
+            state: string;
+            /** @description The node-to-node address, or "" for a node without a listener. */
+            address: string;
+            /** @description The SHA-256 pin of the member's node key. */
+            pin: string;
+            /** @description Set while the member rotates its key. */
+            next_pin?: string;
+            voter: boolean;
+        };
+        ClusterPending: {
+            node_id: string;
+            name: string;
+            address: string;
+            pin: string;
+            /** Format: date-time */
+            expires_at: string;
+        };
+        ClusterClock: {
+            node_id: string;
+            name: string;
+            known: boolean;
+            /** Format: int64 */
+            offset_ms?: number;
+            /** Format: int64 */
+            uncertainty_ms?: number;
+            /** Format: int64 */
+            round_trip_ms?: number;
+            note?: string;
+        };
+        ClusterAdmitRequest: {
+            /** @description The line "skep-cluster join-request" printed on the host. */
+            request: string;
+        };
+        ClusterAdmission: {
+            /** @description The line to paste into "skep-cluster join" on the host. */
+            admission: string;
+            cluster_id: string;
+            node_id: string;
+            name: string;
+            address: string;
+            pin: string;
+            /** Format: date-time */
+            expires_at: string;
+            op_id: string;
+        };
+        ClusterWithdrawal: {
+            node_id: string;
+            name: string;
+            op_id: string;
+        };
+        ClusterRemoveRequest: {
+            /** @description The cluster's ID, typed back (GET /cluster). */
+            cluster_id: string;
+        };
+        ClusterRemoval: {
+            node_id: string;
+            name: string;
+            cluster_id: string;
+            op_id: string;
+            /** @description The member was the leader and handed the leadership over first. */
+            handed_over: boolean;
+        };
         ErrorResponse: {
             error: {
                 /**
@@ -2059,7 +2265,7 @@ export interface components {
                  *     by task submission, which is not exposed yet.
                  * @enum {string}
                  */
-                code: "invalid_request" | "not_found" | "method_not_allowed" | "internal_error" | "service_unavailable" | "agent_unavailable" | "agent_version_mismatch" | "unauthenticated" | "invalid_credentials" | "forbidden" | "rate_limited" | "setup_required" | "username_taken" | "last_admin" | "unknown_role" | "no_quorum" | "users_import_pending" | "too_many_users" | "resource_busy" | "idempotency_key_conflict" | "not_cancellable" | "queue_full" | "shutting_down";
+                code: "invalid_request" | "not_found" | "method_not_allowed" | "internal_error" | "service_unavailable" | "agent_unavailable" | "agent_version_mismatch" | "unauthenticated" | "invalid_credentials" | "forbidden" | "rate_limited" | "setup_required" | "username_taken" | "last_admin" | "unknown_role" | "no_quorum" | "users_import_pending" | "too_many_users" | "cluster_refused" | "voters_unanswered" | "cluster_id_mismatch" | "resource_busy" | "idempotency_key_conflict" | "not_cancellable" | "queue_full" | "shutting_down";
                 /** @description Human-readable description. */
                 message: string;
                 request_id?: string;
@@ -2550,6 +2756,35 @@ export interface components {
         };
         /** @description The request is malformed (`invalid_request`). */
         InvalidRequest: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["ErrorResponse"];
+            };
+        };
+        /**
+         * @description The cluster refused (`cluster_refused`, the message says why; for a
+         *     node without a listen address it names `skep-cluster listen
+         *     -address ADDR`), too few remaining voters answered
+         *     (`voters_unanswered`), or the cluster ID given is not the
+         *     cluster's (`cluster_id_mismatch`). Nothing was written.
+         */
+        ClusterRefused: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["ErrorResponse"];
+            };
+        };
+        /**
+         * @description Nothing can be committed now (`no_quorum`). `details.outcome` is
+         *     `not_written` (no leader, skep-cluster not reachable, joining,
+         *     removed, …) or `unknown` (sent and no answer, or the outcome was
+         *     not known within the cluster's limit: check GET /cluster).
+         */
+        ClusterNoQuorum: {
             headers: {
                 [name: string]: unknown;
             };
@@ -4463,6 +4698,120 @@ export interface operations {
             409: components["responses"]["VMConflict"];
             422: components["responses"]["VMUnprocessable"];
             503: components["responses"]["Unavailable"];
+        };
+    };
+    getCluster: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The view. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Cluster"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            503: components["responses"]["ClusterNoQuorum"];
+        };
+    };
+    admitHost: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ClusterAdmitRequest"];
+            };
+        };
+        responses: {
+            /** @description Admitted; the admission is pending until the host joins or it expires. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClusterAdmission"];
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["ClusterRefused"];
+            503: components["responses"]["ClusterNoQuorum"];
+        };
+    };
+    withdrawAdmission: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The admitted host's node name. */
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Withdrawn. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClusterWithdrawal"];
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["ClusterRefused"];
+            503: components["responses"]["ClusterNoQuorum"];
+        };
+    };
+    removeMember: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The member's node name. */
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ClusterRemoveRequest"];
+            };
+        };
+        responses: {
+            /** @description The removal is under way. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClusterRemoval"];
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["ClusterRefused"];
+            503: components["responses"]["ClusterNoQuorum"];
         };
     };
     getMetrics: {

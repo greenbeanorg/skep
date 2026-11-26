@@ -337,9 +337,9 @@ forbidden`.
 | `health` | `GET /cluster/v1/health` | yes | yes |
 | `status` | `GET /cluster/v1/status` | yes | yes |
 | `raft-configuration` | `GET /cluster/v1/raft/configuration` | yes | no |
-| `admit` | `POST /cluster/v1/admit` | yes | no |
-| `admit-withdraw` | `POST /cluster/v1/admit/withdraw` | yes | no |
-| `remove` | `POST /cluster/v1/remove` | yes | no |
+| `admit` | `POST /cluster/v1/admit` | yes | yes |
+| `admit-withdraw` | `POST /cluster/v1/admit/withdraw` | yes | yes |
+| `remove` | `POST /cluster/v1/remove` | yes | yes |
 | `key-rotate` | `POST /cluster/v1/key/rotate` | yes | no |
 | `key-abort` | `POST /cluster/v1/key/abort` | yes | no |
 | `users-read` | `GET /cluster/v1/users` | no | yes |
