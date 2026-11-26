@@ -14,6 +14,9 @@ import (
 
 const clusterUsage = `usage:
   skepctl cluster show [--json] [--server HOST]
+  skepctl cluster guests [--json] [--server HOST]
+        the cluster's guest inventory: every VM and jail, its owner node, and
+        the names reserved by creates and clones under way
   skepctl cluster admit REQUEST [--json] [--server HOST]
         admit a host: REQUEST is the line "skep-cluster join-request" printed on it
   skepctl cluster withdraw NAME [--json] [--server HOST]
@@ -31,6 +34,8 @@ func cmdCluster(ctx context.Context, args []string, e env) error {
 	switch args[0] {
 	case "show":
 		return clusterShow(ctx, args[1:], e)
+	case "guests":
+		return clusterGuests(ctx, args[1:], e)
 	case "admit":
 		return clusterAdmit(ctx, args[1:], e)
 	case "withdraw":
@@ -60,6 +65,54 @@ func clusterShow(ctx context.Context, args []string, e env) error {
 		return s.explain(err)
 	}
 	return output(e, *f.json, c, func(w io.Writer) error { printCluster(w, c); return nil })
+}
+
+// clusterGuests is "skepctl cluster guests" (step 8d-1, D35).
+func clusterGuests(ctx context.Context, args []string, e env) error {
+	f := newReadFlags("skepctl cluster guests", e)
+	if _, err := f.parse(args, 0); err != nil {
+		return err
+	}
+	s, err := connect(e, *f.server)
+	if err != nil {
+		return err
+	}
+	defer s.client.Close()
+	l, err := s.client.ClusterGuests(ctx)
+	if err != nil {
+		return s.explain(err)
+	}
+	return output(e, *f.json, l, func(w io.Writer) error { printGuests(w, l); return nil })
+}
+
+// printGuests prints the inventory; every value from the server is
+// cleaned.
+func printGuests(w io.Writer, l models.ClusterGuestList) {
+	fmt.Fprintf(w, "Cluster %s, guest inventory at index %d (%d entries)\n", clean(l.ClusterID), l.GuestsIndex, len(l.Items))
+	if len(l.Items) == 0 {
+		return
+	}
+	fmt.Fprintf(w, "%-9s %-24s %-36s %-8s %-24s %-36s %s\n", "KIND", "NAME", "ID", "STATE", "OWNER", "TASK", "SINCE")
+	for _, g := range l.Items {
+		id, task, state := g.ID, g.TaskID, g.State
+		if id == "" {
+			id = "-"
+		}
+		if task == "" {
+			task = "-"
+		}
+		if g.Flagged {
+			state += " FLAGGED"
+		}
+		fmt.Fprintf(w, "%-9s %-24s %-36s %-8s %-24s %-36s %s\n", clean(g.Kind), clean(g.Name), clean(id), clean(state),
+			clean(g.Owner.NodeName), clean(task), g.Time.UTC().Format(time.RFC3339))
+	}
+	for _, g := range l.Items {
+		if g.Flagged {
+			fmt.Fprintln(w, "FLAGGED: another guest of the same kind and name was added first; rename or delete one of them.")
+			break
+		}
+	}
 }
 
 // printCluster prints the view; every value from the server is cleaned.

@@ -20,6 +20,14 @@ func (c *Client) Cluster(ctx context.Context) (models.Cluster, error) {
 	return out, err
 }
 
+// ClusterGuests returns the cluster's guest inventory (step 8d-1):
+// system:read, vm:read and container:read.
+func (c *Client) ClusterGuests(ctx context.Context) (models.ClusterGuestList, error) {
+	var out models.ClusterGuestList
+	err := c.do(ctx, http.MethodGet, "/cluster/guests", nil, nil, &out)
+	return out, err
+}
+
 // AdmitHost admits a host by the line "skep-cluster join-request" printed
 // on it (cluster:manage).
 func (c *Client) AdmitHost(ctx context.Context, request string) (models.ClusterAdmission, error) {

@@ -60,6 +60,27 @@ info:
     imported (`skep-api admin import-users`), a user change answers
     `503 users_import_pending`.
 
+    **The limit on a node without quorum** (step 8d-1, ADR 0013 amendment
+    6). While this node has no quorum, and for a degraded session (also
+    after quorum is back), only these are served: every `GET` except
+    `/vms/{id}/console/serial`, `POST /auth/login`, `POST /auth/logout`,
+    `POST /vms/{id}/actions`, `POST /containers/{id}/actions` and
+    `POST /tasks/{id}/cancel`. Every other request answers `503 no_quorum`
+    before anything is done, with `details.outcome` `not_written` and
+    `details.reason` `no_quorum` or `degraded_session`, and is audited
+    (`request.no_quorum`). While there is no quorum every answer to an
+    authenticated request carries the header `Skep-Quorum: none`.
+
+    **The guest inventory** (step 8d-1). VM and jail names are unique in
+    the cluster per kind: a create or a clone first reserves its name in
+    the replicated inventory (`409 vm_name_taken` or
+    `409 container_name_taken` naming the node that holds it,
+    `409 too_many_guests` at 10000 guests and reservations, `503
+    no_quorum` when the reservation cannot be committed; in each case the
+    host is not asked). `GET /cluster/guests` lists the inventory. While
+    the host's agent is draining (an upgrade or a join), a new task
+    answers `503 node_draining` with the reason and the expiry.
+
     **Authorization.** Every user has one role, and a role is a set of
     permission strings. Each endpoint requires one permission (listed in
     its description); anything not granted is denied with
@@ -2267,6 +2288,33 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "503":
           $ref: "#/components/responses/ClusterNoQuorum"
+  /cluster/guests:
+    get:
+      tags: [cluster]
+      operationId: getClusterGuests
+      x-skep-permission: system:read
+      summary: The cluster's guest inventory
+      description: |
+        Requires `system:read`, `vm:read` and `container:read`. Every VM
+        and jail in the replicated inventory (state `present`) with the
+        node that owns it, and every name reserved by a create or clone
+        under way (state `creating`, no ID). Among guests of the same kind
+        and name every one but the one added first is `flagged`. Served
+        without quorum and to a degraded session. Without `skep-cluster`
+        on this node: `503 no_quorum`.
+      responses:
+        "200":
+          description: The inventory.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClusterGuestList"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "503":
+          $ref: "#/components/responses/ClusterNoQuorum"
   /cluster/admissions:
     post:
       tags: [cluster]
@@ -2584,8 +2632,10 @@ components:
       description: |
         Nothing can be committed now (`no_quorum`). `details.outcome` is
         `not_written` (no leader, skep-cluster not reachable, joining,
-        removed, a degraded session on a membership change, …) or `unknown` (sent and no answer, or the outcome was
-        not known within the cluster's limit: check GET /cluster).
+        removed, a degraded session on a change, …) or `unknown` (sent and no answer, or the outcome was
+        not known within the cluster's limit: check GET /cluster). A
+        request refused by the limit on a node without quorum also has
+        `details.reason`: `no_quorum` or `degraded_session`.
       content:
         application/json:
           schema:
@@ -3802,6 +3852,48 @@ components:
         handed_over:
           type: boolean
           description: The member was the leader and handed the leadership over first.
+    ClusterGuest:
+      type: object
+      required: [name, kind, owner, state, flagged, time]
+      properties:
+        id:
+          type: string
+          description: The guest's ID; absent for a reservation.
+        name: {type: string}
+        kind:
+          type: string
+          enum: [vm, container]
+        owner:
+          type: object
+          required: [node_id, node_name]
+          properties:
+            node_id: {type: string}
+            node_name: {type: string}
+        state:
+          type: string
+          enum: [creating, present]
+        flagged:
+          type: boolean
+          description: Another guest of the same kind and name was added first.
+        task_id:
+          type: string
+          description: The create or clone task, where it is known.
+        time:
+          type: string
+          format: date-time
+          description: When the entry was written, by the cluster leader's clock.
+    ClusterGuestList:
+      type: object
+      required: [cluster_id, guests_index, items]
+      properties:
+        cluster_id: {type: string}
+        guests_index:
+          type: integer
+          format: int64
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ClusterGuest"
     ErrorResponse:
       type: object
       required: [error]
@@ -3843,6 +3935,8 @@ components:
                 - not_cancellable
                 - queue_full
                 - shutting_down
+                - node_draining
+                - too_many_guests
             message:
               type: string
               description: Human-readable description.

@@ -87,7 +87,7 @@ func NewReconciler(o ReconcilerOptions) *Reconciler {
 // Watch makes rounds every 5 seconds while the task is unfinished, for at
 // most 15 minutes. A task ID that is not valid is ignored.
 func (r *Reconciler) Watch(taskID string) {
-	if !clusterstate.ValidNodeID(taskID) {
+	if r == nil || !clusterstate.ValidNodeID(taskID) {
 		return
 	}
 	r.mu.Lock()
