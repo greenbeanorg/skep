@@ -342,6 +342,15 @@ implemented:
   console). Every one is a typed request that becomes a task, or, for the
   console, a byte stream to one VM. There is no operation that takes a
   command, a path, or a shell string.
+- **Every operation names its callers** (step 8d-1): one table
+  (`internalapi.Operations`) says whether root and the API account may
+  call each operation, every route is registered from it, and one check
+  by the kernel's peer UID (root first) runs before the handler. No
+  header takes part in that decision. The drain's set and clear
+  (`POST`/`DELETE /internal/v1/drain`) are the first **root-only**
+  operations: a compromised `skep-api` cannot stop a node from accepting
+  tasks this way (it can read the drain); a drain lasts 60 seconds unless
+  renewed and an agent restart clears it.
 - For a cancellation the agent writes its own audit entry with the actor
   the API named, the peer UID it read from the kernel, the client's
   address, and the request ID. That entry is in `agent.db`, which
@@ -405,6 +414,18 @@ procedure in [Joining hosts into a cluster](../administration/cluster.md).
   on top of file permissions, and each operation names which of the two
   may call it. `admit`, `admit --withdraw` and `remove` are root-only in
   this step.
+- **The guest inventory** (step 8d-1): `guests-write` is open to the API
+  account only, and its request has no owner field: the owner of an entry
+  is this node, or, for a write a member passes to the leader, the node of
+  the calling key. A compromised `skep-api` or member can reserve names up
+  to the 10000 limit (denying creates in the cluster) and add or remove
+  entries of its own node only; the inventory holds no configuration
+  (ADR 0013 amendment 6, B2).
+- **Without quorum** `skep-api` serves only reads (not the serial
+  console), logins, power actions and task cancellation, and a degraded
+  session (a login without quorum) keeps that limit after quorum returns;
+  the check is in the one place access is decided, and a route that does
+  not declare its rule is refused.
 - **A single host opens no cluster port.** Port 8444 opens only on a
   listen address given by `listen`, `join-request` or `init -address`,
   and closes again with `listen -none` (only while the node is alone with
