@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/greenbeanorg/skep/internal/cluster/guestapi"
 	"github.com/greenbeanorg/skep/internal/cluster/memberapi"
 	"github.com/greenbeanorg/skep/internal/cluster/store"
 	"github.com/greenbeanorg/skep/internal/peercred"
@@ -35,6 +36,12 @@ func (fakeBackend) UsersRead(_ context.Context, after uint64, _ time.Duration) (
 }
 func (fakeBackend) UsersWrite(_ context.Context, req UsersWriteRequest) (UsersWriteResult, error) {
 	return UsersWriteResult{Index: 7, Outcome: req.Actor}, nil
+}
+func (fakeBackend) GuestsRead(context.Context) (guestapi.GuestsAnswer, error) {
+	return guestapi.GuestsAnswer{ClusterID: "c"}, nil
+}
+func (fakeBackend) GuestsWrite(_ context.Context, req guestapi.WriteRequest) (guestapi.WriteResult, error) {
+	return guestapi.WriteResult{Index: 8, Outcome: req.Actor}, nil
 }
 func (fakeBackend) RaftConfiguration(context.Context) (RaftConfiguration, error) {
 	return RaftConfiguration{Servers: []store.Server{{ID: "n1", Address: store.NoAddress, Voter: true}}}, nil
@@ -161,8 +168,10 @@ func TestOperationTable(t *testing.T) {
 		"key-abort":          {true, false},
 		"users-read":         {false, true},
 		"users-write":        {false, true},
+		"guests-read":        {false, true},
+		"guests-write":       {false, true},
 	}
-	writes := map[string]bool{"admit": true, "admit-withdraw": true, "remove": true, "key-rotate": true, "key-abort": true, "users-write": true}
+	writes := map[string]bool{"admit": true, "admit-withdraw": true, "remove": true, "key-rotate": true, "key-abort": true, "users-write": true, "guests-write": true}
 	if len(Operations) != len(want) {
 		t.Fatalf("%d operations, want %d", len(Operations), len(want))
 	}

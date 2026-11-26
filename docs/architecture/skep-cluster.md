@@ -344,6 +344,8 @@ forbidden`.
 | `key-abort` | `POST /cluster/v1/key/abort` | yes | no |
 | `users-read` | `GET /cluster/v1/users` | no | yes |
 | `users-write` | `POST /cluster/v1/users/write` | no | yes |
+| `guests-read` | `GET /cluster/v1/guests` | no | yes |
+| `guests-write` | `POST /cluster/v1/guests/write` | no | yes |
 
 `key-rotate` and `key-abort` (step 8b-2b) are root-only and local: no
 operation of `skep-api` changes a pin; `key rotate --api` arrives with
@@ -440,6 +442,7 @@ phase.
 | `key-add` (passed to the leader) | no | no | yes | no | only for the caller's own node |
 | `key-abort` (passed to the leader) | no | no | yes | no | only for the caller's own node |
 | `users-write` (passed to the leader, step 8c-1) | no | no | yes | no | the leader answers only after its barrier of the current term |
+| `guests-write` (passed to the leader, step 8d-1) | no | no | yes | no | the leader answers only after its barrier of the current term; the entry's owner is the node of the calling key, never the body |
 
 The table is `raftnet.Operations`; the tests are driven from it. On a
 joining node that its own membership does not list yet, the admission's

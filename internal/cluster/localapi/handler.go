@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/greenbeanorg/skep/internal/cluster/clusterstate"
+	"github.com/greenbeanorg/skep/internal/cluster/guestapi"
 	"github.com/greenbeanorg/skep/internal/cluster/memberapi"
 	"github.com/greenbeanorg/skep/internal/cluster/store"
 	"github.com/greenbeanorg/skep/internal/cluster/userapi"
@@ -34,6 +35,8 @@ const (
 	PathKeyAbort          = Prefix + "/key/abort"
 	PathUsersRead         = userapi.PathUsersRead
 	PathUsersWrite        = userapi.PathUsersWrite
+	PathGuestsRead        = guestapi.PathGuestsRead
+	PathGuestsWrite       = guestapi.PathGuestsWrite
 )
 
 // CodeForbidden is the error code for a caller an operation does not
@@ -91,6 +94,11 @@ var Operations = []Operation{
 	// API account.
 	{Name: "users-read", Method: http.MethodGet, Path: PathUsersRead, Root: false, API: true},
 	{Name: "users-write", Method: http.MethodPost, Path: PathUsersWrite, Root: false, API: true},
+	// The guest inventory (step 8d-1, D22, D23): skep-api's reads and
+	// its writes. The owner of an entry is this node, set by the
+	// service; the request has no owner field.
+	{Name: "guests-read", Method: http.MethodGet, Path: PathGuestsRead, Root: false, API: true},
+	{Name: "guests-write", Method: http.MethodPost, Path: PathGuestsWrite, Root: false, API: true},
 }
 
 // RotateResult is the answer of key-rotate and key-abort.
@@ -220,6 +228,10 @@ type Backend interface {
 	UsersRead(ctx context.Context, after uint64, wait time.Duration) (UsersAnswer, error)
 	// UsersWrite returns an *OpError for a refusal.
 	UsersWrite(ctx context.Context, req UsersWriteRequest) (UsersWriteResult, error)
+	// GuestsRead answers the guest inventory.
+	GuestsRead(ctx context.Context) (guestapi.GuestsAnswer, error)
+	// GuestsWrite returns an *OpError for a refusal.
+	GuestsWrite(ctx context.Context, req guestapi.WriteRequest) (guestapi.WriteResult, error)
 }
 
 // HandlerOptions configures the handler.
@@ -323,6 +335,18 @@ func NewHandler(b Backend, o HandlerOptions) http.Handler {
 				return
 			}
 			res, err := b.UsersWrite(r.Context(), req)
+			writeResult(w, r, res, err)
+		},
+		PathGuestsRead: func(w http.ResponseWriter, r *http.Request) {
+			res, err := b.GuestsRead(r.Context())
+			writeResult(w, r, res, err)
+		},
+		PathGuestsWrite: func(w http.ResponseWriter, r *http.Request) {
+			var req guestapi.WriteRequest
+			if !decodeBody(w, r, &req) {
+				return
+			}
+			res, err := b.GuestsWrite(r.Context(), req)
 			writeResult(w, r, res, err)
 		},
 		PathWithdraw: func(w http.ResponseWriter, r *http.Request) {

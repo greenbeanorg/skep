@@ -140,6 +140,13 @@ type Record struct {
 	UserDisabled bool     `json:"user_disabled,omitempty"`
 	Count        int      `json:"count,omitempty"`
 	Usernames    []string `json:"usernames,omitempty"`
+	// The guest a guest entry names (step 8d-1, D20): its ID, kind, name
+	// and owner node. Omitted when empty, so every record of an earlier
+	// build still verifies.
+	GuestID    string `json:"guest_id,omitempty"`
+	GuestKind  string `json:"guest_kind,omitempty"`
+	GuestName  string `json:"guest_name,omitempty"`
+	GuestOwner string `json:"guest_owner,omitempty"`
 	// Outcome is applied, refused or duplicate; Reason is why it was
 	// refused and Code the refusal's code, where it has one.
 	Outcome string `json:"outcome,omitempty"`
@@ -613,7 +620,7 @@ func (l *Log) AuditEntry(a clusterstate.AuditEntry) error {
 		EntryTime: a.At, Actor: a.Actor, OpID: a.OpID, Origin: a.Origin, RequestID: a.RequestID,
 		NodeID: a.NodeID, Name: a.Name, Address: a.Address, Pins: a.Pins, Outcome: a.Outcome, Reason: a.Reason,
 		UserID: a.UserID, Username: a.Username, Role: a.Role, UserDisabled: a.UserDisabled, Count: a.Count,
-		Usernames: a.Usernames, Code: a.Code})
+		Usernames: a.Usernames, Code: a.Code, GuestID: a.GuestID, GuestKind: a.GuestKind, GuestName: a.GuestName, GuestOwner: a.GuestOwner})
 }
 
 // AuditSnapshot implements clusterstate.AuditWriter: a snapshot installed

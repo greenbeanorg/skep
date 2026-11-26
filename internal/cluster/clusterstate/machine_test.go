@@ -445,7 +445,7 @@ func TestSnapshotRestore(t *testing.T) {
 	if r := n.Apply(4, joinEntry(t, "j", nodeB, pinB, 10)); !r.Duplicate {
 		t.Fatal("the restored machine applied an old operation again")
 	}
-	if err := n.Restore(bytes.NewReader([]byte(`{"format":6}`))); err == nil {
+	if err := n.Restore(bytes.NewReader([]byte(`{"format":7}`))); err == nil {
 		t.Fatal("a snapshot of an unknown format was restored")
 	}
 	// A restore whose file write fails changes nothing.

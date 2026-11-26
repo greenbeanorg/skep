@@ -99,6 +99,11 @@ func (s *Service) HandlePeer(ctx context.Context, op string, from raftnet.Peer, 
 			return nil, &raftnet.PeerError{Code: raftnet.CodeUnavailable, Message: "this node was removed from the cluster"}
 		}
 		return s.handleUsersWrite(from, body)
+	case raftnet.OpGuestsWrite:
+		if s.isRemoved() {
+			return nil, &raftnet.PeerError{Code: raftnet.CodeUnavailable, Message: "this node was removed from the cluster"}
+		}
+		return s.handleGuestsWrite(from, body)
 	case raftnet.OpRemoved:
 		n, err := decodeNotice(body)
 		if err != nil {
