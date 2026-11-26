@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"net"
@@ -54,13 +55,25 @@ type world struct {
 	onRestart   func()
 	agentErr    error
 	agentID     string
-	// guests is what the fake agent's lists hold; guestErr fails them.
-	vms, jails int
-	guestErr   error
+	// guests is what the fake agent's lists hold; guestErr fails them;
+	// guestReads counts the reads; onGuestRead runs on each.
+	guests      []clusterstate.JoinGuest
+	guestErr    error
+	guestReads  int
+	onGuestRead func(n int)
+	// The fake agent's drain: its reason ("" none), the calls made
+	// ("POST", "GET", "DELETE"), the unfinished tasks it reports, and
+	// errors for POST (drainSetErr) and GET.
+	drainReason     string
+	drainCalls      []string
+	drainUnfinished int
+	drainSetErr     error
+	drainGetErr     error
 	// serviceActions records "stop" and "start"; stages records the
 	// stage commands run as the service account.
 	serviceActions []string
 	stages         [][]string
+	stdins         [][]byte
 	tty            io.ReadWriteCloser
 	onService      func(action string)
 	// importState and importErr are what the fake "admin list
@@ -113,10 +126,39 @@ func (w *world) env(euid int) env {
 			w.agentSocket = socket
 			return w.agentID, w.agentErr
 		},
-		agentGuests: func(context.Context, string) (int, int, error) {
+		agentGuestList: func(context.Context, string) ([]clusterstate.JoinGuest, error) {
+			w.mu.Lock()
+			w.guestReads++
+			f, n := w.onGuestRead, w.guestReads
+			w.mu.Unlock()
+			if f != nil {
+				f(n)
+			}
 			w.mu.Lock()
 			defer w.mu.Unlock()
-			return w.vms, w.jails, w.guestErr
+			return append([]clusterstate.JoinGuest(nil), w.guests...), w.guestErr
+		},
+		agentDrain: func(_ context.Context, _ string, method string) (drainAnswer, error) {
+			w.mu.Lock()
+			defer w.mu.Unlock()
+			w.drainCalls = append(w.drainCalls, method)
+			switch method {
+			case http.MethodPost:
+				if w.drainSetErr != nil {
+					return drainAnswer{}, w.drainSetErr
+				}
+				if w.drainReason != "" && w.drainReason != "join" {
+					return drainAnswer{}, &agentError{status: 409, code: "drain_active", message: "a drain with another reason is active; nothing was changed"}
+				}
+				w.drainReason = "join"
+			case http.MethodDelete:
+				w.drainReason = ""
+			default:
+				if w.drainGetErr != nil {
+					return drainAnswer{}, w.drainGetErr
+				}
+			}
+			return drainAnswer{Reason: w.drainReason, UnfinishedTasks: w.drainUnfinished}, nil
 		},
 		serviceCtl: func(_ context.Context, action string) error {
 			w.mu.Lock()
@@ -127,13 +169,17 @@ func (w *world) env(euid int) env {
 			}
 			return nil
 		},
-		runAsAccount: func(ctx context.Context, uid, _ uint32, args []string) ([]byte, error) {
+		runAsAccount: func(ctx context.Context, uid, _ uint32, args []string, stdin []byte) ([]byte, error) {
 			w.mu.Lock()
 			w.stages = append(w.stages, args)
+			w.stdins = append(w.stdins, stdin)
 			w.mu.Unlock()
 			var out bytes.Buffer
 			sub := w.env(int(uid))
 			sub.stdout = &out
+			if stdin != nil {
+				sub.stdin = bytes.NewReader(stdin)
+			}
 			err := run(ctx, args, sub)
 			return out.Bytes(), err
 		},
@@ -708,33 +754,49 @@ func TestAgentNodeIDReadsTheSystemOperation(t *testing.T) {
 	}
 }
 
-// join-request and join refuse a host with a guest, or whose agent does
-// not answer, before they stop anything (decision D1 of the 8b-1 run).
-func TestJoinCommandsRefuseAHostWithGuests(t *testing.T) {
+// Step 8d-2: join-request no longer asks the agent (D9); join refuses,
+// before it stops or drains anything, a host whose agent does not answer
+// or whose list breaks the cluster's rules (D10 step 2).
+func TestJoinCommandsAndTheHostsGuests(t *testing.T) {
+	w := newWorld(t)
+	clusterconf.Write(w.config, clusterconf.Config{NodeID: agentNode, NodeName: "smith", ListenAddress: "127.0.0.1"}, -1, -1)
+	w.guests = []clusterstate.JoinGuest{{ID: guestA, Kind: "vm", Name: "db1"}}
+	_ = run(context.Background(), []string{"join-request", "-address", "127.0.0.1", "-config", w.config, "-data-dir", w.dataDir,
+		"-socket", filepath.Join(w.dir, "none.sock"), "-agent-socket", "/agent.sock"}, w.env(0))
+	if w.guestReads != 0 || len(w.drainCalls) != 0 {
+		t.Fatalf("join-request asked the agent: %d reads, drain %v", w.guestReads, w.drainCalls)
+	}
 	adm := testAdmission(t)
+	tooMany := make([]clusterstate.JoinGuest, clusterstate.MaxJoinGuests+1)
+	for i := range tooMany {
+		tooMany[i] = clusterstate.JoinGuest{ID: fmt.Sprintf("00000000-0000-4000-8000-%012d", i), Kind: "container", Name: fmt.Sprintf("j%d", i)}
+	}
 	for _, c := range []struct {
-		name       string
-		vms, jails int
-		err        error
-	}{{"a VM", 1, 0, nil}, {"a jail", 0, 1, nil}, {"no agent", 0, 0, errors.New("connection refused")}} {
-		for _, cmd := range [][]string{
-			{"join-request", "-address", "127.0.0.1"},
-			{"join", "-cluster-id", adm.ClusterID, mustAdmissionLine(t, adm)},
-		} {
-			w := newWorld(t)
-			clusterconf.Write(w.config, clusterconf.Config{NodeID: agentNode, NodeName: "smith", ListenAddress: "127.0.0.1"}, -1, -1)
-			w.vms, w.jails, w.guestErr = c.vms, c.jails, c.err
-			args := append(append([]string{cmd[0]}, "-config", w.config, "-data-dir", w.dataDir, "-socket", filepath.Join(w.dir, "none.sock")), cmd[1:]...)
-			err := run(context.Background(), args, w.env(0))
-			if err == nil || !strings.Contains(err.Error(), "refused") {
-				t.Errorf("%s with %s: %v", cmd[0], c.name, err)
-			}
-			if len(w.serviceActions) != 0 || len(w.stages) != 0 {
-				t.Errorf("%s with %s: the service was touched: %v %v", cmd[0], c.name, w.serviceActions, w.stages)
-			}
+		name   string
+		guests []clusterstate.JoinGuest
+		err    error
+		cause  string
+	}{
+		{"no agent", nil, errors.New("connection refused"), "guest list from skep-agent"},
+		{"an upper-case ID", []clusterstate.JoinGuest{{ID: strings.ToUpper(guestA), Kind: "vm", Name: "db1"}}, nil, "lower-case UUID"},
+		{"a control character", []clusterstate.JoinGuest{{ID: guestA, Kind: "vm", Name: "db\x01"}}, nil, "name the cluster does not accept"},
+		{"over 1000", tooMany, nil, "at most 1000"},
+	} {
+		w := newWorld(t)
+		clusterconf.Write(w.config, clusterconf.Config{NodeID: agentNode, NodeName: "smith", ListenAddress: "127.0.0.1"}, -1, -1)
+		w.guests, w.guestErr = c.guests, c.err
+		args := []string{"join", "-config", w.config, "-data-dir", w.dataDir, "-socket", filepath.Join(w.dir, "none.sock"), "-cluster-id", adm.ClusterID, mustAdmissionLine(t, adm)}
+		err := run(context.Background(), args, w.env(0))
+		if err == nil || !strings.Contains(err.Error(), "refused") || !strings.Contains(err.Error(), c.cause) || !strings.Contains(err.Error(), "nothing was changed") {
+			t.Errorf("%s: %v", c.name, err)
+		}
+		if len(w.serviceActions) != 0 || len(w.stages) != 0 || len(w.drainCalls) != 0 {
+			t.Errorf("%s: something was touched: %v %v %v", c.name, w.serviceActions, w.stages, w.drainCalls)
 		}
 	}
 }
+
+const guestA = "0a0a0a0a-0000-4000-8000-00000000000a"
 
 func testAdmission(t *testing.T) joincode.Admission {
 	return joincode.Admission{
@@ -991,7 +1053,7 @@ func TestStatusReplacesControlCharacters(t *testing.T) {
 // replaced.
 func TestJoinCommandsReplaceControlCharacters(t *testing.T) {
 	stageSays := func(w *world, e *env, res stageResult) {
-		e.runAsAccount = func(context.Context, uint32, uint32, []string) ([]byte, error) {
+		e.runAsAccount = func(context.Context, uint32, uint32, []string, []byte) ([]byte, error) {
 			b, _ := json.Marshal(res)
 			return b, nil
 		}

@@ -11,6 +11,7 @@ import (
 
 	"github.com/greenbeanorg/skep/internal/cluster/audit"
 	"github.com/greenbeanorg/skep/internal/cluster/clusterconf"
+	"github.com/greenbeanorg/skep/internal/cluster/clusterstate"
 	"github.com/greenbeanorg/skep/internal/cluster/joincode"
 	"github.com/greenbeanorg/skep/internal/cluster/joinstate"
 	"github.com/greenbeanorg/skep/internal/cluster/layout"
@@ -35,8 +36,12 @@ type StageOutcome struct {
 // 5 and 7): it reads "is this node alone" from the store, moves the
 // one-node state aside, makes the join call, and puts the state back only
 // when it knows join step 1 was not applied.
-func StageJoin(ctx context.Context, dataDir string, cfg clusterconf.Config, key *nodekey.Key, adm joincode.Admission, now time.Time, pause time.Duration) StageOutcome {
-	return stageJoin(ctx, dataDir, cfg, key, adm, now, pause, nil)
+//
+// guests is the host's guest list (step 8d-2, D13): it is checked against
+// D4's limits before anything changes, recorded in join.json with its
+// first write (D14), and sent with every join call of this join.
+func StageJoin(ctx context.Context, dataDir string, cfg clusterconf.Config, key *nodekey.Key, adm joincode.Admission, guests []clusterstate.JoinGuest, now time.Time, pause time.Duration) StageOutcome {
+	return stageJoin(ctx, dataDir, cfg, key, adm, guests, now, pause, nil)
 }
 
 // Crash points a test stops the stage at (stageJoin's stop, outcome "stopped").
@@ -45,10 +50,18 @@ const (
 	stopAfterJoinRemove = "after join.json is removed, before the put-back"
 )
 
-func stageJoin(ctx context.Context, dataDir string, cfg clusterconf.Config, key *nodekey.Key, adm joincode.Admission, now time.Time, pause time.Duration, stop func(point string) bool) StageOutcome {
+func stageJoin(ctx context.Context, dataDir string, cfg clusterconf.Config, key *nodekey.Key, adm joincode.Admission, guests []clusterstate.JoinGuest, now time.Time, pause time.Duration, stop func(point string) bool) StageOutcome {
 	stopped := func(point string) bool { return stop != nil && stop(point) }
 	if adm.For.NodeID != cfg.NodeID || adm.For.Pin != key.Pin() {
 		return StageOutcome{Outcome: "not_alone", Message: fmt.Sprintf("the admission is for the key %s, this host's key is %s", adm.For.Pin, key.Pin())}
+	}
+	if len(guests) > 0 {
+		if err := clusterstate.CheckJoinGuestLimits(guests); err != nil {
+			return StageOutcome{Outcome: "error", Message: err.Error()}
+		}
+		if err := clusterstate.CheckJoinGuests(guests); err != nil {
+			return StageOutcome{Outcome: "error", Message: err.Error()}
+		}
 	}
 	if err := layout.CheckOldLayout(dataDir); err != nil {
 		return StageOutcome{Outcome: "error", Message: err.Error()}
@@ -74,7 +87,7 @@ func stageJoin(ctx context.Context, dataDir string, cfg clusterconf.Config, key 
 	if stopped(stopAfterMoveAside) {
 		return StageOutcome{Outcome: "stopped", Standalone: standalone}
 	}
-	js := joinstate.State{Phase: joinstate.PhaseCalling, OpID: opID, Admission: adm, Standalone: standalone}
+	js := joinstate.State{Phase: joinstate.PhaseCalling, OpID: opID, Admission: adm, Standalone: standalone, Guests: guests}
 	if err := joinstate.Write(dataDir, js); err != nil {
 		if rerr := joinstate.Remove(dataDir); rerr != nil {
 			return StageOutcome{Outcome: "error", Message: fmt.Sprintf("writing join.json failed (%v) and removing it failed (%v); the one-node state is in %s", err, rerr, standalone)}
@@ -85,7 +98,7 @@ func stageJoin(ctx context.Context, dataDir string, cfg clusterconf.Config, key 
 		return StageOutcome{Outcome: "error", Message: "writing join.json failed: " + err.Error()}
 	}
 	caller := raftnet.Caller{NodeID: cfg.NodeID, Certificate: key.Certificate}
-	out := JoinCall(ctx, caller, js.Peers(cfg.NodeID), adm.ClusterID, opID, 3, pause, nil)
+	out := JoinCall(ctx, caller, js.Peers(cfg.NodeID), adm.ClusterID, opID, guests, 3, pause, nil)
 	res := StageOutcome{Outcome: out.Result, Message: out.Message, Standalone: standalone, Attempts: out.Attempts, Answer: out.Answer}
 	switch out.Result {
 	case JoinAccepted:

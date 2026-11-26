@@ -101,6 +101,14 @@ type RemoveRequest struct {
 	ClusterID string `json:"cluster_id,omitempty"`
 	Actor     string `json:"actor,omitempty"`
 	RequestID string `json:"request_id,omitempty"`
+	// ForgetGuests removes a member that owns guests or name
+	// reservations, and the cluster forgets them (step 8d-2, D21).
+	// Root only. Guests and Reservations are the counts the operator
+	// confirmed; the leader refuses the removal unless the member owns
+	// exactly that many.
+	ForgetGuests bool `json:"forget_guests,omitempty"`
+	Guests       int  `json:"guests,omitempty"`
+	Reservations int  `json:"reservations,omitempty"`
 }
 
 // RemoveResult is its answer: the first entry (removing) is committed.

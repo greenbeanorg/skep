@@ -1,0 +1,89 @@
+package clusterstate_test
+
+import (
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/greenbeanorg/skep/internal/cluster/audit"
+	cs "github.com/greenbeanorg/skep/internal/cluster/clusterstate"
+)
+
+// Writes, with this build's code, a version 1 log, the state it applies
+// to (a snapshot) and the cluster audit it writes, into $GOLDEN_OUT.
+func TestWriteGoldenLog(t *testing.T) {
+	out := os.Getenv("GOLDEN_OUT")
+	if out == "" {
+		t.Skip("GOLDEN_OUT not set")
+	}
+	const (
+		cid = "c1c1c1c1-0000-4000-8000-000000000001"
+		a   = "a1a1a1a1-0000-4000-8000-00000000000a"
+		b   = "b1b1b1b1-0000-4000-8000-00000000000b"
+		d   = "d1d1d1d1-0000-4000-8000-00000000000d"
+		g1  = "11111111-0000-4000-8000-000000000001"
+		g2  = "22222222-0000-4000-8000-000000000002"
+	)
+	pin := func(c string) string { return "sha256:" + strings.Repeat(c, 64) }
+	type step struct {
+		typ, op string
+		data    any
+	}
+	steps := []step{
+		{cs.TypeClusterInit, "init", cs.ClusterInit{ClusterID: cid, Member: cs.Member{ID: a, Name: "smith", Address: "10.0.0.1:8444", Pin: pin("a"), State: cs.StateMember}}},
+		{cs.TypePendingCreate, "p-b", cs.PendingCreate{NodeID: b, Name: "langrishe", Address: "10.0.0.2:8444", Pin: pin("b"), ExpiresAt: 2000}},
+		{cs.TypeMemberJoin, "join:b", cs.MemberJoin{NodeID: b, Pin: pin("b"), At: 1000}},
+		{cs.TypeMemberPromoted, "promote:b", cs.MemberPromoted{NodeID: b}},
+		{cs.TypeGuestReserve, "g-r1", cs.GuestReserve{Kind: "container", Name: "web1", Key: "k1", Owner: b, At: 1001}},
+		{cs.TypeGuestAdd, "g-a1", cs.GuestAdd{ID: g1, Kind: "container", Name: "web1", Owner: b, At: 1002}},
+		{cs.TypeGuestReserve, "g-r2", cs.GuestReserve{Kind: "vm", Name: "db1", Key: "k2", Owner: a, At: 1003}},
+		{cs.TypeGuestAdd, "g-a2", cs.GuestAdd{ID: g2, Kind: "vm", Name: "db2", Owner: a, At: 1004}},
+		{cs.TypePendingCreate, "p-d", cs.PendingCreate{NodeID: d, Name: "star", Address: "10.0.0.3:8444", Pin: pin("d"), ExpiresAt: 3000}},
+		{cs.TypeMemberJoin, "join:d", cs.MemberJoin{NodeID: d, Pin: pin("d"), At: 1005}},
+		{cs.TypeMemberRemoving, "rm-d", cs.MemberRemoving{NodeID: d, ForgetGuests: []string{}}},
+		{cs.TypeMemberRemoved, "rmd-d", cs.MemberRemoved{NodeID: d}},
+		{cs.TypeGuestRemove, "g-x2", cs.GuestRemove{ID: g2, Owner: a}},
+		{cs.TypeMemberRemoving, "rm-b-1", cs.MemberRemoving{NodeID: b, ForgetGuests: []string{}}}, // refused: owns web1
+		{cs.TypeGuestRelease, "g-l2", cs.GuestRelease{Kind: "vm", Name: "db1", Key: "k2", Owner: a}},
+		{cs.TypeGuestRemove, "g-x1", cs.GuestRemove{ID: g1, Owner: b}},
+		{cs.TypeMemberRemoving, "rm-b-2", cs.MemberRemoving{NodeID: b, ForgetGuests: []string{}}},
+		{cs.TypeMemberRemoved, "rmd-b", cs.MemberRemoved{NodeID: b}},
+	}
+	if err := os.MkdirAll(out, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	adir := filepath.Join(out, "auditroot")
+	os.MkdirAll(adir, 0o700)
+	l, err := audit.Open(adir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := cs.New()
+	m.SetAuditWriter(l)
+	var log []byte
+	for i, s := range steps {
+		e, err := cs.NewEntry(s.typ, s.op, "root", a, s.data)
+		if err != nil {
+			t.Fatal(err)
+		}
+		raw, _ := e.Encode()
+		r := m.Apply(uint64(i+1), raw)
+		if r.Err != nil && !strings.Contains(r.Err.Error(), "refused") {
+			t.Fatalf("%s: %v", s.op, r.Err)
+		}
+		line, _ := json.Marshal(struct {
+			Index uint64          `json:"index"`
+			Entry json.RawMessage `json:"entry"`
+		}{uint64(i + 1), raw})
+		log = append(append(log, line...), '\n')
+	}
+	l.Close()
+	snap, err := m.Snapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(filepath.Join(out, "log.jsonl"), log, 0o644)
+	os.WriteFile(filepath.Join(out, "state.json"), snap, 0o644)
+}

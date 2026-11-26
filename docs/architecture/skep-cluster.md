@@ -344,7 +344,7 @@ forbidden`.
 | `key-abort` | `POST /cluster/v1/key/abort` | yes | no |
 | `users-read` | `GET /cluster/v1/users` | no | yes |
 | `users-write` | `POST /cluster/v1/users/write` | no | yes |
-| `guests-read` | `GET /cluster/v1/guests` | no | yes |
+| `guests-read` | `GET /cluster/v1/guests` | yes | yes |
 | `guests-write` | `POST /cluster/v1/guests/write` | no | yes |
 
 `key-rotate` and `key-abort` (step 8b-2b) are root-only and local: no

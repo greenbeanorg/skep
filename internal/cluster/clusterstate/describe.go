@@ -47,7 +47,13 @@ func (s state) describe(e Entry) (nodeID, name, address string, pins []string, a
 		}
 	case TypeMemberJoin:
 		var d MemberJoin
-		if decodeData(e.Data, &d) == nil {
+		if e.Version == 2 {
+			var d2 MemberJoinV2
+			if decodeData(e.Data, &d2) == nil {
+				fromMember(d2.NodeID)
+				pins, at = []string{d2.Pin}, d2.At
+			}
+		} else if decodeData(e.Data, &d) == nil {
 			fromMember(d.NodeID)
 			pins, at = []string{d.Pin}, d.At
 		}
@@ -58,7 +64,12 @@ func (s state) describe(e Entry) (nodeID, name, address string, pins []string, a
 		}
 	case TypeMemberRemoving:
 		var d MemberRemoving
-		if decodeData(e.Data, &d) == nil {
+		if e.Version == 2 {
+			var d2 MemberRemovingV2
+			if decodeData(e.Data, &d2) == nil {
+				fromMember(d2.NodeID)
+			}
+		} else if decodeData(e.Data, &d) == nil {
 			fromMember(d.NodeID)
 		}
 	case TypeMemberRemoved:
@@ -87,4 +98,30 @@ func memberPins(m Member) []string {
 		return []string{m.Pin, m.NextPin}
 	}
 	return []string{m.Pin}
+}
+
+// describeGuests returns what a member entry says about guests for the
+// audit (D7 of step 8d-2), by the state before it: a member.join version
+// 2's guests; a member.removing version 2's counts; for an applied
+// member.removed, the counts of what it removed. Nothing for any other
+// entry, so every earlier record is written as before.
+func (s state) describeGuests(e Entry, outcome string) (guests []JoinGuest, guestCount, reservationCount int) {
+	switch {
+	case e.Type == TypeMemberJoin && e.Version == 2:
+		var d MemberJoinV2
+		if decodeData(e.Data, &d) == nil {
+			guests = d.Guests
+		}
+	case e.Type == TypeMemberRemoving && e.Version == 2:
+		var d MemberRemovingV2
+		if decodeData(e.Data, &d) == nil {
+			guestCount, reservationCount = d.Guests, d.Reservations
+		}
+	case e.Type == TypeMemberRemoved && outcome == "applied":
+		var d MemberRemoved
+		if decodeData(e.Data, &d) == nil {
+			guestCount, reservationCount = s.ownsGuests(d.NodeID)
+		}
+	}
+	return guests, guestCount, reservationCount
 }

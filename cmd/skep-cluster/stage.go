@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/greenbeanorg/skep/internal/cluster/clusterconf"
+	"github.com/greenbeanorg/skep/internal/cluster/clusterstate"
 	"github.com/greenbeanorg/skep/internal/cluster/joincode"
 	"github.com/greenbeanorg/skep/internal/cluster/layout"
 	"github.com/greenbeanorg/skep/internal/cluster/nodekey"
@@ -40,7 +41,12 @@ func runStageCmd(ctx context.Context, args []string, e env) error {
 	case "read":
 		res = stageRead(*configPath, *dataDir)
 	case "join":
-		res = stageJoin(ctx, e, *configPath, *dataDir, *admission)
+		guests, err := readStageInput(e.stdin)
+		if err != nil {
+			res = fail(err.Error())
+			break
+		}
+		res = stageJoin(ctx, e, *configPath, *dataDir, *admission, guests)
 	case "read-state":
 		res = stageReadState(*configPath, *dataDir)
 	case "wipe-info":
@@ -101,7 +107,7 @@ func stageRead(configPath, dataDir string) stageResult {
 }
 
 // stageJoin runs service.StageJoin and reports its outcome.
-func stageJoin(ctx context.Context, e env, configPath, dataDir, line string) stageResult {
+func stageJoin(ctx context.Context, e env, configPath, dataDir, line string, guests []clusterstate.JoinGuest) stageResult {
 	adm, err := joincode.ParseAdmission(line)
 	if err != nil {
 		return fail(err.Error())
@@ -114,7 +120,7 @@ func stageJoin(ctx context.Context, e env, configPath, dataDir, line string) sta
 	if err != nil {
 		return fail(err.Error())
 	}
-	out := service.StageJoin(ctx, dataDir, cfg, key, adm, time.Now(), 2*time.Second)
+	out := service.StageJoin(ctx, dataDir, cfg, key, adm, guests, time.Now(), 2*time.Second)
 	res := stageResult{Outcome: out.Outcome, Message: out.Message, Pin: key.Pin(), Standalone: out.Standalone, Attempts: out.Attempts}
 	if out.Answer != nil {
 		res.ClusterID = out.Answer.ClusterID

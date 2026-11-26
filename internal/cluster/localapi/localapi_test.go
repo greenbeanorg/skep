@@ -168,7 +168,7 @@ func TestOperationTable(t *testing.T) {
 		"key-abort":          {true, false},
 		"users-read":         {false, true},
 		"users-write":        {false, true},
-		"guests-read":        {false, true},
+		"guests-read":        {true, true}, // root since step 8d-2 (D19)
 		"guests-write":       {false, true},
 	}
 	writes := map[string]bool{"admit": true, "admit-withdraw": true, "remove": true, "key-rotate": true, "key-abort": true, "users-write": true, "guests-write": true}

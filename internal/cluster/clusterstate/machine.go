@@ -150,6 +150,12 @@ type AuditEntry struct {
 	GuestKind  string
 	GuestName  string
 	GuestOwner string
+	// A member entry's guests (step 8d-2, D7): the guests a member.join
+	// version 2 adds; the counts a member.removing version 2 forgets, or
+	// a member.removed removed.
+	Guests           []JoinGuest
+	GuestCount       int
+	ReservationCount int
 }
 
 // AuditWriter makes a log entry's record durable before the machine
@@ -283,6 +289,7 @@ func auditOf(st state, e Entry, index uint64, outcome, reason string) AuditEntry
 		a.GuestID, a.GuestKind, a.GuestName, a.GuestOwner, a.At = g.GuestID, g.GuestKind, g.GuestName, g.GuestOwner, g.At
 	} else {
 		a.NodeID, a.Name, a.Address, a.Pins, a.At = st.describe(e)
+		a.Guests, a.GuestCount, a.ReservationCount = st.describeGuests(e, outcome)
 	}
 	if e.Type == TypeClusterInit && a.Epoch == 0 && outcome == "applied" {
 		a.Epoch = 1
@@ -605,8 +612,17 @@ func (s *state) apply(e Entry, index uint64) (change, error) {
 		return change{pending: true, events: []Event{{Kind: "pending expired", NodeID: p.NodeID, Name: p.Name}}}, nil
 
 	case TypeMemberJoin:
+		// Each version is decoded strictly into its own struct (D2): a
+		// version 1 entry with a guests field is malformed.
 		var d MemberJoin
-		if err := decodeOrStall(e, &d); err != nil {
+		var guests []JoinGuest
+		if e.Version == 2 {
+			var d2 MemberJoinV2
+			if err := decodeOrStall(e, &d2); err != nil {
+				return change{}, err
+			}
+			d, guests = MemberJoin{NodeID: d2.NodeID, Pin: d2.Pin, At: d2.At}, d2.Guests
+		} else if err := decodeOrStall(e, &d); err != nil {
 			return change{}, err
 		}
 		p, ok := s.pendings[d.NodeID]
@@ -621,6 +637,14 @@ func (s *state) apply(e Entry, index uint64) (change, error) {
 		}
 		if err := s.conflict(p.NodeID, p.Name, p.Address, p.Pin, p.NodeID); err != nil {
 			return change{}, err
+		}
+		// Version 2 (D3): the guests' checks a to f, then they are added
+		// with the member entry.
+		if e.Version == 2 {
+			if err := s.checkJoinGuests(guests); err != nil {
+				return change{}, err
+			}
+			s.addJoinGuests(p.NodeID, guests, index, d.At)
 		}
 		delete(s.pendings, d.NodeID)
 		s.members[p.NodeID] = Member{ID: p.NodeID, Name: p.Name, Address: p.Address, Pin: p.Pin,
@@ -648,7 +672,16 @@ func (s *state) apply(e Entry, index uint64) (change, error) {
 
 	case TypeMemberRemoving:
 		var d MemberRemoving
-		if err := decodeOrStall(e, &d); err != nil {
+		var d2 MemberRemovingV2
+		if e.Version == 2 {
+			if err := decodeOrStall(e, &d2); err != nil {
+				return change{}, err
+			}
+			if d2.Guests < 0 || d2.Reservations < 0 || d2.Guests+d2.Reservations == 0 {
+				return change{}, refuse(CodeInvalid, "a removal that forgets guests needs counts above 0 (version 1 is the removal of a member that owns nothing)")
+			}
+			d.NodeID = d2.NodeID
+		} else if err := decodeOrStall(e, &d); err != nil {
 			return change{}, err
 		}
 		mem, ok := s.members[d.NodeID]
@@ -661,9 +694,16 @@ func (s *state) apply(e Entry, index uint64) (change, error) {
 		if mem.State == StateRemoving {
 			return change{}, fmt.Errorf("member %s is already being removed", mem.Name)
 		}
-		// Step 8d-1, D17: a member that owns guests or reservations
-		// cannot be removed until "--forget-guests" exists (step 8d-2).
-		if g, r := s.ownsGuests(mem.ID); g+r > 0 {
+		if e.Version == 2 {
+			// Step 8d-2, D5: the member owns exactly what the operator
+			// confirmed.
+			if err := s.refuseRemovingV2(mem, d2); err != nil {
+				return change{}, err
+			}
+		} else if g, r := s.ownsGuests(mem.ID); g+r > 0 {
+			// Version 1 is the removal of a member that owns nothing,
+			// refused with 8d-1's text unchanged (every node records the
+			// same reason, whatever its build).
 			return change{}, fmt.Errorf("member %s owns %d guests and %d name reservations in the inventory; it cannot be removed while it owns any (step 8d-2 brings --forget-guests)", mem.Name, g, r)
 		}
 		// Decision D7a: no removal of another member while one joins.
@@ -709,6 +749,12 @@ func (s *state) apply(e Entry, index uint64) (change, error) {
 		// Both pins of the node go with its entry.
 		delete(s.members, d.NodeID)
 		s.removedIndex = index
+		// Step 8d-2, D6 (the fifth change in place, ADR 0013 amendment
+		// 7): the node's guests and reservations go too. A removing
+		// member owns any only after a member.removing version 2, which
+		// a build before this step stops at; in every other log there
+		// is nothing to remove.
+		s.forgetOwner(mem.ID, index)
 		return change{membership: true, events: []Event{{Kind: "member removed", NodeID: mem.ID, Name: mem.Name}}}, nil
 
 	case TypeMemberKeyAdd:
