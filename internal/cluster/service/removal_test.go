@@ -336,8 +336,8 @@ func TestRemovalWhileAMemberIsDown(t *testing.T) {
 	if stateOf(leader, x.id) != clusterstate.StateMember {
 		t.Fatal("something was written")
 	}
-	// A wrong cluster ID is refused.
-	if _, err := leader.svc.Remove(context.Background(), localapi.RemoveRequest{Name: x.name, AllowUnanswered: true, ClusterID: newID(t)}, "root"); opCode(err) != "refused" {
+	// A wrong cluster ID is refused (cluster_id_mismatch since step 8c-2, D24).
+	if _, err := leader.svc.Remove(context.Background(), localapi.RemoveRequest{Name: x.name, AllowUnanswered: true, ClusterID: newID(t)}, "root"); opCode(err) != CodeClusterIDMismatch {
 		t.Fatalf("wrong cluster ID: %v", err)
 	}
 	cid := leader.svc.machine.View().ClusterID
