@@ -27,6 +27,7 @@ import (
 	"github.com/greenbeanorg/skep/internal/apitls"
 	"github.com/greenbeanorg/skep/internal/audit"
 	"github.com/greenbeanorg/skep/internal/auth"
+	"github.com/greenbeanorg/skep/internal/cluster/memberapi"
 	"github.com/greenbeanorg/skep/internal/cluster/userapi"
 	"github.com/greenbeanorg/skep/internal/config"
 	"github.com/greenbeanorg/skep/internal/database"
@@ -266,6 +267,7 @@ func runServer(ctx context.Context, args []string, e env) error {
 		checks[models.CheckAccessAuditArchive] = archive.Health
 	}
 	handler := api.NewHandler(api.Options{
+		Cluster:  memberapi.NewClient(cfg.ClusterSocket),
 		Checks:   checks,
 		Backend:  agent,
 		Auth:     authn,

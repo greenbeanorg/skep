@@ -380,8 +380,10 @@ func printHostUsers(ctx context.Context, e env, w io.Writer) {
 }
 
 // refusePendingImport refuses the join of a host whose 0.1 users have not
-// been imported (F5 of the 8c-1 review): its users would be lost. A state
-// that cannot be read does not stop the join; it is said.
+// been imported (F5 of the 8c-1 review): its users would be lost. An
+// api.db older than the installed skep-api ("unmigrated", D18 of step
+// 8c-2) is refused the same way: it may hold such users. A state that
+// cannot be read does not stop the join; it is said.
 func refusePendingImport(ctx context.Context, e env) error {
 	state, err := e.hostImportState(ctx)
 	switch {
@@ -389,6 +391,8 @@ func refusePendingImport(ctx context.Context, e env) error {
 		fmt.Fprintf(e.stdout, "The state of this host's user import could not be read (%s); the join goes on.\n", termSafe(err.Error()))
 	case state == "pending":
 		return errors.New("refused: this host's users have not been imported: run \"skep-api admin import-users\" first; nothing was changed")
+	case state == "unmigrated":
+		return errors.New("refused: this host's api.db is older than the installed skep-api, so its users may not have been imported: run skep-setup upgrade first; nothing was changed")
 	}
 	return nil
 }

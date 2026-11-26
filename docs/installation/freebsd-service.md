@@ -31,14 +31,19 @@ A restarted agent resumes nothing: it marks unfinished tasks `interrupted`
 (ADR 0005). A restarted API server holds no state that matters to tasks.
 
 The start order does not matter for correctness. `skep_api` declares
-`REQUIRE: skep_agent` so that the agent is normally up first, but either
-service can start first or restart alone. Without the agent, the API
-answers node requests with `503 agent_unavailable`.
+`REQUIRE: skep_agent skep_cluster` so that the agent and the cluster
+service are normally up first, but any service can start first or restart
+alone; a disabled `skep_cluster` does not stop `skep_api` from starting.
+Without the agent, the API answers node requests with `503
+agent_unavailable`; without `skep_cluster` it has no quorum, and only an
+enabled administrator can log in, with a degraded session.
 
 **A third service, `skep_cluster`** (Milestone 8, step 8a), runs
 `skep-cluster` as the `skep-cluster` account (UID/GID 410, created by the
-package). It is not enabled by `skep-setup` yet, and neither of the other
-two services needs it. To try it on a host:
+package). From step 8c-2, `skep-setup apply -start` initialises it
+(`skep-cluster init`), enables it and starts it, and `skep-setup upgrade`
+restarts it (see [skep-setup](skep-setup.md#the-cluster)); `skep-api`
+needs it for logins. By hand:
 
 ```sh
 skep-cluster init                    # as root, once; reads the node ID from the running agent
@@ -50,8 +55,7 @@ skep-cluster status
 It opens no network port unless `skep-cluster listen -address <addr>` or
 `skep-cluster join-request -address <addr>` is run ([joining hosts into a
 cluster](../administration/cluster.md)). What it does, its files and its socket are in
-[skep-cluster](../architecture/skep-cluster.md). After a package upgrade,
-restart it by hand: `skep-setup upgrade` does not know it yet.
+[skep-cluster](../architecture/skep-cluster.md).
 
 Both scripts create what they need at every start, so a cleared `/var/run`
 is not a problem:
@@ -161,7 +165,7 @@ commands write through its socket (`cluster_socket` in `api.json`,
 default `/var/run/skep-cluster/cluster.sock`) and need `skep_cluster`
 running with quorum; without it they answer `no_quorum` and change
 nothing. A host upgraded from 0.1 runs `skep-api admin import-users` once
-(see [cluster administration](../administration/cluster.md#users-in-a-cluster-step-8c-1)).
+(`skep-setup upgrade` does it on a single host; see [cluster administration](../administration/cluster.md#users-in-a-cluster-step-8c-1)).
 
 `skep-api admin exists --username NAME` says whether a user exists. It
 opens `api.db` read-only and only if it exists: it never creates the

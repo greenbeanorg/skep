@@ -31,6 +31,9 @@ var noAgent = fakeAgent{buildErr: errors.New("no socket"), healthErr: errors.New
 
 func computeRemove(t *testing.T, o RemoveOptions, f Facts, r Runner) Plan {
 	t.Helper()
+	if o.Cluster == nil {
+		o.Cluster = &fakeCluster{}
+	}
 	p, err := ComputeRemove(context.Background(), o, f, r, noAgent)
 	if err != nil {
 		t.Fatal(err)
@@ -51,8 +54,8 @@ func TestRemoveKeepsDataAndHostLines(t *testing.T) {
 		t.Fatalf("refused: %+v", p.Items)
 	}
 	got := strings.Join(actions(p), "\n")
-	want := strings.Join([]string{"service skep_api stop", "service skep_agent stop",
-		`sysrc skep_agent_enable="NO"`, `sysrc skep_api_enable="NO"`}, "\n")
+	want := strings.Join([]string{"service skep_api stop", "service skep_cluster stop", "service skep_agent stop",
+		`sysrc skep_agent_enable="NO"`, `sysrc skep_cluster_enable="NO"`, `sysrc skep_api_enable="NO"`}, "\n")
 	if got != want {
 		t.Fatalf("actions:\n%s\nwant:\n%s", got, want)
 	}

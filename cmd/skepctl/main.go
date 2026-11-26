@@ -37,6 +37,7 @@ func main() {
 		stateDir:     stateDir,
 		readPassword: termpass.Read,
 		confirm:      confirmOnTerminal,
+		readLine:     lineOnTerminal,
 		now:          time.Now,
 	})
 	switch {
@@ -59,7 +60,10 @@ type env struct {
 	readPassword func(ctx context.Context, prompt string) (string, error)
 	// confirm asks a yes/no question on the terminal.
 	confirm func(ctx context.Context, prompt string) (bool, error)
-	now     func() time.Time
+	// readLine asks for one line on the terminal (the cluster ID typed
+	// back before a removal).
+	readLine func(ctx context.Context, prompt string) (string, error)
+	now      func() time.Time
 }
 
 const usage = `usage: skepctl <command> [flags]
@@ -89,6 +93,13 @@ Virtual machines:
   vm snapshot list | create | rollback | delete
                                              see "skepctl vm snapshot"
 
+Cluster:
+  cluster show [--json]                      this node's view of its cluster
+  cluster admit REQUEST                      admit a host by its join request line
+  cluster withdraw NAME                      withdraw a pending admission
+  cluster remove NAME [--cluster-id ID]      remove a member (asks for the cluster ID)
+                                             see "skepctl cluster"
+
 Every command takes --server; without it, the server of the last login is used.
 skepctl keeps its state in $SKEPCTL_CONFIG_DIR or ~/.config/skepctl.`
 
@@ -113,6 +124,8 @@ func run(ctx context.Context, args []string, e env) error {
 		return cmdAudit(ctx, args[1:], e)
 	case "vm":
 		return cmdVM(ctx, args[1:], e)
+	case "cluster":
+		return cmdCluster(ctx, args[1:], e)
 	case "version", "-version", "--version":
 		fmt.Fprintln(e.stdout, "skepctl", version.Get())
 		return nil

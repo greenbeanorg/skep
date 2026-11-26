@@ -21,8 +21,9 @@ func requireRoot(root string, e env) error {
 }
 
 func (e env) applier(root string) *setup.Applier {
+	cl, _ := e.clusterFor(root)
 	return &setup.Applier{Root: root, Runner: e.runner, Now: e.now, Chown: e.chown, Out: e.stdout,
-		SkepVersion: version.Get().String(), Sleep: e.sleep}
+		SkepVersion: version.Get().String(), Sleep: e.sleep, Cluster: cl, Agent: e.agentFor(root)}
 }
 
 func runApply(ctx context.Context, args []string, e env) error {

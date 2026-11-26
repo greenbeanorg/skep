@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"io"
@@ -40,8 +41,8 @@ func stockRoot(t *testing.T) string {
 	files := map[string]string{
 		"etc/rc.conf":        "hostname=\"skep1\"\nifconfig_vtnet0=\"inet 192.0.2.10/24\"\n",
 		"boot/loader.conf":   "",
-		"etc/passwd":         "root:*:0:0::/root:/bin/sh\nskep:*:409:409::/nonexistent:/usr/sbin/nologin\n",
-		"etc/group":          "wheel:*:0:root\nskep:*:409:\n",
+		"etc/passwd":         "root:*:0:0::/root:/bin/sh\nskep:*:409:409::/nonexistent:/usr/sbin/nologin\nskep-cluster:*:410:410::/nonexistent:/usr/sbin/nologin\n",
+		"etc/group":          "wheel:*:0:root\nskep:*:409:\nskep-cluster:*:410:\n",
 		"var/run/dmesg.boot": "VT-x: EPT,UG\n",
 	}
 	for p, c := range files {
@@ -75,6 +76,12 @@ func runWith(t *testing.T, e env, args ...string) result {
 	}
 	if e.confirm == nil {
 		e.confirm = func(string) bool { return false }
+	}
+	if e.cluster == nil {
+		e.cluster = &fakeCluster{initialised: true, view: aloneView(t)}
+	}
+	if e.importer == nil {
+		e.importer = fakeImporter{state: "done"}
 	}
 	code := run(context.Background(), args, e)
 	return result{code, out.String(), errb.String()}
@@ -253,4 +260,46 @@ type failingProber struct{ t *testing.T }
 func (p failingProber) Probe(context.Context) (setup.Facts, error) {
 	p.t.Error("probed the host before the data-directory check")
 	return setup.Facts{}, errors.New("probe")
+}
+
+// fakeCluster answers skep-setup's skep-cluster questions.
+type fakeCluster struct {
+	initialised bool
+	initErr     error
+	view        setup.ClusterView
+	inits       int
+}
+
+func (f *fakeCluster) Build(context.Context) (string, error) { return selfBuild(), nil }
+func (f *fakeCluster) Initialised(context.Context) (bool, error) {
+	return f.initialised, nil
+}
+func (f *fakeCluster) Init(context.Context) error {
+	f.inits++
+	if f.initErr == nil {
+		f.initialised = true
+	}
+	return f.initErr
+}
+func (f *fakeCluster) Status(context.Context) (setup.ClusterView, error) { return f.view, nil }
+
+// fakeImporter answers the import state.
+type fakeImporter struct{ state string }
+
+func (f fakeImporter) State(context.Context) (string, error)  { return f.state, nil }
+func (f fakeImporter) Import(context.Context) (string, error) { return "", nil }
+
+// aloneView is a one-node cluster with a leader, as skep-cluster's status
+// prints it.
+func aloneView(t *testing.T) setup.ClusterView {
+	t.Helper()
+	var v setup.ClusterView
+	raw := `{"node_id":"n1","node_name":"smith","cluster_id":"c1","build":"b","raft":{"state":"leader","leader_id":"n1"},` +
+		`"state_machine":{"up_to_date":true},"servers":[{"id":"n1","address":"","voter":true}],"accepted_by":"state machine",` +
+		`"members":[{"id":"n1","name":"smith","state":"member"}],"pendings":[]}`
+	if err := json.Unmarshal([]byte(raw), &v); err != nil {
+		t.Fatal(err)
+	}
+	v.Health = "ok"
+	return v
 }

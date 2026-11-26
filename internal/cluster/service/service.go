@@ -188,8 +188,13 @@ type Service struct {
 	// afterRemovalStep is the same for removal steps 0, 1 and 2.
 	afterRemovalStep func(step int, nodeID string) bool
 	frozen           bool
-	// beforeBarrier is a test hook run before each barrier of leaderStep.
+	// beforeBarrier is a test hook run before each barrier of a term
+	// (leaderStep's and watchLeadership's).
 	beforeBarrier func()
+	// afterHandoverPass is a test hook run after each pass-on of a
+	// leader's own removal to the new leader; the error it returns is
+	// used in place of the pass's.
+	afterHandoverPass func(err error) error
 	// beforeStep is a test hook run at the start of each step.
 	beforeStep func()
 	// usersMu guards usersCh, closed and replaced whenever the users

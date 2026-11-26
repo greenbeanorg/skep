@@ -3,7 +3,7 @@
 # rc.d script for the Skep API server.
 #
 # PROVIDE: skep_api
-# REQUIRE: LOGIN skep_agent
+# REQUIRE: LOGIN skep_agent skep_cluster
 # KEYWORD: shutdown
 #
 # Add to /etc/rc.conf (or use sysrc) to enable the API server:

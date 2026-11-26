@@ -3,9 +3,10 @@
 Every Skep host is a one-node cluster (`skep-cluster`, see
 [the architecture page](../architecture/skep-cluster.md)). This page joins
 a host to another host's cluster, removes it again, and gives up a join,
-with the commands of Milestone 8, steps 8b-1 and 8b-2a. **This is a
-preview:** only a host without VMs and jails can join, and users are not
-shared yet (each host keeps its own). Do it on test hosts.
+with the commands of Milestone 8, steps 8b-1 and 8b-2a, and through the
+API and `skepctl` from step 8c-2 ([below](#through-the-api-and-skepctl-step-8c-2)).
+**This is a preview:** only a host without VMs and jails can join. Do it
+on test hosts.
 
 Both sides exchange **key pins** before the first connection: the new
 host's request carries its pin, the member's admission carries the pin of
@@ -14,7 +15,9 @@ request you admit is really the new host's.
 
 ## Before you start
 
-On every host, as root:
+On every host, `skep-setup apply -start` (or `skep-setup upgrade` on an
+upgraded host) has initialised, enabled and started `skep_cluster`. By
+hand, as root:
 
 ```
 skep-cluster init                          # once, if not done
@@ -456,10 +459,59 @@ itself.
 
 - Join a host that has VMs or jails, or remove one that owns guests with
   `--forget-guests` (step 8d).
-- Admit or remove through the web interface or `skepctl` (step 8c-2).
+- Admit or remove through the web interface (`skepctl` and the API can,
+  from step 8c-2).
 - Change the address of a clustered node.
 - Limit a node without quorum to reads and to stopping and starting its
   own guests (ADR 0013 B9): this comes with the guest inventory (step 8d).
+
+## Through the API and skepctl (step 8c-2)
+
+Admitting a host, withdrawing an admission and removing a member are
+open to the public API with the permission `cluster:manage` (only the
+built-in `admin` role has it). The cluster view needs `system:read`.
+`skepctl` uses the same API:
+
+```
+skepctl cluster show                       # GET /api/v1/cluster
+skepctl cluster admit 'skep-join-request:...'
+skepctl cluster withdraw wu
+skepctl cluster remove wu                  # shows wu, asks for the cluster ID
+skepctl cluster remove wu --cluster-id ID  # without a terminal
+```
+
+- **admit** takes the line `skep-cluster join-request` printed on the new
+  host (at most 2 KiB) and prints the host's name, node ID, address and
+  pin, then the admission and the `skep-cluster join` command to run on
+  that host. **Compare the pin with the one the host shows on its own
+  console** (`skep-cluster status` there) before you join; if it differs,
+  withdraw the admission. The node you send it to needs a listen address:
+  without one the API answers `409 cluster_refused` naming `skep-cluster
+  listen -address ADDR`, which only root on that host can run.
+- **remove** needs the cluster ID typed back (`cluster_id` in the body).
+  It is compared on the node that receives the request and again on the
+  leader: a different one is `409 cluster_id_mismatch` and nothing is
+  written (a node that does not know its cluster ID yet answers `503
+  no_quorum`, `not_written`: it is not ready). When too few of the
+  remaining voters answer, `409 voters_unanswered`, naming the voters
+  that did not answer, nothing written: the API offers no override; root's
+  `skep-cluster remove -allow-unanswered` on the host stays the only one.
+  The answer can take up to about 90 s. Removing the node whose API you
+  use hands the leadership over first (`handed_over`); that API then
+  answers `503 no_quorum`, because the node is removed.
+- Nothing can be committed without quorum: `503 no_quorum` with
+  `details.outcome` `not_written` (no leader, `skep-cluster` not
+  reachable, joining, removed) or `unknown` (sent and no answer: check
+  `skepctl cluster show`). skep-api never repeats a member operation.
+- A **degraded session** (an administrator's login without quorum) cannot
+  admit, withdraw or remove, even once quorum is back: `503 no_quorum`,
+  `not_written`, "a degraded session cannot change the cluster's
+  membership; log in again once this node has quorum", audited as a
+  failure. `skepctl cluster show` still works with it.
+- Each one is in the access audit (`cluster.admit`,
+  `cluster.admit.withdraw`, `cluster.member.remove`, with the node name,
+  node ID, operation ID, and on failure the error code and outcome), and
+  in every node's cluster audit with the actor `user:NAME`.
 
 ## Users in a cluster (step 8c-1)
 

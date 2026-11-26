@@ -123,10 +123,28 @@ type Upgrader struct {
 	PIDWait    time.Duration
 	SocketWait time.Duration
 	Inode      func(path string) (uint64, error)
+	// Cluster runs skep-cluster's commands and Importer skep-api's import
+	// commands; nil means the installed programs (HostCluster,
+	// HostImporter). LeaderWait bounds the wait for a leader after
+	// skep_cluster's start (default DefaultUpgradeLeaderWait), ImportWait
+	// the wait for an import state after skep_api's (default 30 s).
+	Cluster    Cluster
+	Importer   Importer
+	LeaderWait time.Duration
+	ImportWait time.Duration
 
 	// dbPath is the agent's database, from its configuration.
 	dbPath string
 }
+
+// DefaultUpgradeLeaderWait is how long upgrade waits, after skep_cluster's
+// start, for its status to name a leader (D11 step 6 of step 8c-2).
+const DefaultUpgradeLeaderWait = 60 * time.Second
+
+// loginsWithoutCluster is what works while skep_cluster is not running or
+// has no leader (ADR 0013 amendment 4, D18 of 8c-1): the texts of D12.
+const loginsWithoutCluster = "Meanwhile skep-api has no quorum: an enabled administrator can log in, with a degraded session of at most one hour; " +
+	"every other user's login and every user change answer 503 no_quorum"
 
 // DefaultSocketWait is how long upgrade waits for the restarted agent to
 // answer on its socket. The agent serves its socket only after its
@@ -217,8 +235,13 @@ func (u *Upgrader) printf(format string, args ...any) {
 
 var versionLineRE = regexp.MustCompile(`^(skep-agent|skep-api) (\S+) \(commit (\S+),`)
 
-// installedBuild runs "<bin> -version" and returns version+commit.
+// installedBuild runs "<bin> -version" and returns version+commit;
+// skep-cluster prints its version with the "version" command, in its own
+// shape (facts F3 of step 8c-2).
 func (u *Upgrader) installedBuild(ctx context.Context, bin string) (string, error) {
+	if bin == clusterBin {
+		return u.cluster().Build(ctx)
+	}
 	out, err := u.Runner.Run(ctx, Cmd{Name: hostPath(u.Root, bin), Args: []string{"-version"}})
 	if err != nil {
 		return "", err
@@ -327,6 +350,12 @@ func (u *Upgrader) Upgrade(ctx context.Context) error {
 	if u.Wait == 0 {
 		u.Wait = DefaultTaskWait
 	}
+	if u.LeaderWait <= 0 {
+		u.LeaderWait = DefaultUpgradeLeaderWait
+	}
+	if u.ImportWait <= 0 {
+		u.ImportWait = importWait
+	}
 	// Setup backs the databases up under /var/db/skep: refuse a data
 	// directory someone other than root can change.
 	if err := CheckDataDir(u.Root); err != nil {
@@ -350,11 +379,21 @@ func (u *Upgrader) Upgrade(ctx context.Context) error {
 			return &UpgradeRefusal{Reason: fmt.Sprintf("%s is %s, skep-setup is %s: the package was not upgraded as one", bin, got, want)}
 		}
 	}
-	u.printf("  installed: skep-agent, skep-api and skep-setup are %s\n", want)
+	cl := u.cluster()
+	if got, err := cl.Build(ctx); err != nil {
+		return &UpgradeRefusal{Reason: err.Error()}
+	} else if got != want {
+		return &UpgradeRefusal{Reason: fmt.Sprintf("%s is %s, skep-setup is %s: the package was not upgraded as one", clusterBin, Clean(got), want)}
+	}
+	u.printf("  installed: skep-agent, skep-api, skep-cluster and skep-setup are %s\n", want)
 	// The backup directory, the backup commands and the checks below
 	// assume the default data directory.
 	if err := defaultDataDirs(u.Root); err != nil {
 		return &UpgradeRefusal{Reason: err.Error()}
+	}
+	cs, err := u.clusterRefusals(ctx, f)
+	if err != nil {
+		return err
 	}
 	// 2. Unfinished tasks, while the API still accepts requests: the
 	// common refusal, with nothing changed.
@@ -414,15 +453,17 @@ func (u *Upgrader) Upgrade(ctx context.Context) error {
 		}
 		u.printf("%s", indent(out))
 	}
-	// 5. Restart the agent, then the API, each verified. From the agent's
-	// stop on, Ctrl-C (or SIGTERM) no longer cancels anything: stopping
-	// half way would leave the host without an agent. The commands run in
-	// their own process group, so the terminal's signal does not reach
-	// them either; every wait below is bounded.
+	u.printf("  the cluster store (%s) is not backed up by this version\n", clusterDataDir)
+	// 5. Restart the agent, then the cluster, then the API, each
+	// verified. From the agent's stop on, Ctrl-C (or SIGTERM) no longer
+	// cancels anything: stopping half way would leave the host without an
+	// agent. The commands run in their own process group, so the
+	// terminal's signal does not reach them either; every wait below is
+	// bounded, and the context's limit is their sum (V6 of step 8c-2).
 	if err := ctx.Err(); err != nil {
 		return u.restoreAPI(ctx, want, err, "backups in "+dir+"; "+stateAgentUntouched)
 	}
-	nctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*(u.PIDWait+time.Minute)+u.SocketWait+time.Minute)
+	nctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), u.uninterruptibleLimit())
 	defer cancel()
 	u.printf("  service skep_agent stop (from here on, Ctrl-C does not interrupt the upgrade)\n")
 	if err := stopService(nctx, u.Runner, "skep_agent", u.printf); err != nil {
@@ -449,9 +490,47 @@ func (u *Upgrader) Upgrade(ctx context.Context) error {
 	if err := u.verify(nctx, "skep_agent", agentBin, agentPID, want); err != nil {
 		return agentDown(err)
 	}
+	// clusterDown is a failure of steps 4 to 6 (D12): skep_api is started
+	// again before it returns, and the text says what works meanwhile.
+	clusterDown := func(problem, check, again string) error {
+		restored := u.restoreAPI(nctx, want, errors.New(problem), "backups in "+dir)
+		return &UpgradeIncomplete{Problem: restored.Error() + ". " + loginsWithoutCluster, Check: check, Again: again}
+	}
+	agentAnswered := false
+	// 6. Only on a host without a cluster: wait for the agent's socket
+	// (init reads the node ID from it), then "skep-cluster init".
+	if !cs.initialised {
+		if err := u.waitForAgent(nctx, want); err != nil {
+			return clusterDown(fmt.Sprintf("skep_agent runs %s, but %v, so skep-cluster init could not run (backups in %s)", want, err, dir),
+				"the agent's log (/var/log/daemon.log): jail_stop_completing means it is completing interrupted jail stops; then service skep_agent status",
+				"Running skep-setup upgrade again is safe: it initialises the cluster once the agent answers")
+		}
+		agentAnswered = true
+		u.printf("  skep-cluster init\n")
+		if err := cl.Init(nctx); err != nil {
+			return clusterDown(fmt.Sprintf("skep-cluster init failed and may have changed the host: %v (backups in %s)", err, dir),
+				"skep-cluster init -check, and the output above; a half-made cluster store is removed by init itself",
+				"Running skep-setup upgrade again is safe: it runs init again only while the host is not initialised")
+		}
+	}
+	// 7. Only when skep_cluster_enable is unset: add it, with a journal
+	// of command "upgrade" (the same re-read rule as apply).
+	if cs.addEnable {
+		if err := u.addClusterEnable(nctx); err != nil {
+			return clusterDown(fmt.Sprintf("adding skep_cluster_enable=\"YES\" to %s failed: %v (backups in %s)", rcConfPath, err, dir),
+				"the journal in /"+journalRoot+" (skep-setup rollback lists it) and "+rcConfPath,
+				"Clear the journal with skep-setup rollback if it is unfinished, then run skep-setup upgrade again")
+		}
+	}
+	// 8. Restart skep_cluster as the new build and wait for a leader.
+	if err := u.restartCluster(nctx, want); err != nil {
+		return clusterDown(fmt.Sprintf("skep_agent runs %s, but skep_cluster did not come up as it: %v (backups in %s)", want, err, dir),
+			"service skep_cluster status, skep-cluster status, and skep-cluster's log (/var/log/daemon.log)",
+			"Running skep-setup upgrade again is safe: it restarts skep_cluster again, but does not fix the cause")
+	}
 	apiDown := func(err error) error {
 		return &UpgradeIncomplete{
-			Problem: fmt.Sprintf("skep_agent runs %s, but skep_api did not come up: %v (backups in %s)", want, err, dir),
+			Problem: fmt.Sprintf("skep_agent and skep_cluster run %s, but skep_api did not come up: %v (backups in %s)", want, err, dir),
 			Check:   "the API's log (/var/log/daemon.log), then start it with service skep_api start; upgrade need not run again"}
 	}
 	if _, err := u.Runner.Run(nctx, Cmd{Name: cmdService, Args: []string{"skep_api", "start"}}); err != nil {
@@ -460,27 +539,245 @@ func (u *Upgrader) Upgrade(ctx context.Context) error {
 	if err := u.verify(nctx, "skep_api", apiBin, apiPID, want); err != nil {
 		return apiDown(err)
 	}
-	// 6. The agent answers on its socket as the new build, then health.
-	if err := u.waitForAgent(nctx, want); err != nil {
-		return &UpgradeIncomplete{
-			Problem: fmt.Sprintf("both services restarted, but %v (backups in %s)", err, dir),
-			Check: "the agent's log (/var/log/daemon.log): jail_stop_completing means it is completing interrupted jail " +
-				"stops and will answer when they end; then service skep_agent status and skep-setup check"}
+	// 9. The agent answers on its socket as the new build, then health.
+	if !agentAnswered {
+		if err := u.waitForAgent(nctx, want); err != nil {
+			return &UpgradeIncomplete{
+				Problem: fmt.Sprintf("the services restarted, but %v (backups in %s)", err, dir),
+				Check: "the agent's log (/var/log/daemon.log): jail_stop_completing means it is completing interrupted jail " +
+					"stops and will answer when they end; then service skep_agent status and skep-setup check"}
+		}
 	}
 	status, err := u.Agent.Health(nctx)
 	if err != nil {
 		return &UpgradeIncomplete{
-			Problem: fmt.Sprintf("both services restarted at %s, but the agent's health is unknown: %v (backups in %s)", want, err, dir),
+			Problem: fmt.Sprintf("the services restarted at %s, but the agent's health is unknown: %v (backups in %s)", want, err, dir),
 			Check:   "the agent's log (/var/log/daemon.log) and skep-setup check"}
 	}
 	u.printf("  health: %s\n", status)
 	if status != "ok" {
 		return &UpgradeIncomplete{
-			Problem: fmt.Sprintf("both services restarted at %s, but health is %s (backups in %s)", want, status, dir),
+			Problem: fmt.Sprintf("the services restarted at %s, but health is %s (backups in %s)", want, status, dir),
 			Check:   u.modulesHint(nctx) + "skep-setup check and the agent's log (/var/log/daemon.log)"}
+	}
+	// 10. The import of the host's users (D13).
+	if err := u.importUsers(nctx); err != nil {
+		return err
 	}
 	u.printf("upgraded to %s; backups in %s\n", want, dir)
 	return nil
+}
+
+// cluster is the Cluster upgrade asks.
+func (u *Upgrader) cluster() Cluster {
+	if u.Cluster != nil {
+		return u.Cluster
+	}
+	return HostCluster{Root: u.Root, Runner: u.Runner}
+}
+
+// importer is the Importer upgrade asks.
+func (u *Upgrader) importer() Importer {
+	if u.Importer != nil {
+		return u.Importer
+	}
+	return HostImporter{Root: u.Root, Runner: u.Runner}
+}
+
+// uninterruptibleLimit is the sum of every bounded wait from the agent's
+// stop to the end (V6): the agent's stop and start with its pid wait, the
+// agent's socket, init, the rc.conf line, skep_cluster's stop and start
+// with its pid wait and the leader, skep_api's start with its pid wait,
+// the import state and the import, and a minute to spare. Each command
+// without a limit of its own is counted as one minute.
+func (u *Upgrader) uninterruptibleLimit() time.Duration {
+	return 3*(u.PIDWait+time.Minute) + u.SocketWait + clusterInitTimeout + time.Minute +
+		time.Minute + u.LeaderWait + u.ImportWait + 2*importTimeout + 2*time.Minute
+}
+
+// clusterState is what upgrade found out about skep_cluster before
+// anything was stopped.
+type clusterState struct {
+	initialised bool
+	addEnable   bool
+}
+
+// clusterRefusals makes D10's checks, before anything is stopped.
+func (u *Upgrader) clusterRefusals(ctx context.Context, f Facts) (clusterState, error) {
+	var cs clusterState
+	refuse := func(reason string) (clusterState, error) { return cs, &UpgradeRefusal{Reason: reason} }
+	switch it := clusterAccountItem(u.Root); it.Kind {
+	case Refuse:
+		return refuse(it.What + ": " + it.Detail)
+	case Warn:
+		u.printf("  warning: %s: %s\n", it.What, it.Detail)
+	}
+	rc, err := ReadRCConf(u.Root)
+	if err != nil {
+		return refuse("rc.conf: " + err.Error())
+	}
+	if v, set := rc.Get("skep_cluster_enable"); set {
+		if !strings.EqualFold(v, "YES") {
+			return refuse(fmt.Sprintf("skep_cluster_enable is %q: skep-api needs skep_cluster from this build on; set it to YES, then run upgrade again", v))
+		}
+	} else {
+		cs.addEnable = true
+		if len(rc.Main.Complex) > 0 || rc.ComplexOverride() != "" {
+			return refuse("skep_cluster_enable is not set, and setup cannot edit rc.conf by its rules (it is not plain assignments); " +
+				"run by hand: sysrc skep_cluster_enable=YES, then run upgrade again")
+		}
+		journals, err := LoadJournals(u.Root)
+		if err != nil {
+			return refuse("the journals: " + err.Error())
+		}
+		if j := incompleteJournal(journals); j != nil {
+			return refuse("skep_cluster_enable must be added to rc.conf, and an earlier run did not finish (journal " + j.ID + "): run skep-setup rollback " + j.ID + " first")
+		}
+	}
+	for v, def := range map[string]string{"skep_cluster_data_dir": clusterDataDir, "skep_cluster_config": clusterJSONPath,
+		"skep_cluster_socket_dir": "/var/run/skep-cluster", "skep_cluster_run_dir": "/var/run/skep"} {
+		if d, set := rc.Get(v); set && path.Clean(d) != def {
+			return refuse(fmt.Sprintf("%s is %q, not the default %s: skep-setup upgrade handles only the default layout; upgrade by hand as %s describes", v, d, def, manualUpgradeDoc))
+		}
+	}
+	cl := u.cluster()
+	if cs.initialised, err = cl.Initialised(ctx); err != nil {
+		return refuse("skep-cluster init -check failed, so upgrade cannot tell whether this host has a cluster: " + err.Error())
+	}
+	if !f.Running["skep_cluster"] {
+		if cs.initialised {
+			u.printf("  skep_cluster is initialised but not running; upgrade starts it\n")
+		} else {
+			u.printf("  this host has no cluster yet; upgrade runs skep-cluster init (a one-node cluster, no port opened)\n")
+		}
+		return cs, nil
+	}
+	v, err := cl.Status(ctx)
+	switch {
+	case err != nil:
+		return refuse("skep_cluster runs, but its status cannot be read (" + err.Error() + "), so upgrade cannot tell whether it is joining, rotating its key or removed; find out why (skep-cluster status), then run upgrade again")
+	case v.Removed != nil:
+		return refuse("this node was removed from cluster " + Clean(v.Removed.ClusterID) + ": run skep-cluster leave --wipe as root first (it makes this host a new one-node cluster)")
+	case v.Join != nil:
+		return refuse("this node is joining cluster " + Clean(v.Join.ClusterID) + " (phase " + Clean(v.Join.Phase) + "): let the join finish, or run skep-cluster join --abandon as root, then run upgrade again")
+	case v.Rotation != nil:
+		return refuse("this node is rotating its key (phase " + Clean(v.Rotation.Phase) + "): wait until skep-cluster status shows no rotation, or run skep-cluster key rotate --abort as root, then run upgrade again")
+	}
+	if v.StateMachine.Stalled != nil {
+		u.printf("  skep-cluster's state machine is stopped at log index %d; the new build may apply it\n", v.StateMachine.Stalled.Index)
+	}
+	return cs, nil
+}
+
+// addClusterEnable adds skep_cluster_enable="YES" through the Applier,
+// with a journal of command "upgrade", and checks the line afterwards: an
+// action skipped because the line appeared meanwhile is fine only if it
+// says YES.
+func (u *Upgrader) addClusterEnable(ctx context.Context) error {
+	a := &Applier{Root: u.Root, Runner: u.Runner, Now: u.Now, Out: u.Out, SkepVersion: u.Self.String(), Command: "upgrade"}
+	act := Action{Type: ActSysrc, File: rcConfPath, Name: "skep_cluster_enable", Op: "=", Value: "YES"}
+	p := Plan{Items: []Item{{Kind: Add, Area: rcConfPath, What: `skep_cluster_enable="YES"`, Action: &act}}}
+	if _, err := a.Apply(ctx, p); err != nil {
+		return err
+	}
+	rc, err := ReadRCConf(u.Root)
+	if err != nil {
+		return err
+	}
+	if v, _ := rc.Get("skep_cluster_enable"); !strings.EqualFold(v, "YES") {
+		return fmt.Errorf("skep_cluster_enable is %q after the change", v)
+	}
+	return nil
+}
+
+// restartCluster stops skep_cluster if it runs, starts it, checks it runs
+// the installed file at the new build, and waits for its status to show
+// the new build, a state machine that is not stopped and a leader.
+func (u *Upgrader) restartCluster(ctx context.Context, want string) error {
+	u.printf("  service skep_cluster stop\n")
+	if err := stopService(ctx, u.Runner, "skep_cluster", u.printf); err != nil {
+		return fmt.Errorf("stop skep_cluster: %w", err)
+	}
+	if _, err := u.Runner.Run(ctx, Cmd{Name: cmdService, Args: []string{"skep_cluster", "start"}}); err != nil {
+		return fmt.Errorf("start skep_cluster: %w", err)
+	}
+	if err := u.verify(ctx, "skep_cluster", clusterBin, clusterPID, want); err != nil {
+		return err
+	}
+	v, err := waitForLeader(ctx, u.cluster(), u.LeaderWait, u.Sleep)
+	if err != nil {
+		return err
+	}
+	if v.Build != want {
+		return fmt.Errorf("skep-cluster's status reports build %s, want %s", Clean(v.Build), want)
+	}
+	u.printf("  skep_cluster: %s\n", v.Summary())
+	return nil
+}
+
+// notAloneSettled is ClusterView.NotAlone, asked again every second for
+// up to ImportWait while the member list is only not current yet (right
+// after skep_cluster's start it comes from the membership file).
+func (u *Upgrader) notAloneSettled(ctx context.Context) (string, error) {
+	for waited := time.Duration(0); ; waited += time.Second {
+		v, err := u.cluster().Status(ctx)
+		if err != nil {
+			return "", err
+		}
+		why, settling := v.NotAlone()
+		if !settling || waited >= u.ImportWait || ctx.Err() != nil {
+			return why, nil
+		}
+		u.Sleep(time.Second)
+	}
+}
+
+// importUsers is D13: read the import state, import alone, never with
+// --yes, and print the cluster steps otherwise.
+func (u *Upgrader) importUsers(ctx context.Context) error {
+	im := u.importer()
+	st, err := waitForImportState(ctx, im, u.ImportWait, u.Sleep)
+	if err != nil {
+		return &UpgradeIncomplete{Problem: "the services run the new build, but the state of the import of this host's users is unknown: " + err.Error(),
+			Check: "skep-api admin list --import-state (as root)", Again: "Running skep-setup upgrade again is safe; it only reads the state again"}
+	}
+	if st != ImportPending {
+		u.printf("  users: import state %s\n", st)
+		return nil
+	}
+	notAlone, err := u.notAloneSettled(ctx)
+	if err != nil {
+		return &UpgradeIncomplete{Problem: "this host's users are still to be imported, and skep-cluster's status cannot be read: " + err.Error(),
+			Check: "skep-cluster status", Again: "Running skep-setup upgrade again is safe; it imports once skep-cluster answers"}
+	}
+	if notAlone != "" {
+		u.printf("  users: import state pending, and this node is not shown to be alone in its cluster (%s): setup does not import here.\n"+
+			"  Upgrade every node first, then run \""+ImportCommand+"\" on one node only; on every other node run it, then again with --yes\n"+
+			"  (docs/installation/upgrading.md). Until then logins work from this host's own users and user changes answer 503 users_import_pending.\n", notAlone)
+		return nil
+	}
+	u.printf("  users: import state pending; %s\n", ImportCommand)
+	out, ierr := im.Import(ctx)
+	if out != "" {
+		u.printf("%s", indent(out))
+	}
+	after, serr := im.State(ctx)
+	if ierr == nil && serr == nil && after == ImportDone {
+		u.printf("  users: import state done\n")
+		return nil
+	}
+	why := fmt.Sprintf("the state is %q afterwards", after)
+	switch {
+	case ierr != nil:
+		why = ierr.Error()
+	case serr != nil:
+		why = "the state cannot be read afterwards: " + serr.Error()
+	}
+	return &UpgradeIncomplete{
+		Problem: "the services run the new build, but the import of this host's users did not finish: " + why +
+			". Meanwhile logins work from this host's own users and user changes answer 503 users_import_pending",
+		Check: "skep-cluster status and skep-api admin list --import-state",
+		Again: "Run \"" + ImportCommand + "\" as root (it finishes an interrupted import), or skep-setup upgrade again"}
 }
 
 // stopFailedText says a stop failed and may have taken effect, unless it

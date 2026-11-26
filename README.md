@@ -43,7 +43,7 @@ API, a web UI, and a CLI.
 | Node API | `GET /api/v1/health`, `/system`, `/nodes/{id}/hardware`, `/tasks`, `/tasks/{id}`; `POST /tasks/{id}/cancel`. The VM, storage, and container endpoints are in the rows below ([OpenAPI](api/openapi.yaml)) |
 | Task engine | Persistent tasks with states, events, idempotency keys, cancellation, and an audit trail; nothing is resumed after a restart |
 | `skep-cluster` (Milestone 8, steps 8a to 8c-1) | A third, unprivileged service with its own account (UID/GID 410): the node key (ECDSA P-256, trusted by its pin), a Raft store, a Unix socket for root and `skep-api` with a per-operation caller check, and, on a host with a listen address, Raft over TLS 1.3 on port 8444 with the sender's pinned key checked on every RPC. **Preview:** a host without VMs and jails can join another host's cluster (`join-request`, `admit`, `join`); removal, `leave --wipe` and key rotation since 8b-2; since 8c-1 the users are the cluster's (`skep-api` keeps a copy and writes through it; `skep-api admin import-users` for an upgraded 0.1 host), guests are not shared yet ([what is built](docs/architecture/skep-cluster.md), [joining](docs/administration/cluster.md), [ADR 0013](docs/decisions/0013-clustering.md)) |
-| FreeBSD services | rc.d scripts for the three processes, supervised, started at boot (`skep_cluster` is not enabled by `skep-setup` yet) |
+| FreeBSD services | rc.d scripts for the three processes, supervised, started at boot (`skep-setup apply -start` initialises, enables and starts `skep_cluster`; `skep-setup upgrade` restarts it) |
 | Database | SQLite with versioned migrations and a stable node ID; separate databases for the agent and the API |
 | Users | Accounts with Argon2id password hashes and three built-in roles; the first administrator is created with a local command (`skep-api admin create`), never with default credentials |
 | Sessions | Login with a cookie session (browsers) or a bearer session (scripts), never both; idle and absolute timeouts; logout; login rate limits that never lock an account; every endpoint except the health status and the login needs a session |
@@ -359,7 +359,8 @@ administrator. `disable` and `delete` refuse the only enabled
 administrator, as the API does. On `main` (the unreleased cluster
 preview, step 8c-1) the users are `skep-cluster`'s, and these commands
 need `skep_cluster` running with quorum; `skep-api admin import-users`
-makes an upgraded 0.1 host's users the cluster's. Every one of these commands is written to
+makes an upgraded 0.1 host's users the cluster's (step 8c-2's `skep-setup
+upgrade` runs it on a single host). Every one of these commands is written to
 the access audit log with the actor `local:<uid>`.
 
 Passwords are 12 to 256 characters, with no composition rules, and are

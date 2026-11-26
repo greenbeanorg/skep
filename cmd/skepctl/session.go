@@ -63,16 +63,28 @@ func clientOptions(server string, t ctlstate.Trust, token string) (client.Option
 
 // newClient returns a client for a server with its stored trust setting.
 func newClient(server string, t ctlstate.Trust, token string) (*client.Client, error) {
+	return newClientTimeout(server, t, token, 0)
+}
+
+// newClientTimeout is newClient with a request timeout (0: the client's
+// default).
+func newClientTimeout(server string, t ctlstate.Trust, token string, timeout time.Duration) (*client.Client, error) {
 	opts, err := clientOptions(server, t, token)
 	if err != nil {
 		return nil, err
 	}
+	opts.Timeout = timeout
 	return client.New(opts)
 }
 
 // connect opens the stored session for a server. It needs both a stored
 // trust setting and a session token; it never trusts a server by itself.
 func connect(e env, serverFlag string) (*session, error) {
+	return connectTimeout(e, serverFlag, 0)
+}
+
+// connectTimeout is connect with a request timeout (0: the default).
+func connectTimeout(e env, serverFlag string, timeout time.Duration) (*session, error) {
 	store := ctlstate.New(e.stateDir)
 	server, err := resolveServer(store, serverFlag)
 	if err != nil {
@@ -92,7 +104,7 @@ func connect(e env, serverFlag string) (*session, error) {
 	if !ok {
 		return nil, fmt.Errorf("not logged in to %s: run skepctl login --server %s", server, server)
 	}
-	c, err := newClient(server, trust, sess.Token)
+	c, err := newClientTimeout(server, trust, sess.Token, timeout)
 	if err != nil {
 		return nil, err
 	}

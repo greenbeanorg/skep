@@ -491,7 +491,9 @@ func TestApplyStartAndAdmin(t *testing.T) {
 			tail = append(tail, c)
 		}
 	}
-	want := []string{"service skep_agent status", "service skep_api status", "service skep_api start",
+	// Each start is followed by a status check (F4 of the 8c-2 review).
+	want := []string{"service skep_agent status", "service skep_cluster status", "service skep_cluster start", "service skep_cluster status",
+		"service skep_api status", "service skep_api start", "service skep_api status",
 		root + "/usr/local/sbin/skep-api admin create --username andy -data-dir /var/db/skep (interactive) (as 409:409)"}
 	if strings.Join(tail, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("commands:\n%s", strings.Join(tail, "\n"))
@@ -520,7 +522,7 @@ func TestSecondApplyWithStartAndAdminIsANoOp(t *testing.T) {
 		t.Fatal(err)
 	}
 	f := facts()
-	f.Running = map[string]bool{"skep_agent": true, "skep_api": true}
+	f.Running = map[string]bool{"skep_agent": true, "skep_cluster": true, "skep_api": true}
 	o.Admins = SkepAPIAdmins{Runner: e.runner}
 	p := compute(t, o, f)
 	if acts := p.Actions(); len(acts) != 0 {
@@ -556,7 +558,7 @@ func TestPlanAdminAsksSkepAPINotTheJournals(t *testing.T) {
 		t.Fatal(err)
 	}
 	running := facts()
-	running.Running = map[string]bool{"skep_agent": true, "skep_api": true}
+	running.Running = map[string]bool{"skep_agent": true, "skep_cluster": true, "skep_api": true}
 	o.Admins = SkepAPIAdmins{Runner: e.runner}
 
 	// A reinstall: the journal says andy was created, api.db is new.
@@ -749,7 +751,7 @@ func TestApplyAdminWaitsForTheAPIAndFailsCleanly(t *testing.T) {
 	}
 	// Not refused; the retry plans only the administrator.
 	f := facts()
-	f.Running = map[string]bool{"skep_agent": true, "skep_api": true}
+	f.Running = map[string]bool{"skep_agent": true, "skep_cluster": true, "skep_api": true}
 	p := compute(t, o, f)
 	if p.Refused() || strings.Join(actions(p), "|") != (Action{Type: ActAdminCreate, Username: "andy"}).String() {
 		t.Fatalf("retry plan: refused=%v %v", p.Refused(), actions(p))
@@ -931,7 +933,7 @@ func TestPlanAdminDisabledOrNotAdmin(t *testing.T) {
 		t.Fatal(err)
 	}
 	running := facts()
-	running.Running = map[string]bool{"skep_agent": true, "skep_api": true}
+	running.Running = map[string]bool{"skep_agent": true, "skep_cluster": true, "skep_api": true}
 	cases := []struct{ detail, kind, want string }{
 		{`user "andy" exists (role admin)`, "ok", "exists (skep-api admin exists"},
 		{`user "andy" exists (role admin, disabled)`, "warn", "is disabled"},

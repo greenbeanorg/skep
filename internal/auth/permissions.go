@@ -38,6 +38,11 @@ const (
 	PermContainerPower    = "container:power"
 	PermContainerSnapshot = "container:snapshot"
 
+	// Admitting a host to the cluster, withdrawing an admission and
+	// removing a member (ADR 0013 B2, step 8c-2 D19). Only the admin
+	// role has it, through "*": no migration gives it to another role.
+	PermClusterManage = "cluster:manage"
+
 	// PermAll is how the admin role is stored: every permission,
 	// including ones added later.
 	PermAll = "*"
@@ -50,6 +55,7 @@ var Permissions = []string{
 	PermVMRead, PermVMWrite, PermVMDelete, PermVMPower, PermVMConsole, PermStorageRead,
 	PermVMSnapshot, PermStorageWrite,
 	PermContainerRead, PermContainerWrite, PermContainerDelete, PermContainerPower, PermContainerSnapshot,
+	PermClusterManage,
 }
 
 // KnownPermission reports whether p is a declared permission.

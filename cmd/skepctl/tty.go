@@ -36,3 +36,28 @@ func confirmOnTerminal(ctx context.Context, prompt string) (bool, error) {
 		return a == "y" || a == "yes", nil
 	}
 }
+
+// lineOnTerminal reads one line from the controlling terminal, not from
+// standard input.
+func lineOnTerminal(ctx context.Context, prompt string) (string, error) {
+	tty, err := os.OpenFile("/dev/tty", os.O_RDWR, 0)
+	if err != nil {
+		return "", fmt.Errorf("%w: %v", termpass.ErrNoTerminal, err)
+	}
+	defer tty.Close()
+	if _, err := fmt.Fprint(tty, prompt); err != nil {
+		return "", err
+	}
+	answer := make(chan string, 1)
+	go func() {
+		line, _ := bufio.NewReaderSize(tty, 256).ReadString('\n')
+		answer <- line
+	}()
+	select {
+	case <-ctx.Done():
+		fmt.Fprintln(tty)
+		return "", ctx.Err()
+	case line := <-answer:
+		return strings.TrimSpace(line), nil
+	}
+}

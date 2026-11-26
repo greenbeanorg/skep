@@ -41,7 +41,7 @@ func runUpgrade(ctx context.Context, args []string, e env) error {
 	if err := e.checkDataDir(*root); err != nil {
 		return err
 	}
-	if !*yes && !e.confirm("Stop skep_api, wait for unfinished tasks, back up both databases and restart skep_agent and skep_api? Running guests are not touched.") {
+	if !*yes && !e.confirm("Stop skep_api, wait for unfinished tasks, back up both databases, restart skep_agent, initialise and enable skep_cluster where it is not, restart skep_cluster and skep_api, and import this host's users where it is alone? Running guests are not touched.") {
 		return &exitError{code: exitPending, msg: "not confirmed: nothing was changed"}
 	}
 	agent := e.agentFor(*root)
@@ -50,7 +50,8 @@ func runUpgrade(ctx context.Context, args []string, e env) error {
 		taskWait = -1 // Upgrader: 0 is the default, negative is no wait
 	}
 	u := &setup.Upgrader{Root: *root, Runner: e.runner, Prober: e.prober, Agent: agent, Now: e.now, Out: e.stdout,
-		Self: version.Get(), Force: *force, Wait: taskWait, Keep: *keep, Sleep: e.sleep, Inode: e.inode}
+		Self: version.Get(), Force: *force, Wait: taskWait, Keep: *keep, Sleep: e.sleep, Inode: e.inode,
+		Cluster: e.cluster, Importer: e.importer}
 	return upgradeExit(u.Upgrade(ctx))
 }
 

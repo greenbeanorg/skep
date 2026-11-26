@@ -17,7 +17,7 @@ func runRemove(ctx context.Context, args []string, e env) error {
 	planOnly := flags.Bool("plan", false, "only show what remove would do and keep (read-only)")
 	flags.BoolVar(&o.KeepGuests, "keep-guests", false, "remove although Skep guests exist; nothing is stopped, nothing will manage them")
 	flags.BoolVar(&o.RevertHost, "revert-host", false, "remove the lines setup added to rc.conf and loader.conf, where unchanged since")
-	flags.BoolVar(&o.PurgeData, "purge-data", false, "delete /var/db/skep (node identity, databases, audit logs), agent.json, api.json and the skep account; always asks")
+	flags.BoolVar(&o.PurgeData, "purge-data", false, "delete /var/db/skep (node identity, databases, audit logs, the cluster's node key and audit), agent.json, api.json, cluster.json and the skep and skep-cluster accounts; always asks")
 	yes := flags.Bool("yes", false, "do not ask (except for -purge-data)")
 	if err := flags.Parse(args); err != nil {
 		return err
@@ -37,6 +37,7 @@ func runRemove(ctx context.Context, args []string, e env) error {
 	if err != nil {
 		return err
 	}
+	o.Cluster, o.ClusterReason = e.clusterFor(o.Root)
 	p, err := setup.ComputeRemove(ctx, o, f, e.runner, e.agentFor(o.Root))
 	if err != nil {
 		return err
@@ -54,7 +55,7 @@ func runRemove(ctx context.Context, args []string, e env) error {
 	if err := refuseFixtureServices(o.Root, e, p); err != nil {
 		return err
 	}
-	if o.PurgeData && !e.confirm("This deletes the node identity, both databases and every audit log, and cannot be undone. Delete them?") {
+	if o.PurgeData && !e.confirm("This deletes the node identity, both databases, every audit log, the cluster's node key and its cluster audit, and cannot be undone. Delete them?") {
 		return &exitError{code: exitPending, msg: "not confirmed: nothing was changed"}
 	}
 	if !*yes && !e.confirm(fmt.Sprintf("Make these %d changes?", len(p.Actions()))) {

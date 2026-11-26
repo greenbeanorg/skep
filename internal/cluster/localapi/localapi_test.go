@@ -9,10 +9,12 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/greenbeanorg/skep/internal/cluster/memberapi"
 	"github.com/greenbeanorg/skep/internal/cluster/store"
 	"github.com/greenbeanorg/skep/internal/peercred"
 	"github.com/greenbeanorg/skep/pkg/models"
@@ -61,9 +63,29 @@ func (fakeBackend) Withdraw(_ context.Context, name, actor string) (WithdrawResu
 const apiUID = 409
 
 func call(h http.Handler, method, path string, peer *peercred.Cred) *httptest.ResponseRecorder {
+	return callBody(h, method, path, peer, bodyFor(path, peer))
+}
+
+// bodyFor is a body each caller may send: the API account's member
+// operations name the user and carry a request ID, its removal the
+// cluster ID (D22, D24 of step 8c-2); root's carry neither.
+func bodyFor(path string, peer *peercred.Cred) string {
+	if peer == nil || peer.UID != apiUID {
+		return "{}"
+	}
+	switch path {
+	case PathAdmit, PathWithdraw:
+		return `{"actor":"user:andy","request_id":"r1"}`
+	case PathRemove:
+		return `{"actor":"user:andy","request_id":"r1","cluster_id":"c1"}`
+	}
+	return "{}"
+}
+
+func callBody(h http.Handler, method, path string, peer *peercred.Cred, b string) *httptest.ResponseRecorder {
 	var body io.Reader
 	if method == http.MethodPost {
-		body = strings.NewReader("{}")
+		body = strings.NewReader(b)
 	}
 	req := httptest.NewRequest(method, path, body)
 	if peer != nil {
@@ -132,9 +154,9 @@ func TestOperationTable(t *testing.T) {
 		"health":             {true, true},
 		"status":             {true, true},
 		"raft-configuration": {true, false},
-		"admit":              {true, false},
-		"admit-withdraw":     {true, false},
-		"remove":             {true, false},
+		"admit":              {true, true},
+		"admit-withdraw":     {true, true},
+		"remove":             {true, true},
 		"key-rotate":         {true, false},
 		"key-abort":          {true, false},
 		"users-read":         {false, true},
@@ -318,5 +340,81 @@ func TestRemoveHasItsOwnTimeLimit(t *testing.T) {
 	}
 	if WriteTimeout <= RemoveTimeout || NewClient("/nonexistent").http.Timeout < WriteTimeout {
 		t.Fatalf("write limit %s, client limit %s, remove limit %s", WriteTimeout, NewClient("/x").http.Timeout, RemoveTimeout)
+	}
+}
+
+// V4 of step 8c-2: the socket refuses, for the API account, a missing or
+// malformed actor, a missing request ID, allow_unanswered, and a removal
+// without the cluster ID; for root, a request that names an actor. The
+// actor the backend sees is the API's user, or "root".
+func TestMemberOperationCallers(t *testing.T) {
+	h := NewHandler(fakeBackend{}, HandlerOptions{APIUID: apiUID})
+	api := &peercred.Cred{UID: apiUID, GID: apiUID}
+	root := &peercred.Cred{UID: 0, GID: 0}
+	for _, c := range []struct {
+		name string
+		peer *peercred.Cred
+		path string
+		body string
+		code int
+		want string
+	}{
+		{"api admit", api, PathAdmit, `{"request":"x","actor":"user:andy","request_id":"r1"}`, 200, `"op_id":"user:andy"`},
+		{"api no actor", api, PathAdmit, `{"request":"x","request_id":"r1"}`, 400, "invalid_request"},
+		{"api actor root", api, PathAdmit, `{"request":"x","actor":"root","request_id":"r1"}`, 400, "invalid_request"},
+		{"api local actor", api, PathWithdraw, `{"name":"wu","actor":"local:0","request_id":"r1"}`, 400, "invalid_request"},
+		{"api actor with a newline", api, PathWithdraw, `{"name":"wu","actor":"user:andy\n","request_id":"r1"}`, 400, "invalid_request"},
+		{"api no request id", api, PathWithdraw, `{"name":"wu","actor":"user:andy"}`, 400, "invalid_request"},
+		{"api remove", api, PathRemove, `{"name":"wu","actor":"user:andy","request_id":"r1","cluster_id":"c1"}`, 200, `"op_id":"user:andy"`},
+		{"api remove without cluster id", api, PathRemove, `{"name":"wu","actor":"user:andy","request_id":"r1"}`, 400, "cluster ID"},
+		{"api allow_unanswered", api, PathRemove, `{"name":"wu","actor":"user:andy","request_id":"r1","cluster_id":"c1","allow_unanswered":true}`, 403, "allow_unanswered"},
+		{"root admit", root, PathAdmit, `{"request":"x"}`, 200, `"op_id":"root"`},
+		{"root with an actor", root, PathAdmit, `{"request":"x","actor":"user:andy"}`, 400, "root's requests name no actor"},
+		{"root with a request id", root, PathRemove, `{"name":"wu","request_id":"r1"}`, 400, "root's requests name no actor"},
+		{"root allow_unanswered", root, PathRemove, `{"name":"wu","allow_unanswered":true,"cluster_id":"c1"}`, 200, `"op_id":"root"`},
+	} {
+		rec := callBody(h, http.MethodPost, c.path, c.peer, c.body)
+		if rec.Code != c.code || !strings.Contains(rec.Body.String(), c.want) {
+			t.Errorf("%s: %d %s", c.name, rec.Code, rec.Body)
+		}
+	}
+}
+
+// D21 of step 8c-2: skep-api's view of the status reads what Status
+// prints: every tag of memberapi.View is one of Status's, and a full
+// Status decodes into it.
+func TestMemberViewFollowsStatus(t *testing.T) {
+	tagsOf := func(t reflect.Type) map[string]bool {
+		m := map[string]bool{}
+		for i := range t.NumField() {
+			m[strings.Split(t.Field(i).Tag.Get("json"), ",")[0]] = true
+		}
+		return m
+	}
+	status, view := tagsOf(reflect.TypeOf(Status{})), reflect.TypeOf(memberapi.View{})
+	for i := range view.NumField() {
+		if tag := strings.Split(view.Field(i).Tag.Get("json"), ",")[0]; !status[tag] {
+			t.Errorf("memberapi.View reads %q, which Status does not have", tag)
+		}
+	}
+	raft := tagsOf(reflect.TypeOf(store.Stats{}))
+	for _, tag := range []string{"state", "leader_id"} {
+		if !raft[tag] {
+			t.Errorf("store.Stats has no %q", tag)
+		}
+	}
+	server := tagsOf(reflect.TypeOf(store.Server{}))
+	for _, tag := range []string{"id", "voter"} {
+		if !server[tag] {
+			t.Errorf("store.Server has no %q", tag)
+		}
+	}
+	st := Status{NodeID: "n1", ClusterID: "c1", Raft: store.Stats{State: "leader", LeaderID: "n1"},
+		Servers: []store.Server{{ID: "n1", Voter: true}}, Removals: []string{"x"}, Clocks: []ClockStatus{{NodeID: "n2", Known: true}}}
+	raw, _ := json.Marshal(st)
+	var v memberapi.View
+	if err := json.Unmarshal(raw, &v); err != nil || v.Raft.LeaderID != "n1" || len(v.Servers) != 1 || !v.Servers[0].Voter ||
+		v.Removals[0] != "x" || !v.Clocks[0].Known || v.ClusterID != "c1" {
+		t.Fatalf("%v %+v", err, v)
 	}
 }

@@ -54,9 +54,12 @@
 #   skep_cluster_env=""
 #       Environment for skep-cluster (standard rc.subr variable).
 #
-# The service does not need skep_agent or skep_api and they do not need it
-# yet: it never talks to the agent, and skep-api starts using it with
-# Skep 0.2's replicated users.
+# The service does not need skep_agent: it never talks to the agent (only
+# the root-run "skep-cluster init" reads the node ID from it). skep_api
+# needs it: the users are skep-cluster's (ADR 0013 amendment 4), so
+# skep_api's script REQUIREs skep_cluster and starts after it at boot. A
+# disabled skep_cluster does not stop skep_api from starting; skep-api then
+# has no quorum and lets only administrators log in, degraded.
 #
 # skep_cluster_flags, skep_cluster_user and skep_cluster_group are
 # deliberately not used: rc.subr would apply them to daemon(8), not to

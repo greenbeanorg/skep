@@ -96,6 +96,8 @@ tags:
     description: Login, logout, and the caller's own session and password
   - name: users
     description: Accounts, roles, and the access audit log
+  - name: cluster
+    description: This node's cluster, admissions and removals (ADR 0013)
   - name: system
     description: Health and identity of the local node
   - name: nodes
@@ -2239,6 +2241,162 @@ paths:
           $ref: "#/components/responses/VMUnprocessable"
         "503":
           $ref: "#/components/responses/Unavailable"
+  /cluster:
+    get:
+      tags: [cluster]
+      operationId: getCluster
+      x-skep-permission: system:read
+      summary: This node's view of its cluster
+      description: |
+        Requires `system:read`. What this node's `skep-cluster` knows: the
+        cluster ID, the members (with their key pins and whether they
+        vote), the pending admissions, what removals and key rotations
+        wait for, the members' clocks and the service's health. Nothing in
+        it is secret. Without `skep-cluster` on this node: `503
+        no_quorum`. Open to a degraded session (a login without quorum).
+      responses:
+        "200":
+          description: The view.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Cluster"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "503":
+          $ref: "#/components/responses/ClusterNoQuorum"
+  /cluster/admissions:
+    post:
+      tags: [cluster]
+      operationId: admitHost
+      x-skep-permission: cluster:manage
+      summary: Admit a host to the cluster
+      description: |
+        Requires `cluster:manage`. `request` is the line `skep-cluster
+        join-request` printed on the host (at most 2 KiB). The answer is
+        the admission line to paste into `skep-cluster join` there;
+        compare the pin with the one the host shows on its own console
+        first. This node needs a listen address (`skep-cluster listen
+        -address ADDR` as root): otherwise `409 cluster_refused`. Sent
+        once; never repeated by skep-api. A degraded session (a login
+        without quorum) is refused before anything is sent: `503
+        no_quorum`, `details.outcome` `not_written`, audited as a failure.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ClusterAdmitRequest"
+      responses:
+        "200":
+          description: Admitted; the admission is pending until the host joins or it expires.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClusterAdmission"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/ClusterRefused"
+        "503":
+          $ref: "#/components/responses/ClusterNoQuorum"
+  /cluster/admissions/{name}:
+    parameters:
+      - name: name
+        in: path
+        required: true
+        description: The admitted host's node name.
+        schema:
+          type: string
+    delete:
+      tags: [cluster]
+      operationId: withdrawAdmission
+      x-skep-permission: cluster:manage
+      summary: Withdraw a pending admission
+      description: |
+        Requires `cluster:manage`. No such admission is `404 not_found`.
+        A degraded session (a login without quorum) is refused before
+        anything is sent: `503 no_quorum`, `details.outcome`
+        `not_written`, audited as a failure.
+      responses:
+        "200":
+          description: Withdrawn.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClusterWithdrawal"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/ClusterRefused"
+        "503":
+          $ref: "#/components/responses/ClusterNoQuorum"
+  /cluster/members/{name}/remove:
+    parameters:
+      - name: name
+        in: path
+        required: true
+        description: The member's node name.
+        schema:
+          type: string
+    post:
+      tags: [cluster]
+      operationId: removeMember
+      x-skep-permission: cluster:manage
+      summary: Remove a member from the cluster
+      description: |
+        Requires `cluster:manage`. `cluster_id` is required and must be
+        the cluster's (compared on this node and again on the leader):
+        otherwise `409 cluster_id_mismatch` and nothing is written (a
+        node that does not know its cluster ID yet answers `503
+        no_quorum`, `not_written`: not ready). When too few of the
+        remaining voters answer now, `409 voters_unanswered`, naming the
+        voters that did not answer, and nothing is written; the API offers
+        no override. A degraded session (a login without quorum) is
+        refused before anything is sent: `503 no_quorum`,
+        `details.outcome` `not_written`, audited as a failure. The answer comes once the first entry of the removal is
+        committed (up to about 90 s); the leader finishes the removal by
+        itself. Removing the leader hands the leadership over first
+        (`handed_over`); afterwards that node's API answers `503
+        no_quorum`. The removed host keeps its guests running and needs
+        `skep-cluster leave --wipe` before it can join again.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ClusterRemoveRequest"
+      responses:
+        "200":
+          description: The removal is under way.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClusterRemoval"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/ClusterRefused"
+        "503":
+          $ref: "#/components/responses/ClusterNoQuorum"
   /metrics:
     get:
       tags: [storage]
@@ -2407,6 +2565,27 @@ components:
             $ref: "#/components/schemas/ErrorResponse"
     InvalidRequest:
       description: The request is malformed (`invalid_request`).
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    ClusterRefused:
+      description: |
+        The cluster refused (`cluster_refused`, the message says why; for a
+        node without a listen address it names `skep-cluster listen
+        -address ADDR`), too few remaining voters answered
+        (`voters_unanswered`), or the cluster ID given is not the
+        cluster's (`cluster_id_mismatch`). Nothing was written.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    ClusterNoQuorum:
+      description: |
+        Nothing can be committed now (`no_quorum`). `details.outcome` is
+        `not_written` (no leader, skep-cluster not reachable, joining,
+        removed, a degraded session on a membership change, …) or `unknown` (sent and no answer, or the outcome was
+        not known within the cluster's limit: check GET /cluster).
       content:
         application/json:
           schema:
@@ -3480,6 +3659,149 @@ components:
         bridges:
           type: array
           items: { type: string }
+    Cluster:
+      type: object
+      required: [cluster_id, node_id, node_name, leader_known, members, pending_admissions, health, build]
+      properties:
+        cluster_id: {type: string}
+        node_id: {type: string}
+        node_name: {type: string}
+        leader_known:
+          type: boolean
+          description: Whether this node knows a leader now.
+        state_machine_stopped_at:
+          type: integer
+          format: int64
+          description: The log index the replicated state machine stopped at (an entry this build cannot apply).
+        members:
+          type: array
+          items:
+            $ref: "#/components/schemas/ClusterMember"
+        pending_admissions:
+          type: array
+          items:
+            $ref: "#/components/schemas/ClusterPending"
+        removals:
+          type: array
+          description: Per member being removed, what its removal waits for.
+          items: {type: string}
+        rotations:
+          type: array
+          description: Per member rotating its key, what the rotation waits for.
+          items: {type: string}
+        unapplied_removal:
+          type: array
+          description: Members that have not applied the last removal yet.
+          items: {type: string}
+        clocks:
+          type: array
+          items:
+            $ref: "#/components/schemas/ClusterClock"
+        health:
+          $ref: "#/components/schemas/Health"
+        joining:
+          type: object
+          required: [phase, cluster_id]
+          properties:
+            phase: {type: string}
+            cluster_id: {type: string}
+            message: {type: string}
+        removed:
+          type: object
+          required: [cluster_id, at, how]
+          properties:
+            cluster_id: {type: string}
+            at: {type: string}
+            how: {type: string}
+        build: {type: string}
+    ClusterMember:
+      type: object
+      required: [id, name, state, address, pin, voter]
+      properties:
+        id: {type: string}
+        name: {type: string}
+        state:
+          type: string
+          description: member, joining or removing.
+        address:
+          type: string
+          description: The node-to-node address, or "" for a node without a listener.
+        pin:
+          type: string
+          description: The SHA-256 pin of the member's node key.
+        next_pin:
+          type: string
+          description: Set while the member rotates its key.
+        voter: {type: boolean}
+    ClusterPending:
+      type: object
+      required: [node_id, name, address, pin, expires_at]
+      properties:
+        node_id: {type: string}
+        name: {type: string}
+        address: {type: string}
+        pin: {type: string}
+        expires_at: {type: string, format: date-time}
+    ClusterClock:
+      type: object
+      required: [node_id, name, known]
+      properties:
+        node_id: {type: string}
+        name: {type: string}
+        known: {type: boolean}
+        offset_ms: {type: integer, format: int64}
+        uncertainty_ms: {type: integer, format: int64}
+        round_trip_ms: {type: integer, format: int64}
+        note: {type: string}
+    ClusterAdmitRequest:
+      type: object
+      required: [request]
+      additionalProperties: false
+      properties:
+        request:
+          type: string
+          maxLength: 2048
+          description: The line "skep-cluster join-request" printed on the host.
+    ClusterAdmission:
+      type: object
+      required: [admission, cluster_id, node_id, name, address, pin, expires_at, op_id]
+      properties:
+        admission:
+          type: string
+          description: The line to paste into "skep-cluster join" on the host.
+        cluster_id: {type: string}
+        node_id: {type: string}
+        name: {type: string}
+        address: {type: string}
+        pin: {type: string}
+        expires_at: {type: string, format: date-time}
+        op_id: {type: string}
+    ClusterWithdrawal:
+      type: object
+      required: [node_id, name, op_id]
+      properties:
+        node_id: {type: string}
+        name: {type: string}
+        op_id: {type: string}
+    ClusterRemoveRequest:
+      type: object
+      required: [cluster_id]
+      additionalProperties: false
+      properties:
+        cluster_id:
+          type: string
+          description: The cluster's ID, typed back (GET /cluster).
+    ClusterRemoval:
+      type: object
+      required: [node_id, name, cluster_id, op_id, handed_over]
+      properties:
+        node_id: {type: string}
+        name: {type: string}
+        cluster_id: {type: string}
+        op_id: {type: string}
+        handed_over:
+          type: boolean
+          description: The member was the leader and handed the leadership over first.
     ErrorResponse:
       type: object
       required: [error]
@@ -3513,6 +3835,9 @@ components:
                 - no_quorum
                 - users_import_pending
                 - too_many_users
+                - cluster_refused
+                - voters_unanswered
+                - cluster_id_mismatch
                 - resource_busy
                 - idempotency_key_conflict
                 - not_cancellable

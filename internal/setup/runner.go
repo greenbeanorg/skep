@@ -58,6 +58,9 @@ type Cmd struct {
 	// As, when set, runs the command as that user with no supplementary
 	// groups.
 	As *Credential
+	// Limit, when above 0, is the most of the standard output that is
+	// kept; the rest is read and dropped, so the command is not blocked.
+	Limit int
 }
 
 func (c Cmd) String() string { return strings.Join(append([]string{c.Name}, c.Args...), " ") }
@@ -95,7 +98,10 @@ func (h HostRunner) Run(ctx context.Context, c Cmd) (string, error) {
 		return "", nil
 	}
 	var out, errb bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &out, &errb
+	cmd.Stdout, cmd.Stderr = &out, &limitWriter{w: &errb, n: 64 << 10}
+	if c.Limit > 0 {
+		cmd.Stdout = &limitWriter{w: &out, n: c.Limit}
+	}
 	if err := cmd.Run(); err != nil {
 		if tail := strings.TrimSpace(errb.String()); tail != "" {
 			return out.String(), fmt.Errorf("%s: %w: %s", c, err, tail)
@@ -103,4 +109,22 @@ func (h HostRunner) Run(ctx context.Context, c Cmd) (string, error) {
 		return out.String(), fmt.Errorf("%s: %w", c, err)
 	}
 	return out.String(), nil
+}
+
+// limitWriter keeps the first n bytes written to it and drops the rest,
+// reporting every write as complete.
+type limitWriter struct {
+	w io.Writer
+	n int
+}
+
+func (l *limitWriter) Write(p []byte) (int, error) {
+	if l.n > 0 {
+		k := min(len(p), l.n)
+		if _, err := l.w.Write(p[:k]); err != nil {
+			return 0, err
+		}
+		l.n -= k
+	}
+	return len(p), nil
 }

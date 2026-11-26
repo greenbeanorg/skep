@@ -5,7 +5,7 @@
 //	skep-setup plan    [answers]   read-only: the exact changes apply would make
 //	skep-setup apply   [answers]   make them, with backups and a journal
 //	skep-setup rollback [ID]       undo one apply where files are unchanged since
-//	skep-setup upgrade             after pkg upgrade: stop the API, wait for tasks, back up, restart in order
+//	skep-setup upgrade             after pkg upgrade: stop the API, wait for tasks, back up, restart in order (and the cluster)
 //	skep-setup remove  [--plan]    before pkg delete: stop, disable, optionally revert
 //
 // The answers are flags (see "skep-setup plan -h"). Nothing here runs a
@@ -71,7 +71,51 @@ type env struct {
 	// startFS replaces the host in check's agent start check; nil means
 	// the real host, as root, on the real root only.
 	startFS startcheck.FS
+	// cluster and importer replace skep-cluster's and skep-api's commands
+	// in the tests; nil means the installed programs, as root, on the
+	// real root only.
+	cluster  setup.Cluster
+	importer setup.Importer
 }
+
+// clusterFor is how setup asks skep-cluster: its commands, run as root.
+// With the real runner and a -root other than / they would read this
+// host's cluster instead of the root's, and without root they cannot
+// run, so neither case asks; reason says why.
+func (e env) clusterFor(root string) (setup.Cluster, string) {
+	switch {
+	case e.cluster != nil:
+		return e.cluster, ""
+	case e.runner == nil:
+		return nil, "no command runner"
+	case !e.realRunner():
+	case root != "/":
+		return nil, "-root " + root + ": skep-cluster would read this host's cluster, not the root's"
+	case e.euid != 0:
+		return nil, "only root can run skep-cluster init -check; run skep-setup as root"
+	}
+	return setup.HostCluster{Root: root, Runner: e.runner}, ""
+}
+
+// importerFor is how setup reads the import state: skep-api's commands as
+// the skep account, which needs root, on the real root only.
+func (e env) importerFor(root string) (setup.Importer, string) {
+	switch {
+	case e.importer != nil:
+		return e.importer, ""
+	case e.runner == nil:
+		return nil, "no command runner"
+	case !e.realRunner():
+	case root != "/":
+		return nil, "-root is set"
+	case e.euid != 0:
+		return nil, "run skep-setup check as root"
+	}
+	return setup.HostImporter{Root: root, Runner: e.runner}, ""
+}
+
+// selfBuild is skep-setup's own build, version+commit.
+func selfBuild() string { v := version.Get(); return v.Version + "+" + v.Commit }
 
 // checkDataDir is the check every command makes before its first read or
 // write under /var/db/skep.
@@ -128,7 +172,7 @@ func refuseFixtureServices(root string, e env, p setup.Plan) error {
 	}
 	for _, a := range p.Actions() {
 		switch a.Type {
-		case setup.ActServiceStart, setup.ActServiceStop, setup.ActAdminCreate, setup.ActPwDelete:
+		case setup.ActServiceStart, setup.ActServiceStop, setup.ActAdminCreate, setup.ActPwDelete, setup.ActClusterInit:
 			return &exitError{code: exitUsage, msg: fmt.Sprintf("-root %s: %q would act on this host's services or accounts, not on the root; refused", root, a.String())}
 		}
 	}
@@ -221,7 +265,7 @@ func usage(w io.Writer) {
   plan      read-only: the exact changes apply would make, and what it leaves to you
   apply     make the planned changes (backups and a journal in /var/db/skep/setup)
   rollback  undo one apply, only where files are unchanged since
-  upgrade   after "pkg upgrade skep": check versions, stop the API, wait for tasks, back up, restart in order
+  upgrade   after "pkg upgrade skep": check versions, stop the API, wait for tasks, back up, restart the agent, skep_cluster and the API
   remove    before "pkg delete skep": stop and disable the services
   version   print the version
 
@@ -261,7 +305,7 @@ func (a *answers) register(flags *flag.FlagSet) {
 	flags.StringVar(&a.listen, "listen", "", "API listen address, ADDRESS:PORT (default: the management address, port 8443)")
 	flags.BoolVar(&a.listenAll, "listen-all", false, "allow listening on 0.0.0.0 or ::")
 	flags.BoolVar(&a.noRACCT, "no-racct", false, "do not add kern.racct.enable (jail limits other than disk_quota are then refused)")
-	flags.BoolVar(&a.start, "start", false, "start both services at the end of apply")
+	flags.BoolVar(&a.start, "start", false, "start skep_agent, skep_cluster (initialising the cluster first) and skep_api at the end of apply")
 	flags.StringVar(&a.admin, "admin", "", "create the first administrator with this username (asks for the password)")
 }
 
@@ -286,6 +330,10 @@ func computePlan(ctx context.Context, name string, args []string, e env, extra f
 	o, p, _, err := computePlanFacts(ctx, name, args, e, extra, gate)
 	return o, p, err
 }
+
+// isApply reports whether a plan is computed for apply (D5: a cluster
+// that cannot be asked refuses there).
+func isApply(name string) bool { return name == "apply" }
 
 // computePlanFacts is computePlan, also returning the facts it probed.
 func computePlanFacts(ctx context.Context, name string, args []string, e env, extra func(*flag.FlagSet), gate func(setup.Options) error) (setup.Options, setup.Plan, setup.Facts, error) {
@@ -315,6 +363,8 @@ func computePlanFacts(ctx context.Context, name string, args []string, e env, ex
 		return o, setup.Plan{}, setup.Facts{}, err
 	}
 	o.Admins = e.adminChecker(o.Root)
+	o.Cluster, o.ClusterReason = e.clusterFor(o.Root)
+	o.Agent, o.SelfBuild, o.Apply = e.agentFor(o.Root), selfBuild(), isApply(name)
 	f, err := e.prober.Probe(ctx)
 	if err != nil {
 		return o, setup.Plan{}, setup.Facts{}, err
@@ -371,6 +421,7 @@ func runCheck(ctx context.Context, args []string, e env) error {
 	}
 	fmt.Fprintf(e.stdout, "skep-setup check, root %s (read-only; nothing was changed)\n", o.Root)
 	p.Items = append(p.Items, reportAgent(o.Root, f, e)...)
+	p.Items = append(p.Items, reportCluster(ctx, o.Root, f, e)...)
 	fmt.Fprintln(e.stdout, " ", summary(p.Items))
 	printItems(e.stdout, p.Items, false)
 	switch {

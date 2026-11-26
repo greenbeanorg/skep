@@ -322,6 +322,11 @@ skep-api admin create --username NAME     # as root; prompts twice, no echo
 skep-api tls fingerprint                  # write this down
 ```
 
+On `main` (step 8c-1 and later) the administrator is written through
+`skep-cluster`, so `skep_cluster` must be initialised and running first:
+`skep-setup apply -start -admin NAME` does both in order (step 8c-2; see
+[skep-setup](skep-setup.md#the-cluster)).
+
 There are no default credentials, and login answers `503 setup_required`
 until an administrator exists. Then set the management address, either
 in `api.json`:

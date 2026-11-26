@@ -31,7 +31,7 @@ type Facts struct {
 	Jails []string
 	VMs   []string
 	// Running holds the Skep services whose "service NAME status"
-	// succeeded (skep_agent, skep_api).
+	// succeeded (skep_agent, skep_cluster, skep_api).
 	Running map[string]bool
 	// Bridges are the bridges that exist now (ifconfig -g bridge), as
 	// ifconfig shows them: rc.conf says what a bridge is at the next

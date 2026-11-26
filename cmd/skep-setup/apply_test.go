@@ -266,3 +266,25 @@ func TestApplyReportsModulesNotLoaded(t *testing.T) {
 		t.Fatalf("check with the modules loaded: %+v", res)
 	}
 }
+
+// okAgent is an agent that answers on its socket.
+type okAgent struct{}
+
+func (okAgent) Build(context.Context) (string, error)  { return selfBuild(), nil }
+func (okAgent) Health(context.Context) (string, error) { return "ok", nil }
+
+// V1: a failed skep-cluster init is "may have changed", so apply's exit
+// is 4 (incomplete), not 3.
+func TestApplyFailedClusterInitIsExit4(t *testing.T) {
+	root := stockRoot(t)
+	e := applyEnv(&appendSysrc{}, true)
+	e.sleep = func(time.Duration) {}
+	e.agent = okAgent{}
+	cl := &fakeCluster{initErr: errors.New("exit status 1")}
+	e.cluster = cl
+	res := runWith(t, e, "apply", "-root", root, "-mgmt", "vtnet0", "-start", "-yes")
+	if res.code != exitIncomplete || cl.inits != 1 ||
+		!strings.Contains(res.stderr, "May have changed: skep-cluster init") {
+		t.Fatalf("inits %d: %+v", cl.inits, res)
+	}
+}

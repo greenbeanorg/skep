@@ -58,6 +58,7 @@ const (
 	ActServiceStop  = "service-stop"  // stop a Skep service (remove)
 	ActRemovePath   = "remove-path"   // delete Skep's data (remove --purge-data)
 	ActPwDelete     = "pw-delete"     // delete the skep account (remove --purge-data)
+	ActClusterInit  = "cluster-init"  // skep-cluster init: this host becomes a one-node cluster
 )
 
 // Action is one change apply makes. Paths are host paths (under the root).
@@ -117,6 +118,8 @@ func (a Action) String() string {
 		return "rm -rf " + a.File
 	case ActPwDelete:
 		return "pw userdel " + a.Name + "; pw groupdel " + a.Name
+	case ActClusterInit:
+		return "skep-cluster init (a one-node cluster; reads the node ID from the running agent; opens no port)"
 	}
 	return a.Type
 }
@@ -190,6 +193,20 @@ type Options struct {
 	// Admins answers whether Admin exists once api.db does. Nil: the
 	// plan cannot ask, and refuses -admin while api.db exists.
 	Admins AdminChecker
+	// Cluster answers whether this host's cluster is initialised
+	// ("skep-cluster init -check", as root). Nil: it cannot be asked,
+	// and ClusterReason says why; apply then refuses, check and plan
+	// say it was not checked (D5 of step 8c-2).
+	Cluster       Cluster
+	ClusterReason string
+	// Agent is the running agent's socket, asked for its build before a
+	// cluster-init; SelfBuild is skep-setup's own (version+commit). An
+	// empty SelfBuild skips the comparison.
+	Agent     Agent
+	SelfBuild string
+	// Apply is set when the plan is for apply: a cluster that cannot be
+	// asked is then a refusal.
+	Apply bool
 
 	// fileOwner returns a file's owner UID; the tests, which do not run
 	// as root, replace it. Nil means the owner from stat(2).
@@ -347,11 +364,32 @@ func Compute(ctx context.Context, o Options, f Facts) (Plan, error) {
 	b.media()
 	b.readOnlyChecks()
 	b.guests()
+	b.clusterAccount()
+	initItem := b.clusterInit()
+	if !o.Start && initItem != nil {
+		b.item(*initItem)
+	}
 	if o.Start {
-		for _, svc := range []string{"skep_agent", "skep_api"} {
-			if f.Running[svc] {
+		// The order of D6: the agent, the cluster (init reads the node
+		// ID from the running agent), skep_cluster, then skep_api, which
+		// reads the users from skep-cluster.
+		for _, svc := range []string{"skep_agent", "skep_cluster", "skep_api"} {
+			if svc == "skep_cluster" && initItem != nil {
+				b.item(*initItem)
+			}
+			switch v, set := b.rc.Get(svc + "_enable"); {
+			case f.Running[svc]:
 				b.ok("services", svc, "running")
-			} else {
+			case set && !strings.EqualFold(v, "YES"):
+				// rc.d would exit 0 and start nothing (F4 of the
+				// 8c-2 review).
+				fix := "sysrc " + svc + "_enable=YES"
+				if over := b.rc.OverriddenIn(svc + "_enable"); over != "" {
+					fix = "it is set in " + strings.TrimPrefix(over, b.o.Root) + "; change it there"
+				}
+				b.refuse("services", "start "+svc, fmt.Sprintf("%s_enable is %q, perhaps from an earlier remove: set it to YES (%s), then run apply again",
+					svc, v, fix))
+			default:
 				b.add("services", "start "+svc, "", Action{Type: ActServiceStart, Service: svc})
 			}
 		}
@@ -886,7 +924,63 @@ func (b *builder) account() {
 
 func (b *builder) services() {
 	b.setVar(rcConfPath, b.rc, b.rcOK, "skep_agent_enable", "YES", "")
+	b.setVar(rcConfPath, b.rc, b.rcOK, "skep_cluster_enable", "YES", "the cluster service; skep-api reads the users from it (ADR 0013 amendment 4)")
 	b.setVar(rcConfPath, b.rc, b.rcOK, "skep_api_enable", "YES", "")
+}
+
+// clusterAccount checks the skep-cluster account (D3).
+func (b *builder) clusterAccount() { b.item(clusterAccountItem(b.o.Root)) }
+
+// clusterInit decides the cluster item (D5): nil when the host is
+// initialised (an OK item is recorded) or when it was not checked (a
+// refusal or a warning is recorded); otherwise the item to place, which
+// with -start goes after the agent's start.
+func (b *builder) clusterInit() *Item {
+	what := "the cluster on this host"
+	notChecked := func(why string) *Item {
+		if b.o.Apply {
+			b.refuse("cluster", what, "cannot tell whether this host is initialised: "+why)
+		} else {
+			b.warn("cluster", what, "not checked: "+why)
+		}
+		return nil
+	}
+	if b.o.Cluster == nil {
+		return notChecked(b.o.ClusterReason)
+	}
+	done, err := b.o.Cluster.Initialised(b.ctx)
+	if err != nil {
+		if b.o.Apply {
+			b.refuse("cluster", what, "skep-cluster init -check failed, so apply cannot tell whether to initialise this host: "+err.Error())
+		} else {
+			b.warn("cluster", what, "skep-cluster init -check failed: "+err.Error())
+		}
+		return nil
+	}
+	if done {
+		b.ok("cluster", what, "initialised (skep-cluster init -check)")
+		return nil
+	}
+	running := b.f.Running["skep_agent"]
+	if !running && !b.o.Start {
+		return &Item{Kind: Manual, Area: "cluster", What: what,
+			Detail: "not initialised; skep-cluster init reads the node ID from the running agent, so it needs skep_agent running: run the same apply again with -start",
+			Steps:  []string{"skep-setup apply ... -start"}}
+	}
+	if running && b.o.Agent != nil && b.o.SelfBuild != "" {
+		got, err := b.o.Agent.Build(b.ctx)
+		switch {
+		case err != nil:
+			b.refuse("cluster", what, "not initialised, and the running agent's build cannot be read ("+Clean(err.Error())+"); skep-cluster init needs the agent's socket")
+			return nil
+		case got != b.o.SelfBuild:
+			b.refuse("cluster", what, fmt.Sprintf("not initialised, and the running agent is %s, not %s: run skep-setup upgrade", Clean(got), b.o.SelfBuild))
+			return nil
+		}
+	}
+	return &Item{Kind: Add, Area: "cluster", What: what,
+		Detail: "not initialised; rollback does not undo this (skep-setup remove -purge-data deletes it)",
+		Action: &Action{Type: ActClusterInit}}
 }
 
 // listenAddress returns the API's listen address from the answers or the

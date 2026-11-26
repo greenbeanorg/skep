@@ -6,6 +6,7 @@
 // host's administrator:
 //
 //	skep-cluster init [-address ADDR]        create a one-node cluster (root)
+//	skep-cluster init -check                 is this host initialised? (root, read-only)
 //	skep-cluster listen -address ADDR        open the node-to-node listener (root)
 //	skep-cluster join-request -address ADDR  print this host's join request (root)
 //	skep-cluster admit REQUEST               admit a host, print its admission (root)
@@ -308,6 +309,7 @@ func run(ctx context.Context, args []string, e env) error {
 const usage = `usage:
   skep-cluster [-config FILE] [-data-dir DIR] [-socket PATH]   run the service (as the skep-cluster account)
   skep-cluster init [-address ADDR] [-name NAME]               create a one-node cluster (root)
+  skep-cluster init -check                                     print "initialised" or "not-initialised" (root, read-only)
   skep-cluster listen -address ADDR                            open the node-to-node listener on ADDR:8444 (root)
   skep-cluster join-request -address ADDR                      print this host's join request; opens ADDR:8444 (root)
   skep-cluster admit REQUEST                                   admit a host; prints its admission (root, on a member)

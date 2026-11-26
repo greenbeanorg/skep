@@ -22,8 +22,13 @@ type RemoveOptions struct {
 	// RevertHost removes the lines setup added to rc.conf and loader.conf
 	// where they are unchanged since.
 	RevertHost bool
-	// PurgeData deletes Skep's data, its configuration and the account.
+	// PurgeData deletes Skep's data, its configuration and the accounts.
 	PurgeData bool
+	// Cluster asks skep-cluster whether this node is alone (D15 of step
+	// 8c-2). Nil: it cannot be asked, ClusterReason says why, and remove
+	// refuses.
+	Cluster       Cluster
+	ClusterReason string
 }
 
 // dataRoot is Skep's data directory; purging keeps only setup's journals.
@@ -109,8 +114,11 @@ func ComputeRemove(ctx context.Context, o RemoveOptions, f Facts, r Runner, ag A
 			"nothing is stopped; their datasets stay and nothing will manage them. pkg delete only warns while any of them runs, and deletes the files anyway")
 	}
 
+	b.clusterAlone(ctx, o)
+
 	// Stop the services, then disable them.
 	b.add("services", "stop skep_api", "", Action{Type: ActServiceStop, Service: "skep_api"})
+	b.add("services", "stop skep_cluster", "", Action{Type: ActServiceStop, Service: "skep_cluster"})
 	b.add("services", "stop skep_agent", "running guests keep running", Action{Type: ActServiceStop, Service: "skep_agent"})
 	reported := map[string]bool{}
 	if o.RevertHost {
@@ -118,7 +126,7 @@ func ComputeRemove(ctx context.Context, o RemoveOptions, f Facts, r Runner, ag A
 	} else {
 		b.ok("host", "lines setup added to rc.conf and loader.conf", "kept (use --revert-host to remove them where unchanged)")
 	}
-	for _, v := range []string{"skep_agent_enable", "skep_api_enable"} {
+	for _, v := range []string{"skep_agent_enable", "skep_cluster_enable", "skep_api_enable"} {
 		// revertHost has said what happens to it already, unless it left
 		// a changed value that still enables the service.
 		if reported[v] {
@@ -132,11 +140,66 @@ func ComputeRemove(ctx context.Context, o RemoveOptions, f Facts, r Runner, ag A
 			return Plan{}, err
 		}
 	} else {
-		b.ok("data", dataRoot+", agent.json, api.json, the skep account", "kept (use --purge-data to delete them)")
+		b.ok("data", dataRoot+", agent.json, api.json, cluster.json, the skep and skep-cluster accounts", "kept (use --purge-data to delete them)")
 	}
 	b.datasets(ctx, r, o.PurgeData)
 	b.item(Item{Kind: Manual, Area: "package", What: "then remove the files", Steps: []string{"pkg delete skep"}})
 	return b.plan, nil
+}
+
+// clusterAlone refuses to remove a node that is not alone in its cluster
+// (D15 of step 8c-2). It trusts the running service's answer; there is no
+// override.
+func (b *builder) clusterAlone(ctx context.Context, o RemoveOptions) {
+	what := "this node's cluster"
+	if o.Cluster == nil {
+		b.refuse("cluster", what, "cannot tell whether this host has a cluster: "+o.ClusterReason)
+		return
+	}
+	done, err := o.Cluster.Initialised(ctx)
+	switch {
+	case err != nil:
+		b.refuse("cluster", what, "skep-cluster init -check failed, so remove cannot tell whether this host has a cluster: "+err.Error())
+		return
+	case !done:
+		b.ok("cluster", what, "none (not initialised)")
+		return
+	}
+	v, err := o.Cluster.Status(ctx)
+	switch {
+	case err != nil:
+		// A host an earlier remove disabled needs onestart (found on
+		// blazanov, 2026-11-26).
+		start := "service skep_cluster start"
+		if v, _ := b.rc.Get("skep_cluster_enable"); !strings.EqualFold(v, "YES") {
+			start = "service skep_cluster onestart"
+		}
+		b.refuse("cluster", what, "no answer from skep-cluster ("+err.Error()+"): start skep_cluster so that remove can see whether this node is alone ("+start+")")
+	case v.Removed != nil:
+		b.ok("cluster", what, "this node was removed from cluster "+Clean(v.Removed.ClusterID))
+	case v.Join != nil:
+		b.refuse("cluster", what, "this node is joining cluster "+Clean(v.Join.ClusterID)+": run skep-cluster join --abandon first")
+	case len(v.Pendings) > 0:
+		var names []string
+		for _, p := range v.Pendings {
+			names = append(names, Clean(p.Name))
+		}
+		b.item(Item{Kind: Refuse, Area: "cluster", What: what,
+			Detail: "admissions are pending (" + strings.Join(names, ", ") + "): withdraw them first",
+			Steps:  []string{"skep-cluster admit -withdraw NAME"}})
+	case !v.Alone():
+		why, _ := v.NotAlone()
+		detail := "this node is not shown to be alone in cluster " + Clean(v.ClusterID) + ": " + why +
+			". If it is one of several members, remove it on another member, then wipe it here"
+		name, shown := commandName(v.NodeName)
+		if !shown {
+			detail += " (this node's name could not be shown: skep-cluster status prints it)"
+		}
+		b.item(Item{Kind: Refuse, Area: "cluster", What: what, Detail: detail,
+			Steps: []string{"skep-cluster remove " + name + "   (as root, on another member)", "skep-cluster leave --wipe   (as root, here)"}})
+	default:
+		b.ok("cluster", what, "alone: "+v.Summary())
+	}
 }
 
 // disable sets an rc.conf enable variable to NO when it is YES.
@@ -192,7 +255,9 @@ func (b *builder) revertHost() map[string]bool {
 	var added []addedVar
 	seen := map[addedVar]bool{}
 	for _, j := range b.journals {
-		if j.RolledBack != nil || j.Command != "apply" {
+		// An upgrade's journal adds skep_cluster_enable like apply does
+		// (D12 of step 8c-2).
+		if j.RolledBack != nil || (j.Command != "apply" && j.Command != "upgrade") {
 			continue
 		}
 		for _, e := range j.Entries {
@@ -284,8 +349,9 @@ func (b *builder) revertHost() map[string]bool {
 // configuration files, and the account.
 func (b *builder) purge() error {
 	b.item(Item{Kind: Warn, Area: "data", What: "--purge-data",
-		Detail: "deletes the node identity, both databases, every audit log and archive, the database backups, the TLS key and the install media in " +
-			dataRoot + ", and agent.json and api.json. It cannot be undone; setup's journals in " + dataRoot + "/setup are kept. " +
+		Detail: "deletes the node identity, both databases, every audit log and archive, the database backups, the TLS key, the install media, " +
+			"the cluster's node key, store and cluster audit in " +
+			dataRoot + ", and agent.json, api.json and cluster.json. It cannot be undone; setup's journals in " + dataRoot + "/setup are kept. " +
 			"Skep keeps no ZFS encryption key (ADR 0010: the operator holds them); setup checks below that no guest dataset's keylocation is under " + dataRoot})
 	entries, err := os.ReadDir(hostPath(b.o.Root, dataRoot))
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
@@ -302,7 +368,7 @@ func (b *builder) purge() error {
 		p := dataRoot + "/" + n
 		b.add("data", "delete "+p, "", Action{Type: ActRemovePath, File: p})
 	}
-	for _, p := range []string{agentJSONPath, apiJSONPath} {
+	for _, p := range []string{agentJSONPath, apiJSONPath, clusterJSONPath} {
 		if _, err := os.Lstat(hostPath(b.o.Root, p)); err == nil {
 			b.add("config", "delete "+p, "a copy is kept in the journal", Action{Type: ActRemovePath, File: p})
 		}
@@ -314,6 +380,12 @@ func (b *builder) purge() error {
 	if u || g {
 		b.add("account", "delete the skep user and group", "files still owned by it would show a bare number",
 			Action{Type: ActPwDelete, Name: skepAccount})
+	}
+	_, cu := findAccount(users, clusterAccount)
+	_, cg := findAccount(groups, clusterAccount)
+	if cu || cg {
+		b.add("account", "delete the skep-cluster user and group", "files still owned by it would show a bare number",
+			Action{Type: ActPwDelete, Name: clusterAccount})
 	}
 	return nil
 }

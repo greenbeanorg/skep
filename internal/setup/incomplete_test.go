@@ -112,7 +112,7 @@ func TestApplyAdminAloneFailsChangedNothing(t *testing.T) {
 		t.Fatal("the first run's administrator should fail")
 	}
 	f := facts()
-	f.Running = map[string]bool{"skep_agent": true, "skep_api": true}
+	f.Running = map[string]bool{"skep_agent": true, "skep_cluster": true, "skep_api": true}
 	p := compute(t, o, f)
 	if len(p.Actions()) != 1 {
 		t.Fatalf("plan %v", actions(p))
@@ -331,7 +331,7 @@ func adminOnlyPlan(t *testing.T, e *applyEnv, root string) Plan {
 		t.Fatal("the first run's administrator should fail")
 	}
 	f := facts()
-	f.Running = map[string]bool{"skep_agent": true, "skep_api": true}
+	f.Running = map[string]bool{"skep_agent": true, "skep_cluster": true, "skep_api": true}
 	p := compute(t, o, f)
 	if len(p.Actions()) != 1 {
 		t.Fatalf("plan %v", actions(p))
