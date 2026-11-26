@@ -2447,9 +2447,8 @@ owns.
 
 ## Amendment 5 (2026-11-25, Proposed)
 
-Written with the build of step 8c-2, from the fixed decisions D1–D29 the
-review chat gave that run (the prompt named "D1 to D34"; it listed
-D1–D29, and this amendment records those). **Status: Proposed**: Andy
+Written with the build of step 8c-2, from the fixed decisions D1 to D29
+the review chat gave that run. **Status: Proposed**: Andy
 accepts it by merging the step 8c-2 PR. The facts it rests on are in
 [0013-evidence/8c2-facts-20261125.md](0013-evidence/8c2-facts-20261125.md).
 It changes no replicated entry type, no apply rule and no node-to-node
@@ -2592,3 +2591,45 @@ admit, withdraw and remove through the API on the three lab nodes.
 - **remove's hint names `onestart`** for a host whose `skep_cluster_enable`
   is not YES.
 
+### 5. From the review (fixes F1–F7, approved by Andy)
+
+- **F1 "alone"** (`remove`, `upgrade`'s import) reads `servers`,
+  `accepted_by` and `state_machine.up_to_date` too. A node is alone only
+  when the member list comes from the state machine, which is up to date
+  and not stopped, the Raft configuration and the members are exactly
+  this node, nothing is pending and it is not joining. `remove` says what
+  it saw instead of "one of N members"; `upgrade` waits up to 30 s while
+  the member list is only not current yet.
+- **F2 `init` and `init -check`** refuse a data directory that a join, a
+  wipe or a key rotation left (`wipe.json`; `join.json` without `state/`
+  or in phase `abandoning`; a `standalone.*` directory without `state/`
+  and `join.json`; `rotate.json` without `state/`), naming the state and
+  what ends it, and change nothing. `not-initialised` is only a host with
+  none of them and no store. A store with `rotate.json` or `join.json` is
+  `initialised` (a rotation or a join under way).
+- **F3** A degraded session is refused on `POST /cluster/admissions`,
+  `DELETE /cluster/admissions/{name}` and `POST
+  /cluster/members/{name}/remove` before anything is sent (`503
+  no_quorum`, `not_written`, audited as a failure); `GET /cluster` stays
+  open to it.
+- **F4** `apply -start` refuses in the plan to start a service whose
+  `_enable` line is not YES, and a start that exits 0 must be followed by
+  a successful `service X status` within 10 s.
+- **F5** `skep-setup` puts a node name from skep-cluster's status into a
+  printed command only when it has the node-name shape (a copy of
+  `clusterstate.ValidName`'s rule, kept equal by a test); otherwise
+  `NAME`.
+- **F6** In-process tests: the leader's removal while the new leader's
+  barrier is held (first pass-on `unavailable`, the repeat succeeds, one
+  entry), and a pass-on ending in `outcome_unknown` (no repeat). The
+  test hook for the barrier now runs before every barrier of a term,
+  `watchLeadership`'s included.
+- **F7** Output of `skep-api`'s and `skep-cluster`'s commands is cleaned
+  line by line, keeping its line breaks; a removal's cluster ID compared
+  on a node that does not know its cluster ID yet answers `503
+  unavailable` ("not ready"), not `cluster_id_mismatch`; the API's
+  `voters_unanswered` message keeps the names of the voters that did not
+  answer (only name-shaped ones) and still offers no override.
+
+None of them changes a replicated entry type, an apply rule or a
+node-to-node message.

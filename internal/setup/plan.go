@@ -377,9 +377,19 @@ func Compute(ctx context.Context, o Options, f Facts) (Plan, error) {
 			if svc == "skep_cluster" && initItem != nil {
 				b.item(*initItem)
 			}
-			if f.Running[svc] {
+			switch v, set := b.rc.Get(svc + "_enable"); {
+			case f.Running[svc]:
 				b.ok("services", svc, "running")
-			} else {
+			case set && !strings.EqualFold(v, "YES"):
+				// rc.d would exit 0 and start nothing (F4 of the
+				// 8c-2 review).
+				fix := "sysrc " + svc + "_enable=YES"
+				if over := b.rc.OverriddenIn(svc + "_enable"); over != "" {
+					fix = "it is set in " + strings.TrimPrefix(over, b.o.Root) + "; change it there"
+				}
+				b.refuse("services", "start "+svc, fmt.Sprintf("%s_enable is %q, perhaps from an earlier remove: set it to YES (%s), then run apply again",
+					svc, v, fix))
+			default:
 				b.add("services", "start "+svc, "", Action{Type: ActServiceStart, Service: svc})
 			}
 		}
@@ -940,7 +950,12 @@ func (b *builder) clusterInit() *Item {
 	}
 	done, err := b.o.Cluster.Initialised(b.ctx)
 	if err != nil {
-		return notChecked(err.Error())
+		if b.o.Apply {
+			b.refuse("cluster", what, "skep-cluster init -check failed, so apply cannot tell whether to initialise this host: "+err.Error())
+		} else {
+			b.warn("cluster", what, "skep-cluster init -check failed: "+err.Error())
+		}
+		return nil
 	}
 	if done {
 		b.ok("cluster", what, "initialised (skep-cluster init -check)")

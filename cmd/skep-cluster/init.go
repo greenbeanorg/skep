@@ -14,12 +14,15 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/greenbeanorg/skep/internal/agentproto"
 	"github.com/greenbeanorg/skep/internal/cluster/audit"
 	"github.com/greenbeanorg/skep/internal/cluster/clusterconf"
+	"github.com/greenbeanorg/skep/internal/cluster/joinstate"
 	"github.com/greenbeanorg/skep/internal/cluster/layout"
+	"github.com/greenbeanorg/skep/internal/cluster/nodekey"
 	"github.com/greenbeanorg/skep/internal/cluster/service"
 	"github.com/greenbeanorg/skep/internal/cluster/store"
 )
@@ -114,7 +117,7 @@ func runInit(ctx context.Context, args []string, e env) error {
 		dataDir     = flags.String("data-dir", clusterconf.DefaultDataDir, "directory of the node key and the cluster store")
 		agentSocket = flags.String("agent-socket", clusterconf.DefaultAgentSocket, "Unix socket of skep-agent")
 		account     = flags.String("account", clusterconf.Account, "the service account")
-		check       = flags.Bool("check", false, "only report whether this host is initialised (\"initialised\" or \"not-initialised\"); changes nothing and asks no agent")
+		check       = flags.Bool("check", false, "only report whether this host is initialised (\"initialised\" or \"not-initialised\"; an error for what a join, a wipe or a key rotation left); changes nothing and asks no agent")
 	)
 	if err := flags.Parse(args); err != nil {
 		return err
@@ -132,6 +135,9 @@ func runInit(ctx context.Context, args []string, e env) error {
 	// Part 1, as root: everything that needs root, and nothing in the
 	// data directory but the directory itself.
 	if err := layout.CheckOldLayout(*dataDir); err != nil {
+		return err
+	}
+	if err := dataDirInUse(*dataDir, store.Exists(layout.State(*dataDir))); err != nil {
 		return err
 	}
 	if store.Exists(layout.State(*dataDir)) {
@@ -202,15 +208,76 @@ func runInit(ctx context.Context, args []string, e env) error {
 	return nil
 }
 
+// dataDirInUse refuses init and init -check on a data directory that is
+// not a never-initialised host, so that neither "not-initialised" nor a
+// new one-node cluster hides what a join, a wipe or a key rotation left
+// (F2 of the 8c-2 review). Without a store: join.json, a moved-aside
+// one-node state or rotate.json; always: a wipe marker or a join in phase
+// abandoning, on which the service refuses to start. It only reads.
+func dataDirInUse(dataDir string, hasStore bool) error {
+	at := func(name string) (string, bool, error) {
+		p := filepath.Join(dataDir, name)
+		ok, err := layout.Exists(p)
+		return p, ok, err
+	}
+	const unchanged = " Nothing was changed"
+	if p, ok, err := at(layout.WipeMarker); err != nil || ok {
+		if err == nil {
+			err = fmt.Errorf("%s exists: \"skep-cluster leave --wipe\" did not finish; run it again as root to end it.%s", p, unchanged)
+		}
+		return err
+	}
+	p, joining, err := at(layout.JoinFile)
+	if err != nil {
+		return err
+	}
+	if joining {
+		js, rerr := joinstate.Read(dataDir)
+		if !hasStore || rerr != nil || (js != nil && js.Phase == joinstate.PhaseAbandoning) {
+			return fmt.Errorf("%s exists: this host is joining a cluster, or a join stopped; end it with \"skep-cluster join --abandon\" as root "+
+				"(it puts this host's one-node cluster back), or start skep_cluster to let the join go on.%s", p, unchanged)
+		}
+	}
+	if hasStore {
+		return nil
+	}
+	aside, err := layout.Standalones(dataDir)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	switch {
+	case len(aside) == 1:
+		return fmt.Errorf("%s holds this host's one-node cluster, moved aside by a join that stopped: start skep_cluster "+
+			"(service skep_cluster start), which puts it back.%s", filepath.Join(dataDir, aside[0]), unchanged)
+	case len(aside) > 1:
+		return fmt.Errorf("%s holds %d moved-aside one-node clusters (%s) and no state: skep_cluster refuses to start with more than one; "+
+			"as root, move all but the one to keep out of %s, then start skep_cluster.%s", dataDir, len(aside), strings.Join(aside, ", "), dataDir, unchanged)
+	}
+	if p, ok, err := at(layout.RotateFile); err != nil || ok {
+		if err == nil {
+			err = fmt.Errorf("%s exists, but there is no cluster store: a key rotation's record that no skep-cluster command leaves on a host without one. "+
+				"If \"skep-cluster status\" on a member does not list this node's next pin, delete it and %s as root.%s",
+				p, filepath.Join(dataDir, nodekey.NextKeyFile), unchanged)
+		}
+		return err
+	}
+	return nil
+}
+
 // initCheck is "skep-cluster init -check" (D2 of step 8c-2): the checks of
 // init's first part that need no agent, and nothing else. It prints one
-// word, "initialised" (a store exists) or "not-initialised"; any error is
-// returned (exit 1). It writes nothing and creates nothing.
+// word, "initialised" (a store exists) or "not-initialised" (nothing that
+// dataDirInUse refuses either); any error is returned (exit 1). It writes
+// nothing and creates nothing.
 func initCheck(e env, dataDir, account string) error {
 	if err := layout.CheckOldLayout(dataDir); err != nil {
 		return err
 	}
-	if store.Exists(layout.State(dataDir)) {
+	hasStore := store.Exists(layout.State(dataDir))
+	if err := dataDirInUse(dataDir, hasStore); err != nil {
+		return err
+	}
+	if hasStore {
 		fmt.Fprintln(e.stdout, "initialised")
 		return nil
 	}

@@ -1303,7 +1303,7 @@ export interface paths {
          *     vote), the pending admissions, what removals and key rotations
          *     wait for, the members' clocks and the service's health. Nothing in
          *     it is secret. Without `skep-cluster` on this node: `503
-         *     no_quorum`.
+         *     no_quorum`. Open to a degraded session (a login without quorum).
          */
         get: operations["getCluster"];
         put?: never;
@@ -1331,7 +1331,9 @@ export interface paths {
          *     compare the pin with the one the host shows on its own console
          *     first. This node needs a listen address (`skep-cluster listen
          *     -address ADDR` as root): otherwise `409 cluster_refused`. Sent
-         *     once; never repeated by skep-api.
+         *     once; never repeated by skep-api. A degraded session (a login
+         *     without quorum) is refused before anything is sent: `503
+         *     no_quorum`, `details.outcome` `not_written`, audited as a failure.
          */
         post: operations["admitHost"];
         delete?: never;
@@ -1356,6 +1358,9 @@ export interface paths {
         /**
          * Withdraw a pending admission
          * @description Requires `cluster:manage`. No such admission is `404 not_found`.
+         *     A degraded session (a login without quorum) is refused before
+         *     anything is sent: `503 no_quorum`, `details.outcome`
+         *     `not_written`, audited as a failure.
          */
         delete: operations["withdrawAdmission"];
         options?: never;
@@ -1379,10 +1384,14 @@ export interface paths {
          * Remove a member from the cluster
          * @description Requires `cluster:manage`. `cluster_id` is required and must be
          *     the cluster's (compared on this node and again on the leader):
-         *     otherwise `409 cluster_id_mismatch` and nothing is written. When
-         *     too few of the remaining voters answer now, `409
-         *     voters_unanswered` and nothing is written; the API offers no
-         *     override. The answer comes once the first entry of the removal is
+         *     otherwise `409 cluster_id_mismatch` and nothing is written (a
+         *     node that does not know its cluster ID yet answers `503
+         *     no_quorum`, `not_written`: not ready). When too few of the
+         *     remaining voters answer now, `409 voters_unanswered`, naming the
+         *     voters that did not answer, and nothing is written; the API offers
+         *     no override. A degraded session (a login without quorum) is
+         *     refused before anything is sent: `503 no_quorum`,
+         *     `details.outcome` `not_written`, audited as a failure. The answer comes once the first entry of the removal is
          *     committed (up to about 90 s); the leader finishes the removal by
          *     itself. Removing the leader hands the leadership over first
          *     (`handed_over`); afterwards that node's API answers `503
@@ -2781,7 +2790,7 @@ export interface components {
         /**
          * @description Nothing can be committed now (`no_quorum`). `details.outcome` is
          *     `not_written` (no leader, skep-cluster not reachable, joining,
-         *     removed, …) or `unknown` (sent and no answer, or the outcome was
+         *     removed, a degraded session on a membership change, …) or `unknown` (sent and no answer, or the outcome was
          *     not known within the cluster's limit: check GET /cluster).
          */
         ClusterNoQuorum: {

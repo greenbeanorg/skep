@@ -159,7 +159,7 @@ func (b *builder) clusterAlone(ctx context.Context, o RemoveOptions) {
 	done, err := o.Cluster.Initialised(ctx)
 	switch {
 	case err != nil:
-		b.refuse("cluster", what, "cannot tell whether this host has a cluster: "+err.Error())
+		b.refuse("cluster", what, "skep-cluster init -check failed, so remove cannot tell whether this host has a cluster: "+err.Error())
 		return
 	case !done:
 		b.ok("cluster", what, "none (not initialised)")
@@ -188,9 +188,15 @@ func (b *builder) clusterAlone(ctx context.Context, o RemoveOptions) {
 			Detail: "admissions are pending (" + strings.Join(names, ", ") + "): withdraw them first",
 			Steps:  []string{"skep-cluster admit -withdraw NAME"}})
 	case !v.Alone():
-		b.item(Item{Kind: Refuse, Area: "cluster", What: what,
-			Detail: fmt.Sprintf("this node is one of %d members of cluster %s: remove it on another member, then wipe it here", len(v.Members), Clean(v.ClusterID)),
-			Steps:  []string{"skep-cluster remove " + Clean(v.NodeName) + "   (as root, on another member)", "skep-cluster leave --wipe   (as root, here)"}})
+		why, _ := v.NotAlone()
+		detail := "this node is not shown to be alone in cluster " + Clean(v.ClusterID) + ": " + why +
+			". If it is one of several members, remove it on another member, then wipe it here"
+		name, shown := commandName(v.NodeName)
+		if !shown {
+			detail += " (this node's name could not be shown: skep-cluster status prints it)"
+		}
+		b.item(Item{Kind: Refuse, Area: "cluster", What: what, Detail: detail,
+			Steps: []string{"skep-cluster remove " + name + "   (as root, on another member)", "skep-cluster leave --wipe   (as root, here)"}})
 	default:
 		b.ok("cluster", what, "alone: "+v.Summary())
 	}

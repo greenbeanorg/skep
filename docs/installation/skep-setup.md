@@ -59,7 +59,7 @@ says so when the variable is set.
 | `-dir-pool NAME=/PATH` | A directory pool for VM disks; the path must be a real directory (not a symbolic link), owned by root (UID 0), and not writable by its group or others |
 | `-listen ADDR:PORT` | The API listen address (default: the management address, port 8443). `0.0.0.0` or `::` only with `-listen-all` |
 | `-no-racct` | Do not add `kern.racct.enable="1"` (jail limits other than `disk_quota` are then refused) |
-| `-start` | At the end of `apply`, start `skep_agent`, initialise the cluster where there is none (`skep-cluster init`), start `skep_cluster`, then `skep_api` (ADR 0013 amendment 5, D6) |
+| `-start` | At the end of `apply`, start `skep_agent`, initialise the cluster where there is none (`skep-cluster init`), start `skep_cluster`, then `skep_api` (ADR 0013 amendment 5, D6). A service that does not run and whose `_enable` line is set to anything but `YES` (for example `NO` from an earlier `remove`) is refused in the plan ("skep_X_enable is "NO", perhaps from an earlier remove: set it to YES, then run apply again"), so nothing is changed: rc.d would exit 0 without starting it. After each start, `service X status` must succeed within 10 s, or the start fails naming the `_enable` line |
 | `-admin NAME` | Create the first administrator (asks for the password, twice, without echo). Needs `-start`, or `/var/db/skep/api` to exist already (the API has run once); otherwise the plan refuses, because `skep-api admin create` run as root first would create the API's data directory owned by root ([ADR 0012 amendment](../decisions/0012-installer.md#amendment-2026-11-22-build-decisions-confirmed), build decision 8). Setup runs `skep-api admin create` **as the `skep` user** (UID and primary GID from `/etc/passwd`, never root), and only once `skep_api` has written `/var/run/skep/api.pid` and created `api.db` (it waits up to 30 s). If it fails, every other change stays made, the journal is finished with the error, and setup prints the same `apply` command to retry: it then plans only the administrator. Whether the administrator exists is asked of `skep-api` itself: with no `api.db` the create is planned; with one, `check`, `plan` and `apply` run `skep-api admin exists --username NAME` as the `skep` user with the fixed environment (read-only; it never creates or migrates `api.db`). Exit 0 is `ok`, 1 plans the create, anything else refuses with skep-api's error. Asking needs root; as another user, or with `-root` other than `/`, the plan refuses `-admin` while `api.db` exists. A NAME that exists already is left as it is: `ok` when it is an enabled `admin`, a **warning** when it is disabled or has another role (setup never changes an existing user). |
 
 ## What apply changes
@@ -162,25 +162,45 @@ or one where the firmware was removed afterwards. Setup never installs it:
 
 ## The cluster
 
-From step 8c-2 of ADR 0013 the users are `skep-cluster`'s, so `skep_api`
+From step 8c-1 of ADR 0013 the users are `skep-cluster`'s, so `skep_api`
 needs a running `skep_cluster` for its logins. Setup never links the
 cluster code: it runs `/usr/local/sbin/skep-cluster` as root with its
 fixed environment and reads at most 1 MiB of what it prints; every string
 from it (or from `skep-api`'s commands) is cleaned of control and format
-characters before setup prints it, and is never acted on except to
-refuse.
+characters before setup prints it (line by line: output over several
+lines keeps its line breaks), and is never acted on except to refuse. A
+node name from it appears in a printed command only when it has the shape
+of a node name (letters, digits, dots and hyphens); otherwise the command
+shows `NAME` and says the name could not be shown.
 
 - **The account.** `skep-cluster` (UID and GID 410), checked like `skep`:
   missing or half there is refused, other numbers are a warning.
 - **The cluster**, decided by `skep-cluster init -check` (read-only; it
-  prints `initialised` or `not-initialised`):
+  prints `initialised` or `not-initialised`, and fails on a data
+  directory that a join, a wipe or a key rotation left: see below):
 
   | State | Plan |
   |---|---|
   | initialised | `ok` |
   | not initialised, the agent runs or `-start` | `add`: `skep-cluster init` |
   | not initialised, the agent does not run, no `-start` | manual: run the same `apply` again with `-start` (init reads the node ID from the running agent) |
-  | cannot tell (not root, `-root` other than `/`, an error) | `apply` refuses; `check` and `plan` say it was not checked and why |
+  | `init -check` fails | `apply` refuses ("skep-cluster init -check failed, so apply cannot tell whether to initialise this host: …" with skep-cluster's text); `check` and `plan` warn with the same text |
+  | cannot ask (not root, `-root` other than `/`) | `apply` refuses; `check` and `plan` say it was not checked and why |
+
+  `not-initialised` means a host with no cluster store and none of what a
+  stopped join, wipe or key rotation leaves. `init -check` and `init`
+  both refuse, change nothing, and name what ends it (8c-2 review, F2):
+
+  | In `/var/db/skep/cluster` | Answer names |
+  |---|---|
+  | `wipe.json` (with or without a store) | `skep-cluster leave --wipe` again |
+  | `join.json` and no `state/`, or a join in phase `abandoning` | `skep-cluster join --abandon` (or start `skep_cluster` to let the join go on) |
+  | one `standalone.*` directory, no `state/`, no `join.json` | start `skep_cluster`: it puts the one-node cluster back |
+  | several `standalone.*` directories, no `state/`, no `join.json` | the service refuses to start with them: keep one, move the others out |
+  | `rotate.json` and no `state/` | delete it and `node.key.next` if no member lists this node's next pin |
+
+  A store with `rotate.json` (a key rotation under way) or with
+  `join.json` (a join in progress) is `initialised`.
 
   When the running agent is another build than `skep-setup`, the init is
   refused with "run skep-setup upgrade". The init waits up to 60 s for
@@ -514,13 +534,21 @@ counts them in the database the agent's configuration names; a missing
 table is an error, and a missing database while the agent answers on its
 socket is refused.
 If this host has a cluster (`skep-cluster init -check`), `remove` asks the
-running `skep_cluster` whether this node is alone (one member, itself;
-nothing pending; not joining) or was removed, and **refuses otherwise**:
-with more members it names `skep-cluster remove NAME` on another member
-and then `skep-cluster leave --wipe` here; pending admissions must be
-withdrawn first; a joining node needs `skep-cluster join --abandon`; no
-answer asks you to start `skep_cluster` so that remove can see. There is
-no override, and the check trusts the running service's answer.
+running `skep_cluster` whether this node is alone or was removed, and
+**refuses otherwise**. Alone means all of: the member list comes from the
+state machine (`accepted_by` is `state machine`), which is up to date and
+not stopped; the Raft configuration (`servers`) is exactly this node; the
+member list is exactly this node; nothing is pending; not joining
+(8c-2 review, F1). Otherwise it says what it saw ("the Raft
+configuration has 3 servers", "the member list is not current yet (it
+comes from the membership file): try again in a moment", …) and names
+`skep-cluster remove NAME` on another member and then `skep-cluster
+leave --wipe` here; pending admissions must be withdrawn first; a joining
+node needs `skep-cluster join --abandon`; no answer asks you to start
+`skep_cluster` so that remove can see. There is no override, and the
+check trusts the running service's answer. `upgrade`'s import of the
+users uses the same rule, and waits up to 30 s while the member list is
+only not current yet.
 It stops `skep_api`, `skep_cluster` and `skep_agent` and sets the three
 `_enable` variables to `NO`. By default it keeps everything else (answer 11):
 

@@ -42,15 +42,11 @@ func (s *Service) leaderStep(ctx context.Context) {
 	s.mu.Lock()
 	needBarrier := term != s.barrierTerm
 	due := needBarrier || !now.Before(s.nextLeader)
-	hook := s.beforeBarrier
 	s.mu.Unlock()
 	if !due {
 		return
 	}
 	if needBarrier {
-		if hook != nil {
-			hook()
-		}
 		if !s.termBarrier(st, term) {
 			return
 		}
@@ -71,6 +67,12 @@ func (s *Service) leaderStep(ctx context.Context) {
 // (leaderStep and watchLeadership); a barrier changes nothing, so a second
 // one only waits again.
 func (s *Service) termBarrier(st Store, term uint64) bool {
+	s.mu.Lock()
+	hook := s.beforeBarrier
+	s.mu.Unlock()
+	if hook != nil {
+		hook()
+	}
 	if err := st.Barrier(); err != nil {
 		s.log.Warn("leader: barrier failed; the work waits for the next round", "term", term, "error", err)
 		return false

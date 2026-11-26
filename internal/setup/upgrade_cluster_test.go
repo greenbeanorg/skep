@@ -212,6 +212,33 @@ func TestUpgradeImport(t *testing.T) {
 			t.Fatalf("sent --yes: %q", c)
 		}
 	}
+	// F1 of the 8c-2 review: right after skep_cluster's start the member
+	// list comes from the membership file; upgrade waits that out, then
+	// imports.
+	u, h = newUpgrade(t)
+	h.importState = "pending"
+	h.view.AcceptedBy = "membership file"
+	statuses := 0
+	h.onStatus = func() {
+		if statuses++; statuses >= 3 {
+			h.view.AcceptedBy = "state machine"
+		}
+	}
+	if err := u.Upgrade(context.Background()); err != nil ||
+		!slices.ContainsFunc(h.calls, func(c string) bool { return strings.Contains(c, "import-users") }) {
+		t.Fatalf("%v %v", err, h.calls)
+	}
+	// It stays so: no import, and the reason printed.
+	u, h = newUpgrade(t)
+	h.importState = "pending"
+	h.view.AcceptedBy = "membership file"
+	out.Reset()
+	u.Out = &out
+	if err := u.Upgrade(context.Background()); err != nil ||
+		slices.ContainsFunc(h.calls, func(c string) bool { return strings.Contains(c, "import-users") }) ||
+		!strings.Contains(out.String(), "not shown to be alone in its cluster (the member list is not current yet (it comes from the membership file)") {
+		t.Fatalf("%v %v\n%s", err, h.calls, out.String())
+	}
 	// Not pending: the state printed, nothing else.
 	u, h = newUpgrade(t)
 	h.importState = "superseded"

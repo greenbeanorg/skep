@@ -229,7 +229,39 @@ func TestRemoveClusterRule(t *testing.T) {
 			c := &fakeCluster{initialised: true, view: aloneView("b")}
 			member(&c.view, "n2", "langrishe")
 			return c
-		}(), Refuse, "remove it on another member"},
+		}(), Refuse, "the member list has 2 members. If it is one of several members, remove it on another member"},
+		// F1 of the 8c-2 review: one member, but three servers.
+		{"one member, three servers", func() *fakeCluster {
+			c := &fakeCluster{initialised: true, view: aloneView("b")}
+			c.view.Servers = append(c.view.Servers, struct {
+				ID string `json:"id"`
+			}{"n2"}, struct {
+				ID string `json:"id"`
+			}{"n3"})
+			return c
+		}(), Refuse, "the Raft configuration has 3 servers"},
+		{"membership file", func() *fakeCluster {
+			c := &fakeCluster{initialised: true, view: aloneView("b")}
+			c.view.AcceptedBy = "membership file"
+			return c
+		}(), Refuse, "the member list is not current yet (it comes from the membership file): try again in a moment"},
+		{"catching up", func() *fakeCluster {
+			c := &fakeCluster{initialised: true, view: aloneView("b")}
+			c.view.StateMachine.UpToDate = false
+			return c
+		}(), Refuse, "the state machine is catching up"},
+		{"no members yet", func() *fakeCluster {
+			c := &fakeCluster{initialised: true, view: aloneView("b")}
+			c.view.Members, c.view.AcceptedBy = nil, "none"
+			return c
+		}(), Refuse, "not current yet"},
+		// F5: a name without the node-name shape is not put in a command.
+		{"odd name", func() *fakeCluster {
+			c := &fakeCluster{initialised: true, view: aloneView("b")}
+			c.view.NodeName = "smith; rm -rf /"
+			member(&c.view, "n2", "langrishe")
+			return c
+		}(), Refuse, "this node's name could not be shown"},
 		{"pending", func() *fakeCluster {
 			c := &fakeCluster{initialised: true, view: aloneView("b")}
 			c.view.Pendings = append(c.view.Pendings, struct {
@@ -263,8 +295,17 @@ func TestRemoveClusterRule(t *testing.T) {
 			if it.Kind != c.kind || !strings.Contains(it.Detail, c.hint) {
 				t.Fatalf("%+v", it)
 			}
-			if c.name == "more members" && (len(it.Steps) != 2 || !strings.HasPrefix(it.Steps[0], "skep-cluster remove smith") || !strings.HasPrefix(it.Steps[1], "skep-cluster leave --wipe")) {
-				t.Fatalf("steps %q", it.Steps)
+			if it.Kind == Refuse && strings.Contains(it.Detail, "not shown to be alone") {
+				want := "skep-cluster remove smith "
+				if c.name == "odd name" {
+					want = "skep-cluster remove NAME "
+				}
+				if len(it.Steps) != 2 || !strings.HasPrefix(it.Steps[0], want) || !strings.HasPrefix(it.Steps[1], "skep-cluster leave --wipe") {
+					t.Fatalf("steps %q", it.Steps)
+				}
+			}
+			if strings.Contains(it.Detail, " of 0 members") || strings.Contains(strings.Join(it.Steps, " "), "rm -rf") {
+				t.Fatalf("%+v", it)
 			}
 		})
 	}
@@ -345,5 +386,83 @@ func TestRemoveNoAnswerDisabledNamesOnestart(t *testing.T) {
 	p = computeRemove(t, RemoveOptions{Root: e.root, Cluster: &fakeCluster{initialised: true, statusErr: errors.New("not reachable")}}, facts(), e.runner)
 	if it := findItem(t, p, "cluster", "this node's cluster"); !strings.Contains(it.Detail, "(service skep_cluster start)") {
 		t.Fatalf("enabled: %+v", it)
+	}
+}
+
+// F4 of the 8c-2 review: with -start, a service whose _enable line is set
+// to anything but YES is a refusal (rc.d would exit 0 and start nothing),
+// so nothing is changed.
+func TestStartRefusesADisabledService(t *testing.T) {
+	root := stockHost(t)
+	appendFile(t, filepath.Join(root, "etc/rc.conf"), "skep_agent_enable=\"YES\"\nskep_cluster_enable=\"NO\"\nskep_api_enable=\"NO\"\n")
+	o := newBridgeOpts(root)
+	o.Start = true
+	o.Cluster = &fakeCluster{initialised: true, view: aloneView("b")}
+	p := compute(t, o, facts())
+	if !p.Refused() {
+		t.Fatal("the plan is not refused")
+	}
+	for _, svc := range []string{"skep_cluster", "skep_api"} {
+		it := findItem(t, p, "services", "start "+svc)
+		if it.Kind != Refuse || !strings.Contains(it.Detail, svc+`_enable is "NO", perhaps from an earlier remove: set it to YES (sysrc `+svc+`_enable=YES), then run apply again`) {
+			t.Fatalf("%s: %+v", svc, it)
+		}
+	}
+	if it := findItem(t, p, "services", "start skep_agent"); it.Kind != Add {
+		t.Fatalf("agent: %+v", it)
+	}
+	// Running already: not refused.
+	running := facts()
+	running.Running = map[string]bool{"skep_agent": true, "skep_cluster": true, "skep_api": true}
+	if it := findItem(t, compute(t, o, running), "services", "skep_api"); it.Kind != OK {
+		t.Fatalf("running: %+v", it)
+	}
+}
+
+// F4 of the 8c-2 review, the backstop: "service X start" that exits 0
+// without starting X fails the action, naming the _enable line.
+func TestStartActionChecksTheServiceRuns(t *testing.T) {
+	root := stockHost(t)
+	e := newApplyEnv(t, root)
+	e.runner.onStart = func(name string) {
+		if name == "skep_agent" {
+			e.runner.running[name] = false // as rc.d does for a disabled service
+		}
+	}
+	o := newBridgeOpts(root)
+	o.Start = true
+	cl := &fakeCluster{initialised: true, view: aloneView("b")}
+	o.Cluster = cl
+	a := e.applier()
+	a.Cluster = cl
+	_, err := a.Apply(context.Background(), compute(t, o, facts()))
+	if err == nil || !strings.Contains(err.Error(), `"service skep_agent start" exited 0, but skep_agent is not running`) ||
+		!strings.Contains(err.Error(), "skep_agent_enable") {
+		t.Fatalf("%v", err)
+	}
+}
+
+// F2 of the 8c-2 review: skep-cluster's refusal of a data directory that a
+// join, a wipe or a key rotation left reaches apply, check and remove as
+// what it is, not as "not initialised".
+func TestInitCheckRefusalTexts(t *testing.T) {
+	refusal := errors.New(`/usr/local/sbin/skep-cluster init -check: exit status 1: skep-cluster: /var/db/skep/cluster/join.json exists: ... end it with "skep-cluster join --abandon" as root`)
+	root := stockHost(t)
+	o := newBridgeOpts(root)
+	o.Cluster = &fakeCluster{checkErr: refusal}
+	o.Apply = true
+	it := findItem(t, compute(t, o, facts()), "cluster", "the cluster on this host")
+	if it.Kind != Refuse || !strings.HasPrefix(it.Detail, "skep-cluster init -check failed, so apply cannot tell whether to initialise this host: /usr/local/sbin/skep-cluster init -check: exit status 1") ||
+		!strings.Contains(it.Detail, "join --abandon") {
+		t.Fatalf("apply: %+v", it)
+	}
+	o.Apply = false
+	if it := findItem(t, compute(t, o, facts()), "cluster", "the cluster on this host"); it.Kind != Warn || !strings.Contains(it.Detail, "join --abandon") {
+		t.Fatalf("check: %+v", it)
+	}
+	e, _, _ := appliedHost(t)
+	p := computeRemove(t, RemoveOptions{Root: e.root, Cluster: &fakeCluster{checkErr: refusal}}, facts(), e.runner)
+	if it := findItem(t, p, "cluster", "this node's cluster"); it.Kind != Refuse || !strings.Contains(it.Detail, "so remove cannot tell whether this host has a cluster") || !strings.Contains(it.Detail, "join --abandon") {
+		t.Fatalf("remove: %+v", it)
 	}
 }

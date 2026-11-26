@@ -491,8 +491,10 @@ skepctl cluster remove wu --cluster-id ID  # without a terminal
 - **remove** needs the cluster ID typed back (`cluster_id` in the body).
   It is compared on the node that receives the request and again on the
   leader: a different one is `409 cluster_id_mismatch` and nothing is
-  written. When too few of the remaining voters answer, `409
-  voters_unanswered`, nothing written: the API offers no override; root's
+  written (a node that does not know its cluster ID yet answers `503
+  no_quorum`, `not_written`: it is not ready). When too few of the
+  remaining voters answer, `409 voters_unanswered`, naming the voters
+  that did not answer, nothing written: the API offers no override; root's
   `skep-cluster remove -allow-unanswered` on the host stays the only one.
   The answer can take up to about 90 s. Removing the node whose API you
   use hands the leadership over first (`handed_over`); that API then
@@ -501,6 +503,11 @@ skepctl cluster remove wu --cluster-id ID  # without a terminal
   `details.outcome` `not_written` (no leader, `skep-cluster` not
   reachable, joining, removed) or `unknown` (sent and no answer: check
   `skepctl cluster show`). skep-api never repeats a member operation.
+- A **degraded session** (an administrator's login without quorum) cannot
+  admit, withdraw or remove, even once quorum is back: `503 no_quorum`,
+  `not_written`, "a degraded session cannot change the cluster's
+  membership; log in again once this node has quorum", audited as a
+  failure. `skepctl cluster show` still works with it.
 - Each one is in the access audit (`cluster.admit`,
   `cluster.admit.withdraw`, `cluster.member.remove`, with the node name,
   node ID, operation ID, and on failure the error code and outcome), and

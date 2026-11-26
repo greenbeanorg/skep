@@ -39,6 +39,17 @@ func Clean(s string) string {
 	}, s)
 }
 
+// CleanLines is Clean line by line, keeping the line breaks (F7 of the
+// 8c-2 review): what skep-cluster or skep-api's commands print over
+// several lines stays readable. A carriage return at a line's end goes.
+func CleanLines(s string) string {
+	lines := strings.Split(s, "\n")
+	for i, l := range lines {
+		lines[i] = Clean(strings.TrimSuffix(l, "\r"))
+	}
+	return strings.Join(lines, "\n")
+}
+
 // ClusterView is the part of "skep-cluster status -json" setup reads,
 // decoded into setup's own struct: skep-setup never links the cluster
 // packages (D1). A test keeps the tags in line with localapi.Status.
@@ -57,8 +68,16 @@ type ClusterView struct {
 			Index  uint64 `json:"index"`
 			Reason string `json:"reason"`
 		} `json:"stalled"`
+		UpToDate bool `json:"up_to_date"`
 	} `json:"state_machine"`
-	Members []struct {
+	// Servers is the latest Raft configuration.
+	Servers []struct {
+		ID string `json:"id"`
+	} `json:"servers"`
+	// AcceptedBy says where the member list comes from; only "state
+	// machine" is current.
+	AcceptedBy string `json:"accepted_by"`
+	Members    []struct {
 		ID    string `json:"id"`
 		Name  string `json:"name"`
 		State string `json:"state"`
@@ -82,10 +101,65 @@ type ClusterView struct {
 	Health string `json:"-"`
 }
 
-// Alone reports whether this node is a cluster of one: one member, itself;
-// nothing pending; not joining; not removed.
+// Alone reports whether this node is a cluster of one (NotAlone says why
+// not).
 func (v ClusterView) Alone() bool {
-	return len(v.Members) == 1 && v.Members[0].ID == v.NodeID && len(v.Pendings) == 0 && v.Join == nil && v.Removed == nil
+	why, _ := v.NotAlone()
+	return why == ""
+}
+
+// acceptedByStateMachine is the AcceptedBy of a current member list.
+const acceptedByStateMachine = "state machine"
+
+// NotAlone says why this node is not shown to be a cluster of one, or ""
+// when it is (F1 of the 8c-2 review): the member list comes from the state
+// machine, which is up to date and not stopped; the Raft configuration
+// and the members are exactly this node; nothing is pending; it is
+// neither joining nor removed. settling is true when the member list is
+// only not current yet, which a moment later may change.
+func (v ClusterView) NotAlone() (why string, settling bool) {
+	switch {
+	case v.Join != nil:
+		return "this node is joining a cluster", false
+	case v.Removed != nil:
+		return "this node was removed from its cluster", false
+	case len(v.Pendings) > 0:
+		return fmt.Sprintf("%d admission(s) are pending", len(v.Pendings)), false
+	case v.StateMachine.Stalled != nil:
+		return fmt.Sprintf("the state machine is stopped at log index %d", v.StateMachine.Stalled.Index), false
+	case v.AcceptedBy != acceptedByStateMachine:
+		from := "skep-cluster does not say where it comes from"
+		if v.AcceptedBy != "" {
+			from = "it comes from the " + Clean(v.AcceptedBy)
+		}
+		return "the member list is not current yet (" + from + "): try again in a moment", true
+	case !v.StateMachine.UpToDate:
+		return "the member list is not current yet (the state machine is catching up): try again in a moment", true
+	case len(v.Servers) != 1:
+		return fmt.Sprintf("the Raft configuration has %d servers", len(v.Servers)), false
+	case v.Servers[0].ID != v.NodeID:
+		return "the Raft configuration's one server is not this node", false
+	case len(v.Members) != 1:
+		return fmt.Sprintf("the member list has %d members", len(v.Members)), false
+	case v.Members[0].ID != v.NodeID:
+		return "the member list's one member is not this node", false
+	}
+	return "", false
+}
+
+// nodeNameRE is the node-name rule of clusterstate.ValidName, copied
+// because skep-setup does not link the cluster packages (D1); a test keeps
+// the two equal.
+var nodeNameRE = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$`)
+
+// commandName is a node name from skep-cluster's status as it may appear
+// in a printed command: itself when it has the node-name shape, otherwise
+// NAME, and shown false (F5 of the 8c-2 review).
+func commandName(name string) (string, bool) {
+	if nodeNameRE.MatchString(name) {
+		return name, true
+	}
+	return "NAME", false
 }
 
 // LeaderKnown reports whether the status names a leader.
@@ -114,7 +188,9 @@ func (v ClusterView) Summary() string {
 type Cluster interface {
 	// Build is the installed skep-cluster's build (version+commit).
 	Build(ctx context.Context) (string, error)
-	// Initialised runs "skep-cluster init -check" (read-only).
+	// Initialised runs "skep-cluster init -check" (read-only). Its error
+	// is skep-cluster's refusal of the data directory (a join, a wipe or a
+	// key rotation left it so), or a failure to run it.
 	Initialised(ctx context.Context) (bool, error)
 	// Init runs "skep-cluster init" (no -address: no port is opened).
 	Init(ctx context.Context) error
@@ -134,7 +210,7 @@ func (h HostCluster) run(ctx context.Context, timeout time.Duration, args ...str
 	defer cancel()
 	out, err := h.Runner.Run(cctx, Cmd{Name: hostPath(h.Root, clusterBin), Args: args, Limit: maxCommandOutput})
 	if err != nil {
-		return out, errors.New(Clean(err.Error()))
+		return out, errors.New(CleanLines(err.Error()))
 	}
 	return out, nil
 }
@@ -159,7 +235,7 @@ func (h HostCluster) Build(ctx context.Context) (string, error) {
 func (h HostCluster) Initialised(ctx context.Context) (bool, error) {
 	out, err := h.run(ctx, 30*time.Second, "init", "-check")
 	if err != nil {
-		return false, fmt.Errorf("skep-cluster init -check: %w", err)
+		return false, err // the runner's error names the command
 	}
 	switch strings.TrimSpace(out) {
 	case "initialised":

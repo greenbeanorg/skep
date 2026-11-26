@@ -642,7 +642,7 @@ func (u *Upgrader) clusterRefusals(ctx context.Context, f Facts) (clusterState, 
 	}
 	cl := u.cluster()
 	if cs.initialised, err = cl.Initialised(ctx); err != nil {
-		return refuse(err.Error())
+		return refuse("skep-cluster init -check failed, so upgrade cannot tell whether this host has a cluster: " + err.Error())
 	}
 	if !f.Running["skep_cluster"] {
 		if cs.initialised {
@@ -715,6 +715,23 @@ func (u *Upgrader) restartCluster(ctx context.Context, want string) error {
 	return nil
 }
 
+// notAloneSettled is ClusterView.NotAlone, asked again every second for
+// up to ImportWait while the member list is only not current yet (right
+// after skep_cluster's start it comes from the membership file).
+func (u *Upgrader) notAloneSettled(ctx context.Context) (string, error) {
+	for waited := time.Duration(0); ; waited += time.Second {
+		v, err := u.cluster().Status(ctx)
+		if err != nil {
+			return "", err
+		}
+		why, settling := v.NotAlone()
+		if !settling || waited >= u.ImportWait || ctx.Err() != nil {
+			return why, nil
+		}
+		u.Sleep(time.Second)
+	}
+}
+
 // importUsers is D13: read the import state, import alone, never with
 // --yes, and print the cluster steps otherwise.
 func (u *Upgrader) importUsers(ctx context.Context) error {
@@ -728,15 +745,15 @@ func (u *Upgrader) importUsers(ctx context.Context) error {
 		u.printf("  users: import state %s\n", st)
 		return nil
 	}
-	v, err := u.cluster().Status(ctx)
+	notAlone, err := u.notAloneSettled(ctx)
 	if err != nil {
 		return &UpgradeIncomplete{Problem: "this host's users are still to be imported, and skep-cluster's status cannot be read: " + err.Error(),
 			Check: "skep-cluster status", Again: "Running skep-setup upgrade again is safe; it imports once skep-cluster answers"}
 	}
-	if !v.Alone() {
-		u.printf("  users: import state pending, and this node is not alone in its cluster: setup does not import here.\n" +
-			"  Upgrade every node first, then run \"" + ImportCommand + "\" on one node only; on every other node run it, then again with --yes\n" +
-			"  (docs/installation/upgrading.md). Until then logins work from this host's own users and user changes answer 503 users_import_pending.\n")
+	if notAlone != "" {
+		u.printf("  users: import state pending, and this node is not shown to be alone in its cluster (%s): setup does not import here.\n"+
+			"  Upgrade every node first, then run \""+ImportCommand+"\" on one node only; on every other node run it, then again with --yes\n"+
+			"  (docs/installation/upgrading.md). Until then logins work from this host's own users and user changes answer 503 users_import_pending.\n", notAlone)
 		return nil
 	}
 	u.printf("  users: import state pending; %s\n", ImportCommand)

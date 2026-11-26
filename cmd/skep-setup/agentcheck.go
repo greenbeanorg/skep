@@ -95,7 +95,7 @@ func reportCluster(ctx context.Context, root string, f setup.Facts, e env) []set
 	if f.Running["skep_cluster"] {
 		fmt.Fprintln(e.stdout, "  cluster: skep_cluster running")
 		if v, err := cl.Status(ctx); err != nil {
-			fmt.Fprintf(e.stdout, "  cluster: status not read (%s)\n", setup.Clean(err.Error()))
+			fmt.Fprintf(e.stdout, "  cluster: status not read (%s)\n", setup.CleanLines(err.Error()))
 		} else {
 			fmt.Fprintf(e.stdout, "  cluster: %s\n", v.Summary())
 		}
@@ -110,7 +110,7 @@ func reportCluster(ctx context.Context, root string, f setup.Facts, e env) []set
 	st, err := im.State(ctx)
 	switch {
 	case err != nil:
-		fmt.Fprintf(e.stdout, "  users: import state not read (%s)\n", setup.Clean(err.Error()))
+		fmt.Fprintf(e.stdout, "  users: import state not read (%s)\n", setup.CleanLines(err.Error()))
 	case st == setup.ImportPending:
 		return []setup.Item{{Kind: setup.Manual, Area: "users", What: "import of this host's users: pending",
 			Detail: "user changes answer 503 users_import_pending until it is done; alone, skep-setup upgrade does it; in a cluster of several nodes follow docs/installation/upgrading.md",

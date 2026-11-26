@@ -39,7 +39,9 @@ type upgradeHost struct {
 	clusterInit  bool
 	clusterBuild string
 	view         ClusterView
-	importState  string
+	// onStatus runs before each "skep-cluster status -json" answer.
+	onStatus    func()
+	importState string
 	// importTo is the state "admin import-users" leaves; initErr fails
 	// "skep-cluster init".
 	importTo string
@@ -85,6 +87,9 @@ func (h *upgradeHost) Run(ctx context.Context, c Cmd) (string, error) {
 		case "status -json":
 			if _, err := os.Stat(hostPath(h.root, clusterPID)); err != nil {
 				return "", errors.New("skep-cluster is not reachable on its socket")
+			}
+			if h.onStatus != nil {
+				h.onStatus()
 			}
 			v := h.view
 			v.Build = h.clusterBuild

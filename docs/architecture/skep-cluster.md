@@ -365,7 +365,9 @@ neither: a root request with an actor or a request ID is `400`, and its
 actor is `root`. `allow_unanswered` is refused for the API account (`403
 forbidden`), and its removal must carry `cluster_id`. A `cluster_id`
 given with any removal is compared on the node that receives it and again
-on the leader: `409 cluster_id_mismatch`, nothing written. Their errors: `400
+on the leader: `409 cluster_id_mismatch`, nothing written; on a node
+that does not know its cluster ID yet, `503 unavailable` ("this node is
+not ready"). Their errors: `400
 invalid_request`, `409 no_listen_address`, `409 joining`, `409 refused`
 (the leader or the state machine refused it, with the reason), `409
 removed` (this node was removed), `409 voters_unanswered` (remove: too
@@ -978,6 +980,10 @@ cannot be applied): user writes answer `503 no_quorum`
 with `details.outcome`; the password is checked first, then an enabled
 administrator gets a degraded session of at most one hour and anyone else
 `503 no_quorum`; an empty copy answers `no_quorum`, not `setup_required`.
+A degraded session is refused on the three membership operations of the
+API before anything is sent (`503 no_quorum`, `not_written`), even after
+quorum is back; on user writes it is refused only while there is no
+quorum (8c-2 review, F3).
 The hash upgrade at login is a `user.rehash` with a 2 s limit, not sent
 without quorum. `skep-api`'s health has the non-critical check
 `cluster_users`. The writer treats the codes `no_leader`, `unavailable`,

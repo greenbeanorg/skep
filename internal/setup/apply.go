@@ -363,8 +363,10 @@ func (a *Applier) do(ctx context.Context, act Action) (noop bool, err error) {
 			a.printf("    %s is running already\n", act.Service)
 			return true, nil
 		}
-		_, err := a.Runner.Run(ctx, Cmd{Name: cmdService, Args: []string{act.Service, "start"}})
-		return false, err
+		if _, err := a.Runner.Run(ctx, Cmd{Name: cmdService, Args: []string{act.Service, "start"}}); err != nil {
+			return false, err
+		}
+		return false, a.startedCheck(ctx, act.Service)
 	case ActAdminCreate:
 		return false, a.adminCreate(ctx, act.Username)
 	case ActServiceStop:
@@ -377,6 +379,26 @@ func (a *Applier) do(ctx context.Context, act Action) (noop bool, err error) {
 		return false, a.clusterInit(ctx)
 	}
 	return false, fmt.Errorf("unknown action %q", act.Type)
+}
+
+// startedWait is how long a started service has to show as running.
+const startedWait = 10 * time.Second
+
+// startedCheck is the backstop after a "service NAME start" that exited 0
+// (F4 of the 8c-2 review): rc.d exits 0 without starting a service whose
+// _enable line is not YES, so "service NAME status" must succeed within
+// startedWait.
+func (a *Applier) startedCheck(ctx context.Context, svc string) error {
+	for waited := time.Duration(0); ; waited += time.Second {
+		if _, err := a.Runner.Run(ctx, Cmd{Name: cmdService, Args: []string{svc, "status"}}); err == nil {
+			return nil
+		}
+		if waited >= startedWait || ctx.Err() != nil {
+			return fmt.Errorf("\"service %s start\" exited 0, but %s is not running after %s: check %s_enable in /etc/rc.conf "+
+				"(rc.d starts no service whose _enable line is not YES, and says nothing)", svc, svc, startedWait, svc)
+		}
+		a.sleep(time.Second)
+	}
 }
 
 // stopService stops an rc.d service that is running; one that is not

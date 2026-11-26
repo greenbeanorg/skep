@@ -205,6 +205,72 @@ func TestInitCheck(t *testing.T) {
 	}
 }
 
+// F2 of the 8c-2 review: a data directory that a join, a wipe or a key
+// rotation left is neither "not-initialised" nor initialised again: init
+// -check and init both name the state and the command that ends it, and
+// change nothing.
+func TestInitRefusesWhatAJoinWipeOrRotationLeft(t *testing.T) {
+	for _, c := range []struct {
+		name  string
+		files []string
+		want  string
+	}{
+		{"join.json, no state", []string{"join.json"}, "join --abandon"},
+		{"wipe marker", []string{"wipe.json"}, "leave --wipe"},
+		{"wipe marker with a store", []string{"wipe.json", "state/raft.db"}, "leave --wipe"},
+		{"one moved-aside state", []string{"standalone.20261126T010203Z/raft.db"}, "service skep_cluster start"},
+		{"two moved-aside states", []string{"standalone.a/raft.db", "standalone.b/raft.db"}, "standalone.a, standalone.b"},
+		{"rotate.json, no state", []string{"rotate.json"}, "node.key.next"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			w := newWorld(t)
+			for _, f := range c.files {
+				p := filepath.Join(w.dataDir, f)
+				os.MkdirAll(filepath.Dir(p), 0o700)
+				if err := os.WriteFile(p, []byte("{}"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			os.Chmod(w.dataDir, 0o700)
+			before := treeOf(t, w.dataDir)
+			err := run(context.Background(), []string{"init", "-check", "-data-dir", w.dataDir, "-config", w.config}, w.env(0))
+			if err == nil || !strings.Contains(err.Error(), c.want) || !strings.Contains(err.Error(), "Nothing was changed") || w.out.Len() != 0 {
+				t.Fatalf("init -check: %v %q", err, w.out.String())
+			}
+			if err := w.init(0); err == nil || !strings.Contains(err.Error(), c.want) {
+				t.Fatalf("init: %v", err)
+			}
+			if w.agentCalls != 0 || treeOf(t, w.dataDir) != before {
+				t.Fatalf("init changed the data directory or asked the agent (%d)", w.agentCalls)
+			}
+			if _, err := os.Stat(w.config); err == nil {
+				t.Fatal("init wrote cluster.json")
+			}
+		})
+	}
+	// A key rotation under way with a store is a member's: initialised.
+	w := newWorld(t)
+	if err := w.init(0); err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(filepath.Join(w.dataDir, "rotate.json"), []byte("{}"), 0o600)
+	w.out.Reset()
+	if err := run(context.Background(), []string{"init", "-check", "-data-dir", w.dataDir, "-config", w.config}, w.env(0)); err != nil || w.out.String() != "initialised\n" {
+		t.Fatalf("rotation with a store: %v %q", err, w.out.String())
+	}
+}
+
+// treeOf lists the paths under dir.
+func treeOf(t *testing.T, dir string) string {
+	t.Helper()
+	var b strings.Builder
+	filepath.WalkDir(dir, func(p string, _ fs.DirEntry, err error) error {
+		b.WriteString(p + "\n")
+		return err
+	})
+	return b.String()
+}
+
 func TestInitNeedsRoot(t *testing.T) {
 	w := newWorld(t)
 	if err := w.init(1000); err == nil || !strings.Contains(err.Error(), "root") {

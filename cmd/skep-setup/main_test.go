@@ -295,6 +295,7 @@ func aloneView(t *testing.T) setup.ClusterView {
 	t.Helper()
 	var v setup.ClusterView
 	raw := `{"node_id":"n1","node_name":"smith","cluster_id":"c1","build":"b","raft":{"state":"leader","leader_id":"n1"},` +
+		`"state_machine":{"up_to_date":true},"servers":[{"id":"n1","address":"","voter":true}],"accepted_by":"state machine",` +
 		`"members":[{"id":"n1","name":"smith","state":"member"}],"pendings":[]}`
 	if err := json.Unmarshal([]byte(raw), &v); err != nil {
 		t.Fatal(err)

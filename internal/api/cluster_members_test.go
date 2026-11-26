@@ -222,3 +222,56 @@ func TestClusterManageOnlyForAdmin(t *testing.T) {
 		}
 	}
 }
+
+// F3 of the 8c-2 review: a degraded session (a login without quorum) is
+// refused on the three member operations before anything is sent, with
+// 503 no_quorum not_written, audited as a failure; GET /cluster stays
+// open to it.
+func TestDegradedSessionCannotChangeMembership(t *testing.T) {
+	e := freshEnv(t)
+	if _, err := e.db.Exec(`UPDATE sessions SET degraded = 1 WHERE token_hash = ?`, auth.HashToken(e.tokens[auth.RoleAdmin])); err != nil {
+		t.Fatal(err)
+	}
+	f := &fakeMembers{}
+	h := e.clusterHandler(f)
+	for _, c := range []struct {
+		method, path, body, action string
+	}{
+		{http.MethodPost, Prefix + "/cluster/admissions", `{"request":"` + joinRequest(t) + `"}`, ActionClusterAdmit},
+		{http.MethodDelete, Prefix + "/cluster/admissions/wu", "", ActionClusterWithdraw},
+		{http.MethodPost, Prefix + "/cluster/members/wu/remove", `{"cluster_id":"00000000-0000-4000-8000-000000000009"}`, ActionClusterRemove},
+	} {
+		rec := e.serve(h, request{method: c.method, path: c.path, role: auth.RoleAdmin, body: c.body})
+		eb := errorOf(t, rec.Body.Bytes())
+		if rec.Code != http.StatusServiceUnavailable || eb.Code != auth.CodeNoQuorum || eb.Details["outcome"] != auth.OutcomeNotWritten ||
+			eb.Message != "a degraded session cannot change the cluster's membership; log in again once this node has quorum" {
+			t.Errorf("%s %s: %d %s", c.method, c.path, rec.Code, rec.Body)
+		}
+		if en := lastAudit(t, e, c.action); en.Outcome != "failure" || en.Details["error_code"] != auth.CodeNoQuorum {
+			t.Errorf("%s audit: %+v", c.action, en)
+		}
+	}
+	if f.actor != "" {
+		t.Fatalf("something was sent to skep-cluster (actor %q)", f.actor)
+	}
+	ok := &fakeMembers{}
+	if rec := e.serve(e.clusterHandler(ok), request{method: http.MethodGet, path: Prefix + "/cluster", role: auth.RoleAdmin}); rec.Code != http.StatusOK {
+		t.Fatalf("GET /cluster for a degraded session: %d %s", rec.Code, rec.Body)
+	}
+}
+
+// F7 of the 8c-2 review: the public voters_unanswered message keeps the
+// names of the voters that did not answer (only name-shaped ones) and
+// still offers no override.
+func TestVotersUnansweredKeepsTheNames(t *testing.T) {
+	msg := "without star the cluster has 2 voters and needs 2 of them for every change, but only 1 answered now (no answer from langrishe.greenbean.org, bad\x1bname): " +
+		"after this removal the cluster would accept no changes until they return. Nothing was written. To remove it all the same, run the command again with -allow-unanswered and confirm the cluster ID"
+	e := clusterFailure(&memberapi.Error{HTTPStatus: 409, Code: "voters_unanswered", Message: msg})
+	if e.Code != CodeVotersUnanswered || !strings.Contains(e.Message, "(no answer from langrishe.greenbean.org)") ||
+		strings.Contains(e.Message, "allow-unanswered") || strings.Contains(e.Message, "bad") {
+		t.Fatalf("%q", e.Message)
+	}
+	if e := clusterFailure(&memberapi.Error{HTTPStatus: 409, Code: "voters_unanswered", Message: "x"}); strings.Contains(e.Message, "no answer from") {
+		t.Fatalf("without names: %q", e.Message)
+	}
+}

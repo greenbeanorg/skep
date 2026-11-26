@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 	"unicode"
@@ -110,7 +111,12 @@ func clusterFailure(err error) *models.Error {
 	case CodeClusterIDMismatch:
 		return &models.Error{Code: CodeClusterIDMismatch, Message: msg}
 	case CodeVotersUnanswered:
-		return &models.Error{Code: CodeVotersUnanswered, Message: "too few of the remaining voters answered now: after this removal the cluster would accept no changes until they return. Nothing was written; bring them back and try again"}
+		silent := ""
+		if names := unansweredNames(e.Message); len(names) > 0 {
+			silent = " (no answer from " + strings.Join(names, ", ") + ")"
+		}
+		return &models.Error{Code: CodeVotersUnanswered, Message: "too few of the remaining voters answered now" + silent +
+			": after this removal the cluster would accept no changes until they return. Nothing was written; bring them back and try again"}
 	case "no_listen_address":
 		return &models.Error{Code: CodeClusterRefused, Message: "this node has no listen address for the cluster: run \"skep-cluster listen -address ADDR\" as root on the host first; nothing was written"}
 	case "no_leader", "unavailable", "handover_failed", "joining", "removed", "forbidden", "not_leader":
@@ -122,6 +128,27 @@ func clusterFailure(err error) *models.Error {
 		return unknown("skep-cluster answered " + e.Code + ": " + msg)
 	}
 	return &models.Error{Code: CodeClusterRefused, Message: "the cluster refused (" + e.Code + "): " + msg}
+}
+
+// unansweredRE finds the voters skep-cluster's voters_unanswered message
+// names; the rest of that message (its override) is not passed on.
+var unansweredRE = regexp.MustCompile(`\(no answer from ([^()]*)\)`)
+
+// unansweredNames returns the names in a voters_unanswered message that
+// have the shape of a node name or ID (F7 of the 8c-2 review); anything
+// else is dropped.
+func unansweredNames(msg string) []string {
+	m := unansweredRE.FindStringSubmatch(msg)
+	if m == nil {
+		return nil
+	}
+	var out []string
+	for _, n := range strings.Split(m[1], ", ") {
+		if clusterstate.ValidName(n) {
+			out = append(out, n)
+		}
+	}
+	return out
 }
 
 // statusForClusterCode maps the codes of clusterFailure to statuses.
@@ -154,6 +181,19 @@ func memberEntry(r *http.Request, action, nodeID, name string) audit.AccessEntry
 	return audit.AccessEntry{ActorID: who.User.ID, ActorName: who.User.Username, Action: action,
 		ResourceType: "cluster_member", ResourceID: nodeID, Outcome: audit.Success,
 		Details: map[string]any{"node_name": name, "node_id": nodeID}}
+}
+
+// degradedRefused refuses a member operation from a degraded session (a
+// login without quorum) before anything is sent to skep-cluster, even if
+// quorum is back by now (F3 of the 8c-2 review), and audits it as a
+// failure. It reports whether it refused.
+func (h *handler) degradedRefused(w http.ResponseWriter, r *http.Request, entry audit.AccessEntry) bool {
+	if who, _ := identityFrom(r.Context()); !who.Session.Degraded {
+		return false
+	}
+	h.writeClusterFailure(w, r, entry, auth.NoQuorum(auth.OutcomeNotWritten,
+		"a degraded session cannot change the cluster's membership; log in again once this node has quorum"))
+	return true
 }
 
 // socketActor is the actor and request ID passed to the socket (D22).
@@ -223,6 +263,9 @@ func (h *handler) clusterAdmit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	entry := memberEntry(r, ActionClusterAdmit, jr.NodeID, jr.Name)
+	if h.degradedRefused(w, r, entry) {
+		return
+	}
 	actor, requestID := socketActor(r)
 	res, err := h.cluster.Admit(r.Context(), memberapi.AdmitRequest{Request: strings.TrimSpace(req.Request), Actor: actor, RequestID: requestID})
 	if err != nil {
@@ -251,6 +294,9 @@ func (h *handler) clusterWithdraw(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	entry := memberEntry(r, ActionClusterWithdraw, "", name)
+	if h.degradedRefused(w, r, entry) {
+		return
+	}
 	actor, requestID := socketActor(r)
 	res, err := h.cluster.Withdraw(r.Context(), memberapi.WithdrawRequest{Name: name, Actor: actor, RequestID: requestID})
 	if err != nil {
@@ -280,6 +326,9 @@ func (h *handler) clusterRemove(w http.ResponseWriter, r *http.Request) {
 	_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(removeWriteLimit))
 	entry := memberEntry(r, ActionClusterRemove, "", name)
 	entry.Details["cluster_id"] = req.ClusterID
+	if h.degradedRefused(w, r, entry) {
+		return
+	}
 	actor, requestID := socketActor(r)
 	res, err := h.cluster.Remove(r.Context(), memberapi.RemoveRequest{Name: name, ClusterID: req.ClusterID, Actor: actor, RequestID: requestID})
 	if err != nil {

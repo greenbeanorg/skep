@@ -57,9 +57,9 @@ func (h HostImporter) run(ctx context.Context, timeout time.Duration, args ...st
 	defer cancel()
 	out, err := h.Runner.Run(cctx, Cmd{Name: hostPath(h.Root, apiBin), Args: append(args, svc...), As: cred, Limit: maxCommandOutput})
 	if err != nil {
-		return Clean(strings.TrimSpace(out)), errors.New(Clean(err.Error()))
+		return CleanLines(strings.TrimSpace(out)), errors.New(CleanLines(err.Error()))
 	}
-	return Clean(strings.TrimSpace(out)), nil
+	return CleanLines(strings.TrimSpace(out)), nil
 }
 
 // State implements Importer.

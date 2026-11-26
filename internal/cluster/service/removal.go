@@ -667,10 +667,16 @@ func (s *Service) Remove(ctx context.Context, req localapi.RemoveRequest, actor 
 const CodeClusterIDMismatch = "cluster_id_mismatch"
 
 // clusterIDMismatch compares a removal's cluster ID, when one was given,
-// with this cluster's.
+// with this cluster's. A node that does not know its cluster ID yet (its
+// state machine has applied nothing) is not ready, which is not a
+// mismatch (F7 of the 8c-2 review).
 func clusterIDMismatch(given, have string) error {
 	if given == "" || given == have {
 		return nil
+	}
+	if have == "" {
+		return &localapi.OpError{HTTPStatus: http.StatusServiceUnavailable, Code: raftnet.CodeUnavailable,
+			Message: "this node is not ready: it does not know its cluster's ID yet; nothing was written"}
 	}
 	return &localapi.OpError{HTTPStatus: http.StatusConflict, Code: CodeClusterIDMismatch,
 		Message: fmt.Sprintf("the cluster ID given (%s) is not this cluster's (%s); nothing was written", given, have)}
@@ -797,6 +803,12 @@ func (s *Service) removeAsLeader(ctx context.Context, req forwardRemove, origin 
 		retryUntil := time.Now().Add(10 * time.Second)
 		for {
 			err := s.toLeader(ctx, raftnet.OpRemove, req, &res)
+			s.mu.Lock()
+			hook := s.afterHandoverPass
+			s.mu.Unlock()
+			if hook != nil {
+				err = hook(err)
+			}
 			if err == nil {
 				res.HandedOver = true
 				return res, nil
@@ -804,6 +816,7 @@ func (s *Service) removeAsLeader(ctx context.Context, req forwardRemove, origin 
 			if !handoverRetryable(err) || time.Now().After(retryUntil) {
 				return res, err
 			}
+			s.log.Info("leader removal: the new leader is not ready; passing the removal on again", "error", err.Error())
 			select {
 			case <-ctx.Done():
 				return res, err
