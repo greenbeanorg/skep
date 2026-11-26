@@ -46,6 +46,27 @@ refuses rather than do that unless given `-force`; by hand, check
 `skepctl tasks list --status pending` and `--status running` (or the
 Tasks page) first, and stop `skep_api` before the agent.
 
+## To step 8d-1 or later: the guest inventory
+
+From step 8d-1 the cluster keeps a replicated inventory of every VM and
+jail (ADR 0013 amendment 6). **Upgrade every node of a cluster while no
+node of the cluster has a guest**, one node at a time as for 8c-1, and
+create nothing until all are upgraded: a `skep-cluster` of an earlier
+build stops at the first guest entry (it must never meet one), and the
+new `skep-api` writes guest entries by itself — within a minute of its
+start it adds every VM and jail its agent has. A cluster that has guests
+today has to delete them (or wait for a later step) before its nodes are
+upgraded.
+
+A **single host** upgraded from 0.1, or from an earlier step, with VMs or
+jails is not affected: it is its own cluster, and after `skep-setup
+upgrade` its guests appear in `skepctl cluster guests` within about a
+minute, added by `reconciliation`.
+
+Until step 8d-2, a host that has guests cannot join a cluster, and a
+member that owns guests cannot be removed (the removal is refused: `409
+cluster_refused`).
+
 ## To step 8c-1 or later (main, the unreleased cluster preview): the users move into the cluster
 
 From step 8c-1 the users are `skep-cluster`'s (ADR 0013 amendment 4).

@@ -457,13 +457,50 @@ itself.
 
 ## What you cannot do yet
 
-- Join a host that has VMs or jails, or remove one that owns guests with
-  `--forget-guests` (step 8d).
+- Join a host that has VMs or jails, or remove a member that owns guests
+  or name reservations (the removal is refused, `409 cluster_refused`);
+  `--forget-guests` comes with step 8d-2.
 - Admit or remove through the web interface (`skepctl` and the API can,
   from step 8c-2).
 - Change the address of a clustered node.
-- Limit a node without quorum to reads and to stopping and starting its
-  own guests (ADR 0013 B9): this comes with the guest inventory (step 8d).
+
+## The guest inventory (step 8d-1)
+
+The cluster keeps a replicated list of every VM and jail: its ID, kind,
+name and the node that owns it (no configuration). VM names and jail names
+are each unique in the cluster: a create or a clone first reserves its
+name, on any node, and a name another node holds answers `409
+vm_name_taken` or `409 container_name_taken` naming that node; the host is
+not asked.
+
+```
+$ skepctl cluster guests
+Cluster ff712cb0-…, guest inventory at index 291 (2 entries)
+KIND      NAME   ID          STATE    OWNER                    TASK  SINCE
+container web1   2f1c…       present  langrishe.greenbean.org  9a0e… 2026-11-26T…
+container db1    -           creating star                     -     2026-11-26T…
+```
+
+`creating` is a reserved name whose guest is not in the list yet.
+`skep-api` on each node keeps the list in line with its own agent: at
+start, every minute, and every 5 seconds while a create, clone or delete
+it accepted runs. A guest made on a host by other means appears within a
+minute; a deleted guest's entry goes when the agent says it is gone; a
+reservation whose guest never appeared is released after 5 minutes. Two
+guests of one kind and name (for example one made on a host directly)
+are both listed, and every one but the first is **FLAGGED**: rename or
+delete one.
+
+**Without quorum**, and for a degraded session even after quorum is back,
+a node serves only reads (not the serial console), logins and logouts,
+start, stop and restart of its VMs and jails, and task cancellation;
+everything else answers `503 no_quorum` with `details.reason`
+`no_quorum` or `degraded_session`, and every answer carries `Skep-Quorum:
+none` while there is no quorum. Log in again once the node has quorum to
+leave a degraded session.
+
+**Upgrade every node while no node has a guest**
+([upgrading](../installation/upgrading.md#to-step-8d-1-or-later-the-guest-inventory)).
 
 ## Through the API and skepctl (step 8c-2)
 
