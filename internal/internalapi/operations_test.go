@@ -31,7 +31,9 @@ func (f *fakeEngine) SetDrain(_ context.Context, reason string, by tasks.DrainAc
 	f.drain = &d
 	return d, 2, nil
 }
-func (f *fakeEngine) ClearDrain(context.Context, tasks.DrainActor) { f.drain, f.cleared = nil, f.cleared+1 }
+func (f *fakeEngine) ClearDrain(context.Context, tasks.DrainActor) {
+	f.drain, f.cleared = nil, f.cleared+1
+}
 func (f *fakeEngine) CurrentDrain(context.Context) (tasks.Drain, bool, int) {
 	if f.drain == nil {
 		return tasks.Drain{}, false, 0
