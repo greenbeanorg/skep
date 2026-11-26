@@ -92,15 +92,22 @@ func (h HostImporter) Import(ctx context.Context) (string, error) {
 // state word (D13).
 const importWait = 30 * time.Second
 
-// waitForImportState polls the state every second for up to wait.
+// waitForImportState polls the state every second for up to wait. Right
+// after skep_api's start the state can read "unmigrated": the service has
+// not run its migrations yet (seen on blazanov in the 8c-2 lab), so that
+// word is waited out too, and is an error if it stays.
 func waitForImportState(ctx context.Context, im Importer, wait time.Duration, sleep func(time.Duration)) (string, error) {
 	var last error
 	for waited := time.Duration(0); ; waited += time.Second {
 		st, err := im.State(ctx)
-		if err == nil {
+		switch {
+		case err == nil && st != ImportUnmigrated:
 			return st, nil
+		case err == nil:
+			last = errors.New("api.db is still older than the installed skep-api (skep_api has not run its migrations)")
+		default:
+			last = err
 		}
-		last = err
 		if waited >= wait {
 			return "", fmt.Errorf("no import state within %s: %v", wait, last)
 		}

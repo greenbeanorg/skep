@@ -266,3 +266,32 @@ func TestUpgradeUninterruptibleLimit(t *testing.T) {
 		t.Fatalf("%s", got)
 	}
 }
+
+// Found on blazanov: right after skep_api's start the state reads
+// "unmigrated" until the service has migrated; upgrade waits it out and
+// then imports.
+func TestUpgradeWaitsOutUnmigrated(t *testing.T) {
+	u, h := newUpgrade(t)
+	h.importState = "unmigrated"
+	reads := 0
+	h.on[apiBin+" admin list"] = func() {
+		if reads++; reads == 3 {
+			h.importState = "pending"
+		}
+	}
+	if err := u.Upgrade(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.ContainsFunc(h.calls, func(c string) bool { return strings.Contains(c, "import-users") }) || h.importState != "done" {
+		t.Fatalf("no import after unmigrated: %v", h.calls)
+	}
+	// It stays: incomplete, not "nothing to import".
+	u, h = newUpgrade(t)
+	h.importState = "unmigrated"
+	u.ImportWait = 2e9
+	err := u.Upgrade(context.Background())
+	var inc *UpgradeIncomplete
+	if !errors.As(err, &inc) || !strings.Contains(err.Error(), "still older than the installed skep-api") {
+		t.Fatalf("%v", err)
+	}
+}
