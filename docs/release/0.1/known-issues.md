@@ -88,11 +88,13 @@ procedure, and results recorded as it describes are welcome.
   [limits](../../architecture/skep-cluster.md#limits-of-8b-2a-and-8b-2b)).
   Step 8c-1 moves the users into the cluster: `skep-api` then needs a
   running `skep_cluster` with quorum for every user change, and only an
-  administrator may log in without it (degraded, at most one hour). **A
-  fresh install from `main` cannot log anyone in until step 8c-2** teaches
-  `skep-setup` to initialise and start `skep_cluster`; an upgraded host
-  imports its users with `skep-api admin import-users`
-  ([upgrading](../../installation/upgrading.md#to-step-8c-1-main-the-unreleased-cluster-preview-the-users-move-into-the-cluster)).
+  administrator may log in without it (degraded, at most one hour). From
+  step 8c-2 `skep-setup apply -start` initialises, enables and starts
+  `skep_cluster` on a fresh install, and `skep-setup upgrade` restarts it
+  and imports a single host's users; in a cluster of several upgraded
+  hosts the import is by hand
+  ([upgrading](../../installation/upgrading.md#to-step-8c-1-or-later-main-the-unreleased-cluster-preview-the-users-move-into-the-cluster)).
+  The cluster store is not backed up by `skep-setup upgrade` yet (step 8f).
   A cluster holds at most **2000 users**, and an import at most what fits
   in one 192 KiB entry.
 

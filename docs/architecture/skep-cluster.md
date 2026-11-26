@@ -355,8 +355,17 @@ after which the rotation is aborted in the background). The remove operation has
 its own time limit of 60 s (every other operation 15 s), and the
 command's client waits above it.
 
-`admit`, `admit-withdraw` and `remove` are root-only in this step
-(`skep-api` gets them with `cluster:manage` in 8c). Their errors: `400
+`admit`, `admit-withdraw` and `remove` are open to root's commands and,
+from step 8c-2, to `skep-api` for a user with `cluster:manage` (ADR 0013
+amendment 5, D22–D24). For the API account the body must name the user
+as `actor` (`user:NAME`, the `user:` form of the users-write rule) and
+carry a `request_id` (logged on this node; the node-to-node message is
+unchanged, so it stays here); the entry's actor is that user. Root names
+neither: a root request with an actor or a request ID is `400`, and its
+actor is `root`. `allow_unanswered` is refused for the API account (`403
+forbidden`), and its removal must carry `cluster_id`. A `cluster_id`
+given with any removal is compared on the node that receives it and again
+on the leader: `409 cluster_id_mismatch`, nothing written. Their errors: `400
 invalid_request`, `409 no_listen_address`, `409 joining`, `409 refused`
 (the leader or the state machine refused it, with the reason), `409
 removed` (this node was removed), `409 voters_unanswered` (remove: too
@@ -365,8 +374,10 @@ few of the remaining voters answer), `404 not_found` (withdraw, remove),
 `no_leader` / `outcome_unknown`. A member that is
 not the leader passes the operation to the leader as a typed Skep RPC;
 the leader checks it again and the state machine checks it again at apply
-on every node. The actor recorded is `root` (the verified peer); the
-entry's origin is the node where the command ran.
+on every node. The actor recorded is `root` (the verified peer) or the
+API's user; the entry's origin is the node where the command ran. The
+messages are package `memberapi` (standard library and `clusterstate`
+only), which `skep-api` uses without linking the Raft library.
 
 `status` returns the node and cluster IDs, the pin, the listener, the Raft
 state, the state machine's index (below), the members with their Raft role,

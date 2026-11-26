@@ -2444,3 +2444,135 @@ time (one hour) and by the refusal of user writes only. The limit is
 built in step 8d, with the guest inventory that tells which guests a node
 owns.
 
+
+## Amendment 5 (2026-11-25, Proposed)
+
+Written with the build of step 8c-2, from the fixed decisions D1–D29 the
+review chat gave that run (the prompt named "D1 to D34"; it listed
+D1–D29, and this amendment records those). **Status: Proposed**: Andy
+accepts it by merging the step 8c-2 PR. The facts it rests on are in
+[0013-evidence/8c2-facts-20261125.md](0013-evidence/8c2-facts-20261125.md).
+It changes no replicated entry type, no apply rule and no node-to-node
+message (V8 of the run).
+
+### 1. `skep-setup` and `skep_cluster` (D1–D18)
+
+- **D1** `skep-setup` never links the cluster packages. It learns the
+  cluster's state by running `/usr/local/sbin/skep-cluster` as root, by
+  absolute path, with its fixed environment, reading at most 1 MiB, into
+  its own small struct, which a test keeps in line with
+  `localapi.Status`. A test keeps `github.com/hashicorp/raft` out of
+  `skep-setup` and `skep-api` (V1).
+- **D2** `skep-cluster init -check` (root, read-only): init's own checks
+  without the agent; prints `initialised` or `not-initialised`; any
+  error exits 1.
+- **D3** The `skep-cluster` account (UID and GID 410) is checked like
+  `skep`: missing or half there refuses, other numbers warn.
+- **D4** `skep_api`'s rc.d script REQUIREs `skep_cluster`; a disabled or
+  missing `skep_cluster` does not stop `skep_api` at boot (facts F7).
+- **D5, D6** apply plans the account, `skep_cluster_enable="YES"` and the
+  cluster (`cluster-init` when not initialised and the agent runs or
+  `-start` is given; a manual item without them; refused in apply, "not
+  checked" in check and plan when it cannot be asked; refused with "run
+  skep-setup upgrade" when the running agent is another build). With
+  `-start`: the agent, `cluster-init`, `skep_cluster`, `skep_api`, then
+  the administrator.
+- **D7** `cluster-init` waits up to 60 s for the agent's socket, then runs
+  `skep-cluster init` without `-address`. A failure is always "may have
+  changed"; rollback never undoes it (`remove -purge-data` deletes it).
+- **D8** The administrator waits up to 30 s for a leader and a running
+  state machine.
+- **D9** check reports, as root on the real root, whether `skep_cluster`
+  runs, one line of its status, and the import state (pending is a
+  manual item with the command).
+- **D10** New upgrade refusals, all before anything is stopped: another
+  build of `skep-cluster`, no account, `skep_cluster_enable` set to
+  anything but YES, an unset line that setup cannot add (the `sysrc` line
+  to run is printed), an unfinished journal when the line must be added,
+  a non-default `skep_cluster_data_dir`, `_config`, `_socket_dir` or
+  `_run_dir`, a failing `init -check`, and a running service whose status
+  shows the node joining, rotating its key or removed (each with the
+  command that ends that state) or cannot be read. A stopped state machine
+  and an initialised service that does not run do not refuse.
+- **D11** Upgrade's order: stop `skep_api` and wait for tasks; back up
+  both databases (the cluster store is not backed up by this version:
+  step 8f); restart the agent; only where not initialised, wait for the
+  agent's socket and run `init`; only where the line is unset, add it
+  through the Applier with a journal of command `upgrade`; restart
+  `skep_cluster` and verify it (pid file, installed file, build) and its
+  status (new build, running state machine, a leader within 60 s); start
+  `skep_api`; the agent's socket and health; the import. Every step is
+  decided from the host's state, so running upgrade again is safe.
+- **D12** Failures from the init on are incomplete (exit 4); each starts
+  `skep_api` again and says who can log in meanwhile. The
+  non-interruptible part's limit is the sum of its bounded waits (V6:
+  18 min 50 s with the defaults). `revertHost` and rollback treat an
+  `upgrade` journal like an `apply` one.
+- **D13** The import, from the state `skep-api admin list
+  --import-state` prints (waited for up to 30 s): not pending, printed;
+  pending and alone (one member, itself; nothing pending; not joining),
+  `skep-api admin import-users` without `--yes`, done only when the state
+  then reads `done`, incomplete otherwise; pending and not alone, the
+  documented steps are printed and nothing is sent.
+- **D14** upgrade's question and messages name `skep_cluster`.
+- **D15** remove asks the running service whether this node is alone (or
+  removed) and refuses otherwise, naming `skep-cluster remove NAME` on a
+  member and `skep-cluster leave --wipe` here, withdrawal of pending
+  admissions, `join --abandon`, or "start skep_cluster". No override.
+  This trusts the running service's answer.
+- **D16** remove stops `skep_api`, `skep_cluster`, `skep_agent` and
+  disables `skep_cluster_enable` too.
+- **D17** `-purge-data` deletes `cluster.json` (a copy in the journal) and
+  the `skep-cluster` account; the cluster directory goes with the rest of
+  `/var/db/skep` (a symbolic link in it is unlinked, never followed:
+  facts F8); `/var/run` is left.
+- **D18** `skep-api admin list --import-state` answers `unmigrated` for an
+  `api.db` older than the build; `skep-cluster join` refuses it like
+  `pending`, with "run skep-setup upgrade first".
+
+### 2. Admit, withdraw and remove in the public API (D19–D29)
+
+- **D19** Permission `cluster:manage`; the admin role has it through `*`;
+  no role migration.
+- **D20, D26** `GET /api/v1/cluster` (`system:read`): the cluster ID,
+  this node, whether a leader is known, the members with pins and voter
+  flag, pending admissions, what removals and rotations wait for, members
+  that have not applied the last removal, clocks, health, joining or
+  removed. `POST /cluster/admissions` (`{request}`, at most 2 KiB), `DELETE
+  /cluster/admissions/{name}`, `POST /cluster/members/{name}/remove`
+  (`{cluster_id}`, required), all `cluster:manage`.
+- **D21** The messages live in `internal/cluster/memberapi`, which imports
+  only the standard library, `clusterstate` and `pkg/models`, as
+  `userapi` does; `localapi` aliases them.
+- **D22** The socket opens `admit`, `admit-withdraw` and `remove` to the
+  API account, which must name the user (`user:NAME`, the users-write
+  rule's form) and carry a request ID; the entry's actor is that user.
+  Root names neither and stays `root`.
+- **D23** `allow_unanswered` is refused at the socket for the API account.
+- **D24** A removal's cluster ID, when given, is compared on the node that
+  receives it and on the leader: `409 cluster_id_mismatch`, nothing
+  written. The API account must give it. Root's command is unchanged but
+  for that code.
+- **D25** skep-api makes no retry. Public errors: `400 invalid_request`,
+  `404 not_found`, `409 cluster_refused` (every refusal of the cluster;
+  for no listen address the message names `skep-cluster listen -address
+  ADDR`), `409 voters_unanswered` (no override offered), `409
+  cluster_id_mismatch`, `503 no_quorum` with `details.outcome`
+  `not_written` or `unknown`. The remove endpoint extends its write
+  deadline beyond the server's 60 s.
+- **D27** Access audit entries `cluster.admit`, `cluster.admit.withdraw`,
+  `cluster.member.remove`.
+- **D28** `pkg/client` methods; `skepctl cluster show | admit | withdraw |
+  remove` (remove asks for the cluster ID on the terminal or takes
+  `--cluster-id`).
+- **D29** OpenAPI; no web page in this step.
+
+### 3. B12, step 8c as built
+
+**Amended (amendment 5): B12's row 8c.** 8c-2 is built as above: a fresh
+install from `main` initialises and starts `skep_cluster` with `skep-setup
+apply -start`, and `skep-setup upgrade` takes a 0.1 host to a one-node
+cluster with its users imported. The lab test of 8c (login on any node, a
+password change revoking sessions on all, a cut-off node's login rules)
+ran in 8c-1; 8c-2 adds the single-host install and upgrade (blazanov) and
+admit, withdraw and remove through the API on the three lab nodes.

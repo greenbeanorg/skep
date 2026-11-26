@@ -681,6 +681,33 @@ what it says; where they differ for 0.1, this amendment wins.
   are needed then.
 - The work is a row in the [backlog](../backlog.md).
 
+## Amendment (2026-11-25, Proposed): skep_cluster (ADR 0013 step 8c-2)
+
+Written with step 8c-2 of ADR 0013 (its amendment 5 lists the decisions
+D1–D29). **Status: Proposed**; Andy accepts it by merging that PR.
+
+- **Upgrade may add one rc.conf line, with a journal.** Decision 5's
+  upgrade changed no host file; from 8c-2 it adds
+  `skep_cluster_enable="YES"` when the line is unset, through the
+  Applier's own rules (re-read before the change, read back after), with
+  a journal of command `upgrade` that rollback and `remove -revert-host`
+  treat like an apply's. Set to anything else, upgrade refuses before
+  anything is stopped.
+- **New actions.** `cluster-init` (`skep-cluster init`, apply and upgrade;
+  never undone by rollback); the services `skep_cluster` (start, stop);
+  `pw-delete` and `remove-path` now also cover the `skep-cluster` account
+  and `cluster.json`.
+- **Upgrade's order** gains, after the agent, the init (where none), the
+  line (where unset), the restart of `skep_cluster` with its own checks,
+  and, after `skep_api`, the import of a host that is alone in its
+  cluster (ADR 0013 amendment 5, D11 and D13).
+- **remove and the cluster.** remove refuses while the node is not alone
+  in its cluster, as the running `skep_cluster` reports it, and names the
+  commands that make it so; it stops and disables `skep_cluster` with the
+  other two services, and `-purge-data` deletes the cluster's node key,
+  store and audit with the rest of `/var/db/skep`, `cluster.json`, and the
+  `skep-cluster` account.
+
 ## What Andy must provide
 
 1. **Two fresh FreeBSD 15.1-RELEASE amd64 VMs on Proxmox**, from the

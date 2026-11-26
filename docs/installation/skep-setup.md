@@ -46,7 +46,7 @@ says so when the variable is set.
 | `1` | `check`: something for `apply` or for you; any command: not confirmed |
 | `2` | usage |
 | `3` | refused: nothing was (or would be) done. `upgrade` also exits 3 for a failure between the two services' stops (for example a backup), after starting `skep_api` again; its message says what was left |
-| `4` | **incomplete**: changes were made and the run failed or its result could not be verified. The message starts `incomplete:`. `upgrade`: the stop of `skep_api` or of `skep_agent` failed (it may have taken effect), the agent was stopped and did not come back as the new build (its start or its check failed), `skep_api` did not come up after the agent's restart, the agent did not answer on its socket within the wait, or its health was not `ok` (see [Upgrades](#upgrades)). `apply`: an action failed after earlier ones changed something, or the failed action may itself have changed something (a failed service stop always counts), or the administrator's creation failed after other changes or was killed or timed out. `rollback`: it failed after restoring or removing some files. `remove`: as `apply`. See [Failures part way](#failures-part-way) |
+| `4` | **incomplete**: changes were made and the run failed or its result could not be verified. The message starts `incomplete:`. `upgrade`: the stop of `skep_api` or of `skep_agent` failed (it may have taken effect), the agent was stopped and did not come back as the new build (its start or its check failed), `skep_api` did not come up after the agent's restart, the agent did not answer on its socket within the wait, or its health was not `ok`; and from step 8c-2 `skep-cluster init` failed, the `skep_cluster_enable` line could not be added, `skep_cluster` did not come up with a leader, or the import of the host's users did not finish (see [Upgrades](#upgrades)). `apply`: an action failed after earlier ones changed something, or the failed action may itself have changed something (a failed service stop always counts), or the administrator's creation failed after other changes or was killed or timed out. `rollback`: it failed after restoring or removing some files. `remove`: as `apply`. See [Failures part way](#failures-part-way) |
 
 ## The answers
 
@@ -59,7 +59,7 @@ says so when the variable is set.
 | `-dir-pool NAME=/PATH` | A directory pool for VM disks; the path must be a real directory (not a symbolic link), owned by root (UID 0), and not writable by its group or others |
 | `-listen ADDR:PORT` | The API listen address (default: the management address, port 8443). `0.0.0.0` or `::` only with `-listen-all` |
 | `-no-racct` | Do not add `kern.racct.enable="1"` (jail limits other than `disk_quota` are then refused) |
-| `-start` | Start both services at the end of `apply` |
+| `-start` | At the end of `apply`, start `skep_agent`, initialise the cluster where there is none (`skep-cluster init`), start `skep_cluster`, then `skep_api` (ADR 0013 amendment 5, D6) |
 | `-admin NAME` | Create the first administrator (asks for the password, twice, without echo). Needs `-start`, or `/var/db/skep/api` to exist already (the API has run once); otherwise the plan refuses, because `skep-api admin create` run as root first would create the API's data directory owned by root ([ADR 0012 amendment](../decisions/0012-installer.md#amendment-2026-11-22-build-decisions-confirmed), build decision 8). Setup runs `skep-api admin create` **as the `skep` user** (UID and primary GID from `/etc/passwd`, never root), and only once `skep_api` has written `/var/run/skep/api.pid` and created `api.db` (it waits up to 30 s). If it fails, every other change stays made, the journal is finished with the error, and setup prints the same `apply` command to retry: it then plans only the administrator. Whether the administrator exists is asked of `skep-api` itself: with no `api.db` the create is planned; with one, `check`, `plan` and `apply` run `skep-api admin exists --username NAME` as the `skep` user with the fixed environment (read-only; it never creates or migrates `api.db`). Exit 0 is `ok`, 1 plans the create, anything else refuses with skep-api's error. Asking needs root; as another user, or with `-root` other than `/`, the plan refuses `-admin` while `api.db` exists. A NAME that exists already is left as it is: `ok` when it is an enabled `admin`, a **warning** when it is disabled or has another role (setup never changes an existing user). |
 
 ## What apply changes
@@ -71,7 +71,8 @@ says so when the variable is set.
 | `/etc/rc.conf` | `kld_list+=` the missing ones of `if_epair netgraph ng_socket ng_ether ng_bpf` | Next boot |
 | `/etc/rc.conf` | `zfs_enable="YES"` when a pool is named | Next boot |
 | `/etc/rc.conf` | With `-create-bridge`: `cloned_interfaces+=`, `ifconfig_UPLINK="up"`, `ifconfig_BRIDGE="addm UPLINK ifuntagged UPLINK 1 defuntagged 1 vlanfilter up"` | Next boot; the plan prints the `ifconfig` lines to run now |
-| `/etc/rc.conf` | `skep_agent_enable="YES"`, `skep_api_enable="YES"` | |
+| `/etc/rc.conf` | `skep_agent_enable="YES"`, `skep_cluster_enable="YES"`, `skep_api_enable="YES"` | |
+| The cluster | `skep-cluster init` (a one-node cluster, no network port) when this host has none and the agent runs or `-start` is given; see [The cluster](#the-cluster) | Never undone by rollback |
 | `agent.json` | Written once (pools, directory pools, bridges, management interfaces), `0600 root:wheel` | Agent start |
 | `api.json` | Written once with the listen address, `0640 root:skep` | API start |
 | `/var/db/skep/media` | Created `0700 root:wheel` | |
@@ -158,6 +159,44 @@ package depends on it, so a package install has it
 ([packaging](packaging.md)); the warning is for a host installed by hand,
 or one where the firmware was removed afterwards. Setup never installs it:
 `pkg install edk2-bhyve`.
+
+## The cluster
+
+From step 8c-2 of ADR 0013 the users are `skep-cluster`'s, so `skep_api`
+needs a running `skep_cluster` for its logins. Setup never links the
+cluster code: it runs `/usr/local/sbin/skep-cluster` as root with its
+fixed environment and reads at most 1 MiB of what it prints; every string
+from it (or from `skep-api`'s commands) is cleaned of control and format
+characters before setup prints it, and is never acted on except to
+refuse.
+
+- **The account.** `skep-cluster` (UID and GID 410), checked like `skep`:
+  missing or half there is refused, other numbers are a warning.
+- **The cluster**, decided by `skep-cluster init -check` (read-only; it
+  prints `initialised` or `not-initialised`):
+
+  | State | Plan |
+  |---|---|
+  | initialised | `ok` |
+  | not initialised, the agent runs or `-start` | `add`: `skep-cluster init` |
+  | not initialised, the agent does not run, no `-start` | manual: run the same `apply` again with `-start` (init reads the node ID from the running agent) |
+  | cannot tell (not root, `-root` other than `/`, an error) | `apply` refuses; `check` and `plan` say it was not checked and why |
+
+  When the running agent is another build than `skep-setup`, the init is
+  refused with "run skep-setup upgrade". The init waits up to 60 s for
+  the agent's socket; a failed init counts as "may have changed" (exit
+  4), and **rollback never undoes it** (`remove -purge-data` deletes it).
+- **Before the administrator**, apply waits up to 30 s until
+  `skep-cluster status` shows a leader and a state machine that is not
+  stopped: the administrator is written through the cluster.
+- **check** (as root, on the real root) also prints whether
+  `skep_cluster` runs, one line of its status (cluster ID, members, leader
+  known, health), and the import state of the host's users: `pending` is
+  an item for you with the command, `unmigrated` asks for `skep-setup
+  upgrade`.
+- At boot `skep_api` starts after `skep_cluster` (its rc.d script
+  REQUIREs it); a disabled `skep_cluster` does not stop `skep_api`, which
+  then lets only administrators log in, degraded.
 
 ## What it refuses
 
@@ -311,7 +350,7 @@ skep-setup upgrade
 ```
 
 `upgrade` refuses, changing nothing, unless the installed `skep-agent`,
-`skep-api` and `skep-setup` are one build, and while any agent task is
+`skep-api`, `skep-cluster` and `skep-setup` are one build, and while any agent task is
 **pending or running**. A task interrupted by the agent restart is never
 resumed or re-run: it ends `interrupted` and must be resubmitted, so only
 `-force` upgrades over unfinished tasks. It reads the tasks from the
@@ -324,7 +363,19 @@ service whose data directory is not the default (`skep_agent_data_dir` or
 `skep_api_data_dir` set in `rc.conf` to anything but `/var/db/skep`) is
 refused before anything is stopped: upgrade backs up and checks only the
 default layout, so upgrade that host by hand as
-[Upgrading a host](upgrading.md) describes (the general steps). Then
+[Upgrading a host](upgrading.md) describes (the general steps).
+For the cluster (ADR 0013 amendment 5, D10) it also refuses, before
+anything is stopped: no `skep-cluster` account; `skep_cluster_enable` set
+to anything but `YES` ("set it to YES, then run upgrade again"); an
+unset `skep_cluster_enable` in an `rc.conf` setup cannot edit (it prints
+the `sysrc` line to run by hand), or while an unfinished journal stands;
+a non-default `skep_cluster_data_dir`, `skep_cluster_config`,
+`skep_cluster_socket_dir` or `skep_cluster_run_dir`; a failing `init
+-check`; and a running `skep_cluster` whose status cannot be read or shows
+this node joining (`skep-cluster join --abandon`), rotating its key
+(`skep-cluster key rotate --abort`) or removed (`skep-cluster leave
+--wipe`). A stopped state machine is not refused: the new build may apply
+it. An initialised `skep_cluster` that does not run is started. Then
 it:
 
 1. stops `skep_api` (a service that is not running is left as it is,
@@ -336,20 +387,50 @@ it:
    stops there;
 2. backs up both databases with `skep-agent db backup` and `skep-api db
    backup` into `/var/db/skep/backup/<running build>-<timestamp>/`
-   (keeping the newest 3);
-3. stops `skep_agent`, starts it (its schema migrations run), starts
-   `skep_api`, and checks each running process is the installed file at
-   the new build. **From the agent's stop on, Ctrl-C does not interrupt
-   the upgrade**: stopping half way would leave the host without an
-   agent. The commands run in their own process group, so the terminal's
-   signal does not reach them either; every wait is bounded;
-4. polls the agent's socket, up to 200 s, until it answers and reports the
-   new build in `Skep-Agent-Version`, then reports the agent's health. The
-   agent serves its socket only after its start-up work, which includes
-   completing any jail stop the restart interrupted (up to about 190 s per
-   jail with the default timeouts; ADR 0010 amendment aa). After 30 s
-   without an answer upgrade prints one line saying so (look for
-   `jail_stop_completing` in `/var/log/daemon.log`).
+   (keeping the newest 3). **The cluster store is not backed up by this
+   version** (step 8f); upgrade says so;
+3. stops `skep_agent`, starts it (its schema migrations run) and checks
+   the running process is the installed file at the new build. **From the
+   agent's stop on, Ctrl-C does not interrupt the upgrade**: stopping half
+   way would leave the host without an agent. The commands run in their
+   own process group, so the terminal's signal does not reach them either;
+   every wait is bounded, and the whole part's limit is their sum (18 min
+   50 s with the defaults);
+4. only on a host without a cluster: polls the agent's socket (as in 8)
+   and runs `skep-cluster init` (a one-node cluster, no network port);
+5. only when `skep_cluster_enable` is unset: adds `skep_cluster_enable="YES"`
+   with `sysrc`, by the same rules as apply, with a journal of command
+   `upgrade` (`skep-setup rollback` and `remove -revert-host` treat it
+   like an apply's);
+6. stops `skep_cluster` if it runs, starts it, checks its pid file
+   (`/var/run/skep/cluster.pid`), that it runs the installed file at the
+   new build, and that within 60 s its status shows the new build, a state
+   machine that is not stopped and a leader;
+7. starts `skep_api` and checks it the same way;
+8. polls the agent's socket, up to 200 s, until it answers and reports the
+   new build in `Skep-Agent-Version` (unless 4 did), then reports the
+   agent's health. The agent serves its socket only after its start-up
+   work, which includes completing any jail stop the restart interrupted
+   (up to about 190 s per jail with the default timeouts; ADR 0010
+   amendment aa). After 30 s without an answer upgrade prints one line
+   saying so (look for `jail_stop_completing` in `/var/log/daemon.log`);
+9. reads the import state of the host's users (`skep-api admin list
+   --import-state`, as `skep`, waiting up to 30 s). Not `pending`: it is
+   printed. `pending` on a node that is alone in its cluster: it runs
+   `skep-api admin import-users` (never with `--yes`) and succeeds only if
+   the state then reads `done`. `pending` in a cluster of several nodes: it
+   prints the steps of [Upgrading a host](upgrading.md) and sends nothing.
+
+Every step is decided from the host's state, so running `skep-setup
+upgrade` again after any failure is safe: an initialised host is not
+initialised again, the line is not added twice, an imported host is not
+imported again. A failure from step 4 on is exit 4; `skep_api` is started
+again before upgrade returns, and the message says what works meanwhile:
+without `skep_cluster`, an enabled administrator can log in with a
+degraded session of at most an hour, and everyone else gets `503
+no_quorum`; with the import unfinished, logins work from the host's own
+users and user changes answer `503 users_import_pending` until
+`skep-api admin import-users` is run.
 
 **Exit 4, incomplete.** Exit 4 means changes were made and the result
 could not be verified. Upgrade exits 4 when the agent was stopped and did
@@ -431,8 +512,16 @@ use `-keep-guests`: nothing is stopped and nothing will manage them). It
 counts them in the database the agent's configuration names; a missing
 table is an error, and a missing database while the agent answers on its
 socket is refused.
-It stops `skep_api` and `skep_agent` and sets both `_enable` variables
-to `NO`. By default it keeps everything else (answer 11):
+If this host has a cluster (`skep-cluster init -check`), `remove` asks the
+running `skep_cluster` whether this node is alone (one member, itself;
+nothing pending; not joining) or was removed, and **refuses otherwise**:
+with more members it names `skep-cluster remove NAME` on another member
+and then `skep-cluster leave --wipe` here; pending admissions must be
+withdrawn first; a joining node needs `skep-cluster join --abandon`; no
+answer asks you to start `skep_cluster` so that remove can see. There is
+no override, and the check trusts the running service's answer.
+It stops `skep_api`, `skep_cluster` and `skep_agent` and sets the three
+`_enable` variables to `NO`. By default it keeps everything else (answer 11):
 
 - `-revert-host` also removes the lines setup's applies added, where
   they are unchanged since ([ADR 0012
@@ -459,8 +548,11 @@ to `NO`. By default it keeps everything else (answer 11):
   Modules stay loaded and interfaces exist until the next boot.
 - `-purge-data` (always asks, even with `-yes`) deletes `/var/db/skep`
   except setup's journals (node identity, databases, audit logs and
-  archives, backups, the TLS key, install media), `agent.json` and
-  `api.json` (copies stay in the journal), and the `skep` account. It is
+  archives, backups, the TLS key, install media, and the cluster's node
+  key, store and cluster audit in `/var/db/skep/cluster`), `agent.json`,
+  `api.json` and `cluster.json` (copies stay in the journal), and the
+  `skep` and `skep-cluster` accounts. A symbolic link inside the data
+  directory is removed as a link, never followed; `/var/run` is left. It is
   **refused while any Skep guest is running**, with `-keep-guests` too.
   Skep keeps no ZFS encryption key ([ADR 0010](../decisions/0010-storage-and-jails.md):
   the operator holds them); remove looks up the encryption roots of the

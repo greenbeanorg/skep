@@ -478,11 +478,17 @@ cluster is **one trust domain for Skep-managed resources**:
 - It **cannot** get a root shell or run commands on another node, touch
   anything outside another node's local allow-lists in `agent.json`, cut
   another node's management interface, or erase another node's logs.
-- **A compromised `skep-api`** (not root) will be able to act as any user
-  on every node and make every replicated write the socket offers to it:
-  since step 8c-1 every user write (`users-write`) and the users with
-  their hashes (`users-read`), and `admit` from step 8c-2; it cannot vote,
-  send Raft RPCs or change a pin. The state machine still checks every
+- **A compromised `skep-api`** (not root) can act as any user on every
+  node and make every replicated write the socket offers to it: every
+  user write (`users-write`) and the users with their hashes
+  (`users-read`) since step 8c-1, and since step 8c-2 `admit`,
+  `admit-withdraw` and `remove` under any user's name (the socket checks
+  the form of the actor it names, `user:NAME`, not that the user asked).
+  It can therefore admit a host it controls and remove members. It
+  cannot remove a member without the remaining voters' answers
+  (`allow_unanswered` is root's alone at the socket), cannot vote, send
+  Raft RPCs or change a pin, and an admitted host still joins only with
+  root on that host. The state machine still checks every
   user entry (the last administrator, the built-in roles, the hash's
   form) on every node.
 - **No password hash leaves the two stores** (`api.db` and the cluster

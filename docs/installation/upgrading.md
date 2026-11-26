@@ -46,20 +46,50 @@ refuses rather than do that unless given `-force`; by hand, check
 `skepctl tasks list --status pending` and `--status running` (or the
 Tasks page) first, and stop `skep_api` before the agent.
 
-## To step 8c-1 (main, the unreleased cluster preview): the users move into the cluster
+## To step 8c-1 or later (main, the unreleased cluster preview): the users move into the cluster
 
 From step 8c-1 the users are `skep-cluster`'s (ADR 0013 amendment 4).
 Migration `api/0006` keeps a host's own users and marks them
 **pending**: logins work as before, and every user change answers
-`503 users_import_pending` until the import below. `skep-api` reads the
+`503 users_import_pending` until the import. `skep-api` reads the
 users from `skep-cluster`'s socket (`cluster_socket` in `api.json`,
 default `/var/run/skep-cluster/cluster.sock`), so `skep_cluster` must be
-running; `skep-setup upgrade` does not restart it yet (step 8c-2): run
-`service skep_cluster restart` by hand after each package upgrade.
+running.
 
-1. Upgrade **every** node of a cluster first, one at a time, and wait for
-   all voters and `health ok` after each. A `skep-cluster` of an earlier
-   build stops at the first user entry and must not meet one.
+**From step 8c-2, `skep-setup upgrade` does this on a single host**
+(ADR 0013 amendment 5, D10–D13): after the package upgrade, run
+
+```sh
+pkg upgrade skep
+skep-setup upgrade
+```
+
+Before it stops anything it refuses (exit 3, nothing changed) on another
+build of `skep-cluster`, a missing `skep-cluster` account,
+`skep_cluster_enable` set to anything but `YES`, a non-default
+`skep_cluster_*` directory, or a running `skep_cluster` that is joining,
+rotating its key or removed (the message names the command that ends
+that state). Then, in order: it stops `skep_api` and waits for tasks,
+backs up both databases (**not** the cluster store: that comes with step
+8f), restarts `skep_agent`, runs `skep-cluster init` on a host that has
+no cluster yet (a one-node cluster, no network port), adds
+`skep_cluster_enable="YES"` where the line is missing (with a journal of
+command `upgrade`), restarts `skep_cluster` and waits for its leader,
+starts `skep_api`, and, **on a node that is alone in its cluster**, runs
+`skep-api admin import-users` (never with `--yes`) and checks that the
+import state is `done`. A failure from the init on is exit 4: `skep_api`
+is started again, the message says what to check, and running `skep-setup
+upgrade` again is safe. Meanwhile, without `skep_cluster`, an enabled
+administrator can still log in with a degraded session of at most an
+hour; everyone else gets `503 no_quorum`.
+
+**In a cluster of several nodes** `skep-setup upgrade` does not import:
+it prints the steps and exits 0. Do it by hand:
+
+1. Upgrade **every** node of a cluster first, one at a time
+   (`skep-setup upgrade` on each), and wait for all voters and `health ok`
+   after each. A `skep-cluster` of an earlier build stops at the first
+   user entry and must not meet one.
 2. On one node only: `skep-api admin import-users`. It sends this host's
    users to the cluster in one entry (at most 192 KiB; 2000 users at
    most) and records its operation ID first, so running it again after a
@@ -71,11 +101,17 @@ running; `skep-setup upgrade` does not restart it yet (step 8c-2): run
 
 A host whose import is still pending cannot join a cluster:
 `skep-cluster join` refuses it until `skep-api admin import-users` has
-run there.
+run there, and refuses an `api.db` older than the installed `skep-api`
+(`unmigrated`: run `skep-setup upgrade` first).
 
-Until step 8c-2, a fresh install from `main` cannot log anyone in: nothing
-starts `skep_cluster` for it, and without quorum an empty copy answers
-`no_quorum`.
+**Going back to 0.1** after such an upgrade: install the 0.1 package
+again, stop the services, and restore both database backups from
+`/var/db/skep/backup/<old build>-<time>/` as the general steps above
+describe (an older binary refuses the newer schema). The 0.1 package has
+no `skep_cluster` script, so the `skep_cluster_enable` line is left over
+and does nothing (`skep-setup rollback` of the upgrade's journal removes
+it where unchanged); the cluster's data stays in `/var/db/skep/cluster`
+until `skep-setup remove -purge-data`.
 
 ## From b61e578 (Milestone 7b) to Milestone 7c (main at 578b7d8 or later)
 

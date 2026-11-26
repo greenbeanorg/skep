@@ -46,6 +46,11 @@ skepctl vm snapshot list VM [--json]
 skepctl vm snapshot create VM NAME [--description TEXT] [--wait] [--json]
 skepctl vm snapshot rollback VM SNAPSHOT [--destroy-newer] [--wait] [--json]
 skepctl vm snapshot delete VM SNAPSHOT [--wait] [--json]
+
+skepctl cluster show [--json]
+skepctl cluster admit REQUEST [--json]
+skepctl cluster withdraw NAME [--json]
+skepctl cluster remove NAME [--cluster-id ID] [--json]
 ```
 
 - The port defaults to `8443`. Only `https` is accepted.
@@ -73,6 +78,14 @@ skepctl vm snapshot delete VM SNAPSHOT [--wait] [--json]
   the reminder that a clone is the same guest, with the source's
   hostname, SSH host keys, and machine ID. With `--json`, the reminder
   goes to standard error. Snapshots and clones need a ZFS pool.
+- `cluster` (step 8c-2): `show` needs `system:read`; `admit`, `withdraw`
+  and `remove` need `cluster:manage` (the `admin` role). `admit` prints
+  the host's name, node ID, address and pin, asks you to compare the pin
+  with the one the host shows on its own console, then prints the
+  admission and the `skep-cluster join` command. `remove` shows the member
+  and asks for the cluster ID on the terminal (or takes `--cluster-id`),
+  and waits up to two minutes for the answer. See [Joining hosts into a
+  cluster](cluster.md#through-the-api-and-skepctl-step-8c-2).
 
 ## First login: trusting the server's key
 
