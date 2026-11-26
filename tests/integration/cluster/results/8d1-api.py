@@ -156,6 +156,24 @@ def main():
                 f.write(b["admission"])
             b = {k: v for k, v in b.items() if k != "admission"}
         print(f"{host} POST /cluster/admissions as {user}: {st} {json.dumps(clean(b))[:600]}")
+    elif cmd == "guests":
+        # 8d1: the inventory, one line per item (name kind owner state flagged task)
+        host, user = sys.argv[2:4]
+        st, b = call(host, "GET", "/cluster/guests", None, tokens().get(host + "/" + user))
+        if st != 200:
+            print(f"{host} guests: {st} {json.dumps(clean(b))}")
+            return
+        print(f"{host} guests: index {b['guests_index']}, {len(b['items'])} items")
+        for i in b["items"]:
+            print(f"  {i['kind']} {i['name']} {i.get('id','-')} owner={i['owner']['node_name']} {i['state']} flagged={i['flagged']} task={i.get('task_id','-')}")
+    elif cmd == "taskcount":
+        # 8d1: the number of tasks the agent lists (newest 200), by type
+        host, user = sys.argv[2:4]
+        st, b = call(host, "GET", "/tasks?limit=200", None, tokens().get(host + "/" + user))
+        types = {}
+        for t in b.get("items", []):
+            types[t["type"]] = types.get(t["type"], 0) + 1
+        print(f"{host} tasks: {sum(types.values())} {json.dumps(types, sort_keys=True)}")
     elif cmd == "audit":
         host, user, action = sys.argv[2:5]
         st, b = call(host, "GET", "/audit?limit=100", None, tokens().get(host + "/" + user))
