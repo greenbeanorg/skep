@@ -104,13 +104,29 @@ A host whose import is still pending cannot join a cluster:
 run there, and refuses an `api.db` older than the installed `skep-api`
 (`unmigrated`: run `skep-setup upgrade` first).
 
-**Going back to 0.1** after such an upgrade: install the 0.1 package
-again, stop the services, and restore both database backups from
-`/var/db/skep/backup/<old build>-<time>/` as the general steps above
-describe (an older binary refuses the newer schema). The 0.1 package has
-no `skep_cluster` script, so the `skep_cluster_enable` line is left over
-and does nothing (`skep-setup rollback` of the upgrade's journal removes
-it where unchanged); the cluster's data stays in `/var/db/skep/cluster`
+**Going back to 0.1** after such an upgrade (run on blazanov,
+2026-11-26):
+
+1. Stop the three services **first**: `service skep_api stop`, `service
+   skep_cluster stop`, `service skep_agent stop`. The 0.1 package has no
+   `skep_cluster` script: installed first, it leaves `skep-cluster`
+   running from a deleted file, and `service skep_cluster stop` then
+   answers "does not exist" (a reboot ends it).
+2. Install the 0.1 package again (`pkg install -f ./skep-0.1.0.pkg`).
+3. Restore both copies from `/var/db/skep/backup/<old build>-<time>/`:
+   delete `agent.db-wal`, `agent.db-shm`, `api.db-wal` and `api.db-shm`
+   next to the live databases, then `install -o root -g wheel -m 0600
+   .../agent.db /var/db/skep/agent/agent.db` and `install -o skep -g skep
+   -m 0600 .../api.db /var/db/skep/api/api.db` (an older binary refuses the
+   newer schema, so the copies are the only way back).
+4. `service skep_agent start`, `service skep_api start`. The 0.1 users log
+   in with their 0.1 passwords.
+
+The `skep_cluster_enable` line is left over and does nothing: rc prints
+nothing about it at boot, and `service skep_cluster status` answers that
+the script does not exist (`skep-setup rollback` of the upgrade's journal
+removes the line where unchanged). The cluster's data stays in
+`/var/db/skep/cluster`, and `cluster.json` in `/usr/local/etc/skep`,
 until `skep-setup remove -purge-data`.
 
 ## From b61e578 (Milestone 7b) to Milestone 7c (main at 578b7d8 or later)

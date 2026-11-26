@@ -168,7 +168,13 @@ func (b *builder) clusterAlone(ctx context.Context, o RemoveOptions) {
 	v, err := o.Cluster.Status(ctx)
 	switch {
 	case err != nil:
-		b.refuse("cluster", what, "no answer from skep-cluster ("+err.Error()+"): start skep_cluster so that remove can see whether this node is alone (service skep_cluster start)")
+		// A host an earlier remove disabled needs onestart (found on
+		// blazanov, 2026-11-26).
+		start := "service skep_cluster start"
+		if v, _ := b.rc.Get("skep_cluster_enable"); !strings.EqualFold(v, "YES") {
+			start = "service skep_cluster onestart"
+		}
+		b.refuse("cluster", what, "no answer from skep-cluster ("+err.Error()+"): start skep_cluster so that remove can see whether this node is alone ("+start+")")
 	case v.Removed != nil:
 		b.ok("cluster", what, "this node was removed from cluster "+Clean(v.Removed.ClusterID))
 	case v.Join != nil:

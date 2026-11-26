@@ -332,3 +332,18 @@ func TestRevertHostCountsUpgradeJournals(t *testing.T) {
 		t.Fatalf("%+v", b.plan.Items)
 	}
 }
+
+// A host an earlier remove disabled: the hint names onestart.
+func TestRemoveNoAnswerDisabledNamesOnestart(t *testing.T) {
+	e, _, _ := appliedHost(t)
+	appendFile(t, filepath.Join(e.root, "etc/rc.conf"), "skep_cluster_enable=\"NO\"\n")
+	p := computeRemove(t, RemoveOptions{Root: e.root, Cluster: &fakeCluster{initialised: true, statusErr: errors.New("not reachable")}}, facts(), e.runner)
+	if it := findItem(t, p, "cluster", "this node's cluster"); it.Kind != Refuse || !strings.Contains(it.Detail, "service skep_cluster onestart") {
+		t.Fatalf("%+v", it)
+	}
+	e, _, _ = appliedHost(t)
+	p = computeRemove(t, RemoveOptions{Root: e.root, Cluster: &fakeCluster{initialised: true, statusErr: errors.New("not reachable")}}, facts(), e.runner)
+	if it := findItem(t, p, "cluster", "this node's cluster"); !strings.Contains(it.Detail, "(service skep_cluster start)") {
+		t.Fatalf("enabled: %+v", it)
+	}
+}
