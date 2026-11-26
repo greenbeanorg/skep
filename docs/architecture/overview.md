@@ -15,8 +15,9 @@ tasks, and listens on a Unix socket only.
 A third binary, `skep-cluster` ([ADR 0013](../decisions/0013-clustering.md)),
 holds the node's cluster key and the Raft store as its own unprivileged
 account. Since Milestone 8, step 8a it exists and runs, and since step
-8b-1 a host can join another's cluster (with its guests since step 8d-2), but the other two
-do not use it yet; it is described in
+8b-1 a host can join another's cluster (with its guests since step 8d-2).
+`skep-api` uses it since step 8c-1 (the users) and 8d-1 (the guest
+inventory); the agent's service does not use it. It is described in
 [skep-cluster](skep-cluster.md) and left out of the picture below.
 
 ```

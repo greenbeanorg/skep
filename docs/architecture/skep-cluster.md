@@ -1019,8 +1019,12 @@ them; after the confirmation it **sets the agent's drain** (reason
 `join`, renewed every 20 s), waits for the unfinished tasks
 (`-task-wait`, 60 s), reads the list again, stops the service, gives the
 list to the stage **on its standard input** (`{"guests":[...]}`, strict,
-256 KiB), starts the service, and clears the drain on every path that set
-it. Root reads only the agent's answers and skep-cluster's socket; the
+256 KiB), starts the service, and clears the drain right after that,
+before it prints the outcome and before `-wait` (every earlier path that
+set it clears it too). The drain lasts from the confirmation until the
+service is back after the join call, because it is needed only until the
+call is made: the service, back with `join.json`, refuses guest writes
+(`this node is joining`). Root reads only the agent's answers and skep-cluster's socket; the
 stage, as the service account, checks the list again and records it in
 `join.json` (`guests`, read limit 512 KiB) with the file's first write.
 The join call's body is `{op_id, guests}`; the leader checks the limits

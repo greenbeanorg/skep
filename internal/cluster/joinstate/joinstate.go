@@ -126,10 +126,14 @@ func Read(dir string) (*State, error) {
 	}
 	defer fh.Close()
 	// 512 KiB (step 8d-2, D14): the guest list is at most 160 KiB as
-	// JSON, more indented.
-	b, err := io.ReadAll(io.LimitReader(fh, maxFile))
+	// JSON, more indented. One byte more is read to tell a file over the
+	// limit from a damaged one.
+	b, err := io.ReadAll(io.LimitReader(fh, maxFile+1))
 	if err != nil {
 		return nil, err
+	}
+	if len(b) > maxFile {
+		return nil, fmt.Errorf("%s is larger than 512 KiB", FileName)
 	}
 	dec := json.NewDecoder(bytes.NewReader(b))
 	dec.DisallowUnknownFields()

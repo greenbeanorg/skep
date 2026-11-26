@@ -108,7 +108,12 @@ func TestLeaveWipe(t *testing.T) {
 		t.Fatal("the key or the cluster ID did not change")
 	}
 	out := w.out.String()
-	for _, want := range []string{newID, newKey.Pin(), "none (no network port)", "skep-cluster remove smith"} {
+	for _, want := range []string{newID, newKey.Pin(), "none (no network port)", "skep-cluster remove smith",
+		// F3 (fix round of 8d-2): skep-api follows the new cluster within
+		// about a minute; admin create before that answers "already exists".
+		"nobody can log in to skep-api until an administrator is created",
+		"up to about a minute to follow the new one-node cluster", `When "skep-api admin list" prints no user`,
+		`(before that it answers "already exists")`, "skep-api admin create --username NAME"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("output lacks %q:\n%s", want, out)
 		}

@@ -2924,16 +2924,24 @@ operator release a reservation of a live member** (backlog).
   the list again: that list joins**. It stops the service, runs the stage
   with the list on its standard input (one JSON object, read strictly and
   bounded at 256 KiB; no guest name is ever on a command line), starts the
-  service whatever the outcome, and **clears the drain on every path that
-  set it**. A failed renewal before the service is stopped clears the
+  service whatever the outcome, and **clears the drain as soon as the
+  service has been started again**, before it prints the outcome and
+  before it waits for the member entry (`-wait`); every earlier path that
+  set it clears it too. A failed renewal before the service is stopped clears the
   drain and refuses; after that it is printed and the join goes on (no
   guest can be created through the API while the service is stopped, and
   reconciliation settles the rest once the node is a member). A command
   that is killed leaves a drain that expires by itself after 60 seconds.
   **Amended (amendment 7): B3's "the drain is released only when the join
-  has ended either way" is not built:** the drain lasts while the command
-  runs; a guest created on the joining host after it is a joining member
-  is added by its reconciliation once it is a member.
+  has ended either way" is not built:** the drain lasts from the
+  confirmation until the service has been started again after the join
+  call, because it is needed only until the call is made: from then on the
+  service, back with `join.json`, refuses guest writes (`this node is
+  joining`), a guest deleted on the host leaves the inventory by its
+  reconciliation once it is a member, and a join that failed before step 1
+  leaves the host its own one-node cluster. (Held through `-wait`, a join
+  waiting on a member that is down would keep the agent refusing every
+  task, the start and stop of its guests included, for as long as `-wait`.)
 - The stage checks the list again and records it in `join.json` with the
   file's first write, so every repeat of the join call (by the stage, or
   by the service in phase `unknown`) sends the same list with the same
@@ -2962,7 +2970,13 @@ operator release a reservation of a live member** (backlog).
   (amendment 7): a refusal names the first conflicting guest of the
   joining host and the holder's node name, not the cluster's guest.** The
   pending key learns which node holds one of its names; nothing else of
-  the inventory.
+  the inventory. An admitted host can repeat the join call for as long as
+  its admission is valid, so with guessed names it can learn, one name per
+  refused call, which of them are taken in the cluster and on which node;
+  a call without a conflict joins it. This is the cost B3 accepted ("the
+  only cluster data a pending key ever sees"), and its bound is the
+  admission (30 minutes, withdrawn by any removal) and the operator's
+  check of the host's pin.
 - A name conflict refuses the join and puts the host's one-node state
   back (the join failed before step 1). The operator deletes one of the
   two guests (a guest cannot be renamed) and joins again with the same
@@ -3086,3 +3100,8 @@ guests keep running and its agent still has them.
 
 An operator's way to release a name reservation of a live member;
 renaming a guest; `--forget-guests` in the public API.
+
+The agent's drain clear (`DELETE /internal/v1/drain`) removes a drain of
+any reason; the join clears only a drain it believes is its own, but
+after a lost answer it cannot know. Step 8f, which adds the upgrade
+drain, makes the clear name the reason it clears (backlog).

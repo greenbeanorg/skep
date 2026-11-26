@@ -399,8 +399,11 @@ func runLeave(ctx context.Context, args []string, e env) error {
 	fmt.Fprintf(e.stdout, "If it has not been removed on a member of its old cluster yet, remove it there, as root:\n  skep-cluster remove %s\n", cfg.NodeName)
 	fmt.Fprintf(e.stdout, "To join a cluster again: skep-cluster join-request -address ADDR\n")
 	// D21 of step 8c-1: the new cluster has no users, and skep-api's copy
-	// follows it.
-	fmt.Fprintf(e.stdout, "This host has no users now: nobody can log in to skep-api until an administrator is created, as root:\n  skep-api admin create --username NAME\n")
+	// follows it, which takes up to about a minute (the lab's case H of
+	// step 8d-2): before that "admin create" answers "already exists".
+	fmt.Fprintf(e.stdout, "This host has no users now: nobody can log in to skep-api until an administrator is created.\n")
+	fmt.Fprintf(e.stdout, "skep-api takes up to about a minute to follow the new one-node cluster. When \"skep-api admin list\" prints no user,\n")
+	fmt.Fprintf(e.stdout, "create one, as root (before that it answers \"already exists\"):\n  skep-api admin create --username NAME\n")
 	return errors.Join(startErr, rootErr)
 }
 

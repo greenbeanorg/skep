@@ -117,12 +117,16 @@ Without a terminal (a script), give the cluster ID instead of answering:
 must equal the admission's. There is no "yes to everything" flag.
 
 After the confirmation `join` sets the agent's drain (no new task is
-accepted on the host while the command runs; `GET /internal/v1/drain`
-shows it), waits for the agent's unfinished tasks (`-task-wait`, default
+accepted on the host from the confirmation until the service has been
+started again after the join call; `GET /internal/v1/drain` shows it),
+waits for the agent's unfinished tasks (`-task-wait`, default
 60 s), reads the guest list again (that list joins; if it changed, the
 new counts are printed), stops `skep_cluster`, moves the host's one-node
 state into `/var/db/skep/cluster/standalone.<UTC time>/`, calls the
-cluster, starts the service again, and clears the drain. A refusal after
+cluster, starts the service again, and clears the drain at once, before
+it prints the outcome and waits for the member entry: the drain is needed
+only until the call is made, since the service, back with the join's
+state, refuses guest writes ("this node is joining"). A refusal after
 the drain was set says "the drain was set and cleared; nothing else was
 changed". If the command is killed, the drain expires by itself after 60
 seconds.
@@ -340,7 +344,17 @@ This node is a one-node cluster again.
 If it has not been removed on a member of its old cluster yet, remove it there, as root:
   skep-cluster remove star
 To join a cluster again: skep-cluster join-request -address ADDR
+This host has no users now: nobody can log in to skep-api until an administrator is created.
+skep-api takes up to about a minute to follow the new one-node cluster. When "skep-api admin list" prints no user,
+create one, as root (before that it answers "already exists"):
+  skep-api admin create --username NAME
 ```
+
+Nobody can log in until an administrator is created. `skep-api` takes up
+to about a minute to follow the new one-node cluster: when
+`skep-api admin list` prints no user, run
+`skep-api admin create --username NAME`; before that it answers
+"already exists" and changes nothing.
 
 Without a terminal give `-cluster-id ID` (the current cluster ID). The
 command asks for the confirmation **before** it stops `skep_cluster`, so a
@@ -658,7 +672,9 @@ node's own users, says that the cluster's replace them, and does it with
 its own); `skep-cluster join` refuses a host whose import is still
 pending (run `skep-api admin import-users` first, so that its users are
 not lost), and goes on, saying so, when it cannot read that state. After
-`leave --wipe` a host has no users until `skep-api admin create` runs.
+`leave --wipe` a host has no users until `skep-api admin create` runs
+(once `skep-api admin list` prints no user, up to about a minute after
+the wipe; before that it answers "already exists").
 
 A node that has lost its leader still applies what its own state machine
 holds (a committed part of the log): a user disabled or a password

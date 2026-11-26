@@ -492,6 +492,16 @@ func runJoin(ctx context.Context, args []string, e env) error {
 	}
 	res, serr := runStage(ctx, e, acct.UID, acct.GID, []string{"join", "-config", *configPath, "-data-dir", *dataDir, "-admission", line}, input)
 	startErr := startAndWait(ctx, e, *socket)
+	// The drain is cleared here, whatever the stage's outcome and whether
+	// or not the service started, not after waitJoined: it is needed only
+	// until the join call is made. With join.json the service refuses
+	// guest writes ("this node is joining"), a guest deleted on the host
+	// leaves the inventory by its reconciliation once it is a member, and
+	// a join that failed before step 1 leaves the host its own one-node
+	// cluster. The deferred call stays the backstop of earlier returns.
+	if cerr := drain.clear(ctx); cerr != nil {
+		fmt.Fprintf(e.stderr, "skep-cluster: %v\n", cerr)
+	}
 	rootErr := checkNoRootFiles(e, *dataDir)
 	if serr != nil {
 		return errors.Join(serr, startErr, rootErr,

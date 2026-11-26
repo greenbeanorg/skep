@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/greenbeanorg/skep/internal/cluster/clusterconf"
 	"github.com/greenbeanorg/skep/internal/cluster/clusterstate"
@@ -118,6 +119,52 @@ func TestJoinListChangesAndNoGuests(t *testing.T) {
 	_ = run(context.Background(), args, e)
 	if string(w.stdins[0]) != `{"guests":[]}` || !strings.Contains(w.out.String(), `"skep-cluster remove smith"`) || !strings.Contains(w.out.String(), "This host has no VMs and no jails.") {
 		t.Fatalf("no guests: %s\n%s", w.stdins[0], w.out.String())
+	}
+}
+
+// F1 (fix round of 8d-2): the drain is cleared once the stage has run and
+// the service has been started again, before the outcome is printed and
+// before the command waits for the member entry, whatever the outcome;
+// exactly one DELETE in all. The status never lists the node, so -wait
+// would hold the drain for its full length if it were cleared at return.
+func TestJoinClearsDrainBeforeWaiting(t *testing.T) {
+	for _, outcome := range []string{"accepted", "unknown", "refused", "not_alone"} {
+		w, e, args := joinWorld(t, stageResult{Outcome: outcome, Message: "no", Standalone: "standalone.x"})
+		for i, a := range args {
+			if a == "-wait" {
+				args[i+1] = "3s"
+			}
+		}
+		var cleared time.Time
+		var printed string
+		fake := e.agentDrain
+		e.agentDrain = func(ctx context.Context, socket, method string) (drainAnswer, error) {
+			if method == http.MethodDelete && cleared.IsZero() {
+				cleared, printed = time.Now(), w.out.String()
+			}
+			return fake(ctx, socket, method)
+		}
+		err := run(context.Background(), args, e)
+		ended := time.Now()
+		if got := drainCalls(w); strings.Count(got, "DELETE") != 1 || !strings.HasSuffix(got, "DELETE") {
+			t.Errorf("%s: drain calls %s", outcome, got)
+		}
+		if strings.Join(w.serviceActions, ",") != "stop,start" {
+			t.Errorf("%s: service %v", outcome, w.serviceActions)
+		}
+		if strings.Contains(printed, "The cluster accepted") || strings.Contains(printed, "The join failed") || strings.Contains(printed, "no answer came") {
+			t.Errorf("%s: the outcome was printed before the drain was cleared:\n%s", outcome, printed)
+		}
+		if outcome != "accepted" && outcome != "unknown" {
+			continue
+		}
+		var ec *exitCodeError
+		if !errors.As(err, &ec) || ec.code != 3 {
+			t.Fatalf("%s: join: %v\n%s", outcome, err, w.out.String())
+		}
+		if held := ended.Sub(cleared); held < 2500*time.Millisecond {
+			t.Errorf("%s: the drain was cleared %s before the end, not before the wait", outcome, held)
+		}
 	}
 }
 

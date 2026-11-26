@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -164,5 +165,69 @@ func TestStateRecordsTheGuests(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, FileName), []byte(bad), 0o600)
 	if _, err := Read(dir); err == nil {
 		t.Fatal("a list with an ID twice was read")
+	}
+}
+
+// F2 (fix round of 8d-2): join.json at its largest, the longest guest list
+// the limits allow (1000 guests, as near 160 KiB as the names let it be),
+// a full admission (64 members) and a full answer (64 nodes), is written
+// and read back equal; a file over 512 KiB is refused by name.
+func TestStateAtItsLargest(t *testing.T) {
+	dir := t.TempDir()
+	node := func(i int) joincode.Node {
+		name := fmt.Sprintf("n%03d", i) + strings.Repeat("a", 248) + "z" // 253 bytes, the longest node name
+		return joincode.Node{NodeID: fmt.Sprintf("0b0b0b0b-0000-4000-8000-%012d", i), Name: name,
+			Address: fmt.Sprintf("[2001:db8:ffff:ffff:ffff:ffff:ffff:%04x]:8444", i), Pin: "sha256:" + strings.Repeat("f", 64)}
+	}
+	adm := joincode.Admission{ClusterID: "7d1c2a9e-1b0f-4f3e-9a51-2c6b8e0d4f10", For: node(999), ExpiresAt: 1 << 40}
+	var answer []joincode.Node
+	for i := 0; i < 64; i++ {
+		adm.Members = append(adm.Members, node(i))
+		answer = append(answer, node(100+i))
+	}
+	list := make([]clusterstate.JoinGuest, clusterstate.MaxJoinGuests)
+	for i := range list {
+		list[i] = clusterstate.JoinGuest{ID: fmt.Sprintf("0a0a0a0a-0000-4000-8000-%012d", i), Kind: clusterstate.KindContainer, Name: fmt.Sprintf("%04d", i)}
+	}
+	base, _ := json.Marshal(list)
+	room := clusterstate.MaxJoinGuestsBytes - len(base)
+	for i := range list {
+		n := room / len(list)
+		if i < room%len(list) {
+			n++
+		}
+		list[i].Name += strings.Repeat("n", n)
+	}
+	if b, _ := json.Marshal(list); len(b) != clusterstate.MaxJoinGuestsBytes {
+		t.Fatalf("the list is %d bytes, not %d", len(b), clusterstate.MaxJoinGuestsBytes)
+	}
+	s := State{Phase: PhaseAccepted, OpID: "0c0c0c0c-0000-4000-8000-000000000000", Admission: adm, Answer: answer,
+		Standalone: "standalone.20261126T000000Z", Guests: list}
+	if err := Write(dir, s); err != nil {
+		t.Fatal(err)
+	}
+	info, _ := os.Stat(filepath.Join(dir, FileName))
+	t.Logf("join.json at its largest: %d bytes (limit %d)", info.Size(), maxFile)
+	got, err := Read(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Format = format
+	if !reflect.DeepEqual(*got, s) {
+		t.Fatal("read back differently")
+	}
+	big := make([]byte, maxFile+1)
+	for i := range big {
+		big[i] = ' '
+	}
+	b, _ := os.ReadFile(filepath.Join(dir, FileName))
+	copy(big, b)
+	os.WriteFile(filepath.Join(dir, FileName), big, 0o600)
+	if _, err := Read(dir); err == nil || !strings.Contains(err.Error(), "join.json is larger than 512 KiB") {
+		t.Fatalf("a file over the limit: %v", err)
+	}
+	os.WriteFile(filepath.Join(dir, FileName), big[:maxFile], 0o600)
+	if _, err := Read(dir); err != nil {
+		t.Fatalf("a file at the limit: %v", err)
 	}
 }
