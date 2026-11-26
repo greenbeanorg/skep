@@ -102,9 +102,12 @@ func TestPendingExpiry(t *testing.T) {
 		if _, ok := n.svc.ByPin(gk.Pin()); ok {
 			t.Fatalf("%s accepts the key after the expiry entry", n.name)
 		}
-		if !strings.Contains(n.logs.String(), "cluster membership: pending expired") {
-			t.Fatalf("%s did not log the expiry", n.name)
-		}
+		// The state is visible when the machine's Apply returns and the
+		// line is written right after it by the same goroutine (the
+		// library's FSM adapter): wait for it (CI run 45834697351).
+		h.eventually(n.name+" logs the expiry", 5*time.Second, func() bool {
+			return strings.Contains(n.logs.String(), "cluster membership: pending expired")
+		})
 	}
 	a, _ := leader.svc.machine.Snapshot()
 	b, _ := follower.svc.machine.Snapshot()
