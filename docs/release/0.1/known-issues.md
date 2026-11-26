@@ -141,6 +141,16 @@ procedure, and results recorded as it describes are welcome.
   60 s). Start the agent, then upgrade.
 - `skep-setup remove -revert-host` also lists lines an earlier install added,
   because journals survive `pkg delete` (backlog).
+- **A pool whose root has `mountpoint=none`.** Seen on two lab VMs whose
+  `zroot` had `mountpoint=none`: `zroot/skep/templates` then had no mount
+  point (inherited), and a template create answered `storage_unavailable`
+  ("the dataset zroot/skep/templates is not mounted at an absolute path;
+  jails and templates need it mounted"), on 0.1 and on a later build.
+  `skep-setup check` and `apply` say nothing about it. It works after
+  `zfs set mountpoint=/skep zroot/skep` and making `/skep/templates`
+  root:wheel mode 0700 (the agent refuses it otherwise with
+  `jail_parent_insecure`). A `check` item for it is in the
+  [backlog](../../backlog.md).
 
 ## Jails
 

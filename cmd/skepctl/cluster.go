@@ -109,7 +109,7 @@ func printGuests(w io.Writer, l models.ClusterGuestList) {
 	}
 	for _, g := range l.Items {
 		if g.Flagged {
-			fmt.Fprintln(w, "FLAGGED: another guest of the same kind and name was added first; rename or delete one of them.")
+			fmt.Fprintln(w, "FLAGGED: another guest of the same kind and name was added first; delete one of them: a guest cannot be renamed.")
 			break
 		}
 	}

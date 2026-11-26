@@ -2680,6 +2680,13 @@ version 2 with the joining host's guest list, B3) and `remove
   (section 5): `member.removing` is refused at apply until
   `--forget-guests` exists. Its guests have to be deleted first, or the
   removal waits for 8d-2.
+- **Nothing lets an operator release a reservation.** A reservation is
+  released by its own node's reconciliation after 5 minutes when that
+  node has no guest of the name; the reservations of a node whose
+  `skep-api` does not run, or is compromised, stay. Because a member that
+  owns a reservation cannot be removed (section 5), such a member can only
+  be removed from step 8d-2 on, whose `--forget-guests` must cover
+  reservations as well as guests.
 
 ### 2. Reservations and the four entry types
 
@@ -2776,13 +2783,21 @@ refuses `users-write`.
 **Amended (amendment 6).** A compromised `skep-api` (the API account on a
 node) or a compromised member's skep-cluster can, through the inventory,
 **reserve names up to the 10000 limit** (a denial of creates in the whole
-cluster until an operator releases them) and **add or remove entries of
+cluster) and **add or remove entries of
 its own node only**: every guest entry's owner is the caller's node, and
 `guest.remove` of another node's guest is refused (`not_owner`). It cannot
 change another node's guests in the inventory, and the inventory holds no
 configuration, so it cannot change a guest anywhere. Root on a node, as B2
 already says, can propose any entry as a voter; the inventory adds nothing
 to that.
+
+Nothing lets an operator release a reservation. A reservation is released
+by its own node's reconciliation after 5 minutes when that node has no
+guest of the name; the reservations of a node whose `skep-api` does not
+run, or is compromised, stay. Because a member that owns a reservation
+cannot be removed (section 5), such a member can only be removed from
+step 8d-2 on, whose `--forget-guests` must cover reservations as well as
+guests.
 
 ### 8. B9's limit, as built
 
@@ -2837,3 +2852,27 @@ this build while no node of the cluster has a guest**, and nothing is
 created during the upgrade window. A single host upgraded from 0.1 with
 guests is not affected (it is its own cluster: its reconciliation adds its
 guests, and there is no older build to stall).
+
+### 11. Fixes of the review
+
+- F1: a reconciliation write that skep-cluster could not commit
+  (`Uncommitted`) ends the round; a refusal is logged and the round goes on.
+- F2: after a skipped round (no quorum yet, the inventory not readable, the
+  node ID not known) the next comes after 5 seconds, until one round has
+  run without being skipped; then the periods of section 3.
+- F3: `guest.add` after a create or clone carries the name the agent reports
+  for the guest it has just read; if it differs from the reserved name, the
+  reservation of the requested name is released (best effort, logged).
+- F4: an answer of skep-cluster to a guest write with an HTTP status of 500
+  or above that is not a repeated code is `Uncommitted` with outcome
+  `unknown`; only an answer below 500 is a refusal that wrote nothing.
+- F5: an open serial console is closed at its periodic session check when
+  the quorum gate would refuse to open it now (no quorum, or a degraded
+  session): close code 4002 with a reason, one `request.no_quorum` entry.
+  The gate and the console use one rule (`quorumRefusal`).
+- F6: the drain's number of unfinished tasks is the set of tasks the engine
+  accepted and has not brought to a terminal state, so a task between the
+  queue and `running` is counted.
+- F7: the API checks a new guest's name with the agents' rule
+  (`models.ValidGuestName`) before it reserves it: `400 invalid_request`,
+  nothing written or sent.

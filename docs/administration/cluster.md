@@ -483,16 +483,18 @@ container db1    -           creating star                     -     2026-11-26T
 
 `creating` is a reserved name whose guest is not in the list yet.
 `skep-api` on each node keeps the list in line with its own agent: at
-start, every minute, and every 5 seconds while a create, clone or delete
+start (and every 5 seconds after that until the cluster answers), every
+minute, and every 5 seconds while a create, clone or delete
 it accepted runs. A guest made on a host by other means appears within a
 minute; a deleted guest's entry goes when the agent says it is gone; a
 reservation whose guest never appeared is released after 5 minutes. Two
 guests of one kind and name (for example one made on a host directly)
-are both listed, and every one but the first is **FLAGGED**: rename or
-delete one.
+are both listed, and every one but the first is **FLAGGED**: delete one
+of them (a guest cannot be renamed).
 
 **Without quorum**, and for a degraded session even after quorum is back,
-a node serves only reads (not the serial console), logins and logouts,
+a node serves only reads (not the serial console: one already open closes
+at its next session check, within a minute), logins and logouts,
 start, stop and restart of its VMs and jails, and task cancellation;
 everything else answers `503 no_quorum` with `details.reason`
 `no_quorum` or `degraded_session`, and every answer carries `Skep-Quorum:
