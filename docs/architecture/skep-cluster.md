@@ -941,7 +941,7 @@ applies it, so the race is tested on the decision itself
 
 ## Step 8d-1: the guest inventory
 
-ADR 0013 amendment 6 (Proposed); facts in
+ADR 0013 amendment 6 (Accepted 2026-11-26, Andy); facts in
 [0013-evidence/8d1-facts-20261126.md](../decisions/0013-evidence/8d1-facts-20261126.md).
 
 **Entries**, all version 1:

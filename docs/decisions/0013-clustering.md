@@ -33,7 +33,8 @@
   changes are marked "Amended (amendment 4)".
 - **Amendment 5 (2026-11-25)** is **Accepted** (2026-11-26, PR #116): step
   8c-2.
-- **Amendment 6 (2026-11-26)** is **Proposed**. It records the build of
+- **Amendment 6 (2026-11-26)** is **Accepted** (2026-11-26, Andy, PR
+  #117): step 8d-1. It records the build of
   step 8d-1 (the agent's drain and operation table, the replicated guest
   inventory, reconciliation, the limit on a node without quorum), splits
   8d into 8d-1 and 8d-2, and adds a fourth in-place change to B5. It is at
@@ -754,7 +755,8 @@ removal, and stops naming it once it has returned and caught up.
   join call; the leader refuses on a conflict before adding the node,
   and otherwise writes the guests in the member entry itself (B1, join
   step 1), so no guest can take a name between the check and the write.
-  A refusal names both guests so the operator can rename one; it
+  A refusal names both guests so the operator can delete one of them (a
+  guest cannot be renamed); it
   therefore **shows the pending key one cluster guest name** per
   attempt (the first conflict only), which is the only cluster data a
   pending key ever sees. IDs are UUIDs and do not collide. Guests keep
@@ -1185,7 +1187,8 @@ disappears while the guest exists.
     taken** in the cluster, it is added all the same, **flagged as a
     name conflict**; reconciliation never refuses a guest that exists
     and never renames one. The flag shows in the interface and in
-    health until an operator renames either guest;
+    health until an operator deletes one of them (a guest cannot be
+    renamed);
 - **only with quorum:** every change is a replicated write; without
   quorum the owner waits and retries; the agent is not touched;
 - **audited:** each removal or addition is a cluster audit event (B10)
@@ -2654,11 +2657,12 @@ None of them changes a replicated entry type, an apply rule or a
 node-to-node message.
 
 
-## Amendment 6 (2026-11-26, Proposed)
+## Amendment 6 (2026-11-26, Accepted)
 
 Written with the build of step 8d-1, from the fixed decisions D1 to D38
-the review chat gave that run. **Status: Proposed.** It is accepted by
-approving the merge of the step 8d-1 PR. The facts it rests on are in
+the review chat gave that run. **Status: Accepted 2026-11-26 (Andy) with
+PR #117,** by approving the merge of the step 8d-1 PR. The facts it rests
+on are in
 [0013-evidence/8d1-facts-20261126.md](0013-evidence/8d1-facts-20261126.md).
 The passages it changes are marked "Amended (amendment 6)".
 
