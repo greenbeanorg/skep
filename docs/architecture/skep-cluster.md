@@ -478,7 +478,7 @@ pool keeps 3 connections per peer.
 | `pending.expire` | node ID, `expires_at`, `at` (leader's clock) | removes it when `at` ≥ `expires_at` |
 | `member.join` (join step 1) | node ID, pin, `at` (leader's clock) | consumes the pending entry, creates the member entry in state `joining` with the entry's index (`joined_index`) and op ID |
 | `member.promoted` (join step 4) | node ID | `joining` → `member` |
-| `member.removing` (removal step 0) | node ID, `forget_guests` (always empty in version 1) | `joining` or `member` → `removing`; refused for a member already `removing`, while **another** member is `joining`, for the last member that is not `removing`, with a non-empty guest list (step 8d-2 writes guests in version 2), and (step 8d-1, amendment 6) while the node owns a guest or a name reservation; **withdraws every pending entry** in the same apply |
+| `member.removing` (removal step 0) | node ID, `forget_guests` (always empty in version 1) | `joining` or `member` → `removing`; refused for a member already `removing`, while **another** member is `joining`, for the last member that is not `removing`, with a non-empty guest list, and (step 8d-1, amendment 6) while the node owns a guest or a name reservation (version 2, step 8d-2, forgets them instead: see "Step 8d-2"); **withdraws every pending entry** in the same apply |
 | `member.removed` (removal step 2) | node ID | removes a `removing` member entry and its pins; records the entry's index as the last removal |
 
 - **Apply is deterministic**: no wall clock (every time is in the entry,
@@ -508,7 +508,7 @@ pool keeps 3 connections per peer.
 - **Step 8d-2** adds the joining host's guest list to `member.join` as its
   version 2 (ID, name, kind per guest), so that the name check and the
   inventory write stay in join step 1 (ADR 0013 B3); version 1 means a host
-  without guests, which is all this build lets join.
+  without guests. See "Step 8d-2" below.
 - The user entries (step 8c-1) and the guest entries (step 8d-1) are in
   their own sections below.
 
@@ -961,8 +961,9 @@ every one but the one with the lowest added index is flagged. The cluster
 audit records the four types with `guest_id`, `guest_kind`, `guest_name`
 and `guest_owner`, each omitted when empty.
 
-**Socket operations** (`guests-read`, `guests-write`, the API account
-only). `guests-read` answers the cluster ID, the guests index, the guests
+**Socket operations** (`guests-read`, `guests-write`, the API account;
+`guests-read` is open to root too from step 8d-2, for `remove
+--forget-guests`). `guests-read` answers the cluster ID, the guests index, the guests
 (with the flag and the owner's node name), the reservations, and whether
 a leader is known, the machine is stalled, the node is joining or
 removed; a joining or removed node answers no guests. `guests-write`
@@ -989,9 +990,65 @@ settles the rest; see ADR 0013 amendment 6, section 3.
 reconciliation writes guest entries by itself: **every node is upgraded
 while no node of the cluster has a guest.**
 
+## Step 8d-2: a join with guests, `remove --forget-guests`
+
+ADR 0013 amendment 7 (Proposed; accepted by approving the merge of the
+step 8d-2 PR); facts in
+[0013-evidence/8d2-facts-20261126.md](../decisions/0013-evidence/8d2-facts-20261126.md).
+
+**Entries.** Two new versions, no new type:
+
+| Type | Data | Applying it |
+|---|---|---|
+| `member.join` v2 | node ID, pin, `at`, guests `[{id, kind, name}]` | version 1's checks, then (a) 1 to 1000 guests, (b) each a lower-case UUID, `vm` or `container`, a valid name, (c) no ID and no kind and name twice in the list, all `invalid`; (d) no ID the inventory has (`invalid`); (e) no kind and name a guest or reservation holds (`name_taken`, the first such guest of the list and the holder's node); (f) within 10000 (`too_many_guests`); then the member entry (`joining`) and every guest, owner the joining node, no key, no task ID, added at the entry's index and `at` |
+| `member.removing` v2 | node ID, guests, reservations (counts) | version 1's checks except "owns nothing": refused unless the node owns exactly these counts; both 0 is `invalid` |
+| `member.removed` v1 | node ID | **changed in place**: also removes every guest and reservation of the node (the guests index becomes its index when it removed any) |
+
+A leader writes version 2 only for a host that joins with guests and for
+a removal that forgets guests; everything else is written as before.
+Limits of a join's list: 1000 guests and 160 KiB of JSON (one entry
+within 192 KiB, one join call within the RPC's 256 KiB). The audit adds
+`guests` (member.join v2), `guest_count` and `reservation_count`
+(member.removing v2, and member.removed when it removed any), each
+omitted when empty.
+
+**The join** (root, `cmd/skep-cluster/join.go`, `joinguests.go`):
+`join-request` no longer asks the agent. `join` reads the host's guests
+from the agent's lists as root (pages of 200, at most 1000) and shows
+them; after the confirmation it **sets the agent's drain** (reason
+`join`, renewed every 20 s), waits for the unfinished tasks
+(`-task-wait`, 60 s), reads the list again, stops the service, gives the
+list to the stage **on its standard input** (`{"guests":[...]}`, strict,
+256 KiB), starts the service, and clears the drain on every path that set
+it. Root reads only the agent's answers and skep-cluster's socket; the
+stage, as the service account, checks the list again and records it in
+`join.json` (`guests`, read limit 512 KiB) with the file's first write.
+The join call's body is `{op_id, guests}`; the leader checks the limits
+and rules b to f against its state machine before it proposes.
+
+**The removal** (root, `cmd/skep-cluster/removal.go`): `remove
+--forget-guests [-forget-count N] NAME` reads `guests-read` (open to root
+from this step, 16 MiB answer limit), shows what the member owns, and
+has the operator confirm the number of entries; the request carries
+`forget_guests` and the counts (the API account's is `403`). The leader
+counts in its own state machine before the status round and any
+hand-over: without the flag and owning something, or with other counts,
+refused, nothing written; otherwise `member.removing` v2. A hand-over
+passes the request on and the new leader checks again.
+
+**A joining node** has no quorum in its API, refuses guest writes
+(`this node is joining`), and its reconciliation removes a guest deleted
+meanwhile once it is a member.
+
+**Mixed builds.** A build before 8d-2 stops at a version 2 entry: every
+node is upgraded before the first join with guests and the first
+`--forget-guests`. An 8d-1 member answers a join call with guests as
+`invalid_request` (the host gets its one-node state back); an 8d-1 leader
+answers a passed removal with the new fields the same way.
+
 ## Step 8c-1: users in the replicated log
 
-ADR 0013 amendment 4 (Proposed); facts in
+ADR 0013 amendment 4 (Accepted 2026-11-25); facts in
 [0013-evidence/8c1-facts-20261125.md](../decisions/0013-evidence/8c1-facts-20261125.md).
 
 **Entries.** `user.create`, `user.update`, `user.password`, `user.rehash`,
@@ -1096,12 +1153,11 @@ root (never in a shipped build).
 
 ## Limits of 8b-2a and 8b-2b
 
-- Only a host **without VMs or jails** joins, and only a one-node host
-  (`join-request` and `join` refuse otherwise). Since step 8c-1 the
-  cluster's users replace the host's (the join's confirmation lists
-  them); no drain is taken (8d). `remove` has no
-  `--forget-guests` and no guest refusal (8d; the entry's guest list is
-  always empty).
+- Only a one-node host joins (`join-request` and `join` refuse
+  otherwise). Since step 8c-1 the cluster's users replace the host's (the
+  join's confirmation lists them). Since step 8d-2 its guests join with
+  it (at most 1000) under names that must be free in the cluster, and a
+  member that owns guests is removed only with `--forget-guests`.
 - A key rotation waits for every member: a member that stays down blocks
   it until it returns, is removed, or the rotation is aborted (only while
   the rotating node still uses its old key). One rotation in the cluster

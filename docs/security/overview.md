@@ -420,7 +420,14 @@ procedure in [Joining hosts into a cluster](../administration/cluster.md).
   the calling key. A compromised `skep-api` or member can reserve names up
   to the 10000 limit (denying creates in the cluster) and add or remove
   entries of its own node only; the inventory holds no configuration
-  (ADR 0013 amendment 6, B2).
+  (ADR 0013 amendment 6, B2). From step 8d-2 `guests-read` is open to root
+  as well (for `remove --forget-guests`), and root on a member can make
+  the cluster forget another member's guests by removing it with
+  `--forget-guests`, which changes nothing on that member's host; the API
+  account's `forget_guests` is refused (`403`). `skep-cluster join` reads
+  the host's guests from the agent as root and sets the agent's drain;
+  the guest list reaches the service-account stage on its standard input,
+  never on a command line (ADR 0013 amendment 7).
 - **Without quorum** `skep-api` serves only reads (not the serial
   console), logins, power actions and task cancellation, and a degraded
   session (a login without quorum) keeps that limit after quorum returns;

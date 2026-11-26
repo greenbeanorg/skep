@@ -74,8 +74,8 @@ procedure, and results recorded as it describes are welcome.
   ([VM guide](../../administration/virtual-machines.md)).
 - No clustering, HA, backup, network management, graphical consoles or
   metric history in 0.1. **On `main` after 0.1 (Milestone 8, not
-  released):** a host without VMs and jails can join another host's
-  cluster (step 8b-1), and be removed, wiped (`leave --wipe`) or give up
+  released):** a host can join another host's
+  cluster (step 8b-1; with its guests from step 8d-2), and be removed, wiped (`leave --wipe`) or give up
   a join (`join --abandon`) (step 8b-2a), as a preview: guests are not
   shared, `admit` and `remove` are root-only on a member; step
   8b-2b adds node key rotation (`key rotate`, root, every node upgraded
@@ -102,8 +102,13 @@ procedure, and results recorded as it describes are welcome.
   first; `skepctl cluster guests` lists the inventory), and without quorum
   or with a degraded session a node serves only reads, logins, power
   actions and task cancellation (`503 no_quorum` otherwise, header
-  `Skep-Quorum: none`). Until step 8d-2 **a host with VMs or jails cannot
-  join** a cluster and **a member that owns any cannot be removed**.
+  `Skep-Quorum: none`). From step 8d-2 a host's guests join with it (at
+  most 1000; a name the cluster holds refuses the join, and a guest cannot
+  be renamed), and a member that owns guests is removed only with root's
+  `skep-cluster remove --forget-guests` on a member (not through the API);
+  nothing releases a live member's name reservation by hand. Upgrade every
+  node before the first join with guests and the first `--forget-guests`
+  ([upgrading](../../installation/upgrading.md#to-step-8d-2-or-later-a-join-with-guests-remove---forget-guests)).
   **Upgrade every node of a cluster while no node has a guest**: a node on
   an earlier build stops at the first guest entry, and `skep-api` writes
   one by itself for every guest it finds
