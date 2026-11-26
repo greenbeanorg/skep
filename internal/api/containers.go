@@ -8,6 +8,7 @@ import (
 
 	"github.com/greenbeanorg/skep/internal/audit"
 	"github.com/greenbeanorg/skep/internal/auth"
+	"github.com/greenbeanorg/skep/internal/cluster/clusterstate"
 	"github.com/greenbeanorg/skep/internal/httpkit"
 	"github.com/greenbeanorg/skep/pkg/models"
 )
@@ -38,22 +39,22 @@ type ContainerBackend interface {
 
 func (h *handler) containerRoutes() []route {
 	return []route{
-		{http.MethodGet, "/containers", auth.PermContainerRead, nil, h.listContainers},
-		{http.MethodPost, "/containers", auth.PermContainerWrite, nil, h.createContainer},
-		{http.MethodGet, "/containers/{id}", auth.PermContainerRead, nil, h.getContainer},
-		{http.MethodPut, "/containers/{id}", auth.PermContainerWrite, nil, h.updateContainer},
-		{http.MethodDelete, "/containers/{id}", auth.PermContainerDelete, nil, h.deleteContainer},
-		{http.MethodPost, "/containers/{id}/actions", auth.PermContainerPower, nil, h.containerAction},
-		{http.MethodGet, "/containers/{id}/console-log", auth.PermContainerRead, nil, h.containerConsoleLog},
-		{http.MethodGet, "/containers/{id}/snapshots", auth.PermContainerRead, nil, h.listContainerSnapshots},
-		{http.MethodPost, "/containers/{id}/snapshots", auth.PermContainerSnapshot, nil, h.createContainerSnapshot},
-		{http.MethodGet, "/containers/{id}/snapshots/{sid}", auth.PermContainerRead, nil, h.getContainerSnapshot},
-		{http.MethodDelete, "/containers/{id}/snapshots/{sid}", auth.PermContainerSnapshot, nil, h.deleteContainerSnapshot},
+		{http.MethodGet, "/containers", auth.PermContainerRead, nil, h.listContainers, servedWithoutQuorum},
+		{http.MethodPost, "/containers", auth.PermContainerWrite, nil, h.createContainer, needsQuorum},
+		{http.MethodGet, "/containers/{id}", auth.PermContainerRead, nil, h.getContainer, servedWithoutQuorum},
+		{http.MethodPut, "/containers/{id}", auth.PermContainerWrite, nil, h.updateContainer, needsQuorum},
+		{http.MethodDelete, "/containers/{id}", auth.PermContainerDelete, nil, h.deleteContainer, needsQuorum},
+		{http.MethodPost, "/containers/{id}/actions", auth.PermContainerPower, nil, h.containerAction, servedWithoutQuorum},
+		{http.MethodGet, "/containers/{id}/console-log", auth.PermContainerRead, nil, h.containerConsoleLog, servedWithoutQuorum},
+		{http.MethodGet, "/containers/{id}/snapshots", auth.PermContainerRead, nil, h.listContainerSnapshots, servedWithoutQuorum},
+		{http.MethodPost, "/containers/{id}/snapshots", auth.PermContainerSnapshot, nil, h.createContainerSnapshot, needsQuorum},
+		{http.MethodGet, "/containers/{id}/snapshots/{sid}", auth.PermContainerRead, nil, h.getContainerSnapshot, servedWithoutQuorum},
+		{http.MethodDelete, "/containers/{id}/snapshots/{sid}", auth.PermContainerSnapshot, nil, h.deleteContainerSnapshot, needsQuorum},
 		// A rollback destroys the jail's current data (and, with
 		// destroy_newer, newer snapshots): container:write as well as
 		// container:snapshot, the same as a clone (amendment n, SR-11).
-		{http.MethodPost, "/containers/{id}/snapshots/{sid}/rollback", auth.PermContainerWrite, []string{auth.PermContainerSnapshot}, h.rollbackContainerSnapshot},
-		{http.MethodPost, "/containers/{id}/clone", auth.PermContainerWrite, []string{auth.PermContainerSnapshot}, h.cloneContainer},
+		{http.MethodPost, "/containers/{id}/snapshots/{sid}/rollback", auth.PermContainerWrite, []string{auth.PermContainerSnapshot}, h.rollbackContainerSnapshot, needsQuorum},
+		{http.MethodPost, "/containers/{id}/clone", auth.PermContainerWrite, []string{auth.PermContainerSnapshot}, h.cloneContainer, needsQuorum},
 	}
 }
 
@@ -84,7 +85,8 @@ func (h *handler) auditContainer(r *http.Request, action, id string, task *model
 		case errors.As(err, &me):
 			entry.Details = map[string]any{"error_code": me.Code}
 			if me.Code != models.CodeInvalidRequest && me.Code != models.CodeAgentUnavailable &&
-				me.Code != models.CodeQueueFull && me.Code != models.CodeShuttingDown {
+				me.Code != models.CodeQueueFull && me.Code != models.CodeShuttingDown && me.Code != models.CodeNodeDraining &&
+				me.Code != auth.CodeNoQuorum {
 				entry.Outcome = audit.Denied
 			}
 		case errors.Is(err, models.ErrNotFound):
@@ -148,7 +150,14 @@ func (h *handler) createContainer(w http.ResponseWriter, r *http.Request) {
 	if r, ok = withIdempotencyKey(w, r); !ok {
 		return
 	}
+	r, key, ok := h.reserveGuest(w, r, clusterstate.KindContainer, req.Name, func(r *http.Request, err error) {
+		h.auditContainer(r, models.TaskContainerCreate, "", nil, err)
+	})
+	if !ok {
+		return
+	}
 	created, err := h.containers.CreateContainer(r.Context(), req)
+	h.settleGuest(r, clusterstate.KindContainer, req.Name, key, created.Container.ID, created.Task, err)
 	h.auditContainer(r, models.TaskContainerCreate, created.Container.ID, &created.Task, err)
 	if err != nil {
 		h.fail(w, r, err)
@@ -193,6 +202,7 @@ func (h *handler) deleteContainer(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err)
 		return
 	}
+	h.watchGuestTask(task)
 	httpkit.WriteJSON(w, r, http.StatusAccepted, task)
 }
 
@@ -341,7 +351,14 @@ func (h *handler) cloneContainer(w http.ResponseWriter, r *http.Request) {
 	if r, ok = withIdempotencyKey(w, r); !ok {
 		return
 	}
+	r, key, ok := h.reserveGuest(w, r, clusterstate.KindContainer, req.Name, func(r *http.Request, err error) {
+		h.auditContainer(r, models.TaskContainerClone, id, nil, err)
+	})
+	if !ok {
+		return
+	}
 	created, err := h.containers.CloneContainer(r.Context(), id, req)
+	h.settleGuest(r, clusterstate.KindContainer, req.Name, key, created.Container.ID, created.Task, err)
 	h.auditContainer(r, models.TaskContainerClone, id, &created.Task, err)
 	if err != nil {
 		h.fail(w, r, err)

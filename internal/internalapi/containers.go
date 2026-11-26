@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/greenbeanorg/skep/internal/agentproto"
 	"github.com/greenbeanorg/skep/internal/containers"
 	"github.com/greenbeanorg/skep/internal/httpkit"
 	"github.com/greenbeanorg/skep/pkg/models"
@@ -30,15 +29,15 @@ type ContainerBackend interface {
 	CloneContainer(ctx context.Context, id string, req models.ContainerClone, sub containers.Submission) (models.ContainerCreated, error)
 }
 
-func (h *handler) registerContainers(mux *http.ServeMux) {
-	mux.Handle(agentproto.Prefix+"/containers", httpkit.Methods(h.containerCollection, http.MethodGet, http.MethodHead, http.MethodPost))
-	mux.Handle(agentproto.Prefix+"/containers/{id}", httpkit.Methods(h.containerItem, http.MethodGet, http.MethodHead, http.MethodPut, http.MethodDelete))
-	mux.Handle(agentproto.Prefix+"/containers/{id}/actions", httpkit.Methods(h.containerActions, http.MethodPost))
-	mux.Handle(agentproto.Prefix+"/containers/{id}/console-log", httpkit.ReadOnly(h.containerConsoleLog))
-	mux.Handle(agentproto.Prefix+"/containers/{id}/snapshots", httpkit.Methods(h.containerSnapshotCollection, http.MethodGet, http.MethodHead, http.MethodPost))
-	mux.Handle(agentproto.Prefix+"/containers/{id}/snapshots/{sid}", httpkit.Methods(h.containerSnapshotItem, http.MethodGet, http.MethodHead, http.MethodDelete))
-	mux.Handle(agentproto.Prefix+"/containers/{id}/snapshots/{sid}/rollback", httpkit.Methods(h.containerSnapshotRollback, http.MethodPost))
-	mux.Handle(agentproto.Prefix+"/containers/{id}/clone", httpkit.Methods(h.containerClone, http.MethodPost))
+func (h *handler) registerContainers(add func(string, http.HandlerFunc)) {
+	add("/containers", h.containerCollection)
+	add("/containers/{id}", h.containerItem)
+	add("/containers/{id}/actions", h.containerActions)
+	add("/containers/{id}/console-log", h.containerConsoleLog)
+	add("/containers/{id}/snapshots", h.containerSnapshotCollection)
+	add("/containers/{id}/snapshots/{sid}", h.containerSnapshotItem)
+	add("/containers/{id}/snapshots/{sid}/rollback", h.containerSnapshotRollback)
+	add("/containers/{id}/clone", h.containerClone)
 }
 
 // containerSubmission is the submission of a container write, from the

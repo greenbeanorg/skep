@@ -40,6 +40,10 @@ var ErrUnavailable = &models.Error{
 	Message: "the host agent is not reachable; node operations are unavailable",
 }
 
+// ErrNotSent is wrapped beside ErrUnavailable when the socket could not be
+// dialled: nothing was sent, so the agent did nothing (step 8d-1, D27).
+var ErrNotSent = errors.New("agentclient: nothing was sent to the agent")
+
 // Options configures a Client.
 type Options struct {
 	// SocketPath is the agent's Unix socket.
@@ -199,6 +203,15 @@ func (c *Client) Task(ctx context.Context, id string) (models.TaskDetail, error)
 	return detail, err
 }
 
+// TaskByKey returns the task the agent created with an idempotency key
+// (step 8d-1, D7); models.ErrNotFound without one. It is not in the public
+// API: reconciliation reads the task of a reservation with it.
+func (c *Client) TaskByKey(ctx context.Context, key string) (models.Task, error) {
+	var task models.Task
+	err := c.do(ctx, http.MethodGet, "/tasks/by-key/"+url.PathEscape(key), nil, nil, &task)
+	return task, err
+}
+
 // CancelTask asks the agent to cancel a task for the caller in ctx and
 // returns the task as it is after the request.
 func (c *Client) CancelTask(ctx context.Context, id string) (models.Task, error) {
@@ -248,6 +261,9 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 		}
 		if ctxErr := ctx.Err(); ctxErr != nil && errors.Is(err, ctxErr) && !isDialError(err) {
 			return ctxErr
+		}
+		if isDialError(err) {
+			return fmt.Errorf("%w: %w (%v)", ErrUnavailable, ErrNotSent, err)
 		}
 		return fmt.Errorf("%w (%v)", ErrUnavailable, err)
 	}

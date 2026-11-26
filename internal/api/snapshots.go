@@ -3,6 +3,7 @@ package api
 import (
 	"net/http"
 
+	"github.com/greenbeanorg/skep/internal/cluster/clusterstate"
 	"github.com/greenbeanorg/skep/internal/httpkit"
 	"github.com/greenbeanorg/skep/pkg/models"
 )
@@ -124,7 +125,14 @@ func (h *handler) cloneVM(w http.ResponseWriter, r *http.Request) {
 	if r, ok = withIdempotencyKey(w, r); !ok {
 		return
 	}
+	r, key, ok := h.reserveGuest(w, r, clusterstate.KindVM, req.Name, func(r *http.Request, err error) {
+		h.auditVM(r, models.TaskVMClone, id, nil, err)
+	})
+	if !ok {
+		return
+	}
 	created, err := h.vms.CloneVM(r.Context(), id, req)
+	h.settleGuest(r, clusterstate.KindVM, req.Name, key, created.VM.ID, created.Task, err)
 	h.auditVM(r, models.TaskVMClone, id, &created.Task, err)
 	if err != nil {
 		h.fail(w, r, err)

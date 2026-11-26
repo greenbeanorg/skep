@@ -729,7 +729,10 @@ export interface paths {
          *     minute, and when the session has ended, expired, or been revoked
          *     the WebSocket closes with code 4001. Keystrokes count as use of
          *     the session (at most once a minute); output from the guest does
-         *     not, so an unattended console idles out.
+         *     not, so an unattended console idles out. At the same check, a
+         *     console the quorum gate would now refuse to open (the node has no
+         *     quorum, or the session is degraded) closes with code 4002 and a
+         *     reason the client can show, recorded as `request.no_quorum`.
          *
          *     Attachment and detachment are recorded in the access audit log and
          *     in the agent's operation audit log (`vm.console.attach`,
@@ -1306,6 +1309,32 @@ export interface paths {
          *     no_quorum`. Open to a degraded session (a login without quorum).
          */
         get: operations["getCluster"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/cluster/guests": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The cluster's guest inventory
+         * @description Requires `system:read`, `vm:read` and `container:read`. Every VM
+         *     and jail in the replicated inventory (state `present`) with the
+         *     node that owns it, and every name reserved by a create or clone
+         *     under way (state `creating`, no ID). Among guests of the same kind
+         *     and name every one but the one added first is `flagged`. Served
+         *     without quorum and to a degraded session. Without `skep-cluster`
+         *     on this node: `503 no_quorum`.
+         */
+        get: operations["getClusterGuests"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2266,6 +2295,34 @@ export interface components {
             /** @description The member was the leader and handed the leadership over first. */
             handed_over: boolean;
         };
+        ClusterGuest: {
+            /** @description The guest's ID; absent for a reservation. */
+            id?: string;
+            name: string;
+            /** @enum {string} */
+            kind: "vm" | "container";
+            owner: {
+                node_id: string;
+                node_name: string;
+            };
+            /** @enum {string} */
+            state: "creating" | "present";
+            /** @description Another guest of the same kind and name was added first. */
+            flagged: boolean;
+            /** @description The create or clone task, where it is known. */
+            task_id?: string;
+            /**
+             * Format: date-time
+             * @description When the entry was written, by the cluster leader's clock.
+             */
+            time: string;
+        };
+        ClusterGuestList: {
+            cluster_id: string;
+            /** Format: int64 */
+            guests_index: number;
+            items: components["schemas"]["ClusterGuest"][];
+        };
         ErrorResponse: {
             error: {
                 /**
@@ -2274,7 +2331,7 @@ export interface components {
                  *     by task submission, which is not exposed yet.
                  * @enum {string}
                  */
-                code: "invalid_request" | "not_found" | "method_not_allowed" | "internal_error" | "service_unavailable" | "agent_unavailable" | "agent_version_mismatch" | "unauthenticated" | "invalid_credentials" | "forbidden" | "rate_limited" | "setup_required" | "username_taken" | "last_admin" | "unknown_role" | "no_quorum" | "users_import_pending" | "too_many_users" | "cluster_refused" | "voters_unanswered" | "cluster_id_mismatch" | "resource_busy" | "idempotency_key_conflict" | "not_cancellable" | "queue_full" | "shutting_down";
+                code: "invalid_request" | "not_found" | "method_not_allowed" | "internal_error" | "service_unavailable" | "agent_unavailable" | "agent_version_mismatch" | "unauthenticated" | "invalid_credentials" | "forbidden" | "rate_limited" | "setup_required" | "username_taken" | "last_admin" | "unknown_role" | "no_quorum" | "users_import_pending" | "too_many_users" | "cluster_refused" | "voters_unanswered" | "cluster_id_mismatch" | "resource_busy" | "idempotency_key_conflict" | "not_cancellable" | "queue_full" | "shutting_down" | "node_draining" | "too_many_guests";
                 /** @description Human-readable description. */
                 message: string;
                 request_id?: string;
@@ -2790,8 +2847,10 @@ export interface components {
         /**
          * @description Nothing can be committed now (`no_quorum`). `details.outcome` is
          *     `not_written` (no leader, skep-cluster not reachable, joining,
-         *     removed, a degraded session on a membership change, …) or `unknown` (sent and no answer, or the outcome was
-         *     not known within the cluster's limit: check GET /cluster).
+         *     removed, a degraded session on a change, …) or `unknown` (sent and no answer, or the outcome was
+         *     not known within the cluster's limit: check GET /cluster). A
+         *     request refused by the limit on a node without quorum also has
+         *     `details.reason`: `no_quorum` or `degraded_session`.
          */
         ClusterNoQuorum: {
             headers: {
@@ -4725,6 +4784,29 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Cluster"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            503: components["responses"]["ClusterNoQuorum"];
+        };
+    };
+    getClusterGuests: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The inventory. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClusterGuestList"];
                 };
             };
             401: components["responses"]["Unauthenticated"];

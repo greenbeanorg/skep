@@ -90,6 +90,15 @@ type Options struct {
 	// operations (step 8c-2). Nil: every one of them answers 503
 	// no_quorum.
 	Cluster ClusterBackend
+	// Quorum reports whether this node has quorum: the user copy's, the
+	// login's (D33). Nil means there is no cluster to ask and every route
+	// is served (tests of handlers that need none).
+	Quorum func() bool
+	// Guests is the guest inventory for the create and clone paths, the
+	// reconciliation watch, and GET /cluster/guests (step 8d-1). Nil
+	// leaves the inventory out: creates go to the agent alone, and
+	// GET /cluster/guests answers 503 no_quorum.
+	Guests GuestInventory
 	// UI serves every path outside /api: the web interface
 	// (internal/webui). It sets its own security headers. Nil, the
 	// default, answers those paths with the JSON 404. An unknown path
@@ -115,6 +124,8 @@ type handler struct {
 	tls          func() models.TLSInfo
 	proxies      []netip.Prefix
 	cluster      ClusterBackend
+	quorum       func() bool
+	guests       GuestInventory
 }
 
 // AuditReader reads pages of the access audit log.
@@ -144,7 +155,30 @@ type route struct {
 	// 14).
 	also    []string
 	handler http.HandlerFunc
+	// quorum declares whether the route is served while this node has no
+	// quorum or the session is degraded (step 8d-1, D32). A route that
+	// declares nothing is refused for everyone.
+	quorum quorumRule
 }
+
+// quorumRule is a route's declaration for a node without quorum.
+type quorumRule int
+
+const (
+	// quorumUndeclared is the zero value: the route is refused.
+	quorumUndeclared quorumRule = iota
+	// servedWithoutQuorum routes are served without quorum and to a
+	// degraded session: every GET but the serial console, the login and
+	// logout, power actions and task cancellation.
+	servedWithoutQuorum
+	// needsQuorum routes answer 503 no_quorum without quorum and to a
+	// degraded session, before their handler runs.
+	needsQuorum
+)
+
+// QuorumHeader is set on every answer to an authenticated request while
+// the node has no quorum.
+const QuorumHeader = "Skep-Quorum"
 
 // permissions is everything a route requires.
 func (rt route) permissions() []string { return append([]string{rt.requires}, rt.also...) }
@@ -152,25 +186,25 @@ func (rt route) permissions() []string { return append([]string{rt.requires}, rt
 // routes is the whole public API.
 func (h *handler) routes() []route {
 	return append([]route{
-		{http.MethodGet, "/health", requirePublic, nil, h.health},
-		{http.MethodPost, "/auth/login", requirePublic, nil, h.login},
-		{http.MethodPost, "/auth/logout", requireSession, nil, h.logout},
-		{http.MethodGet, "/auth/session", requireSession, nil, h.session},
-		{http.MethodPut, "/auth/password", requireSession, nil, h.changePassword},
+		{http.MethodGet, "/health", requirePublic, nil, h.health, servedWithoutQuorum},
+		{http.MethodPost, "/auth/login", requirePublic, nil, h.login, servedWithoutQuorum},
+		{http.MethodPost, "/auth/logout", requireSession, nil, h.logout, servedWithoutQuorum},
+		{http.MethodGet, "/auth/session", requireSession, nil, h.session, servedWithoutQuorum},
+		{http.MethodPut, "/auth/password", requireSession, nil, h.changePassword, needsQuorum},
 
-		{http.MethodGet, "/system", auth.PermSystemRead, nil, h.system},
-		{http.MethodGet, "/nodes/{id}/hardware", auth.PermNodeRead, nil, h.nodeHardware},
-		{http.MethodGet, "/tasks", auth.PermTaskRead, nil, h.tasks},
-		{http.MethodGet, "/tasks/{id}", auth.PermTaskRead, nil, h.task},
-		{http.MethodPost, "/tasks/{id}/cancel", auth.PermTaskCancel, nil, h.cancelTask},
+		{http.MethodGet, "/system", auth.PermSystemRead, nil, h.system, servedWithoutQuorum},
+		{http.MethodGet, "/nodes/{id}/hardware", auth.PermNodeRead, nil, h.nodeHardware, servedWithoutQuorum},
+		{http.MethodGet, "/tasks", auth.PermTaskRead, nil, h.tasks, servedWithoutQuorum},
+		{http.MethodGet, "/tasks/{id}", auth.PermTaskRead, nil, h.task, servedWithoutQuorum},
+		{http.MethodPost, "/tasks/{id}/cancel", auth.PermTaskCancel, nil, h.cancelTask, servedWithoutQuorum},
 
-		{http.MethodGet, "/users", auth.PermUserRead, nil, h.listUsers},
-		{http.MethodPost, "/users", auth.PermUserManage, nil, h.createUser},
-		{http.MethodGet, "/users/{id}", auth.PermUserRead, nil, h.getUser},
-		{http.MethodPut, "/users/{id}", auth.PermUserManage, nil, h.updateUser},
-		{http.MethodDelete, "/users/{id}", auth.PermUserManage, nil, h.deleteUser},
-		{http.MethodGet, "/roles", auth.PermRoleRead, nil, h.listRoles},
-		{http.MethodGet, "/audit", auth.PermAuditRead, nil, h.listAudit},
+		{http.MethodGet, "/users", auth.PermUserRead, nil, h.listUsers, servedWithoutQuorum},
+		{http.MethodPost, "/users", auth.PermUserManage, nil, h.createUser, needsQuorum},
+		{http.MethodGet, "/users/{id}", auth.PermUserRead, nil, h.getUser, servedWithoutQuorum},
+		{http.MethodPut, "/users/{id}", auth.PermUserManage, nil, h.updateUser, needsQuorum},
+		{http.MethodDelete, "/users/{id}", auth.PermUserManage, nil, h.deleteUser, needsQuorum},
+		{http.MethodGet, "/roles", auth.PermRoleRead, nil, h.listRoles, servedWithoutQuorum},
+		{http.MethodGet, "/audit", auth.PermAuditRead, nil, h.listAudit, servedWithoutQuorum},
 	}, append(append(append(h.vmRoutes(), h.templateRoutes()...), h.containerRoutes()...), h.clusterRoutes()...)...)
 }
 
@@ -185,6 +219,7 @@ func NewHandler(opts Options) http.Handler {
 		backend: opts.Backend, auth: opts.Auth, users: opts.Users, audit: opts.Audit, history: opts.AuditLog,
 		checks: opts.Checks, log: log, tls: opts.TLS, proxies: opts.TrustedProxies,
 	}
+	h.quorum, h.guests = opts.Quorum, opts.Guests
 	h.cluster = opts.Cluster
 	if h.cluster == nil {
 		h.cluster = noCluster{}
@@ -343,6 +378,11 @@ func (h *handler) serve(rt route, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	r = r.WithContext(ctx)
+	// While there is no quorum every answer to an authenticated request
+	// says so (D32), refusals included.
+	if _, ok := identityFrom(ctx); ok && h.quorum != nil && !h.quorum() {
+		w.Header().Set(QuorumHeader, "none")
+	}
 
 	switch rt.requires {
 	case requirePublic:
@@ -369,7 +409,63 @@ func (h *handler) serve(rt route, w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	if !h.quorumGate(w, r, rt) {
+		return
+	}
 	rt.handler(w, r)
+}
+
+// ActionNoQuorum is the access audit action of a request refused by the
+// quorum gate.
+const ActionNoQuorum = "request.no_quorum"
+
+// quorumGate is the limit on a node without quorum (step 8d-1, D32; ADR
+// 0013 B9): while the node has no quorum, or for a degraded session (also
+// after quorum is back), only the routes declared served are; every other
+// answers 503 no_quorum before its handler runs, audited under its user.
+// While there is no quorum every answer to an authenticated request
+// carries Skep-Quorum: none. It reports whether the request may go on.
+func (h *handler) quorumGate(w http.ResponseWriter, r *http.Request, rt route) bool {
+	id, authenticated := identityFrom(r.Context())
+	reason := h.quorumRefusal(rt.quorum, id, authenticated)
+	if reason == "" {
+		return true
+	}
+	msg := "this node has no quorum: only reading, logging in and out, power actions and task cancellation are served; nothing was written"
+	switch reason {
+	case "degraded_session":
+		msg = "this session was opened without quorum (degraded): it may only read, log out, run power actions and cancel tasks; log in again; nothing was written"
+	case "undeclared":
+		msg = "this route does not say whether it is served without quorum; it is refused"
+	}
+	if authenticated {
+		h.writeAudit(r, audit.AccessEntry{ActorID: id.User.ID, ActorName: id.User.Username, Action: ActionNoQuorum, Outcome: audit.Failure,
+			Details: map[string]any{"method": rt.method, "route": Prefix + rt.path, "reason": reason, "outcome": auth.OutcomeNotWritten}})
+	}
+	e := auth.NoQuorum(auth.OutcomeNotWritten, msg)
+	e.Details["reason"] = reason
+	httpkit.WriteErrorDetails(w, r, http.StatusServiceUnavailable, e.Code, e.Message, e.Details)
+	return false
+}
+
+// quorumRefusal is the gate's rule: why a route with rule q is refused
+// now for the identity (authenticated or not), or "" when it is served.
+// The serial console's periodic check uses it too (F5 of the 8d-1
+// review).
+func (h *handler) quorumRefusal(q quorumRule, id auth.Identity, authenticated bool) string {
+	switch {
+	case q == quorumUndeclared:
+		// Deny by default, whatever the quorum: a test fails on such a
+		// route.
+		return "undeclared"
+	case q == servedWithoutQuorum:
+		return ""
+	case h.quorum != nil && !h.quorum():
+		return "no_quorum"
+	case authenticated && id.Session.Degraded:
+		return "degraded_session"
+	}
+	return ""
 }
 
 // requireAlso checks a permission that depends on the body of a request,

@@ -226,7 +226,7 @@ func TestClusterManageOnlyForAdmin(t *testing.T) {
 // F3 of the 8c-2 review: a degraded session (a login without quorum) is
 // refused on the three member operations before anything is sent, with
 // 503 no_quorum not_written, audited as a failure; GET /cluster stays
-// open to it.
+// open to it. Since step 8d-1 the quorum gate does it (D32).
 func TestDegradedSessionCannotChangeMembership(t *testing.T) {
 	e := freshEnv(t)
 	if _, err := e.db.Exec(`UPDATE sessions SET degraded = 1 WHERE token_hash = ?`, auth.HashToken(e.tokens[auth.RoleAdmin])); err != nil {
@@ -243,11 +243,13 @@ func TestDegradedSessionCannotChangeMembership(t *testing.T) {
 	} {
 		rec := e.serve(h, request{method: c.method, path: c.path, role: auth.RoleAdmin, body: c.body})
 		eb := errorOf(t, rec.Body.Bytes())
+		// Step 8d-1 (D32): the quorum gate refuses it before the
+		// handler, audited under the user as request.no_quorum.
 		if rec.Code != http.StatusServiceUnavailable || eb.Code != auth.CodeNoQuorum || eb.Details["outcome"] != auth.OutcomeNotWritten ||
-			eb.Message != "a degraded session cannot change the cluster's membership; log in again once this node has quorum" {
+			eb.Details["reason"] != "degraded_session" {
 			t.Errorf("%s %s: %d %s", c.method, c.path, rec.Code, rec.Body)
 		}
-		if en := lastAudit(t, e, c.action); en.Outcome != "failure" || en.Details["error_code"] != auth.CodeNoQuorum {
+		if en := lastAudit(t, e, ActionNoQuorum); en.Outcome != "failure" || en.Details["reason"] != "degraded_session" || en.Details["method"] != c.method {
 			t.Errorf("%s audit: %+v", c.action, en)
 		}
 	}

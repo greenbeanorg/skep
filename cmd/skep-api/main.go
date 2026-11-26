@@ -27,10 +27,12 @@ import (
 	"github.com/greenbeanorg/skep/internal/apitls"
 	"github.com/greenbeanorg/skep/internal/audit"
 	"github.com/greenbeanorg/skep/internal/auth"
+	"github.com/greenbeanorg/skep/internal/cluster/guestapi"
 	"github.com/greenbeanorg/skep/internal/cluster/memberapi"
 	"github.com/greenbeanorg/skep/internal/cluster/userapi"
 	"github.com/greenbeanorg/skep/internal/config"
 	"github.com/greenbeanorg/skep/internal/database"
+	"github.com/greenbeanorg/skep/internal/guestinv"
 	"github.com/greenbeanorg/skep/internal/logging"
 	"github.com/greenbeanorg/skep/internal/privdrop"
 	"github.com/greenbeanorg/skep/internal/termpass"
@@ -262,12 +264,34 @@ func runServer(ctx context.Context, args []string, e env) error {
 		<-archiveDone
 	}()
 
+	// The guest inventory (step 8d-1): the create and clone paths reserve
+	// names through it, and one reconciliation goroutine brings it in
+	// line with this node's agent.
+	members := memberapi.NewClient(cfg.ClusterSocket)
+	inventory := guestinv.New(guestapi.NewClient(cfg.ClusterSocket), log)
+	reconciler := guestinv.NewReconciler(guestinv.ReconcilerOptions{
+		Agent: agent, Inventory: inventory, Quorum: ucopy.Quorum, Logger: log,
+		NodeID: func(ctx context.Context) (string, error) {
+			v, err := members.Status(ctx)
+			return v.NodeID, err
+		},
+	})
+	recCtx, stopRec := context.WithCancel(ctx)
+	recDone := make(chan struct{})
+	go func() { defer close(recDone); reconciler.Run(recCtx) }()
+	defer func() {
+		stopRec()
+		<-recDone
+	}()
+
 	checks := map[string]models.HealthProbe{usercopy.CheckName: ucopy.Health}
 	if archive != nil {
 		checks[models.CheckAccessAuditArchive] = archive.Health
 	}
 	handler := api.NewHandler(api.Options{
-		Cluster:  memberapi.NewClient(cfg.ClusterSocket),
+		Cluster:  members,
+		Quorum:   ucopy.Quorum,
+		Guests:   guestinv.Service{Inventory: inventory, Reconciler: reconciler},
 		Checks:   checks,
 		Backend:  agent,
 		Auth:     authn,

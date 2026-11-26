@@ -119,3 +119,44 @@ type ClusterRemoval struct {
 	// leadership over first.
 	HandedOver bool `json:"handed_over"`
 }
+
+// Guest inventory states (step 8d-1, D34).
+const (
+	// GuestCreating is a name reservation: a create or clone accepted
+	// whose guest the inventory does not have yet.
+	GuestCreating = "creating"
+	// GuestPresent is a guest in the inventory.
+	GuestPresent = "present"
+)
+
+// CodeTooManyGuests: the cluster's inventory holds its most guests and
+// reservations (10000); nothing was created.
+const CodeTooManyGuests = "too_many_guests"
+
+// ClusterGuestOwner is the node that owns a guest.
+type ClusterGuestOwner struct {
+	NodeID   string `json:"node_id"`
+	NodeName string `json:"node_name"`
+}
+
+// ClusterGuest is one item of GET /api/v1/cluster/guests: a guest of the
+// replicated inventory, or a reservation (state creating, no ID).
+// Flagged is true for every guest of a kind and name but the one added
+// first.
+type ClusterGuest struct {
+	ID      string            `json:"id,omitempty"`
+	Name    string            `json:"name"`
+	Kind    string            `json:"kind"`
+	Owner   ClusterGuestOwner `json:"owner"`
+	State   string            `json:"state"`
+	Flagged bool              `json:"flagged"`
+	TaskID  string            `json:"task_id,omitempty"`
+	Time    time.Time         `json:"time"`
+}
+
+// ClusterGuestList is the answer of GET /api/v1/cluster/guests.
+type ClusterGuestList struct {
+	ClusterID   string         `json:"cluster_id"`
+	GuestsIndex uint64         `json:"guests_index"`
+	Items       []ClusterGuest `json:"items"`
+}

@@ -113,6 +113,10 @@ const (
 	// OpUsersWrite is a user entry passed by a member to the leader
 	// (step 8c-1, D11).
 	OpUsersWrite = "users-write"
+	// OpGuestsWrite is a guest entry passed by a member to the leader
+	// (step 8d-1, D23). The leader sets the entry's owner from the node
+	// of the key that called, never from the body.
+	OpGuestsWrite = "guests-write"
 )
 
 // Operation says which kinds of key may call an operation.
@@ -153,6 +157,7 @@ var Operations = []Operation{
 	// member keys, so a member can tell a joining node it was removed.
 	{Name: OpRemoved, Member: true},
 	{Name: OpUsersWrite, Member: true},
+	{Name: OpGuestsWrite, Member: true},
 }
 
 // Allowed reports whether a key of this kind may call the operation. An

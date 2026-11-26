@@ -97,6 +97,18 @@ procedure, and results recorded as it describes are welcome.
   The cluster store is not backed up by `skep-setup upgrade` yet (step 8f).
   A cluster holds at most **2000 users**, and an import at most what fits
   in one 192 KiB entry.
+  Step 8d-1 adds the cluster's **guest inventory**: VM and jail names are
+  unique in the cluster per kind (a create or clone reserves its name
+  first; `skepctl cluster guests` lists the inventory), and without quorum
+  or with a degraded session a node serves only reads, logins, power
+  actions and task cancellation (`503 no_quorum` otherwise, header
+  `Skep-Quorum: none`). Until step 8d-2 **a host with VMs or jails cannot
+  join** a cluster and **a member that owns any cannot be removed**.
+  **Upgrade every node of a cluster while no node has a guest**: a node on
+  an earlier build stops at the first guest entry, and `skep-api` writes
+  one by itself for every guest it finds
+  ([upgrading](../../installation/upgrading.md#to-step-8d-1-or-later-the-guest-inventory)).
+  A cluster holds at most **10000 guests and name reservations**.
 
 ## Installation and upgrade
 
@@ -129,6 +141,16 @@ procedure, and results recorded as it describes are welcome.
   60 s). Start the agent, then upgrade.
 - `skep-setup remove -revert-host` also lists lines an earlier install added,
   because journals survive `pkg delete` (backlog).
+- **A pool whose root has `mountpoint=none`.** Seen on two lab VMs whose
+  `zroot` had `mountpoint=none`: `zroot/skep/templates` then had no mount
+  point (inherited), and a template create answered `storage_unavailable`
+  ("the dataset zroot/skep/templates is not mounted at an absolute path;
+  jails and templates need it mounted"), on 0.1 and on a later build.
+  `skep-setup check` and `apply` say nothing about it. It works after
+  `zfs set mountpoint=/skep zroot/skep` and making `/skep/templates`
+  root:wheel mode 0700 (the agent refuses it otherwise with
+  `jail_parent_insecure`). A `check` item for it is in the
+  [backlog](../../backlog.md).
 
 ## Jails
 

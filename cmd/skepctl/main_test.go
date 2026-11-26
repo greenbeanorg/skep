@@ -23,9 +23,11 @@ import (
 	"github.com/greenbeanorg/skep/internal/apidb"
 	"github.com/greenbeanorg/skep/internal/auth"
 	"github.com/greenbeanorg/skep/internal/cluster/clustertest"
+	"github.com/greenbeanorg/skep/internal/cluster/guestapi"
 	"github.com/greenbeanorg/skep/internal/cluster/memberapi"
 	"github.com/greenbeanorg/skep/internal/ctlstate"
 	"github.com/greenbeanorg/skep/internal/database"
+	"github.com/greenbeanorg/skep/internal/guestinv"
 	"github.com/greenbeanorg/skep/internal/termpass"
 	"github.com/greenbeanorg/skep/migrations"
 	"github.com/greenbeanorg/skep/pkg/client"
@@ -145,6 +147,7 @@ func newStackWith(t *testing.T, cert **tls.Certificate) *stack {
 	h := api.NewHandler(api.Options{
 		Backend: fakeBackend{}, VMs: vms, Auth: authn, Users: users, Audit: access, AuditLog: access, Logger: quiet,
 		Cluster: memberapi.NewClient(node.Socket),
+		Guests:  guestinv.Service{Inventory: guestinv.New(guestapi.NewClient(node.Socket), quiet)},
 	})
 	s := &stack{db: db, authn: authn, fakeVMs: vms}
 	s.srv = httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

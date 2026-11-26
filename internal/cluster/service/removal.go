@@ -715,6 +715,24 @@ func (s *Service) removeAsLeader(ctx context.Context, req forwardRemove, origin 
 			return localapi.RemoveResult{}, refusedErr(fmt.Sprintf("%s is joining; %s cannot be removed until that join has finished or %s is removed", m.Name, x.Name, m.Name))
 		}
 	}
+	// Step 8d-1, D17, also checked at apply: a member that owns guests
+	// or name reservations cannot be removed. Checked before the status
+	// round and any hand-over, so a refusal changes nothing.
+	guests, reservations := 0, 0
+	inv := s.machine.Guests()
+	for _, g := range inv.Guests {
+		if g.Owner == x.ID {
+			guests++
+		}
+	}
+	for _, r := range inv.Reservations {
+		if r.Owner == x.ID {
+			reservations++
+		}
+	}
+	if guests+reservations > 0 {
+		return localapi.RemoveResult{}, refusedErr(fmt.Sprintf("%s owns %d guests and %d name reservations in the inventory; it cannot be removed while it owns any (step 8d-2 brings --forget-guests). Nothing was written", x.Name, guests, reservations))
+	}
 	if err := clusterIDMismatch(req.ClusterID, view.ClusterID); err != nil {
 		return localapi.RemoveResult{}, err
 	}

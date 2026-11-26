@@ -1,4 +1,4 @@
-# skep-cluster (Milestone 8, steps 8a, 8b-1, 8b-2a and 8b-2b)
+# skep-cluster (Milestone 8, steps 8a to 8d-1)
 
 `skep-cluster` is the third Skep service, next to `skep-agent` and
 `skep-api`. It holds the node's cluster key, the cluster membership and
@@ -344,6 +344,8 @@ forbidden`.
 | `key-abort` | `POST /cluster/v1/key/abort` | yes | no |
 | `users-read` | `GET /cluster/v1/users` | no | yes |
 | `users-write` | `POST /cluster/v1/users/write` | no | yes |
+| `guests-read` | `GET /cluster/v1/guests` | no | yes |
+| `guests-write` | `POST /cluster/v1/guests/write` | no | yes |
 
 `key-rotate` and `key-abort` (step 8b-2b) are root-only and local: no
 operation of `skep-api` changes a pin; `key rotate --api` arrives with
@@ -440,6 +442,7 @@ phase.
 | `key-add` (passed to the leader) | no | no | yes | no | only for the caller's own node |
 | `key-abort` (passed to the leader) | no | no | yes | no | only for the caller's own node |
 | `users-write` (passed to the leader, step 8c-1) | no | no | yes | no | the leader answers only after its barrier of the current term |
+| `guests-write` (passed to the leader, step 8d-1) | no | no | yes | no | the leader answers only after its barrier of the current term; the entry's owner is the node of the calling key, never the body |
 
 The table is `raftnet.Operations`; the tests are driven from it. On a
 joining node that its own membership does not list yet, the admission's
@@ -475,7 +478,7 @@ pool keeps 3 connections per peer.
 | `pending.expire` | node ID, `expires_at`, `at` (leader's clock) | removes it when `at` ≥ `expires_at` |
 | `member.join` (join step 1) | node ID, pin, `at` (leader's clock) | consumes the pending entry, creates the member entry in state `joining` with the entry's index (`joined_index`) and op ID |
 | `member.promoted` (join step 4) | node ID | `joining` → `member` |
-| `member.removing` (removal step 0) | node ID, `forget_guests` (always empty in version 1) | `joining` or `member` → `removing`; refused for a member already `removing`, while **another** member is `joining`, for the last member that is not `removing`, and with a non-empty guest list (step 8d writes guests in version 2); **withdraws every pending entry** in the same apply |
+| `member.removing` (removal step 0) | node ID, `forget_guests` (always empty in version 1) | `joining` or `member` → `removing`; refused for a member already `removing`, while **another** member is `joining`, for the last member that is not `removing`, with a non-empty guest list (step 8d-2 writes guests in version 2), and (step 8d-1, amendment 6) while the node owns a guest or a name reservation; **withdraws every pending entry** in the same apply |
 | `member.removed` (removal step 2) | node ID | removes a `removing` member entry and its pins; records the entry's index as the last removal |
 
 - **Apply is deterministic**: no wall clock (every time is in the entry,
@@ -502,10 +505,25 @@ pool keeps 3 connections per peer.
   removed`) with actor, operation ID and origin; the leader logs
   `non-voter added`, `promoted`, `server removed` and `ghost removed`
   (actor `system`). The cluster audit (B10) is step 8b-2b.
-- **Step 8d** adds the joining host's guest list to `member.join` as its
+- **Step 8d-2** adds the joining host's guest list to `member.join` as its
   version 2 (ID, name, kind per guest), so that the name check and the
   inventory write stay in join step 1 (ADR 0013 B3); version 1 means a host
   without guests, which is all this build lets join.
+- The user entries (step 8c-1) and the guest entries (step 8d-1) are in
+  their own sections below.
+
+**Snapshot formats.** Every earlier format is read; a node writes the
+oldest format that holds its state, so a build of an earlier step in a
+cluster being upgraded still reads it:
+
+| Format | Step | Adds | Written when |
+|---|---|---|---|
+| 1 | 8a | – | never again (read only) |
+| 2 | 8b-1 | pending entries, epoch | no member was ever removed |
+| 3 | 8b-2a | the last removal's index | a member was removed |
+| 4 | 8b-2b | a member's next pin | a member rotates its key |
+| 5 | 8c-1 | users, users index, forgotten operation IDs | the state holds a user or forgot an ID |
+| 6 | 8d-1 | guests, reservations, guests index | a guest or a reservation exists, or the guests index is above 0 |
 
 ### The applied-membership file
 
@@ -920,6 +938,56 @@ applies it, so the race is tested on the decision itself
 - A joining node receives the log's entries, not a snapshot, while the
   log is shorter than the snapshot threshold; hence the join's skip in the
   audit.
+
+## Step 8d-1: the guest inventory
+
+ADR 0013 amendment 6 (Accepted 2026-11-26, Andy); facts in
+[0013-evidence/8d1-facts-20261126.md](../decisions/0013-evidence/8d1-facts-20261126.md).
+
+**Entries**, all version 1:
+
+| Type | Data | Applying it |
+|---|---|---|
+| `guest.reserve` | kind, name, key, owner, `at` | holds kind and name for the owner; refused when the owner is not a member in state `member` (`owner_not_member`), for invalid values (`invalid`: kind `vm` or `container`; a name of 1 to 255 bytes of valid UTF-8 with no byte below 0x20 and no 0x7f; a key of `[A-Za-z0-9._:-]{1,128}`; a time), at 10000 guests and reservations (`too_many_guests`), and when a guest or reservation of the kind and name exists (`name_taken`, naming the holder's node); **the same owner and key as that reservation or guest is a success that changes nothing** |
+| `guest.release` | kind, name, key, owner | removes the reservation when all four match; otherwise nothing changes (a success) |
+| `guest.add` | ID, kind, name, task ID, owner, `at` | adds the guest (owner a member in state `member`, the 10000 limit); the same ID and owner changes nothing, another owner is `not_owner`; consumes this owner's reservation of the kind and name whatever its key, and takes its key; **never refused for its name** |
+| `guest.remove` | ID, owner | removes the guest; no such guest changes nothing; another owner's is `not_owner` |
+
+The state holds guests by ID (ID, kind, name, owner, key, task ID, the
+index that added it, time), reservations by kind and name, and a guests
+index (the last entry that changed either). No configuration. **The flag
+is computed when read, never stored**: among guests of a kind and name,
+every one but the one with the lowest added index is flagged. The cluster
+audit records the four types with `guest_id`, `guest_kind`, `guest_name`
+and `guest_owner`, each omitted when empty.
+
+**Socket operations** (`guests-read`, `guests-write`, the API account
+only). `guests-read` answers the cluster ID, the guests index, the guests
+(with the flag and the owner's node name), the reservations, and whether
+a leader is known, the machine is stalled, the node is joining or
+removed; a joining or removed node answers no guests. `guests-write`
+takes one entry (type, operation ID, actor `user:NAME` or
+`reconciliation`, request ID, data); **the data has no owner field**
+(strict decoding refuses one): the owner is this node, or, when a member
+passes the write to the leader as the peer operation `guests-write`, the
+node of the calling key. The answer is the index, the cluster ID and the
+outcome `applied`, `duplicate` or `unchanged`.
+
+**`skep-api`.** A create or clone reserves its name (the key is the
+client's `Idempotency-Key` or a new UUID passed to the agent), then calls
+the agent; after an accepted call it reads the guest and adds it (or
+releases the name if the guest is not there); after a refusal, or when
+nothing was sent, it releases; after anything else (no answer, a timeout)
+it writes nothing more. A failed reserve answers `409 vm_name_taken` /
+`container_name_taken` (naming the node), `409 too_many_guests`, `409
+cluster_refused` or `503 no_quorum`, and the agent is not called. Delete
+is unchanged. Reconciliation (one goroutine in `skep-api`, at start,
+every 60 s, every 5 s while an accepted create, clone or delete runs)
+settles the rest; see ADR 0013 amendment 6, section 3.
+
+**Mixed builds.** A build before 8d-1 stops at the first guest entry, and
+reconciliation writes guest entries by itself: **every node is upgraded
+while no node of the cluster has a guest.**
 
 ## Step 8c-1: users in the replicated log
 

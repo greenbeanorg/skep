@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/greenbeanorg/skep/internal/agentproto"
 	"github.com/greenbeanorg/skep/internal/httpkit"
 	"github.com/greenbeanorg/skep/internal/templates"
 	"github.com/greenbeanorg/skep/pkg/models"
@@ -21,10 +20,10 @@ type TemplateBackend interface {
 	DeleteTemplate(ctx context.Context, id string, sub templates.Submission) (models.Task, error)
 }
 
-func (h *handler) registerTemplates(mux *http.ServeMux) {
-	mux.Handle(agentproto.Prefix+"/storage/template-sources", httpkit.ReadOnly(h.templateSources))
-	mux.Handle(agentproto.Prefix+"/storage/templates", httpkit.Methods(h.templateCollection, http.MethodGet, http.MethodHead, http.MethodPost))
-	mux.Handle(agentproto.Prefix+"/storage/templates/{id}", httpkit.Methods(h.templateItem, http.MethodGet, http.MethodHead, http.MethodDelete))
+func (h *handler) registerTemplates(add func(string, http.HandlerFunc)) {
+	add("/storage/template-sources", h.templateSources)
+	add("/storage/templates", h.templateCollection)
+	add("/storage/templates/{id}", h.templateItem)
 }
 
 // templateSubmission is the submission of a template write, from the

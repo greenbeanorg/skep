@@ -31,6 +31,15 @@
   0.1 host's users) changes in the accepted text, and splits step 8c into
   8c-1 and 8c-2. It is at the end of this document; the passages it
   changes are marked "Amended (amendment 4)".
+- **Amendment 5 (2026-11-25)** is **Accepted** (2026-11-26, PR #116): step
+  8c-2.
+- **Amendment 6 (2026-11-26)** is **Accepted** (2026-11-26, Andy, PR
+  #117): step 8d-1. It records the build of
+  step 8d-1 (the agent's drain and operation table, the replicated guest
+  inventory, reconciliation, the limit on a node without quorum), splits
+  8d into 8d-1 and 8d-2, and adds a fourth in-place change to B5. It is at
+  the end of this document; the passages it changes are marked "Amended
+  (amendment 6)".
 - Date: 2026-11-23 (evaluation draft), 2026-11-24 (rewritten as the design)
 - Depends on: [ADR 0004](0004-privilege-boundary.md) (privilege boundary),
   [ADR 0005](0005-agent-task-engine.md) (task engine),
@@ -724,6 +733,8 @@ member removed by the majority is refused at once; **amended
 every running member names the stopped member as not having applied the
 removal, and stops naming it once it has returned and caught up.
 
+**Amended (amendment 6):** see amendment 6, section 7: through the guest inventory a compromised `skep-api` or member can reserve names up to the 10000 limit and add or remove entries of its own node only.
+
 ### B3. Joining a host that already has guests and users (proposed; answered in Part C)
 
 **Options:**
@@ -744,7 +755,8 @@ removal, and stops naming it once it has returned and caught up.
   join call; the leader refuses on a conflict before adding the node,
   and otherwise writes the guests in the member entry itself (B1, join
   step 1), so no guest can take a name between the check and the write.
-  A refusal names both guests so the operator can rename one; it
+  A refusal names both guests so the operator can delete one of them (a
+  guest cannot be renamed); it
   therefore **shows the pending key one cluster guest name** per
   attempt (the first conflict only), which is the only cluster data a
   pending key ever sees. IDs are UUIDs and do not collide. Guests keep
@@ -935,6 +947,8 @@ entry in a fresh log carries a type and version; a request using an
 operation only N+1 serves, sent to N+1's API for a guest on N, is
 refused with `node_version_mismatch` and nothing reaches N.
 
+**Amended (amendment 6):** `member.removing` version 1 is refused while the node owns a guest or a reservation: the fourth in-place change before the release (amendment 6, section 5). A build before step 8d-1 stops at the first guest entry; every node is upgraded while no node has a guest (amendment 6, section 10).
+
 ### B6. Backup and restore of the cluster store (proposed; answered in Part C)
 
 **Proposal:**
@@ -1067,6 +1081,8 @@ and `container.stop` are accepted and `vm.start`, `vm.restart`,
 stops are refused too; maintenance survives an agent restart and an API
 stop; the upgrade path on a lab VM with a running task.
 
+**Amended (amendment 6):** built in step 8d-1 as the agent's operation table and the upgrade/join drain (amendment 6, section 9); maintenance mode is step 8f.
+
 ### B8. How a request reaches another node, and who the caller is (proposed; answered in Part C)
 
 **Path:** client → `skep-api` on any node → if the resource's owner (from
@@ -1171,7 +1187,8 @@ disappears while the guest exists.
     taken** in the cluster, it is added all the same, **flagged as a
     name conflict**; reconciliation never refuses a guest that exists
     and never renames one. The flag shows in the interface and in
-    health until an operator renames either guest;
+    health until an operator deletes one of them (a guest cannot be
+    renamed);
 - **only with quorum:** every change is a replicated write; without
   quorum the owner waits and retries; the agent is not touched;
 - **audited:** each removal or addition is a cluster audit event (B10)
@@ -1269,6 +1286,8 @@ minority's sessions for that user are gone; with `skep-cluster` stopped
 on a single host, a create is refused, an admin login is degraded and a
 guest stop works; `skep-api admin create` without quorum is refused and
 says why.
+
+**Amended (amendment 6):** the limit on a node without quorum is built in `serve` as a declared rule per route (amendment 6, section 8).
 
 ### B10. Audit of cluster-level changes (proposed; answered in Part C)
 
@@ -2636,3 +2655,228 @@ admit, withdraw and remove through the API on the three lab nodes.
 
 None of them changes a replicated entry type, an apply rule or a
 node-to-node message.
+
+
+## Amendment 6 (2026-11-26, Accepted)
+
+Written with the build of step 8d-1, from the fixed decisions D1 to D38
+the review chat gave that run. **Status: Accepted 2026-11-26 (Andy) with
+PR #117,** by approving the merge of the step 8d-1 PR. The facts it rests
+on are in
+[0013-evidence/8d1-facts-20261126.md](0013-evidence/8d1-facts-20261126.md).
+The passages it changes are marked "Amended (amendment 6)".
+
+### 1. Step 8d is built as 8d-1 and 8d-2
+
+8d-1 (this step): the agent's drain and its operation table, the task
+read by idempotency key, the replicated guest inventory, the API's create
+and clone paths through it, reconciliation by the owning node, and the
+limit on a node without quorum. 8d-2: a join with guests (`member.join`
+version 2 with the joining host's guest list, B3) and `remove
+--forget-guests` (`member.removing` version 2, B13).
+
+**What main cannot do between them**, stated plainly:
+
+- **A host that has guests cannot join** a cluster: `member.join` is
+  unchanged (version 1 means "no guests"), and nothing yet carries a
+  joining host's guests into the inventory.
+- **A member that owns guests or name reservations cannot be removed**
+  (section 5): `member.removing` is refused at apply until
+  `--forget-guests` exists. Its guests have to be deleted first, or the
+  removal waits for 8d-2.
+- **Nothing lets an operator release a reservation.** A reservation is
+  released by its own node's reconciliation after 5 minutes when that
+  node has no guest of the name; the reservations of a node whose
+  `skep-api` does not run, or is compromised, stay. Because a member that
+  owns a reservation cannot be removed (section 5), such a member can only
+  be removed from step 8d-2 on, whose `--forget-guests` must cover
+  reservations as well as guests.
+
+### 2. Reservations and the four entry types
+
+Four entry types, all version 1: `guest.reserve {kind, name, key, owner,
+at}`, `guest.release {kind, name, key, owner}`, `guest.add {id, kind,
+name, task_id, owner, at}`, `guest.remove {id, owner}`. `kind` is `vm` or
+`container`; `owner` is a node ID; `at` is the proposing leader's clock.
+The state holds guests by ID (ID, kind, name, owner, key, task ID, the
+index that added it, time), reservations by kind and name, and a guests
+index. **A guest entry holds no configuration**: the agent stays the only
+place a guest's configuration lives.
+
+A create or a clone **reserves the name before the agent is asked**
+(`guest.reserve`): a name another guest or reservation of the same kind
+holds is refused (`name_taken`, naming the holder's node), and the agent
+is not called. The same owner with the same key as the existing
+reservation, or as an existing guest of that kind and name, is a success
+that changes nothing (a retried request). `guest.add` consumes this
+owner's reservation of the same kind and name, whatever its key, and
+takes its key; **it is never refused for its name** (section 4).
+Guests and reservations together stop at 10000 (`too_many_guests`). The
+refusal codes are `name_taken`, `too_many_guests`, `owner_not_member`,
+`not_owner` and `invalid`. Apply reads no clock, no file, no map order and
+no Unicode tables: the name rule (valid UTF-8 of 1 to 255 bytes, no byte
+below 0x20 and no 0x7f) is bytes only.
+
+A snapshot is written in format 6 only once a guest or a reservation
+exists or the guests index is above 0; otherwise exactly as before, and
+every earlier format is still read. The cluster audit records the four
+types with the guest's ID, kind, name and owner, each field omitted when
+empty, so every existing record still verifies.
+
+### 3. Reconciliation resolves a reservation by the guest's name, not by the task
+
+`skep-api` runs one reconciliation goroutine: once at start, every 60
+seconds, and every 5 seconds while an accepted create, clone or delete is
+unfinished (at most 15 minutes). With quorum and an inventory that is the
+cluster's (not joining, removed or stalled), it **reads the inventory
+first and only then** lists every VM and jail on its agent; any error
+from the agent ends the round with nothing written. A guest on the agent
+the inventory lacks is added (with the task of this node's reservation of
+that kind and name, read by the reservation's key, if there is one); a
+guest of this node the lists lack is read by its ID, and **only the
+agent's "not found"** removes it; a reservation of this node with no
+guest of its kind and name on the agent, older than 5 minutes by this
+node's clock, is released. At most 200 writes per round; the actor is
+`reconciliation`. It never submits, repeats or cancels anything on the
+agent.
+
+**Why by name and not by the task's key** (facts F1, F2): every create
+and clone inserts its guest's row in the transaction that creates its
+task, so a guest exists from the moment its task is accepted; but the
+task's outcome does not say whether the guest still exists — a failed jail
+create always leaves its row, a failed VM create or clone leaves it only
+when the host's cleanup failed, a task cancelled before it started leaves
+it. So the guest on the agent decides, by its name on the owning node, and
+the task only supplies the task ID. And because the agent's lists are
+pages read one after the other (F7), a guest missing from a list is never
+removed on that evidence alone.
+
+### 4. The flag is computed
+
+Two guests of one kind and name can exist — a guest created on an agent
+directly, or reconciliation adding what an agent has. They are not
+refused (the guests exist; refusing would hide one). **The flag is
+computed when the inventory is read, never stored**: among guests of the
+same kind and name, every one but the one with the lowest added index is
+flagged. Deleting one removes the flag.
+
+### 5. B5: `member.removing` and guests — the fourth in-place change
+
+**Amended (amendment 6): `member.removing` version 1 is refused at apply
+when the node owns a guest or a reservation.** This is the **fourth change
+to how an existing entry type is applied that is made in place, in
+version 1, before the release** (B5, amendment 3's entry-version rule;
+the third was amendment 4's forgotten operation IDs). It is acceptable for
+the same reasons: no release contains the guest entry types, so no
+existing log can hold a guest entry, and every node on any build applies
+every existing log the same way. `member.join` is not changed.
+
+### 6. The owner comes from the caller's key
+
+The `guests-write` request has **no owner field**; strict decoding refuses
+one. On its own socket skep-cluster sets the owner to its node's ID; when
+a member passes the write to the leader (the peer operation
+`guests-write`, member keys only), the leader sets the owner from the node
+of the key that called, never from the body. The leader's handler decodes,
+checks its term's barrier, and only then computes anything, as
+`users-write` does. A removed or joining node refuses `guests-write` as it
+refuses `users-write`.
+
+### 7. B2 extended
+
+**Amended (amendment 6).** A compromised `skep-api` (the API account on a
+node) or a compromised member's skep-cluster can, through the inventory,
+**reserve names up to the 10000 limit** (a denial of creates in the whole
+cluster) and **add or remove entries of
+its own node only**: every guest entry's owner is the caller's node, and
+`guest.remove` of another node's guest is refused (`not_owner`). It cannot
+change another node's guests in the inventory, and the inventory holds no
+configuration, so it cannot change a guest anywhere. Root on a node, as B2
+already says, can propose any entry as a voter; the inventory adds nothing
+to that.
+
+Nothing lets an operator release a reservation. A reservation is released
+by its own node's reconciliation after 5 minutes when that node has no
+guest of the name; the reservations of a node whose `skep-api` does not
+run, or is compromised, stay. Because a member that owns a reservation
+cannot be removed (section 5), such a member can only be removed from
+step 8d-2 on, whose `--forget-guests` must cover reservations as well as
+guests.
+
+### 8. B9's limit, as built
+
+**Amended (amendment 6): the limit is in `serve`, the one place access is
+decided.** Every route in the table declares whether it is served without
+quorum; a route that declares nothing is refused for everyone, and a test
+fails if the table has one. While the node has no quorum (the user copy's
+quorum, the login's), or for a degraded session even after quorum is
+back, only the declared routes are served: every GET except the serial
+console, the login and logout, the power actions of VMs and jails, and
+task cancellation. Every other route answers `503 no_quorum` with
+`details.outcome` `not_written` and `details.reason` `no_quorum` or
+`degraded_session`, before its handler runs, audited under its user
+(`request.no_quorum`). While the node has no quorum every answer to an
+authenticated request carries `Skep-Quorum: none`. The member operations'
+own degraded-session refusal of step 8c-2 is gone: the gate does it.
+Power actions are open to every guest of the node: the agent has only its
+own node's guests.
+
+### 9. B7, the drain as built
+
+**Amended (amendment 6).** The agent's internal API has one operation
+table (`internalapi.Operations`), as skep-cluster's socket has; every
+route is registered from it and one function checks the caller by the
+kernel's peer UID before the handler runs. Every operation before 8d-1 is
+open to root and the API account. The drain is three operations: `POST
+/internal/v1/drain` (`{"reason":"upgrade"|"join"}`, **root only**) sets a
+drain for 60 seconds or renews one of the same reason; another reason
+while one is active is `409 drain_active`; `DELETE` (root only) clears it;
+`GET` is open to both. The decision is the kernel's peer UID alone; no
+header takes part. While a drain is active the engine refuses every new
+task with `503 node_draining` (reason and expiry), answers an idempotent
+replay as it does with a full queue, and leaves cancellation and reads
+alone. It lives in the engine's memory, expires by its clock, and an
+agent restart clears it. Setting, clearing and the first notice of an
+expiry are each one agent audit entry; the health document has a
+non-critical `drain` check. Maintenance mode (B7 source 2) is step 8f;
+`skep-setup upgrade` and `skep-cluster join` start using the drain in
+later steps. The agent's own scheduled tasks (discovery at start,
+retention) are refused like any other while drained, and logged.
+
+`GET /internal/v1/tasks/by-key/{key}` reads the task created with an
+idempotency key; reconciliation uses it. It is not in the public API.
+
+### 10. Mixed builds: upgrade every node while no node has a guest
+
+A build before this step **stops at the first guest entry** (B5: stop,
+never skip). **Reconciliation writes guest entries by itself**: the first
+`skep-api` of this build on a node that has a guest adds it within a
+minute, with no user action. So **every node of a cluster is upgraded to
+this build while no node of the cluster has a guest**, and nothing is
+created during the upgrade window. A single host upgraded from 0.1 with
+guests is not affected (it is its own cluster: its reconciliation adds its
+guests, and there is no older build to stall).
+
+### 11. Fixes of the review
+
+- F1: a reconciliation write that skep-cluster could not commit
+  (`Uncommitted`) ends the round; a refusal is logged and the round goes on.
+- F2: after a skipped round (no quorum yet, the inventory not readable, the
+  node ID not known) the next comes after 5 seconds, until one round has
+  run without being skipped; then the periods of section 3.
+- F3: `guest.add` after a create or clone carries the name the agent reports
+  for the guest it has just read; if it differs from the reserved name, the
+  reservation of the requested name is released (best effort, logged).
+- F4: an answer of skep-cluster to a guest write with an HTTP status of 500
+  or above that is not a repeated code is `Uncommitted` with outcome
+  `unknown`; only an answer below 500 is a refusal that wrote nothing.
+- F5: an open serial console is closed at its periodic session check when
+  the quorum gate would refuse to open it now (no quorum, or a degraded
+  session): close code 4002 with a reason, one `request.no_quorum` entry.
+  The gate and the console use one rule (`quorumRefusal`).
+- F6: the drain's number of unfinished tasks is the set of tasks the engine
+  accepted and has not brought to a terminal state, so a task between the
+  queue and `running` is counted.
+- F7: the API checks a new guest's name with the agents' rule
+  (`models.ValidGuestName`) before it reserves it: `400 invalid_request`,
+  nothing written or sent.

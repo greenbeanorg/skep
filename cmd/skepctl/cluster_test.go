@@ -23,6 +23,13 @@ func TestClusterCommands(t *testing.T) {
 	if err != nil || !strings.Contains(out, "Members (1):") || !strings.Contains(out, "voter") {
 		t.Fatalf("show: %v\n%s", err, out)
 	}
+	// Step 8d-1, D35: the guest inventory of the real one-node cluster.
+	if out, _, err := skepctl(stateDir, nil, "", "cluster", "guests"); err != nil || !strings.Contains(out, "guest inventory at index 0 (0 entries)") {
+		t.Fatalf("guests: %v\n%s", err, out)
+	}
+	if out, _, err := skepctl(stateDir, nil, "", "cluster", "guests", "--json"); err != nil || !strings.Contains(out, `"items": []`) {
+		t.Fatalf("guests --json: %v\n%s", err, out)
+	}
 	jout, _, err := skepctl(stateDir, nil, "", "cluster", "show", "--json")
 	var c models.Cluster
 	if err != nil || json.Unmarshal([]byte(jout), &c) != nil || c.ClusterID == "" {
@@ -56,6 +63,19 @@ func TestClusterCommands(t *testing.T) {
 	}
 	if _, _, err := skepctl(viewer, nil, "", "cluster", "admit", line); err == nil || !strings.Contains(err.Error(), "HTTP 403") {
 		t.Fatalf("viewer admit: %v", err)
+	}
+}
+
+func TestGuestsPrint(t *testing.T) {
+	var b strings.Builder
+	printGuests(&b, models.ClusterGuestList{ClusterID: "c", GuestsIndex: 7, Items: []models.ClusterGuest{
+		{ID: "id-1", Name: "web1", Kind: "container", State: models.GuestPresent, Owner: models.ClusterGuestOwner{NodeName: "langrishe"}},
+		{ID: "id-2", Name: "web1\x1b[2J", Kind: "container", State: models.GuestPresent, Flagged: true, Owner: models.ClusterGuestOwner{NodeName: "star"}},
+		{Name: "db1", Kind: "vm", State: models.GuestCreating, Owner: models.ClusterGuestOwner{NodeName: "smith"}},
+	}})
+	out := b.String()
+	if strings.Contains(out, "\x1b") || !strings.Contains(out, "present FLAGGED") || !strings.Contains(out, "creating") || !strings.Contains(out, "(3 entries)") {
+		t.Fatalf("%s", out)
 	}
 }
 

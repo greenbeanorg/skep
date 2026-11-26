@@ -144,6 +144,12 @@ type AuditEntry struct {
 	// Count and Usernames describe users.import.
 	Count     int
 	Usernames []string
+	// A guest entry's guest (step 8d-1, D20): its ID, kind, name and
+	// owner node.
+	GuestID    string
+	GuestKind  string
+	GuestName  string
+	GuestOwner string
 }
 
 // AuditWriter makes a log entry's record durable before the machine
@@ -180,6 +186,9 @@ type Result struct {
 	Index, OpIndex uint64
 	// Events are the membership events the entry caused.
 	Events []Event
+	// Unchanged is true for a guest entry that was a success and changed
+	// nothing (step 8d-1, D12–D15): its operation ID is recorded.
+	Unchanged bool
 }
 
 // ErrStalled is returned once the machine has met an entry it cannot
@@ -201,11 +210,17 @@ type state struct {
 	// the index of the last entry that changed them.
 	users      map[string]User
 	usersIndex uint64
+	// guests and reservations are the guest inventory (step 8d-1, D11);
+	// guestsIndex is the index of the last entry that changed either.
+	guests       map[string]Guest
+	reservations map[string]Reservation
+	guestsIndex  uint64
 }
 
 func (s state) clone() state {
 	return state{clusterID: s.clusterID, epoch: s.epoch, members: maps.Clone(s.members), pendings: maps.Clone(s.pendings),
-		removedIndex: s.removedIndex, users: maps.Clone(s.users), usersIndex: s.usersIndex}
+		removedIndex: s.removedIndex, users: maps.Clone(s.users), usersIndex: s.usersIndex,
+		guests: maps.Clone(s.guests), reservations: maps.Clone(s.reservations), guestsIndex: s.guestsIndex}
 }
 
 func (s state) sortedMembers() []Member {
@@ -263,6 +278,9 @@ func auditOf(st state, e Entry, index uint64, outcome, reason string) AuditEntry
 	if IsUserType(e.Type) {
 		u := st.describeUser(e)
 		a.UserID, a.Username, a.Role, a.UserDisabled, a.At, a.Count, a.Usernames = u.UserID, u.Username, u.Role, u.UserDisabled, u.At, u.Count, u.Usernames
+	} else if IsGuestType(e.Type) {
+		g := st.describeGuest(e)
+		a.GuestID, a.GuestKind, a.GuestName, a.GuestOwner, a.At = g.GuestID, g.GuestKind, g.GuestName, g.GuestOwner, g.At
 	} else {
 		a.NodeID, a.Name, a.Address, a.Pins, a.At = st.describe(e)
 	}
@@ -274,7 +292,8 @@ func auditOf(st state, e Entry, index uint64, outcome, reason string) AuditEntry
 
 // New returns an empty machine.
 func New() *Machine {
-	return &Machine{st: state{members: map[string]Member{}, pendings: map[string]Pending{}, users: map[string]User{}}, ops: map[string]uint64{}}
+	return &Machine{st: state{members: map[string]Member{}, pendings: map[string]Pending{}, users: map[string]User{},
+		guests: map[string]Guest{}, reservations: map[string]Reservation{}}, ops: map[string]uint64{}}
 }
 
 // SetMembershipWriter installs the writer of the applied-membership file.
@@ -390,7 +409,7 @@ func (m *Machine) apply(index uint64, raw []byte) (Result, func()) {
 			n()
 		}
 	}
-	return Result{Entry: e, Events: ch.events, Index: index}, notify
+	return Result{Entry: e, Events: ch.events, Index: index, Unchanged: ch.unchanged}, notify
 }
 
 // change says what an applied entry changed.
@@ -399,6 +418,8 @@ type change struct {
 	pending    bool
 	users      bool
 	events     []Event
+	// unchanged is a guest entry's success that changed nothing.
+	unchanged bool
 }
 
 // malformedError is data a build that supports the version cannot read:
@@ -475,6 +496,9 @@ func (s *state) apply(e Entry, index uint64) (change, error) {
 	}
 	if IsUserType(e.Type) {
 		return s.applyUser(e, index)
+	}
+	if IsGuestType(e.Type) {
+		return s.applyGuest(e, index)
 	}
 	switch e.Type {
 	case TypeClusterInit:
@@ -637,6 +661,11 @@ func (s *state) apply(e Entry, index uint64) (change, error) {
 		if mem.State == StateRemoving {
 			return change{}, fmt.Errorf("member %s is already being removed", mem.Name)
 		}
+		// Step 8d-1, D17: a member that owns guests or reservations
+		// cannot be removed until "--forget-guests" exists (step 8d-2).
+		if g, r := s.ownsGuests(mem.ID); g+r > 0 {
+			return change{}, fmt.Errorf("member %s owns %d guests and %d name reservations in the inventory; it cannot be removed while it owns any (step 8d-2 brings --forget-guests)", mem.Name, g, r)
+		}
 		// Decision D7a: no removal of another member while one joins.
 		for _, other := range s.sortedMembers() {
 			if other.ID != mem.ID && other.State == StateJoining {
@@ -789,8 +818,8 @@ func (m *Machine) AppliedIndex() (uint64, bool) {
 // snapshotFormat is the version of the snapshot encoding. Format 1 (step
 // 8a) has no pending entries and no epoch; format 2 (8b-1) no removal
 // index; format 3 (8b-2a) no next pin; format 4 (8b-2b) no users and no
-// forgotten operation IDs. All are still read.
-const snapshotFormat = 5
+// forgotten operation IDs; format 5 (8c-1) no guests. All are still read.
+const snapshotFormat = 6
 
 type snapshot struct {
 	Format          int               `json:"format"`
@@ -807,6 +836,11 @@ type snapshot struct {
 	Users      []User `json:"users,omitempty"`
 	UsersIndex uint64 `json:"users_index,omitempty"`
 	Forgot     bool   `json:"forgot,omitempty"`
+	// Format 6 (step 8d-1, D19): the guests, the reservations and the
+	// guests index. A guest's flag is computed, never written.
+	Guests       []Guest       `json:"guests,omitempty"`
+	Reservations []Reservation `json:"reservations,omitempty"`
+	GuestsIndex  uint64        `json:"guests_index,omitempty"`
 	// Stalled is read from snapshots written by the first 8a build and
 	// ignored; it is never written. A stall belongs to the running build,
 	// not to the state: a later build that can apply the entry must.
@@ -845,7 +879,17 @@ func (m *Machine) Snapshot() ([]byte, error) {
 	// operation ID (D9 of step 8c-1), so that an 8b-2b build still reads
 	// a snapshot of a cluster without users.
 	if len(m.st.users) > 0 || m.st.usersIndex > 0 || m.forgot {
+		s.Format, s.Users, s.UsersIndex, s.Forgot = 5, m.st.sortedUsers(), m.st.usersIndex, m.forgot
+	}
+	// Format 6 only once a guest or a reservation exists or the guests
+	// index is above 0 (D19), so that an 8c build reads a snapshot of a
+	// cluster that never had a guest.
+	if len(m.st.guests) > 0 || len(m.st.reservations) > 0 || m.st.guestsIndex > 0 {
 		s.Format, s.Users, s.UsersIndex, s.Forgot = snapshotFormat, m.st.sortedUsers(), m.st.usersIndex, m.forgot
+		s.Guests, s.Reservations, s.GuestsIndex = m.st.sortedGuests(), m.st.sortedReservations(), m.st.guestsIndex
+		for i := range s.Guests {
+			s.Guests[i].Flagged = false
+		}
 	}
 	return json.Marshal(s)
 }
@@ -865,9 +909,17 @@ func (m *Machine) Restore(r io.Reader) error {
 		return fmt.Errorf("clusterstate: snapshot format %d is unknown to this build", s.Format)
 	}
 	st := state{clusterID: s.ClusterID, epoch: s.Epoch, members: map[string]Member{}, pendings: map[string]Pending{}, removedIndex: s.RemovedIndex,
-		users: map[string]User{}, usersIndex: s.UsersIndex}
+		users: map[string]User{}, usersIndex: s.UsersIndex,
+		guests: map[string]Guest{}, reservations: map[string]Reservation{}, guestsIndex: s.GuestsIndex}
 	for _, u := range s.Users {
 		st.users[u.ID] = u
+	}
+	for _, g := range s.Guests {
+		g.Flagged = false
+		st.guests[g.ID] = g
+	}
+	for _, r := range s.Reservations {
+		st.reservations[resKey(r.Kind, r.Name)] = r
 	}
 	if s.Format == 1 && st.clusterID != "" {
 		st.epoch = 1

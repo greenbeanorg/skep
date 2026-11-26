@@ -48,6 +48,7 @@ skepctl vm snapshot rollback VM SNAPSHOT [--destroy-newer] [--wait] [--json]
 skepctl vm snapshot delete VM SNAPSHOT [--wait] [--json]
 
 skepctl cluster show [--json]
+skepctl cluster guests [--json]
 skepctl cluster admit REQUEST [--json]
 skepctl cluster withdraw NAME [--json]
 skepctl cluster remove NAME [--cluster-id ID] [--json]

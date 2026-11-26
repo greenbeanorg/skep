@@ -30,6 +30,9 @@ const (
 	// hypervisor with VT-x virtual interrupt delivery on: nested bhyve can
 	// freeze the host on the first VM start.
 	CheckNestedInterrupts = "nested_interrupts"
+	// CheckDrain is the agent's drain (step 8d-1, D6): degraded while a
+	// drain refuses new tasks, with its reason and expiry.
+	CheckDrain = "drain"
 )
 
 // Events, logged with event=<name> and written to the audit log as

@@ -176,6 +176,93 @@ records the authenticated user as the actor of the cancellation.
 Submission over the socket arrives with the first operation that needs
 it.
 
+### The internal API's operations (step 8d-1)
+
+The agent's socket admits two peers by the kernel's credentials: root and
+the API account (`skep`). Every operation of the internal API is in one
+table (`internalapi.Operations`) that says which of the two may call it;
+every route is registered from it, and a route not in it does not exist.
+One function (`authorize`) checks the caller of an operation by the peer
+UID, root first, before the handler runs. No header takes part in the
+decision; the actor headers are recorded, never trusted for access. A
+test checks this table against the code.
+
+| Operation | Method and path | Root | API |
+|---|---|---|---|
+| `health` | `GET /internal/v1/health` | yes | yes |
+| `system` | `GET /internal/v1/system` | yes | yes |
+| `node-hardware` | `GET /internal/v1/nodes/{id}/hardware` | yes | yes |
+| `tasks-list` | `GET /internal/v1/tasks` | yes | yes |
+| `task-get` | `GET /internal/v1/tasks/{id}` | yes | yes |
+| `task-cancel` | `POST /internal/v1/tasks/{id}/cancel` | yes | yes |
+| `task-by-key` | `GET /internal/v1/tasks/by-key/{key}` | yes | yes |
+| `drain-get` | `GET /internal/v1/drain` | yes | yes |
+| `drain-set` | `POST /internal/v1/drain` | yes | no |
+| `drain-clear` | `DELETE /internal/v1/drain` | yes | no |
+| `vms-list` | `GET /internal/v1/vms` | yes | yes |
+| `vm-create` | `POST /internal/v1/vms` | yes | yes |
+| `vm-get` | `GET /internal/v1/vms/{id}` | yes | yes |
+| `vm-update` | `PUT /internal/v1/vms/{id}` | yes | yes |
+| `vm-delete` | `DELETE /internal/v1/vms/{id}` | yes | yes |
+| `vm-action` | `POST /internal/v1/vms/{id}/actions` | yes | yes |
+| `vm-console` | `GET /internal/v1/vms/{id}/console/serial` | yes | yes |
+| `vm-snapshots-list` | `GET /internal/v1/vms/{id}/snapshots` | yes | yes |
+| `vm-snapshot-create` | `POST /internal/v1/vms/{id}/snapshots` | yes | yes |
+| `vm-snapshot-get` | `GET /internal/v1/vms/{id}/snapshots/{sid}` | yes | yes |
+| `vm-snapshot-delete` | `DELETE /internal/v1/vms/{id}/snapshots/{sid}` | yes | yes |
+| `vm-snapshot-rollback` | `POST /internal/v1/vms/{id}/snapshots/{sid}/rollback` | yes | yes |
+| `vm-clone` | `POST /internal/v1/vms/{id}/clone` | yes | yes |
+| `storage-pools` | `GET /internal/v1/storage/pools` | yes | yes |
+| `storage-media` | `GET /internal/v1/storage/media` | yes | yes |
+| `storage-datasets` | `GET /internal/v1/storage/datasets` | yes | yes |
+| `template-sources` | `GET /internal/v1/storage/template-sources` | yes | yes |
+| `templates-list` | `GET /internal/v1/storage/templates` | yes | yes |
+| `template-create` | `POST /internal/v1/storage/templates` | yes | yes |
+| `template-get` | `GET /internal/v1/storage/templates/{id}` | yes | yes |
+| `template-delete` | `DELETE /internal/v1/storage/templates/{id}` | yes | yes |
+| `containers-list` | `GET /internal/v1/containers` | yes | yes |
+| `container-create` | `POST /internal/v1/containers` | yes | yes |
+| `container-get` | `GET /internal/v1/containers/{id}` | yes | yes |
+| `container-update` | `PUT /internal/v1/containers/{id}` | yes | yes |
+| `container-delete` | `DELETE /internal/v1/containers/{id}` | yes | yes |
+| `container-action` | `POST /internal/v1/containers/{id}/actions` | yes | yes |
+| `container-console-log` | `GET /internal/v1/containers/{id}/console-log` | yes | yes |
+| `container-snapshots-list` | `GET /internal/v1/containers/{id}/snapshots` | yes | yes |
+| `container-snapshot-create` | `POST /internal/v1/containers/{id}/snapshots` | yes | yes |
+| `container-snapshot-get` | `GET /internal/v1/containers/{id}/snapshots/{sid}` | yes | yes |
+| `container-snapshot-delete` | `DELETE /internal/v1/containers/{id}/snapshots/{sid}` | yes | yes |
+| `container-snapshot-rollback` | `POST /internal/v1/containers/{id}/snapshots/{sid}/rollback` | yes | yes |
+| `container-clone` | `POST /internal/v1/containers/{id}/clone` | yes | yes |
+| `metrics` | `GET /internal/v1/metrics` | yes | yes |
+
+### The drain (step 8d-1, ADR 0013 amendment 6)
+
+`POST /internal/v1/drain` with `{"reason":"upgrade"|"join"}` (root only)
+sets a drain for 60 seconds from now, or renews the drain of the same
+reason; it answers the reason, the expiry and the number of unfinished
+tasks. Another reason while a drain is active is `409 drain_active` and
+changes nothing. `DELETE /internal/v1/drain` (root only) clears it, and
+answers the same 200 without one. `GET /internal/v1/drain` is open to root
+and skep-api.
+
+While a drain is active the task engine refuses every new task with
+`503 node_draining` (details: the reason and the expiry), recorded as a
+refused submission; a replay by idempotency key, which creates nothing,
+is answered as it is with a full queue. Cancelling and reading are not
+affected. The drain lives in the engine's memory: it expires by the
+engine's clock unless renewed, and an agent restart clears it. Setting
+it (not each renewal), clearing it, and the first time the engine notices
+it expired each write one agent audit entry (`node.drain.set`,
+`node.drain.cleared`, `node.drain.expired`) with the actor and the peer
+UID. While it is active the health document has a non-critical `drain`
+check with the reason and the expiry. Nothing in step 8d-1 sets a drain
+by itself: `skep-setup upgrade` and `skep-cluster join` use it in later
+steps; the reason `maintenance` comes with step 8f.
+
+`GET /internal/v1/tasks/by-key/{key}` returns the task created with an
+idempotency key (404 without one). skep-api's guest reconciliation reads
+the task of a name reservation with it; it is not in the public API.
+
 ## Persistence
 
 SQLite holds local state, using the pure-Go `modernc.org/sqlite` driver
