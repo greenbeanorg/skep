@@ -76,6 +76,10 @@ type Socket struct {
 	Unanswered bool
 	// Writes counts the guests-write calls that reached the machine.
 	Writes int
+	// WriteErr, when set, is every guests-write's answer (reads still
+	// work); Calls counts the guests-write calls, answered or not.
+	WriteErr error
+	Calls    int
 }
 
 // Node returns the socket of a member.
@@ -107,7 +111,10 @@ func (s *Socket) Read(context.Context) (guestapi.GuestsAnswer, error) {
 // Write implements guestinv.Client: the owner is this socket's node, as
 // skep-cluster sets it.
 func (s *Socket) Write(_ context.Context, req guestapi.WriteRequest) (guestapi.WriteResult, error) {
+	s.Calls++
 	switch {
+	case s.WriteErr != nil:
+		return guestapi.WriteResult{}, s.WriteErr
 	case s.Down:
 		return guestapi.WriteResult{}, guestapi.ErrUnreachable
 	case s.Unanswered:

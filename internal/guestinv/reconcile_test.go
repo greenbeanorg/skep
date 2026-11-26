@@ -5,12 +5,14 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"net/http"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/greenbeanorg/skep/internal/agentclient"
 	"github.com/greenbeanorg/skep/internal/cluster/clusterstate"
+	"github.com/greenbeanorg/skep/internal/cluster/guestapi"
 	"github.com/greenbeanorg/skep/internal/guestinv"
 	"github.com/greenbeanorg/skep/internal/guestinv/guestinvtest"
 	"github.com/greenbeanorg/skep/pkg/models"
@@ -312,5 +314,65 @@ func TestWriteRepeatsAndReportsTheOutcome(t *testing.T) {
 	var ref *guestinv.Refused
 	if !errors.As(err, &ref) || ref.Code != clusterstate.CodeNameTaken {
 		t.Fatalf("taken: %v", err)
+	}
+}
+
+// F1 of the 8d-1 review: a write skep-cluster could not commit ends the
+// round; a refusal does not.
+func TestRoundEndsAtAnUncommittedWrite(t *testing.T) {
+	r := newRig(t)
+	r.agent.cts[ct1] = models.Container{ID: ct1, Name: "a1"}
+	r.agent.cts[ct2] = models.Container{ID: ct2, Name: "a2"}
+	r.sock.WriteErr = guestapi.ErrUnreachable
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	res := r.rec.Round(ctx)
+	if res.Stopped == "" || res.Added != 0 || r.sock.Calls == 0 {
+		t.Fatalf("round: %+v, %d calls", res, r.sock.Calls)
+	}
+	// One write was tried (with its repeats), not the second.
+	calls := r.sock.Calls
+	r.sock.WriteErr = &guestapi.Error{HTTPStatus: http.StatusConflict, Code: clusterstate.CodeOwnerNotMember, Message: "no"}
+	r.sock.Calls = 0
+	if res := r.rec.Round(context.Background()); res.Stopped != "" || r.sock.Calls != 2 {
+		t.Fatalf("refused round: %+v, %d calls (the uncommitted round made %d)", res, r.sock.Calls, calls)
+	}
+}
+
+// F4 of the 8d-1 review: an answer of 500 or above that is not a repeated
+// code is unknown, not a refusal; below 500 it is a refusal.
+func TestWriteAnswerAbove500IsUnknown(t *testing.T) {
+	r := newRig(t)
+	r.sock.WriteErr = &guestapi.Error{HTTPStatus: http.StatusInternalServerError, Code: "internal_error", Message: "x"}
+	_, err := r.inv.Reserve(context.Background(), clusterstate.KindVM, "x", "k", "user:andy", "")
+	var unc *guestinv.Uncommitted
+	if !errors.As(err, &unc) || unc.Outcome != guestinv.OutcomeUnknown || r.sock.Calls != 1 {
+		t.Fatalf("500: %v, %d calls", err, r.sock.Calls)
+	}
+	r.sock.WriteErr = &guestapi.Error{HTTPStatus: http.StatusBadRequest, Code: "invalid_request", Message: "x"}
+	_, err = r.inv.Reserve(context.Background(), clusterstate.KindVM, "x", "k", "user:andy", "")
+	var ref *guestinv.Refused
+	if !errors.As(err, &ref) {
+		t.Fatalf("400: %v", err)
+	}
+}
+
+// F2 of the 8d-1 review: after a skipped round the next comes after
+// RetryEvery, not Every.
+func TestRunRetriesASkippedRoundSoon(t *testing.T) {
+	r := newRig(t)
+	var mu sync.Mutex
+	asked := 0
+	quiet := slog.New(slog.NewTextHandler(io.Discard, nil))
+	rec := guestinv.NewReconciler(guestinv.ReconcilerOptions{Agent: r.agent, Inventory: r.inv, Logger: quiet,
+		NodeID: func(context.Context) (string, error) { return guestinvtest.NodeA, nil },
+		Quorum: func() bool { mu.Lock(); defer mu.Unlock(); asked++; return asked > 1 }})
+	ctx, cancel := context.WithTimeout(context.Background(), guestinv.RetryEvery+1500*time.Millisecond)
+	defer cancel()
+	rec.Run(ctx)
+	mu.Lock()
+	defer mu.Unlock()
+	if asked != 2 || r.agent.calls == 0 {
+		t.Fatalf("rounds begun: %d, agent calls %d; want a skipped round and one that ran", asked, r.agent.calls)
 	}
 }

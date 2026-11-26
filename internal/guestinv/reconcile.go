@@ -20,6 +20,10 @@ const (
 	// WatchEvery is the period while an accepted create, clone or delete
 	// task is unfinished.
 	WatchEvery = 5 * time.Second
+	// RetryEvery is the period after a skipped round until one round has
+	// run without being skipped (F2 of the 8d-1 review): at the start of
+	// skep-api the user copy has usually not had its first answer yet.
+	RetryEvery = 5 * time.Second
 	// WatchFor bounds how long one task is watched.
 	WatchFor = 15 * time.Minute
 	// ReleaseAfter is how old a reservation without its guest must be,
@@ -99,19 +103,29 @@ func (r *Reconciler) Watch(taskID string) {
 	}
 }
 
-// Run makes rounds until ctx ends.
+// Run makes rounds until ctx ends. Until one round has run without being
+// skipped, a skipped round is followed by the next after RetryEvery.
 func (r *Reconciler) Run(ctx context.Context) {
 	last := time.Time{}
+	ran := false
 	for ctx.Err() == nil {
+		every := Every
+		if !ran {
+			every = RetryEvery
+		}
 		now := r.o.Now()
-		if last.IsZero() || now.Sub(last) >= Every || r.watching() {
-			r.Round(ctx)
+		if last.IsZero() || now.Sub(last) >= every || r.watching() {
+			if res := r.Round(ctx); res.Skipped == "" {
+				ran = true
+			}
 			last = r.o.Now()
 			r.updateWatched(ctx)
 		}
 		wait := Every
 		if r.watching() {
 			wait = WatchEvery
+		} else if !ran {
+			wait = RetryEvery
 		}
 		select {
 		case <-ctx.Done():
@@ -281,6 +295,9 @@ func (r *Reconciler) Round(ctx context.Context) (res RoundResult) {
 		if err == nil {
 			res.Added++
 		}
+		if uncommitted(err, &res) {
+			return res
+		}
 	}
 	// (e) a guest this node owns that the lists do not have: only the
 	// agent's "not found" for that one guest removes it.
@@ -309,6 +326,9 @@ func (r *Reconciler) Round(ctx context.Context) (res RoundResult) {
 		if err == nil {
 			res.Removed++
 		}
+		if uncommitted(err, &res) {
+			return res
+		}
 	}
 	// (f) a reservation of this node with no guest of its kind and name
 	// on the agent, older than ReleaseAfter by this node's clock.
@@ -325,8 +345,23 @@ func (r *Reconciler) Round(ctx context.Context) (res RoundResult) {
 		if err == nil {
 			res.Release++
 		}
+		if uncommitted(err, &res) {
+			return res
+		}
 	}
 	return res
+}
+
+// uncommitted ends the round after a write skep-cluster could not commit
+// (F1 of the 8d-1 review): every further write would wait as long. A
+// refusal (*Refused) is logged and the round goes on.
+func uncommitted(err error, res *RoundResult) bool {
+	var unc *Uncommitted
+	if !errors.As(err, &unc) {
+		return false
+	}
+	res.Stopped = "skep-cluster could not commit a write: " + err.Error()
+	return true
 }
 
 func errText(err error) string {

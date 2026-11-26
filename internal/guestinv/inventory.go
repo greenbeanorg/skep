@@ -38,7 +38,7 @@ type Client interface {
 	Write(ctx context.Context, req guestapi.WriteRequest) (guestapi.WriteResult, error)
 }
 
-// Refused is a refusal of the state machine (D18): nothing was written.
+// Refused is a refusal (D18), an answer below 500: nothing was written.
 type Refused struct {
 	Code    string
 	Message string
@@ -122,8 +122,10 @@ func (i *Inventory) write(ctx context.Context, typ string, data any, actor, requ
 		transient, unk := isTransient(err)
 		unknown = unknown || unk
 		if !transient {
+			// Only an answer below 500 is a refusal that wrote nothing
+			// (F4 of the 8d-1 review; clusterFailure's rule).
 			var e *guestapi.Error
-			if errors.As(err, &e) {
+			if errors.As(err, &e) && e.HTTPStatus < 500 {
 				return res, &Refused{Code: e.Code, Message: e.Message}
 			}
 			return res, &Uncommitted{Outcome: OutcomeUnknown, Err: err}
