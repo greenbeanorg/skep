@@ -55,7 +55,7 @@ L2c)
 	python3 "$API" admit "$m" admin "$W/L2-request" "$W/L2-admission"
 	[ -s "$W/L2-admission" ] || { echo "no admission; stop"; exit 3; }
 	h "L2c: $x: skep-cluster join (the admission is not printed)"
-	on $x "sudo $SC join $(cat "$W/L2-admission")" | grep -v 'skep-admission:'; echo "exit=${PIPESTATUS[0]}"
+	on $x "sudo $SC join -cluster-id $(cat "$W/L2-cluster-id") $(cat "$W/L2-admission")" | grep -v 'skep-admission:'; echo "exit=${PIPESTATUS[0]}"
 	bash "$B" wait3
 	;;
 L3)
