@@ -103,6 +103,24 @@ info:
     answer `503 agent_version_mismatch`; restarting both
     (`skep-setup upgrade`) clears it.
 
+    In a cluster (step 8e-1) a request for one VM or one jail by its ID
+    (its read and its power actions) is forwarded to the node that owns
+    the guest, and the task routes take a `node` query parameter (a node
+    ID or name) that sends them to that node; every other route is served
+    by the node the client talks to, and a `node` parameter on it is
+    `400 invalid_request`. The answer of a forwarded request carries the
+    `Skep-Node` header, the serving node's ID. A forward that cannot be
+    made answers one of four codes, each with `details.node_id`,
+    `details.node_name` and `details.outcome` (`not_written`: nothing
+    was carried out; `unknown`: the request was sent and no answer came):
+    `503 node_unreachable` (the node cannot be reached, has not registered
+    its API key yet, is joining or being removed, or has just restarted),
+    `503 node_behind` (the node has not yet caught up with the latest
+    change of the user's account; try again shortly), `503
+    node_clock_skew` (the two nodes' clocks are more than 15 s apart) and
+    `503 node_version_mismatch` (the node's build does not serve this
+    request; it ends when every node is upgraded).
+
     Every error response uses the `ErrorResponse` envelope. Every response
     carries an `X-Request-ID` header; a well-formed ID sent by the client is
     echoed back.
@@ -498,6 +516,7 @@ paths:
       x-skep-permission: task:read
       parameters:
         - $ref: "#/components/parameters/Background"
+        - $ref: "#/components/parameters/Node"
         - name: id
           in: path
           required: true
@@ -510,6 +529,8 @@ paths:
           headers:
             X-Request-ID:
               $ref: "#/components/headers/RequestID"
+            Skep-Node:
+              $ref: "#/components/headers/SkepNode"
           content:
             application/json:
               schema:
@@ -533,6 +554,7 @@ paths:
         required: true
         schema:
           type: string
+      - $ref: "#/components/parameters/Node"
     post:
       tags: [tasks]
       operationId: cancelTask
@@ -554,6 +576,9 @@ paths:
       responses:
         "200":
           description: The task after the request.
+          headers:
+            Skep-Node:
+              $ref: "#/components/headers/SkepNode"
           content:
             application/json:
               schema:
@@ -565,7 +590,11 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
         "404":
-          $ref: "#/components/responses/NotFound"
+          description: No such task, or no node with the name or ID the `node` parameter gives.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "409":
           description: A running task of this type cannot be cancelled (`not_cancellable`).
           content:
@@ -891,6 +920,9 @@ paths:
       responses:
         "200":
           description: The VM with its disks, install media, and network interfaces.
+          headers:
+            Skep-Node:
+              $ref: "#/components/headers/SkepNode"
           content:
             application/json:
               schema:
@@ -1044,6 +1076,9 @@ paths:
       responses:
         "202":
           description: The task.
+          headers:
+            Skep-Node:
+              $ref: "#/components/headers/SkepNode"
           content:
             application/json:
               schema:
@@ -1752,6 +1787,9 @@ paths:
       responses:
         "200":
           description: The jail.
+          headers:
+            Skep-Node:
+              $ref: "#/components/headers/SkepNode"
           content:
             application/json:
               schema:
@@ -1922,6 +1960,9 @@ paths:
       responses:
         "202":
           description: The power task.
+          headers:
+            Skep-Node:
+              $ref: "#/components/headers/SkepNode"
           content:
             application/json:
               schema:
@@ -2514,6 +2555,19 @@ paths:
           $ref: "#/components/responses/Unavailable"
 components:
   parameters:
+    Node:
+      name: node
+      in: query
+      required: false
+      description: |
+        The node that runs the task, by node ID or name (a task's
+        `node_id`). This node's own ID or name, or no parameter, serves the
+        request here; another member's forwards it (`Skep-Node` names it);
+        a name or ID no member has is `404`; a member that cannot be
+        forwarded to is `503 node_unreachable`. Only the two task routes
+        take it in this build.
+      schema:
+        type: string
     IdempotencyKey:
       name: Idempotency-Key
       in: header
@@ -2564,6 +2618,12 @@ components:
   headers:
     RequestID:
       description: ID that correlates the response with the server logs.
+      schema:
+        type: string
+    SkepNode:
+      description: |
+        The ID of the node that served a forwarded request (step 8e-1).
+        Absent when the node the client talks to served it.
       schema:
         type: string
   responses:
@@ -2718,7 +2778,10 @@ components:
       description: |
         The host agent cannot be reached (`agent_unavailable`), is another
         build than skep-api (`agent_version_mismatch`), or the request was
-        cancelled or timed out (`service_unavailable`).
+        cancelled or timed out (`service_unavailable`). A request forwarded
+        to another node (step 8e-1) may also answer `node_unreachable`,
+        `node_behind`, `node_clock_skew` or `node_version_mismatch`, with
+        `details.node_id`, `details.node_name` and `details.outcome`.
       content:
         application/json:
           schema:
@@ -3789,6 +3852,11 @@ components:
         next_pin:
           type: string
           description: Set while the member rotates its key.
+        api_pin:
+          type: string
+          description: |
+            The SHA-256 pin of the member's skep-api node-to-node key, once
+            that skep-api has registered it (step 8e-1); absent before.
         voter: {type: boolean}
     ClusterPending:
       type: object
