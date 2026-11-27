@@ -46,8 +46,8 @@
   counts, the fifth in-place change to B5, and the two limits of a join's
   guest list. It is at the end of this document; the passages it changes
   are marked "Amended (amendment 7)".
-- **Amendment 8 (2026-11-26)** is **Proposed**, accepted by approving the
-  merge of the step 8e-1 PR: skep-api's node-to-node key and its pin
+- **Amendment 8 (2026-11-26)** is **Accepted** (2026-11-27, Andy, PR
+  #119): step 8e-1, skep-api's node-to-node key and its pin
   registered by the node itself (`member.api_key`, with a guard), the node
   listener on 8445, the signed envelope and the first forwarded routes.
   It is at the end of this document; the passages it changes are marked
@@ -3140,11 +3140,11 @@ any reason; the join clears only a drain it believes is its own, but
 after a lost answer it cannot know. Step 8f, which adds the upgrade
 drain, makes the clear name the reason it clears (backlog).
 
-## Amendment 8 (2026-11-26, Proposed)
+## Amendment 8 (2026-11-26, Accepted)
 
 Written with the build of step 8e-1, from the fixed decisions D1 to D46
-of that run. **Status: Proposed, accepted by approving the merge of the
-step 8e-1 PR.** The facts it rests on are in
+of that run. **Status: Accepted 2026-11-27 (Andy) with
+PR #119,** by approving the merge of the step 8e-1 PR. The facts it rests on are in
 [0013-evidence/8e1-facts-20261126.md](0013-evidence/8e1-facts-20261126.md).
 The passages it changes are marked "Amended (amendment 8)".
 
