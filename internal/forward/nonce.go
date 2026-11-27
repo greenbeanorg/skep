@@ -44,9 +44,3 @@ func (c *nonceCache) add(origin, nonce string, expiresAt, nowMillis int64) strin
 	c.until[key] = expiresAt + nonceGraceMillis
 	return ""
 }
-
-func (c *nonceCache) size() int {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return len(c.until)
-}
