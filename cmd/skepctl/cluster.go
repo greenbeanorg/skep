@@ -144,6 +144,9 @@ func printCluster(w io.Writer, c models.Cluster) {
 			addr = "-"
 		}
 		fmt.Fprintf(w, "  %s  %s  %s, %s  %s  %s\n", clean(m.Name), clean(m.ID), clean(m.State), role, clean(addr), clean(m.Pin))
+		if m.APIPin != "" {
+			fmt.Fprintf(w, "      API pin %s\n", clean(m.APIPin))
+		}
 		if m.NextPin != "" {
 			fmt.Fprintf(w, "      next pin %s (rotating)\n", clean(m.NextPin))
 		}

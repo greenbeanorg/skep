@@ -27,7 +27,17 @@ const (
 	HeaderRequestID      = "Skep-Request-Id"
 	HeaderSourceIP       = "Skep-Source-Ip"
 	HeaderIdempotencyKey = "Idempotency-Key"
+	// HeaderOriginNode and HeaderEnvelope are set only on a request that
+	// skep-api serves for another node (step 8e-1, D39): the node the
+	// user's request arrived on, and the signed envelope as received.
+	// Both or neither.
+	HeaderOriginNode = "Skep-Origin-Node"
+	HeaderEnvelope   = "Skep-Envelope"
 )
+
+// MaxEnvelope is the largest envelope the agent stores (ADR 0004,
+// amendment of 2026-11-24).
+const MaxEnvelope = 4096
 
 // HeaderAgentVersion is on every response of the agent's internal API:
 // the agent's build ID. skep-api refuses to work with an agent whose build
@@ -52,6 +62,10 @@ var (
 	nameRE = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,128}$`)
 	// requestIDRE is the character set of request IDs in the public API.
 	requestIDRE = regexp.MustCompile(`^[A-Za-z0-9._-]{1,64}$`)
+	// originRE is a node ID: a lower-case UUID.
+	originRE = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
+	// envelopeRE is the envelope's character set (D39).
+	envelopeRE = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 )
 
 // Caller is the metadata of one request to the agent: who it is made for
@@ -68,6 +82,11 @@ type Caller struct {
 	SourceIP string
 	// IdempotencyKey is passed through for operations that accept one.
 	IdempotencyKey string
+	// OriginNode and Envelope are set for a request skep-api serves for
+	// another node (step 8e-1, D39); the agent records both in the
+	// "requested" audit entry and verifies neither.
+	OriginNode string
+	Envelope   string
 }
 
 // ErrNoActor is returned for a request without an actor.
@@ -92,7 +111,25 @@ func (c Caller) Validate() error {
 	if c.IdempotencyKey != "" && !nameRE.MatchString(c.IdempotencyKey) {
 		return errors.New("invalid idempotency key: use 1 to 128 characters from A-Z a-z 0-9 . _ : -")
 	}
+	if (c.OriginNode == "") != (c.Envelope == "") {
+		return errors.New("the origin node and the envelope are sent together or not at all")
+	}
+	if c.OriginNode != "" && !originRE.MatchString(c.OriginNode) {
+		return errors.New("invalid origin node: a node ID is a lower-case UUID")
+	}
+	if c.Envelope != "" && (len(c.Envelope) > MaxEnvelope || !envelopeRE.MatchString(c.Envelope)) {
+		return errors.New("invalid envelope: at most 4096 characters from A-Z a-z 0-9 . _ -")
+	}
 	return nil
+}
+
+// ForwardDetails returns the audit details of a forwarded request's
+// origin and envelope, or nil.
+func (c Caller) ForwardDetails() map[string]any {
+	if c.OriginNode == "" {
+		return nil
+	}
+	return map[string]any{"origin_node": c.OriginNode, "envelope": c.Envelope}
 }
 
 // SetHeaders writes the caller into the headers of an outgoing request.
@@ -107,6 +144,8 @@ func (c Caller) SetHeaders(h http.Header) {
 	set(HeaderRequestID, c.RequestID)
 	set(HeaderSourceIP, c.SourceIP)
 	set(HeaderIdempotencyKey, c.IdempotencyKey)
+	set(HeaderOriginNode, c.OriginNode)
+	set(HeaderEnvelope, c.Envelope)
 }
 
 // FromHeaders reads and validates the caller of an incoming request.
@@ -117,6 +156,8 @@ func FromHeaders(h http.Header) (Caller, error) {
 		RequestID:      h.Get(HeaderRequestID),
 		SourceIP:       h.Get(HeaderSourceIP),
 		IdempotencyKey: h.Get(HeaderIdempotencyKey),
+		OriginNode:     h.Get(HeaderOriginNode),
+		Envelope:       h.Get(HeaderEnvelope),
 	}
 	if err := c.Validate(); err != nil {
 		return Caller{}, err

@@ -306,6 +306,9 @@ func (h *handler) cancelTask(w http.ResponseWriter, r *http.Request) {
 		PeerUID:   peer.UID,
 		RequestID: caller.RequestID,
 		SourceIP:  caller.SourceIP,
+		// A forwarded cancellation's origin and envelope (D40).
+		OriginNode: caller.OriginNode,
+		Envelope:   caller.Envelope,
 	})
 	if err != nil {
 		httpkit.Fail(h.log, w, r, err)

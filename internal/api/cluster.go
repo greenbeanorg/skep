@@ -51,12 +51,12 @@ const removeWriteLimit = memberapi.RemoveTimeout + 30*time.Second
 
 func (h *handler) clusterRoutes() []route {
 	return []route{
-		{http.MethodGet, "/cluster", auth.PermSystemRead, nil, h.clusterView, servedWithoutQuorum},
+		{http.MethodGet, "/cluster", auth.PermSystemRead, nil, h.clusterView, servedWithoutQuorum, scopeLocal, false},
 		// The guest inventory names VMs and jails (D34).
-		{http.MethodGet, "/cluster/guests", auth.PermSystemRead, []string{auth.PermVMRead, auth.PermContainerRead}, h.clusterGuests, servedWithoutQuorum},
-		{http.MethodPost, "/cluster/admissions", auth.PermClusterManage, nil, h.clusterAdmit, needsQuorum},
-		{http.MethodDelete, "/cluster/admissions/{name}", auth.PermClusterManage, nil, h.clusterWithdraw, needsQuorum},
-		{http.MethodPost, "/cluster/members/{name}/remove", auth.PermClusterManage, nil, h.clusterRemove, needsQuorum},
+		{http.MethodGet, "/cluster/guests", auth.PermSystemRead, []string{auth.PermVMRead, auth.PermContainerRead}, h.clusterGuests, servedWithoutQuorum, scopeLocal, false},
+		{http.MethodPost, "/cluster/admissions", auth.PermClusterManage, nil, h.clusterAdmit, needsQuorum, scopeLocal, false},
+		{http.MethodDelete, "/cluster/admissions/{name}", auth.PermClusterManage, nil, h.clusterWithdraw, needsQuorum, scopeLocal, false},
+		{http.MethodPost, "/cluster/members/{name}/remove", auth.PermClusterManage, nil, h.clusterRemove, needsQuorum, scopeLocal, false},
 	}
 }
 
@@ -213,7 +213,7 @@ func (h *handler) clusterView(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, m := range v.Members {
 		out.Members = append(out.Members, models.ClusterMember{ID: m.ID, Name: m.Name, State: m.State, Address: m.Address,
-			Pin: m.Pin, NextPin: m.NextPin, Voter: voters[m.ID]})
+			Pin: m.Pin, NextPin: m.NextPin, APIPin: m.APIPin, Voter: voters[m.ID]})
 	}
 	for _, p := range v.Pendings {
 		out.Pendings = append(out.Pendings, models.ClusterPending{NodeID: p.NodeID, Name: p.Name, Address: p.Address, Pin: p.Pin,

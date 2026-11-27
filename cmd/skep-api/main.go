@@ -18,6 +18,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -29,9 +30,11 @@ import (
 	"github.com/greenbeanorg/skep/internal/auth"
 	"github.com/greenbeanorg/skep/internal/cluster/guestapi"
 	"github.com/greenbeanorg/skep/internal/cluster/memberapi"
+	"github.com/greenbeanorg/skep/internal/cluster/peerapi"
 	"github.com/greenbeanorg/skep/internal/cluster/userapi"
 	"github.com/greenbeanorg/skep/internal/config"
 	"github.com/greenbeanorg/skep/internal/database"
+	"github.com/greenbeanorg/skep/internal/forward"
 	"github.com/greenbeanorg/skep/internal/guestinv"
 	"github.com/greenbeanorg/skep/internal/logging"
 	"github.com/greenbeanorg/skep/internal/privdrop"
@@ -284,11 +287,19 @@ func runServer(ctx context.Context, args []string, e env) error {
 		<-recDone
 	}()
 
-	checks := map[string]models.HealthProbe{usercopy.CheckName: ucopy.Health}
+	// Forwarding between nodes (step 8e-1): the API node key in its own
+	// directory, the peers skep-cluster reports, the key's registration
+	// and the node listener on port 8445 (only with a listen address).
+	node := forward.NewNode(forward.NodeOptions{
+		KeyDir: filepath.Join(cfg.StateDir(), "nodekey"), Cluster: peerapi.NewClient(cfg.ClusterSocket),
+		Users: userStore, Logger: log,
+	})
+
+	checks := map[string]models.HealthProbe{usercopy.CheckName: ucopy.Health, forward.CheckName: node.Health}
 	if archive != nil {
 		checks[models.CheckAccessAuditArchive] = archive.Health
 	}
-	handler := api.NewHandler(api.Options{
+	apiOpts := api.Options{
 		Cluster:  members,
 		Quorum:   ucopy.Quorum,
 		Guests:   guestinv.Service{Inventory: inventory, Reconciler: reconciler},
@@ -305,7 +316,21 @@ func runServer(ctx context.Context, args []string, e env) error {
 		},
 		TrustedProxies: proxies,
 		UI:             webui.Handler(),
-	})
+		Forward:        node,
+	}
+	handler := api.NewHandler(apiOpts)
+	// The node listener's handler shares the backends and the audit, and
+	// never forwards.
+	nodeOpts := apiOpts
+	nodeOpts.Forward, nodeOpts.UI, nodeOpts.TLS = nil, nil, nil
+	node.SetHandler(api.NewNodeHandler(nodeOpts, node.Receiver()))
+	nodeCtx, stopNode := context.WithCancel(ctx)
+	nodeDone := make(chan struct{})
+	go func() { defer close(nodeDone); node.Run(nodeCtx) }()
+	defer func() {
+		stopNode()
+		<-nodeDone
+	}()
 	if webui.Embedded() {
 		log.Info("web interface embedded; serving it on every path outside /api")
 	} else {

@@ -117,6 +117,14 @@ const (
 	// (step 8d-1, D23). The leader sets the entry's owner from the node
 	// of the key that called, never from the body.
 	OpGuestsWrite = "guests-write"
+	// OpSupports answers whether this build applies a given entry type
+	// and version (step 8e-1, D7). A build before it answers it as an
+	// unknown operation (forbidden).
+	OpSupports = "supports"
+	// OpAPIKey is a member's own API key registration passed to the
+	// leader (step 8e-1, D8). The node is the calling key's, never the
+	// body's.
+	OpAPIKey = "api-key"
 )
 
 // Operation says which kinds of key may call an operation.
@@ -158,6 +166,9 @@ var Operations = []Operation{
 	{Name: OpRemoved, Member: true},
 	{Name: OpUsersWrite, Member: true},
 	{Name: OpGuestsWrite, Member: true},
+	// Every key that may call status may ask what this build supports.
+	{Name: OpSupports, Joining: true, Member: true, Removing: true},
+	{Name: OpAPIKey, Member: true},
 }
 
 // Allowed reports whether a key of this kind may call the operation. An

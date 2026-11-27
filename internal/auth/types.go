@@ -65,6 +65,10 @@ const (
 	// BearerSession tokens are returned once, in the login response, and
 	// sent in the Authorization header.
 	BearerSession SessionKind = "bearer"
+	// ForwardedSession is the identity of a request another node's
+	// skep-api forwarded (step 8e-1, D26): no token, never degraded, the
+	// user and role of this node's copy.
+	ForwardedSession SessionKind = "forwarded"
 )
 
 // EndedSession describes a session that was just deleted, for the audit

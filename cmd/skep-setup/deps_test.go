@@ -14,13 +14,15 @@ import (
 // its socket. Checked for the development build and for FreeBSD. Step
 // 8d-1 (D24): skep-api reaches the guest inventory through package
 // guestapi only, never skep-cluster's service, peer or socket packages.
+// Step 8e-1: skep-api forwards through internal/forward and reads the
+// peers through peerapi; both are checked by themselves as well.
 func TestNoRaftLibraryLinked(t *testing.T) {
 	gobin, err := exec.LookPath("go")
 	if err != nil {
 		t.Fatal("no go command to list the dependencies with")
 	}
 	for _, goos := range []string{runtime.GOOS, "freebsd"} {
-		for _, cmd := range []string{"../skep-setup", "../skep-api"} {
+		for _, cmd := range []string{"../skep-setup", "../skep-api", "../../internal/forward", "../../internal/cluster/peerapi"} {
 			c := exec.Command(gobin, "list", "-deps", cmd)
 			c.Env = append(os.Environ(), "GOOS="+goos, "GOARCH=amd64")
 			out, err := c.CombinedOutput()
@@ -40,6 +42,11 @@ func TestNoRaftLibraryLinked(t *testing.T) {
 			}
 			if cmd == "../skep-api" && !slices.Contains(deps, "github.com/greenbeanorg/skep/internal/cluster/guestapi") {
 				t.Errorf("skep-api (GOOS=%s) does not link guestapi: the guest inventory is not wired", goos)
+			}
+			for _, need := range []string{"internal/forward", "internal/cluster/peerapi"} {
+				if cmd == "../skep-api" && !slices.Contains(deps, "github.com/greenbeanorg/skep/"+need) {
+					t.Errorf("skep-api (GOOS=%s) does not link %s: forwarding is not wired", goos, need)
+				}
 			}
 		}
 	}

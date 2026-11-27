@@ -42,10 +42,21 @@ const (
 	certMode    = fs.FileMode(0o644)
 )
 
+// Common-name prefixes of the self-signed certificate: the node ID
+// follows. skep-cluster's key is the default; skep-api's node-to-node key
+// (step 8e-1, D1) has its own.
+const (
+	PrefixCluster = "skep-cluster node "
+	PrefixAPI     = "skep-api node "
+)
+
 // Key is a node key with its current certificate.
 type Key struct {
-	dir  string
-	key  *ecdsa.PrivateKey
+	dir string
+	// prefix is the certificate's common-name prefix; "" is
+	// PrefixCluster.
+	prefix string
+	key    *ecdsa.PrivateKey
 	pin  string
 	mu   sync.RWMutex
 	leaf *x509.Certificate
@@ -70,12 +81,17 @@ func Exists(dir string) bool {
 // is already there: a node's key is replaced only by an explicit rotation
 // or a wipe, never by accident.
 func Create(dir, nodeID string, now time.Time) (*Key, error) {
+	return CreatePrefix(dir, PrefixCluster, nodeID, now)
+}
+
+// CreatePrefix is Create with the certificate's common-name prefix.
+func CreatePrefix(dir, prefix, nodeID string, now time.Time) (*Key, error) {
 	priv, err := writeNewKey(dir, KeyFile)
 	if err != nil {
 		return nil, err
 	}
 	keyPath := filepath.Join(dir, KeyFile)
-	k := &Key{dir: dir, key: priv}
+	k := &Key{dir: dir, prefix: prefix, key: priv}
 	if err := k.issue(nodeID, now); err != nil {
 		_ = os.Remove(keyPath)
 		return nil, err
@@ -184,9 +200,16 @@ func Load(dir string) (*Key, error) {
 // is then why; the caller logs it as a warning. A bad key is still an
 // error: a node key is never replaced here.
 func LoadRepair(dir, nodeID string, now time.Time) (k *Key, repaired error, err error) {
+	return LoadRepairPrefix(dir, PrefixCluster, nodeID, now)
+}
+
+// LoadRepairPrefix is LoadRepair with the certificate's common-name
+// prefix for a certificate it issues.
+func LoadRepairPrefix(dir, prefix, nodeID string, now time.Time) (k *Key, repaired error, err error) {
 	if k, err = loadKey(dir); err != nil {
 		return nil, nil, err
 	}
+	k.prefix = prefix
 	if repaired = k.loadCertificate(); repaired == nil {
 		return k, nil, nil
 	}
@@ -277,6 +300,25 @@ func (k *Key) Adopt(o *Key) {
 	k.key, k.leaf, k.pin, k.tls = key, leaf, pin, tc
 }
 
+func (k *Key) commonNamePrefix() string {
+	if k.prefix == "" {
+		return PrefixCluster
+	}
+	return k.prefix
+}
+
+// Sign signs digest (a SHA-256 hash) with the key: an ASN.1 ECDSA
+// signature. The private key never leaves the package.
+func (k *Key) Sign(digest []byte) ([]byte, error) {
+	return ecdsa.SignASN1(rand.Reader, k.priv(), digest)
+}
+
+// PublicKeyDER returns the key's SubjectPublicKeyInfo (DER), whose
+// SHA-256 is the pin.
+func (k *Key) PublicKeyDER() ([]byte, error) {
+	return x509.MarshalPKIXPublicKey(&k.priv().PublicKey)
+}
+
 // issue self-signs a certificate for the key and stores it.
 func (k *Key) issue(nodeID string, now time.Time) error {
 	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 127))
@@ -285,7 +327,7 @@ func (k *Key) issue(nodeID string, now time.Time) error {
 	}
 	tmpl := &x509.Certificate{
 		SerialNumber:          serial,
-		Subject:               pkix.Name{CommonName: "skep-cluster node " + nodeID},
+		Subject:               pkix.Name{CommonName: k.commonNamePrefix() + nodeID},
 		NotBefore:             now.Add(-5 * time.Minute),
 		NotAfter:              now.Add(Validity),
 		KeyUsage:              x509.KeyUsageDigitalSignature,

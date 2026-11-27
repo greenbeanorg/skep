@@ -277,8 +277,19 @@ func (c *Client) Tasks(ctx context.Context, opts models.TaskListOptions) (models
 
 // Task returns one task with its events.
 func (c *Client) Task(ctx context.Context, id string) (models.TaskDetail, error) {
+	return c.TaskOn(ctx, id, "")
+}
+
+// TaskOn returns one task from the node that runs it: node is its node ID
+// (the task's node_id) or "" for the node the client talks to. Another
+// node's task is read through this node's API (step 8e-1, D42).
+func (c *Client) TaskOn(ctx context.Context, id, node string) (models.TaskDetail, error) {
+	var q url.Values
+	if node != "" {
+		q = url.Values{"node": {node}}
+	}
 	var out models.TaskDetail
-	return out, c.do(ctx, http.MethodGet, "/tasks/"+url.PathEscape(id), nil, nil, &out)
+	return out, c.do(ctx, http.MethodGet, "/tasks/"+url.PathEscape(id), q, nil, &out)
 }
 
 // AuditOptions selects a page of the access audit log.

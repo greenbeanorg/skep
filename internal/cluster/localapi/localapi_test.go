@@ -16,6 +16,7 @@ import (
 
 	"github.com/greenbeanorg/skep/internal/cluster/guestapi"
 	"github.com/greenbeanorg/skep/internal/cluster/memberapi"
+	"github.com/greenbeanorg/skep/internal/cluster/peerapi"
 	"github.com/greenbeanorg/skep/internal/cluster/store"
 	"github.com/greenbeanorg/skep/internal/peercred"
 	"github.com/greenbeanorg/skep/pkg/models"
@@ -42,6 +43,15 @@ func (fakeBackend) GuestsRead(context.Context) (guestapi.GuestsAnswer, error) {
 }
 func (fakeBackend) GuestsWrite(_ context.Context, req guestapi.WriteRequest) (guestapi.WriteResult, error) {
 	return guestapi.WriteResult{Index: 8, Outcome: req.Actor}, nil
+}
+func (fakeBackend) APIKey(_ context.Context, req peerapi.APIKeyRequest) (peerapi.APIKeyResult, error) {
+	return peerapi.APIKeyResult{Index: 9, Outcome: req.Pin}, nil
+}
+func (fakeBackend) PeersRead(_ context.Context, after uint64, wait time.Duration) (peerapi.PeersAnswer, error) {
+	return peerapi.PeersAnswer{ClusterID: "c", MembershipIndex: after + uint64(wait/time.Second)}, nil
+}
+func (fakeBackend) GuestOwner(_ context.Context, id string) (peerapi.GuestOwnerAnswer, error) {
+	return peerapi.GuestOwnerAnswer{ClusterID: "c", Found: true, Owner: id}, nil
 }
 func (fakeBackend) RaftConfiguration(context.Context) (RaftConfiguration, error) {
 	return RaftConfiguration{Servers: []store.Server{{ID: "n1", Address: store.NoAddress, Voter: true}}}, nil
@@ -122,8 +132,12 @@ func TestEveryOperationAdmitsOnlyItsCallers(t *testing.T) {
 		if !op.Root && !op.API {
 			t.Errorf("%s: nobody may call it", op.Name)
 		}
+		path := op.Path
+		if op.Name == "guest-owner" {
+			path += "?id=00000000-0000-4000-8000-000000000001"
+		}
 		for _, c := range callers {
-			rec := call(h, op.Method, op.Path, &peercred.Cred{UID: c.uid, GID: c.uid})
+			rec := call(h, op.Method, path, &peercred.Cred{UID: c.uid, GID: c.uid})
 			want := http.StatusForbidden
 			if c.may(op) {
 				want = http.StatusOK
@@ -170,8 +184,11 @@ func TestOperationTable(t *testing.T) {
 		"users-write":        {false, true},
 		"guests-read":        {true, true}, // root since step 8d-2 (D19)
 		"guests-write":       {false, true},
+		"api-key":            {false, true}, // step 8e-1, D10
+		"peers-read":         {false, true},
+		"guest-owner":        {false, true},
 	}
-	writes := map[string]bool{"admit": true, "admit-withdraw": true, "remove": true, "key-rotate": true, "key-abort": true, "users-write": true, "guests-write": true}
+	writes := map[string]bool{"admit": true, "admit-withdraw": true, "remove": true, "key-rotate": true, "key-abort": true, "users-write": true, "guests-write": true, "api-key": true}
 	if len(Operations) != len(want) {
 		t.Fatalf("%d operations, want %d", len(Operations), len(want))
 	}

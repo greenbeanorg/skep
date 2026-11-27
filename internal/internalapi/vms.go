@@ -63,6 +63,8 @@ func submission(r *http.Request) vm.Submission {
 		RequestID:      caller.RequestID,
 		SourceIP:       caller.SourceIP,
 		IdempotencyKey: caller.IdempotencyKey,
+		OriginNode:     caller.OriginNode,
+		Envelope:       caller.Envelope,
 	}
 }
 

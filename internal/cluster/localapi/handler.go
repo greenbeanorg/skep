@@ -12,6 +12,7 @@ import (
 	"github.com/greenbeanorg/skep/internal/cluster/clusterstate"
 	"github.com/greenbeanorg/skep/internal/cluster/guestapi"
 	"github.com/greenbeanorg/skep/internal/cluster/memberapi"
+	"github.com/greenbeanorg/skep/internal/cluster/peerapi"
 	"github.com/greenbeanorg/skep/internal/cluster/store"
 	"github.com/greenbeanorg/skep/internal/cluster/userapi"
 	"github.com/greenbeanorg/skep/internal/httpkit"
@@ -37,6 +38,9 @@ const (
 	PathUsersWrite        = userapi.PathUsersWrite
 	PathGuestsRead        = guestapi.PathGuestsRead
 	PathGuestsWrite       = guestapi.PathGuestsWrite
+	PathAPIKey            = peerapi.PathAPIKey
+	PathPeers             = peerapi.PathPeers
+	PathGuestOwner        = peerapi.PathGuestOwner
 )
 
 // CodeForbidden is the error code for a caller an operation does not
@@ -100,6 +104,14 @@ var Operations = []Operation{
 	// "skep-cluster remove --forget-guests" (step 8d-2, D19).
 	{Name: "guests-read", Method: http.MethodGet, Path: PathGuestsRead, Root: true, API: true},
 	{Name: "guests-write", Method: http.MethodPost, Path: PathGuestsWrite, Root: false, API: true},
+	// Forwarding between nodes (step 8e-1, D9–D12): skep-api registers
+	// its own node's API key, reads the peers it may forward to and
+	// accept from, and asks which node owns a guest. The API account
+	// only: root has no use for them, and "skep-cluster key rotate
+	// --api" is step 8e-2.
+	{Name: "api-key", Method: http.MethodPost, Path: PathAPIKey, Root: false, API: true},
+	{Name: "peers-read", Method: http.MethodGet, Path: PathPeers, Root: false, API: true},
+	{Name: "guest-owner", Method: http.MethodGet, Path: PathGuestOwner, Root: false, API: true},
 }
 
 // RotateResult is the answer of key-rotate and key-abort.
@@ -233,6 +245,13 @@ type Backend interface {
 	GuestsRead(ctx context.Context) (guestapi.GuestsAnswer, error)
 	// GuestsWrite returns an *OpError for a refusal.
 	GuestsWrite(ctx context.Context, req guestapi.WriteRequest) (guestapi.WriteResult, error)
+	// APIKey registers this node's API pin; an *OpError for a refusal.
+	APIKey(ctx context.Context, req peerapi.APIKeyRequest) (peerapi.APIKeyResult, error)
+	// PeersRead waits up to wait for the membership index to differ from
+	// after, then answers the peers.
+	PeersRead(ctx context.Context, after uint64, wait time.Duration) (peerapi.PeersAnswer, error)
+	// GuestOwner answers which node owns a guest.
+	GuestOwner(ctx context.Context, id string) (peerapi.GuestOwnerAnswer, error)
 }
 
 // HandlerOptions configures the handler.
@@ -353,6 +372,33 @@ func NewHandler(b Backend, o HandlerOptions) http.Handler {
 			res, err := b.GuestsWrite(r.Context(), req)
 			writeResult(w, r, res, err)
 		},
+		PathAPIKey: func(w http.ResponseWriter, r *http.Request) {
+			var req peerapi.APIKeyRequest
+			if !decodeBody(w, r, &req) {
+				return
+			}
+			res, err := b.APIKey(r.Context(), req)
+			writeResult(w, r, res, err)
+		},
+		PathPeers: func(w http.ResponseWriter, r *http.Request) {
+			after, wait, ok := usersReadQuery(r)
+			if !ok {
+				httpkit.WriteError(w, r, http.StatusBadRequest, "invalid_request", "after must be an index and wait a number of seconds from 0 to 5")
+				return
+			}
+			res, err := b.PeersRead(r.Context(), after, wait)
+			writeResult(w, r, res, err)
+		},
+		PathGuestOwner: func(w http.ResponseWriter, r *http.Request) {
+			q := r.URL.Query()
+			id := q.Get("id")
+			if len(q) != 1 || len(q["id"]) != 1 || !clusterstate.ValidNodeID(id) {
+				httpkit.WriteError(w, r, http.StatusBadRequest, "invalid_request", "id must be one guest ID (a lower-case UUID)")
+				return
+			}
+			res, err := b.GuestOwner(r.Context(), id)
+			writeResult(w, r, res, err)
+		},
 		PathWithdraw: func(w http.ResponseWriter, r *http.Request) {
 			var req WithdrawRequest
 			if !decodeBody(w, r, &req) {
@@ -425,7 +471,7 @@ func withTimeout(next http.Handler) http.Handler {
 		switch r.URL.Path {
 		case PathRemove:
 			limit = RemoveTimeout
-		case PathUsersRead:
+		case PathUsersRead, PathPeers:
 			limit = UsersReadTimeout
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), limit)

@@ -88,6 +88,14 @@ func (s state) describe(e Entry) (nodeID, name, address string, pins []string, a
 		if decodeData(e.Data, &d) == nil {
 			fromMember(d.NodeID)
 		}
+	case TypeMemberAPIKey:
+		// The node's pins are not this entry's: its API pin is recorded
+		// in its own field (D6).
+		var d MemberAPIKey
+		if decodeData(e.Data, &d) == nil {
+			fromMember(d.NodeID)
+			pins, at = nil, d.At
+		}
 	}
 	return nodeID, name, address, pins, at
 }

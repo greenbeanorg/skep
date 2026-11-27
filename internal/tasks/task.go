@@ -65,6 +65,10 @@ type Task struct {
 	CreatedAt    time.Time
 	StartedAt    *time.Time
 	FinishedAt   *time.Time
+	// RequestedDetails is added to the task's "requested" audit entry
+	// when it is created: a forwarded request's origin node and envelope
+	// (step 8e-1, D40). It is not stored in the task.
+	RequestedDetails map[string]any
 }
 
 // Public returns the API representation of the task.
@@ -112,6 +116,11 @@ type Request struct {
 	PeerUID   uint32
 	RequestID string
 	SourceIP  string
+	// OriginNode and Envelope are set for a request another node's
+	// skep-api forwarded (step 8e-1, D40): both are stored in the
+	// "requested" audit entry, neither is verified here.
+	OriginNode string
+	Envelope   string
 	// Companion is optional work done in the transaction that creates the
 	// task: the task and what it reserves exist together or not at all.
 	// vm.create inserts the VM's rows this way, so the name is taken the
@@ -132,6 +141,22 @@ type CancelRequest struct {
 	PeerUID   uint32
 	RequestID string
 	SourceIP  string
+	// OriginNode and Envelope: as in Request (D40).
+	OriginNode string
+	Envelope   string
+}
+
+// forwardDetails adds a forwarded request's origin node and envelope to
+// audit details (D40).
+func forwardDetails(details map[string]any, origin, envelope string) map[string]any {
+	if origin == "" {
+		return details
+	}
+	if details == nil {
+		details = map[string]any{}
+	}
+	details["origin_node"], details["envelope"] = origin, envelope
+	return details
 }
 
 // Reporter lets a running task record progress in its event history.

@@ -251,6 +251,8 @@ func (e *Engine) Submit(ctx context.Context, req Request) (task Task, created bo
 		Payload:        payload,
 		Cancellable:    def.Cancellable,
 		CreatedAt:      e.now().UTC(),
+		// The origin and envelope of a forwarded request (D40).
+		RequestedDetails: forwardDetails(nil, req.OriginNode, req.Envelope),
 	}
 
 	// mu is held across the insert so that the queue capacity check, the
@@ -384,7 +386,7 @@ func (e *Engine) refuse(ctx context.Context, req Request, outcome audit.Outcome,
 		Outcome:   outcome,
 		SourceIP:  req.SourceIP,
 		RequestID: req.RequestID,
-		Details:   map[string]any{"error_code": cause.Code, "error": cause.Message},
+		Details:   forwardDetails(map[string]any{"error_code": cause.Code, "error": cause.Message}, req.OriginNode, req.Envelope),
 	}
 	if nameRE.MatchString(req.ResourceType) && nameRE.MatchString(req.ResourceID) {
 		entry.ResourceType, entry.ResourceID = req.ResourceType, req.ResourceID
@@ -430,7 +432,7 @@ func (e *Engine) Cancel(ctx context.Context, id string, req CancelRequest) (Task
 			Outcome:      audit.Success,
 			SourceIP:     req.SourceIP,
 			RequestID:    req.RequestID,
-			Details:      map[string]any{"task_type": t.Type, "task_status": string(t.Status)},
+			Details:      forwardDetails(map[string]any{"task_type": t.Type, "task_status": string(t.Status)}, req.OriginNode, req.Envelope),
 		}
 
 		switch {

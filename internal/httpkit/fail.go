@@ -22,6 +22,11 @@ var StatusForCode = map[string]int{
 	models.CodeDrainActive:          http.StatusConflict,
 	models.CodeAgentUnavailable:     http.StatusServiceUnavailable,
 	models.CodeAgentVersionMismatch: http.StatusServiceUnavailable,
+	// Forwarding between nodes (step 8e-1, D37).
+	models.CodeNodeUnreachable:     http.StatusServiceUnavailable,
+	models.CodeNodeBehind:          http.StatusServiceUnavailable,
+	models.CodeNodeClockSkew:       http.StatusServiceUnavailable,
+	models.CodeNodeVersionMismatch: http.StatusServiceUnavailable,
 
 	// VM and storage operations (ADR 0009). A request that is well formed
 	// but names something this host does not offer is 422; one that the

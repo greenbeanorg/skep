@@ -38,6 +38,12 @@ func newRequestID() string {
 	return hex.EncodeToString(b[:])
 }
 
+// WithRequestIDValue returns ctx carrying id as the request ID: a
+// forwarded request keeps the origin's (step 8e-1, D27).
+func WithRequestIDValue(ctx context.Context, id string) context.Context {
+	return context.WithValue(ctx, requestIDKey, id)
+}
+
 // WithRequestID assigns every request an ID, reusing a well-formed one from
 // the client, and echoes it in the response.
 func WithRequestID(next http.Handler) http.Handler {

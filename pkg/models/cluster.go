@@ -35,6 +35,9 @@ type ClusterMember struct {
 	Pin     string `json:"pin"`
 	// NextPin is set while the member rotates its key.
 	NextPin string `json:"next_pin,omitempty"`
+	// APIPin is the pin of the member's skep-api node-to-node key, once
+	// that skep-api has registered it (step 8e-1, D41).
+	APIPin string `json:"api_pin,omitempty"`
 	// Voter says whether the member votes in the Raft configuration.
 	Voter bool `json:"voter"`
 }

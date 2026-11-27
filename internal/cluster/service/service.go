@@ -201,6 +201,11 @@ type Service struct {
 	// change (the users-read long poll waits on it).
 	usersMu sync.Mutex
 	usersCh chan struct{}
+	// peersMu guards peersCh, closed and replaced whenever the
+	// membership or the pending entries change (the peers-read long poll
+	// waits on it, step 8e-1).
+	peersMu sync.Mutex
+	peersCh chan struct{}
 }
 
 // joinStepDone runs the test hook and reports whether the node is frozen.
@@ -374,6 +379,7 @@ func (s *Service) OnApplied() {
 	s.nextStatus = time.Time{}
 	s.mu.Unlock()
 	s.revalidate()
+	s.onMembership()
 }
 
 // reconcileAddress applies a listen address written by "skep-cluster
@@ -697,8 +703,7 @@ func (s *Service) Status(context.Context) localapi.Status {
 	if members == nil {
 		members = []clusterstate.Member{}
 	}
-	upToDate := view.Stalled == nil && stats.AppliedIndex >= stats.CommitIndex &&
-		st.LibraryEntriesOnly(view.AppliedIndex, stats.AppliedIndex)
+	upToDate := upToDate(st, view)
 	out := localapi.Status{
 		NodeID:              s.cfg.NodeID,
 		NodeName:            s.cfg.NodeName,

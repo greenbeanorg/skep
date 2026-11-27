@@ -74,7 +74,7 @@ func cmdSnapshot(ctx context.Context, args []string, e env) error {
 		}
 		task := created.Task
 		if *wait {
-			if task, err = waitTask(ctx, s, task.ID); err != nil {
+			if task, err = waitTask(ctx, s, task); err != nil {
 				return err
 			}
 		}
@@ -124,7 +124,7 @@ func cmdSnapshot(ctx context.Context, args []string, e env) error {
 			return s.explain(err)
 		}
 		if *wait {
-			if task, err = waitTask(ctx, s, task.ID); err != nil {
+			if task, err = waitTask(ctx, s, task); err != nil {
 				return err
 			}
 		}
@@ -174,7 +174,7 @@ func cmdClone(ctx context.Context, args []string, e env) error {
 	}
 	task := created.Task
 	if *wait {
-		if task, err = waitTask(ctx, s, task.ID); err != nil {
+		if task, err = waitTask(ctx, s, task); err != nil {
 			return err
 		}
 	}

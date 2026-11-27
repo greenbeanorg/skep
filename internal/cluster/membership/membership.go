@@ -150,6 +150,19 @@ func (f File) validate() error {
 	if f.Format == format2 && !next {
 		return errors.New("format 2 without a next pin")
 	}
+	// API pins (step 8e-1, D5): valid, never twice, never a node pin. The
+	// node pins are all collected first, so the order of the members does
+	// not matter.
+	api := map[string]bool{}
+	for _, m := range f.Members {
+		if m.APIPin == "" {
+			continue
+		}
+		if !clusterstate.ValidPin(m.APIPin) || seen[m.APIPin] || api[m.APIPin] {
+			return fmt.Errorf("member %s has an API pin that is not valid, duplicated or a node pin", m.ID)
+		}
+		api[m.APIPin] = true
+	}
 	return nil
 }
 
