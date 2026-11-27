@@ -187,7 +187,7 @@ func TestAPIKeyAudit(t *testing.T) {
 
 type recorder func(AuditEntry)
 
-func (f recorder) AuditEntry(a AuditEntry) error                 { f(a); return nil }
+func (f recorder) AuditEntry(a AuditEntry) error              { f(a); return nil }
 func (recorder) AuditSnapshot(uint64, uint64, []Member) error { return nil }
 
 func TestGuestByID(t *testing.T) {
