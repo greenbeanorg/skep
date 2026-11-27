@@ -8,7 +8,7 @@
 //
 //	sudo -u skep ./forwardprobe -target 10.79.20.83:8445 -target-pin sha256:... \
 //	    -target-id ID -origin-id ID -other-id ID -cluster-id ID -user admin \
-//	    -guest /api/v1/containers/ID [-only valid]
+//	    -guest /api/v1/containers/ID [-only valid | -only '|case|case|']
 package main
 
 import (
@@ -60,6 +60,9 @@ type probe struct {
 	targetID, originID, cluster string
 	userID                      string
 	epoch                       uint64
+	// rid is sent as X-Request-ID (8e1fix: each case's refusal is found
+	// in the target's access audit by it).
+	rid string
 }
 
 func run(target, pin, targetID, originID, otherID, clusterID, user, guest, keyDir, dbPath, only string) error {
@@ -133,19 +136,38 @@ func run(target, pin, targetID, originID, otherID, clusterID, user, guest, keyDi
 		{"a path outside the list (GET /api/v1/users)", "no_route", func() (int, string, string, error) {
 			return p.signed("GET", "/api/v1/users", nil, p.payload("GET", "/api/v1/users", nil, 0))
 		}},
+		// 8e-1 fix F2: a field without its shape, signed.
+		{"a request ID with a space", "bad_envelope", func() (int, string, string, error) {
+			x := p.payload("GET", guest, nil, 0)
+			x.RequestID = "probe x2"
+			return p.signed("GET", guest, nil, x)
+		}},
+		{"a source IP that is not an address", "bad_envelope", func() (int, string, string, error) {
+			x := p.payload("GET", guest, nil, 0)
+			x.SourceIP = "not-an-address"
+			return p.signed("GET", guest, nil, x)
+		}},
+		{"a nonce of one character", "bad_envelope", func() (int, string, string, error) {
+			x := p.payload("GET", guest, nil, 0)
+			x.Nonce = "a"
+			return p.signed("GET", guest, nil, x)
+		}},
 	}
-	fmt.Println("| Case | Expected | Status | Skep-Forward-Refusal | Line |")
-	fmt.Println("|---|---|---|---|---|")
-	for _, x := range cases {
-		if only != "" && x.name != only {
+	tag := make([]byte, 3)
+	_, _ = rand.Read(tag)
+	fmt.Println("| Case | Expected | Status | Skep-Forward-Refusal | X-Request-ID | Line |")
+	fmt.Println("|---|---|---|---|---|---|")
+	for i, x := range cases {
+		if only != "" && x.name != only && !strings.Contains(only, "|"+x.name+"|") {
 			continue
 		}
+		p.rid = fmt.Sprintf("probe-%x-%d", tag, i)
 		status, refusal, line, err := x.send()
 		if err != nil {
-			fmt.Printf("| %s | %s | - | - | %s |\n", x.name, x.want, oneLine(err.Error()))
+			fmt.Printf("| %s | %s | - | - | %s | %s |\n", x.name, x.want, p.rid, oneLine(err.Error()))
 			continue
 		}
-		fmt.Printf("| %s | %s | %d | %s | %s |\n", x.name, x.want, status, refusal, oneLine(line))
+		fmt.Printf("| %s | %s | %d | %s | %s | %s |\n", x.name, x.want, status, refusal, p.rid, oneLine(line))
 	}
 	return nil
 }
@@ -186,6 +208,9 @@ func (p *probe) send(method, uri string, body []byte, envelope string) (int, str
 		return 0, "", "", err
 	}
 	req.Header.Set(forward.Header, envelope)
+	if p.rid != "" {
+		req.Header.Set("X-Request-ID", p.rid)
+	}
 	resp, err := (&http.Client{Transport: tr, Timeout: 15 * time.Second}).Do(req)
 	if err != nil {
 		return 0, "", "", err

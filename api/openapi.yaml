@@ -2562,10 +2562,7 @@ components:
       description: |
         The node that runs the task, by node ID or name (a task's
         `node_id`). This node's own ID or name, or no parameter, serves the
-        request here (its own ID even while `skep-cluster` has not
-        answered since `skep-api` started; its name needs that answer);
-        an empty value, or one that is neither a lower-case UUID nor a
-        node name, is `400 invalid_request`; another member's forwards it (`Skep-Node` names it);
+        request here; another member's forwards it (`Skep-Node` names it);
         a name or ID no member has is `404`; a member that cannot be
         forwarded to is `503 node_unreachable`. Only the two task routes
         take it in this build.
