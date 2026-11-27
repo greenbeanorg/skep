@@ -83,8 +83,10 @@ func TestForwardAcrossThreeNodes(t *testing.T) {
 	ids := []string{fwSelf, fwJoin, fwStar}
 	m := &fakeMembership{owners: map[string]peerapi.GuestOwnerAnswer{
 		fwGuest: {Found: true, Kind: "container", Owner: fwStar, OwnerName: "star"}}}
+	// The nodes share loopback; each binds its own address.
+	ips := []string{"127.0.0.1", "127.0.0.2", "127.0.0.3"}
 	for i, n := range names {
-		m.nodes = append(m.nodes, peerapi.Peer{NodeID: ids[i], Name: n, Address: "127.0.0.1:8444", State: "member", RaftServer: true})
+		m.nodes = append(m.nodes, peerapi.Peer{NodeID: ids[i], Name: n, Address: ips[i] + ":8444", State: "member", RaftServer: true})
 	}
 	quiet := slog.New(slog.NewTextHandler(io.Discard, nil))
 	ctx, cancel := context.WithCancel(context.Background())
@@ -94,12 +96,7 @@ func TestForwardAcrossThreeNodes(t *testing.T) {
 	agents := map[string]*localGuests{}
 	nodes := map[string]*forward.Node{}
 	for i, n := range names {
-		ip := "127.0.0.1"
-		if i > 0 {
-			// The nodes share loopback; each binds its own address.
-			ip = []string{"", "127.0.0.2", "127.0.0.3"}[i]
-			m.nodes[i].Address = ip + ":8444"
-		}
+		ip := ips[i]
 		node := forward.NewNode(forward.NodeOptions{KeyDir: t.TempDir() + "/nodekey", Cluster: &fakeCluster{m: m, self: ids[i], ip: ip},
 			Users: e.stack.Store, Port: port, Logger: quiet})
 		agent := &localGuests{}
@@ -137,8 +134,10 @@ func TestForwardAcrossThreeNodes(t *testing.T) {
 		t.Fatalf("forwarded power action: %d %v %s", rec.Code, rec.Header(), rec.Body)
 	}
 	rid := rec.Header().Get("X-Request-ID")
-	c := agents["star"].caller
-	if agents["smith"].calls != 0 || agents["star"].calls != 1 || c.ActorID != e.ids[auth.RoleOperator] || c.OriginNode != fwSelf ||
+	agents["star"].mu.Lock()
+	c, starCalls := agents["star"].caller, agents["star"].calls
+	agents["star"].mu.Unlock()
+	if agents["smith"].calls != 0 || starCalls != 1 || c.ActorID != e.ids[auth.RoleOperator] || c.OriginNode != fwSelf ||
 		!strings.HasPrefix(c.Envelope, "v1.") || c.RequestID != rid {
 		t.Fatalf("star's agent: %d calls, caller %+v (smith's %d)", agents["star"].calls, c, agents["smith"].calls)
 	}
