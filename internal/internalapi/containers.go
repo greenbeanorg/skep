@@ -45,7 +45,7 @@ func (h *handler) registerContainers(add func(string, http.HandlerFunc)) {
 func containerSubmission(r *http.Request) containers.Submission {
 	s := submission(r)
 	return containers.Submission{Actor: s.Actor, PeerUID: s.PeerUID, RequestID: s.RequestID,
-		SourceIP: s.SourceIP, IdempotencyKey: s.IdempotencyKey}
+		SourceIP: s.SourceIP, IdempotencyKey: s.IdempotencyKey, OriginNode: s.OriginNode, Envelope: s.Envelope}
 }
 
 func (h *handler) containerCollection(w http.ResponseWriter, r *http.Request) {

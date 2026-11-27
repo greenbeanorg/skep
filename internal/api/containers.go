@@ -39,22 +39,22 @@ type ContainerBackend interface {
 
 func (h *handler) containerRoutes() []route {
 	return []route{
-		{http.MethodGet, "/containers", auth.PermContainerRead, nil, h.listContainers, servedWithoutQuorum},
-		{http.MethodPost, "/containers", auth.PermContainerWrite, nil, h.createContainer, needsQuorum},
-		{http.MethodGet, "/containers/{id}", auth.PermContainerRead, nil, h.getContainer, servedWithoutQuorum},
-		{http.MethodPut, "/containers/{id}", auth.PermContainerWrite, nil, h.updateContainer, needsQuorum},
-		{http.MethodDelete, "/containers/{id}", auth.PermContainerDelete, nil, h.deleteContainer, needsQuorum},
-		{http.MethodPost, "/containers/{id}/actions", auth.PermContainerPower, nil, h.containerAction, servedWithoutQuorum},
-		{http.MethodGet, "/containers/{id}/console-log", auth.PermContainerRead, nil, h.containerConsoleLog, servedWithoutQuorum},
-		{http.MethodGet, "/containers/{id}/snapshots", auth.PermContainerRead, nil, h.listContainerSnapshots, servedWithoutQuorum},
-		{http.MethodPost, "/containers/{id}/snapshots", auth.PermContainerSnapshot, nil, h.createContainerSnapshot, needsQuorum},
-		{http.MethodGet, "/containers/{id}/snapshots/{sid}", auth.PermContainerRead, nil, h.getContainerSnapshot, servedWithoutQuorum},
-		{http.MethodDelete, "/containers/{id}/snapshots/{sid}", auth.PermContainerSnapshot, nil, h.deleteContainerSnapshot, needsQuorum},
+		{http.MethodGet, "/containers", auth.PermContainerRead, nil, h.listContainers, servedWithoutQuorum, scopeNode, false},
+		{http.MethodPost, "/containers", auth.PermContainerWrite, nil, h.createContainer, needsQuorum, scopeNode, false},
+		{http.MethodGet, "/containers/{id}", auth.PermContainerRead, nil, h.getContainer, servedWithoutQuorum, scopeGuest, true},
+		{http.MethodPut, "/containers/{id}", auth.PermContainerWrite, nil, h.updateContainer, needsQuorum, scopeGuest, false},
+		{http.MethodDelete, "/containers/{id}", auth.PermContainerDelete, nil, h.deleteContainer, needsQuorum, scopeGuest, false},
+		{http.MethodPost, "/containers/{id}/actions", auth.PermContainerPower, nil, h.containerAction, servedWithoutQuorum, scopeGuest, true},
+		{http.MethodGet, "/containers/{id}/console-log", auth.PermContainerRead, nil, h.containerConsoleLog, servedWithoutQuorum, scopeGuest, false},
+		{http.MethodGet, "/containers/{id}/snapshots", auth.PermContainerRead, nil, h.listContainerSnapshots, servedWithoutQuorum, scopeGuest, false},
+		{http.MethodPost, "/containers/{id}/snapshots", auth.PermContainerSnapshot, nil, h.createContainerSnapshot, needsQuorum, scopeGuest, false},
+		{http.MethodGet, "/containers/{id}/snapshots/{sid}", auth.PermContainerRead, nil, h.getContainerSnapshot, servedWithoutQuorum, scopeGuest, false},
+		{http.MethodDelete, "/containers/{id}/snapshots/{sid}", auth.PermContainerSnapshot, nil, h.deleteContainerSnapshot, needsQuorum, scopeGuest, false},
 		// A rollback destroys the jail's current data (and, with
 		// destroy_newer, newer snapshots): container:write as well as
 		// container:snapshot, the same as a clone (amendment n, SR-11).
-		{http.MethodPost, "/containers/{id}/snapshots/{sid}/rollback", auth.PermContainerWrite, []string{auth.PermContainerSnapshot}, h.rollbackContainerSnapshot, needsQuorum},
-		{http.MethodPost, "/containers/{id}/clone", auth.PermContainerWrite, []string{auth.PermContainerSnapshot}, h.cloneContainer, needsQuorum},
+		{http.MethodPost, "/containers/{id}/snapshots/{sid}/rollback", auth.PermContainerWrite, []string{auth.PermContainerSnapshot}, h.rollbackContainerSnapshot, needsQuorum, scopeGuest, false},
+		{http.MethodPost, "/containers/{id}/clone", auth.PermContainerWrite, []string{auth.PermContainerSnapshot}, h.cloneContainer, needsQuorum, scopeGuest, false},
 	}
 }
 

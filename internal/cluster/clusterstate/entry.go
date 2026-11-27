@@ -77,6 +77,10 @@ const (
 	// TypeMemberKeyDone ends a rotation: keep "new" makes next_pin the
 	// pin, keep "old" drops next_pin.
 	TypeMemberKeyDone = "member.key_done"
+	// TypeMemberAPIKey sets a member's API pin: the pin of its skep-api's
+	// node-to-node key (step 8e-1, D3). The node registers it itself once
+	// it is a member.
+	TypeMemberAPIKey = "member.api_key"
 )
 
 // Key rotation outcomes of member.key_done.
@@ -102,6 +106,7 @@ var Supported = map[string]int{
 	TypeMemberRemoved:   1,
 	TypeMemberKeyAdd:    1,
 	TypeMemberKeyDone:   1,
+	TypeMemberAPIKey:    1,
 	TypeUserCreate:      1,
 	TypeUserUpdate:      1,
 	TypeUserPassword:    1,
@@ -240,6 +245,14 @@ type MemberKeyDone struct {
 	NodeID   string `json:"node_id"`
 	Keep     string `json:"keep"`
 	AddIndex uint64 `json:"add_index"`
+}
+
+// MemberAPIKey is the data of TypeMemberAPIKey, version 1 (step 8e-1, D3).
+// At is the proposing leader's clock in Unix seconds.
+type MemberAPIKey struct {
+	NodeID string `json:"node_id"`
+	APIPin string `json:"api_pin"`
+	At     int64  `json:"at"`
 }
 
 // KeyDoneOpID is the operation ID of a member.key_done entry.

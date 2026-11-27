@@ -106,7 +106,7 @@ func cmdVM(ctx context.Context, args []string, e env) error {
 		}
 		task := created.Task
 		if *wait {
-			if task, err = waitTask(ctx, s, task.ID); err != nil {
+			if task, err = waitTask(ctx, s, task); err != nil {
 				return err
 			}
 		}
@@ -155,7 +155,7 @@ func cmdVM(ctx context.Context, args []string, e env) error {
 			return s.explain(err)
 		}
 		if *wait {
-			if task, err = waitTask(ctx, s, task.ID); err != nil {
+			if task, err = waitTask(ctx, s, task); err != nil {
 				return err
 			}
 		}
@@ -227,10 +227,11 @@ func resolveVM(ctx context.Context, c *client.Client, ref string) (models.VM, er
 	return models.VM{}, fmt.Errorf("no VM is named %q", ref)
 }
 
-// waitTask polls a task until it ends.
-func waitTask(ctx context.Context, s *session, id string) (models.Task, error) {
+// waitTask polls a task until it ends, on the node that runs it (its
+// node_id, D42 of step 8e-1).
+func waitTask(ctx context.Context, s *session, t models.Task) (models.Task, error) {
 	for {
-		d, err := s.client.Task(ctx, id)
+		d, err := s.client.TaskOn(ctx, t.ID, t.NodeID)
 		if err != nil {
 			return models.Task{}, s.explain(err)
 		}

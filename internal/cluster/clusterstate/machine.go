@@ -156,6 +156,8 @@ type AuditEntry struct {
 	Guests           []JoinGuest
 	GuestCount       int
 	ReservationCount int
+	// APIPin is a member.api_key entry's API pin (step 8e-1, D6).
+	APIPin string
 }
 
 // AuditWriter makes a log entry's record durable before the machine
@@ -290,6 +292,12 @@ func auditOf(st state, e Entry, index uint64, outcome, reason string) AuditEntry
 	} else {
 		a.NodeID, a.Name, a.Address, a.Pins, a.At = st.describe(e)
 		a.Guests, a.GuestCount, a.ReservationCount = st.describeGuests(e, outcome)
+		if e.Type == TypeMemberAPIKey {
+			var d MemberAPIKey
+			if decodeData(e.Data, &d) == nil {
+				a.APIPin = d.APIPin
+			}
+		}
 	}
 	if e.Type == TypeClusterInit && a.Epoch == 0 && outcome == "applied" {
 		a.Epoch = 1
@@ -506,6 +514,9 @@ func (s *state) apply(e Entry, index uint64) (change, error) {
 	}
 	if IsGuestType(e.Type) {
 		return s.applyGuest(e, index)
+	}
+	if e.Type == TypeMemberAPIKey {
+		return s.applyAPIKey(e)
 	}
 	switch e.Type {
 	case TypeClusterInit:
@@ -864,8 +875,10 @@ func (m *Machine) AppliedIndex() (uint64, bool) {
 // snapshotFormat is the version of the snapshot encoding. Format 1 (step
 // 8a) has no pending entries and no epoch; format 2 (8b-1) no removal
 // index; format 3 (8b-2a) no next pin; format 4 (8b-2b) no users and no
-// forgotten operation IDs; format 5 (8c-1) no guests. All are still read.
-const snapshotFormat = 6
+// forgotten operation IDs; format 5 (8c-1) no guests; format 6 (8d-1) no
+// API pin (format 7, step 8e-1, D5, is written only once a member has
+// one; the members already carry the field). All are still read.
+const snapshotFormat = 7
 
 type snapshot struct {
 	Format          int               `json:"format"`
@@ -930,12 +943,21 @@ func (m *Machine) Snapshot() ([]byte, error) {
 	// Format 6 only once a guest or a reservation exists or the guests
 	// index is above 0 (D19), so that an 8c build reads a snapshot of a
 	// cluster that never had a guest.
-	if len(m.st.guests) > 0 || len(m.st.reservations) > 0 || m.st.guestsIndex > 0 {
-		s.Format, s.Users, s.UsersIndex, s.Forgot = snapshotFormat, m.st.sortedUsers(), m.st.usersIndex, m.forgot
+	apiPin := false
+	for _, mem := range m.st.members {
+		apiPin = apiPin || mem.APIPin != ""
+	}
+	if len(m.st.guests) > 0 || len(m.st.reservations) > 0 || m.st.guestsIndex > 0 || apiPin {
+		s.Format, s.Users, s.UsersIndex, s.Forgot = 6, m.st.sortedUsers(), m.st.usersIndex, m.forgot
 		s.Guests, s.Reservations, s.GuestsIndex = m.st.sortedGuests(), m.st.sortedReservations(), m.st.guestsIndex
 		for i := range s.Guests {
 			s.Guests[i].Flagged = false
 		}
+	}
+	// Format 7 only once a member has an API pin (step 8e-1, D5), so that
+	// an 8d build reads a snapshot of a cluster that has none.
+	if apiPin {
+		s.Format = snapshotFormat
 	}
 	return json.Marshal(s)
 }

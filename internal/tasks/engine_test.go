@@ -859,3 +859,38 @@ func TestRegisterValidation(t *testing.T) {
 		t.Error("an engine without a store was created")
 	}
 }
+
+// D40 (step 8e-1): a forwarded request's origin node and envelope are in
+// the details of the "requested" audit entry of its task, of a refusal,
+// and of a cancellation; a local request's entries have none.
+func TestForwardedDetailsAreStored(t *testing.T) {
+	f := newDefaultFixture(t)
+	origin, env := "a1a1a1a1-0000-4000-8000-00000000000a", "v1.payload.sig"
+	task := f.submit(tasks.Request{Type: "test.block", OriginNode: origin, Envelope: env})
+	f.waitStarted()
+	if _, err := f.engine.Cancel(context.Background(), task.ID, tasks.CancelRequest{Actor: andy, PeerUID: peerUID, OriginNode: origin, Envelope: env}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := f.engine.Submit(context.Background(), tasks.Request{Type: "test.validated", Actor: andy, OriginNode: origin, Envelope: env}); err == nil {
+		t.Fatal("an invalid payload was accepted")
+	}
+	local := f.submit(tasks.Request{Type: "test.ok"})
+	want := `{"envelope":"v1.payload.sig","origin_node":"` + origin + `"}`
+	for _, c := range []struct{ where, details string }{
+		{"action = 'test.block' AND phase = 'requested'", want},
+		{"action = 'task.cancel'", `{"envelope":"v1.payload.sig","origin_node":"` + origin + `","task_status":"running","task_type":"test.block"}`},
+	} {
+		var d string
+		if err := f.db.QueryRow(`SELECT COALESCE(details, '') FROM audit_log WHERE ` + c.where).Scan(&d); err != nil || d != c.details {
+			t.Errorf("%s: %q %v", c.where, d, err)
+		}
+	}
+	if n := f.count(`SELECT COUNT(*) FROM audit_log WHERE action = 'test.validated' AND details LIKE '%"origin_node":"` + origin + `"%'`); n != 1 {
+		t.Errorf("the refusal's details: %d", n)
+	}
+	var d string
+	_ = f.db.QueryRow(`SELECT COALESCE(details, '') FROM audit_log WHERE task_id = ? AND phase = 'requested'`, local.ID).Scan(&d)
+	if strings.Contains(d, "origin_node") {
+		t.Errorf("a local task's entry: %q", d)
+	}
+}

@@ -154,6 +154,10 @@ type Record struct {
 	Guests           []clusterstate.JoinGuest `json:"guests,omitempty"`
 	GuestCount       int                      `json:"guest_count,omitempty"`
 	ReservationCount int                      `json:"reservation_count,omitempty"`
+	// APIPin is a member.api_key entry's API pin (step 8e-1, D6).
+	// Omitted when empty, so every record of an earlier build still
+	// verifies.
+	APIPin string `json:"api_pin,omitempty"`
 	// Outcome is applied, refused or duplicate; Reason is why it was
 	// refused and Code the refusal's code, where it has one.
 	Outcome string `json:"outcome,omitempty"`
@@ -628,7 +632,7 @@ func (l *Log) AuditEntry(a clusterstate.AuditEntry) error {
 		NodeID: a.NodeID, Name: a.Name, Address: a.Address, Pins: a.Pins, Outcome: a.Outcome, Reason: a.Reason,
 		UserID: a.UserID, Username: a.Username, Role: a.Role, UserDisabled: a.UserDisabled, Count: a.Count,
 		Usernames: a.Usernames, Code: a.Code, GuestID: a.GuestID, GuestKind: a.GuestKind, GuestName: a.GuestName, GuestOwner: a.GuestOwner,
-		Guests: a.Guests, GuestCount: a.GuestCount, ReservationCount: a.ReservationCount})
+		Guests: a.Guests, GuestCount: a.GuestCount, ReservationCount: a.ReservationCount, APIPin: a.APIPin})
 }
 
 // AuditSnapshot implements clusterstate.AuditWriter: a snapshot installed

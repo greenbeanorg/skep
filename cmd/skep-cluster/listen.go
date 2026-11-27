@@ -15,8 +15,8 @@ import (
 // runListen is "skep-cluster listen -address ADDR" (ADR 0013 B1): on the
 // founding node, before its first admit, it gives the one-node cluster a
 // node-to-node address. It writes cluster.json and restarts skep_cluster;
-// skep-api's node-to-node listener (api.json, port 8445) comes with step
-// 8e.
+// skep-api opens its node-to-node listener on the same address, port 8445,
+// by itself once skep-cluster reports the address (step 8e-1).
 func runListen(ctx context.Context, args []string, e env) error {
 	flags := flag.NewFlagSet("skep-cluster listen", flag.ContinueOnError)
 	flags.SetOutput(e.stderr)

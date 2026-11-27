@@ -264,7 +264,17 @@ export interface paths {
     };
     "/tasks/{id}/cancel": {
         parameters: {
-            query?: never;
+            query?: {
+                /**
+                 * @description The node that runs the task, by node ID or name (a task's
+                 *     `node_id`). This node's own ID or name, or no parameter, serves the
+                 *     request here; another member's forwards it (`Skep-Node` names it);
+                 *     a name or ID no member has is `404`; a member that cannot be
+                 *     forwarded to is `503 node_unreachable`. Only the two task routes
+                 *     take it in this build.
+                 */
+                node?: components["parameters"]["Node"];
+            };
             header?: never;
             path: {
                 id: string;
@@ -2244,6 +2254,11 @@ export interface components {
             pin: string;
             /** @description Set while the member rotates its key. */
             next_pin?: string;
+            /**
+             * @description The SHA-256 pin of the member's skep-api node-to-node key, once
+             *     that skep-api has registered it (step 8e-1); absent before.
+             */
+            api_pin?: string;
             voter: boolean;
         };
         ClusterPending: {
@@ -2949,7 +2964,10 @@ export interface components {
         /**
          * @description The host agent cannot be reached (`agent_unavailable`), is another
          *     build than skep-api (`agent_version_mismatch`), or the request was
-         *     cancelled or timed out (`service_unavailable`).
+         *     cancelled or timed out (`service_unavailable`). A request forwarded
+         *     to another node (step 8e-1) may also answer `node_unreachable`,
+         *     `node_behind`, `node_clock_skew` or `node_version_mismatch`, with
+         *     `details.node_id`, `details.node_name` and `details.outcome`.
          */
         Unavailable: {
             headers: {
@@ -2961,6 +2979,15 @@ export interface components {
         };
     };
     parameters: {
+        /**
+         * @description The node that runs the task, by node ID or name (a task's
+         *     `node_id`). This node's own ID or name, or no parameter, serves the
+         *     request here; another member's forwards it (`Skep-Node` names it);
+         *     a name or ID no member has is `404`; a member that cannot be
+         *     forwarded to is `503 node_unreachable`. Only the two task routes
+         *     take it in this build.
+         */
+        Node: string;
         /**
          * @description Makes a retry safe: a second request with the same key and the
          *     same body returns the task of the first; with a different body it
@@ -2981,6 +3008,11 @@ export interface components {
     headers: {
         /** @description ID that correlates the response with the server logs. */
         RequestID: string;
+        /**
+         * @description The ID of the node that served a forwarded request (step 8e-1).
+         *     Absent when the node the client talks to served it.
+         */
+        SkepNode: string;
     };
     pathItems: never;
 }
@@ -3297,7 +3329,17 @@ export interface operations {
     };
     getTask: {
         parameters: {
-            query?: never;
+            query?: {
+                /**
+                 * @description The node that runs the task, by node ID or name (a task's
+                 *     `node_id`). This node's own ID or name, or no parameter, serves the
+                 *     request here; another member's forwards it (`Skep-Node` names it);
+                 *     a name or ID no member has is `404`; a member that cannot be
+                 *     forwarded to is `503 node_unreachable`. Only the two task routes
+                 *     take it in this build.
+                 */
+                node?: components["parameters"]["Node"];
+            };
             header?: {
                 /**
                  * @description Marks a request the client made by itself (a timer, a refetch on
@@ -3318,6 +3360,7 @@ export interface operations {
             200: {
                 headers: {
                     "X-Request-ID": components["headers"]["RequestID"];
+                    "Skep-Node": components["headers"]["SkepNode"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -3334,7 +3377,17 @@ export interface operations {
     };
     cancelTask: {
         parameters: {
-            query?: never;
+            query?: {
+                /**
+                 * @description The node that runs the task, by node ID or name (a task's
+                 *     `node_id`). This node's own ID or name, or no parameter, serves the
+                 *     request here; another member's forwards it (`Skep-Node` names it);
+                 *     a name or ID no member has is `404`; a member that cannot be
+                 *     forwarded to is `503 node_unreachable`. Only the two task routes
+                 *     take it in this build.
+                 */
+                node?: components["parameters"]["Node"];
+            };
             header?: never;
             path: {
                 id: string;
@@ -3346,6 +3399,7 @@ export interface operations {
             /** @description The task after the request. */
             200: {
                 headers: {
+                    "Skep-Node": components["headers"]["SkepNode"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -3355,7 +3409,15 @@ export interface operations {
             400: components["responses"]["InvalidRequest"];
             401: components["responses"]["Unauthenticated"];
             403: components["responses"]["Forbidden"];
-            404: components["responses"]["NotFound"];
+            /** @description No such task, or no node with the name or ID the `node` parameter gives. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             /** @description A running task of this type cannot be cancelled (`not_cancellable`). */
             409: {
                 headers: {
@@ -3662,6 +3724,7 @@ export interface operations {
             /** @description The VM with its disks, install media, and network interfaces. */
             200: {
                 headers: {
+                    "Skep-Node": components["headers"]["SkepNode"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -3775,6 +3838,7 @@ export interface operations {
             /** @description The task. */
             202: {
                 headers: {
+                    "Skep-Node": components["headers"]["SkepNode"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -4382,6 +4446,7 @@ export interface operations {
             /** @description The jail. */
             200: {
                 headers: {
+                    "Skep-Node": components["headers"]["SkepNode"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -4495,6 +4560,7 @@ export interface operations {
             /** @description The power task. */
             202: {
                 headers: {
+                    "Skep-Node": components["headers"]["SkepNode"];
                     [name: string]: unknown;
                 };
                 content: {

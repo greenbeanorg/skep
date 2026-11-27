@@ -164,12 +164,17 @@ type Submission struct {
 	RequestID      string
 	SourceIP       string
 	IdempotencyKey string
+	// OriginNode and Envelope come with a request another node's
+	// skep-api forwarded (step 8e-1, D40).
+	OriginNode string
+	Envelope   string
 }
 
 func (sub Submission) request(taskType, containerID string, payload []byte) tasks.Request {
 	req := tasks.Request{
 		Type: taskType, Payload: payload, IdempotencyKey: sub.IdempotencyKey,
 		Actor: sub.Actor, PeerUID: sub.PeerUID, RequestID: sub.RequestID, SourceIP: sub.SourceIP,
+		OriginNode: sub.OriginNode, Envelope: sub.Envelope,
 	}
 	if containerID != "" {
 		req.ResourceType, req.ResourceID = models.ContainerResource, containerID

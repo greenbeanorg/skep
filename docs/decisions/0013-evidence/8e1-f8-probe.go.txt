@@ -1,0 +1,136 @@
+// F8 probes: http.Server TLS handshake timeout, keep-alives off, and the
+// error a TLS 1.3 client sees when VerifyConnection refuses its cert.
+package main
+
+import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"errors"
+	"fmt"
+	"io"
+	"math/big"
+	"net"
+	"net/http"
+	"runtime"
+	"sync/atomic"
+	"time"
+)
+
+func cert() tls.Certificate {
+	k, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	t := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "x"}, NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour)}
+	d, _ := x509.CreateCertificate(rand.Reader, t, t, &k.PublicKey, k)
+	l, _ := x509.ParseCertificate(d)
+	return tls.Certificate{Certificate: [][]byte{d}, PrivateKey: k, Leaf: l}
+}
+
+func main() {
+	fmt.Println("go", runtime.Version())
+	srvCert, cliCert := cert(), cert()
+	var handshakes atomic.Int32
+	refuse := atomic.Bool{}
+	conf := &tls.Config{MinVersion: tls.VersionTLS13, ClientAuth: tls.RequireAnyClientCert, Certificates: []tls.Certificate{srvCert},
+		SessionTicketsDisabled: true, NextProtos: []string{"http/1.1"},
+		VerifyConnection: func(cs tls.ConnectionState) error {
+			handshakes.Add(1)
+			if refuse.Load() {
+				return errors.New("refused by pin")
+			}
+			return nil
+		}}
+
+	// 1. Which timeout bounds the TLS handshake of an http.Server?
+	for _, c := range []struct {
+		name               string
+		rht, rt, wt, idle time.Duration
+	}{
+		{"ReadHeaderTimeout=1s only", time.Second, 0, 0, 0},
+		{"ReadTimeout=1s only", 0, time.Second, 0, 0},
+		{"WriteTimeout=1s only", 0, 0, time.Second, 0},
+		{"IdleTimeout=1s only", 0, 0, 0, time.Second},
+		{"RHT=1s RT=3s WT=5s", time.Second, 3 * time.Second, 5 * time.Second, 0},
+	} {
+		ln, _ := net.Listen("tcp", "127.0.0.1:0")
+		srv := &http.Server{Handler: http.NotFoundHandler(), TLSConfig: conf, ReadHeaderTimeout: c.rht, ReadTimeout: c.rt, WriteTimeout: c.wt, IdleTimeout: c.idle,
+			TLSNextProto: map[string]func(*http.Server, *tls.Conn, http.Handler){}, ErrorLog: nil}
+		go srv.ServeTLS(ln, "", "")
+		cn, _ := net.Dial("tcp", ln.Addr().String())
+		start := time.Now()
+		cn.SetReadDeadline(time.Now().Add(4 * time.Second))
+		_, err := io.ReadAll(cn) // send nothing: the server waits for a ClientHello
+		el := time.Since(start).Round(100 * time.Millisecond)
+		closed := err == nil
+		fmt.Printf("handshake timeout, %s: server closed=%v after %v (err=%v)\n", c.name, closed, el, err)
+		cn.Close()
+		srv.Close()
+	}
+
+	// 2. DisableKeepAlives: one handshake per request.
+	ln, _ := net.Listen("tcp", "127.0.0.1:0")
+	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, "ok") }), TLSConfig: conf,
+		ReadHeaderTimeout: 10 * time.Second, TLSNextProto: map[string]func(*http.Server, *tls.Conn, http.Handler){}}
+	srv.SetKeepAlivesEnabled(false)
+	go srv.ServeTLS(ln, "", "")
+	cliConf := &tls.Config{MinVersion: tls.VersionTLS13, InsecureSkipVerify: true, Certificates: []tls.Certificate{cliCert}, NextProtos: []string{"http/1.1"}}
+	for _, ka := range []bool{false, true} {
+		handshakes.Store(0)
+		tr := &http.Transport{TLSClientConfig: cliConf, DisableKeepAlives: !ka, ForceAttemptHTTP2: false}
+		cl := &http.Client{Transport: tr}
+		srv.SetKeepAlivesEnabled(ka)
+		for i := 0; i < 5; i++ {
+			resp, err := cl.Get("https://" + ln.Addr().String() + "/")
+			if err != nil {
+				fmt.Println("get:", err)
+				continue
+			}
+			io.ReadAll(resp.Body)
+			resp.Body.Close()
+		}
+		fmt.Printf("keep-alives enabled=%v (client DisableKeepAlives=%v): 5 requests, %d handshakes\n", ka, !ka, handshakes.Load())
+		tr.CloseIdleConnections()
+	}
+	srv.SetKeepAlivesEnabled(false)
+
+	// 3. The server refuses the client's certificate in VerifyConnection.
+	refuse.Store(true)
+	tc, err := tls.Dial("tcp", ln.Addr().String(), cliConf)
+	fmt.Printf("tls.Dial with a refused client cert: err=%v (%T)\n", err, err)
+	if err == nil {
+		_, werr := tc.Write([]byte("GET / HTTP/1.1\r\nHost: x\r\n\r\n"))
+		fmt.Printf("  Write: err=%v\n", werr)
+		b := make([]byte, 10)
+		_, rerr := tc.Read(b)
+		fmt.Printf("  Read: err=%v (%T)\n", rerr, rerr)
+		var ae tls.AlertError
+		fmt.Printf("  errors.As tls.AlertError: %v value=%d\n", errors.As(rerr, &ae), ae)
+		var re *net.OpError
+		if errors.As(rerr, &re) {
+			fmt.Printf("  net.OpError op=%s err=%T %v\n", re.Op, re.Err, re.Err)
+		}
+		tc.Close()
+	}
+	tr := &http.Transport{TLSClientConfig: cliConf, DisableKeepAlives: true}
+	_, err = (&http.Client{Transport: tr}).Get("https://" + ln.Addr().String() + "/")
+	fmt.Printf("http.Client.Get with a refused client cert: err=%v\n", err)
+	var ae tls.AlertError
+	fmt.Printf("  errors.As tls.AlertError: %v value=%d (%s)\n", errors.As(err, &ae), ae, ae.Error())
+	var op *net.OpError
+	if errors.As(err, &op) {
+		fmt.Printf("  net.OpError op=%q\n", op.Op)
+	}
+	// With an explicit handshake in DialTLSContext.
+	d := &tls.Dialer{Config: cliConf}
+	c2, err := d.Dial("tcp", ln.Addr().String())
+	fmt.Printf("tls.Dialer.Dial: err=%v\n", err)
+	if err == nil {
+		tcc := c2.(*tls.Conn)
+		err = tcc.Handshake()
+		fmt.Printf("  explicit Handshake after Dial: err=%v\n", err)
+		c2.Close()
+	}
+	srv.Close()
+}

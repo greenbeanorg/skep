@@ -107,6 +107,19 @@ func (s *Service) HandlePeer(ctx context.Context, op string, from raftnet.Peer, 
 			return nil, &raftnet.PeerError{Code: raftnet.CodeUnavailable, Message: "this node was removed from the cluster"}
 		}
 		return s.handleGuestsWrite(from, body)
+	case raftnet.OpSupports:
+		s.mu.Lock()
+		old := s.noSupports
+		s.mu.Unlock()
+		if old {
+			return nil, &raftnet.PeerError{Code: raftnet.CodeForbidden, Message: `the operation "supports" is not open to a member key`}
+		}
+		return handleSupports(body)
+	case raftnet.OpAPIKey:
+		if s.isRemoved() {
+			return nil, &raftnet.PeerError{Code: raftnet.CodeUnavailable, Message: "this node was removed from the cluster"}
+		}
+		return s.handleAPIKey(ctx, from, body)
 	case raftnet.OpRemoved:
 		n, err := decodeNotice(body)
 		if err != nil {

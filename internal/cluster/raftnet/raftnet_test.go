@@ -403,6 +403,8 @@ func TestOperationTable(t *testing.T) {
 		OpKeyAbort:    {false, false, true, false},
 		OpUsersWrite:  {false, false, true, false},
 		OpGuestsWrite: {false, false, true, false},
+		OpSupports:    {false, true, true, true},
+		OpAPIKey:      {false, false, true, false},
 	}
 	if len(Operations) != len(want) {
 		t.Fatalf("%d operations, want %d", len(Operations), len(want))

@@ -550,8 +550,40 @@ a member whether the node is still listed; if it is not, run
 if it was joining) and join it again. The warning never shuts anything by
 itself.
 
+## Forwarding between nodes (step 8e-1)
+
+On a clustered node `skep-api` opens a second port, **8445**, on the
+cluster's listen address (the address `skep-cluster listen` or
+`join-request` gave); a single host opens nothing. Open 8445 between the
+members as you opened 8444; it is for the nodes only, never for users or
+browsers. `skep-cluster status` and `skepctl cluster show` list each
+member's **API pin**, which its `skep-api` registers by itself shortly
+after the node becomes a member (while any member runs an earlier build,
+it waits: upgrade every node, and the health check `node_forwarding` says
+what it waits for).
+
+From any node's API or `skepctl`, reading one VM or jail and its power
+actions (start, stop, restart) reach the node that owns it; the answer
+carries `Skep-Node`, the ID of the node that served it. The tasks of
+another node are read and cancelled with `?node=NAME` or `?node=NODE_ID`
+(`skepctl` adds it by itself when it waits for a task; a node's own ID
+is served there even while its `skep-cluster` is stopped). Everything else
+is served by the node you talk to; lists are that node's own.
+
+When a forward cannot be made the API answers:
+
+| Code | Means | What to do |
+|---|---|---|
+| `503 node_unreachable` | the owner is down, its `skep-api` is not running or has just restarted, it has not registered its API key yet, it is joining or being removed; `details.outcome` says whether anything may have run (`not_written`, or `unknown` when the request was sent and no answer came) | check `skep-cluster status` and the owner's health; after `unknown`, look at the owner's tasks before trying again |
+| `503 node_behind` | the owner has not yet caught up with the latest change of your account (a password or role change) | try again in a few seconds |
+| `503 node_clock_skew` | the two nodes' clocks are more than 15 s apart | fix NTP on the nodes (`skep-cluster status` shows the offsets) |
+| `503 node_version_mismatch` | the owner's build does not serve this request | finish the upgrade of every node |
+
 ## What you cannot do yet
 
+- Update, delete, snapshot, clone or open the console of a guest on
+  another node through this node (step 8e-2); create a guest on another
+  node; replace a node's API key (`key rotate --api`, step 8e-2).
 - Release a name reservation of a live member by hand, rename a guest, or
   remove a member that owns guests through the API (`--forget-guests` is
   root's command on a member).

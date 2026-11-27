@@ -153,6 +153,16 @@ func (h *handler) denyOrigin(w http.ResponseWriter, r *http.Request, id *auth.Id
 // ID filled in.
 func (h *handler) writeAudit(r *http.Request, e audit.AccessEntry) {
 	e.SourceIP, e.RequestID = sourceIPFrom(r.Context()), httpkit.RequestID(r.Context())
+	// Every entry written while serving a forwarded request names its
+	// origin node (step 8e-1, D28).
+	if o := originFrom(r.Context()); o != "" {
+		d := make(map[string]any, len(e.Details)+1)
+		for k, v := range e.Details {
+			d[k] = v
+		}
+		d["origin_node"] = o
+		e.Details = d
+	}
 	if err := h.audit.Write(r.Context(), e); err != nil {
 		h.log.ErrorContext(r.Context(), "could not write to the access audit log", "error", err,
 			"action", e.Action, "actor", e.ActorName, "outcome", string(e.Outcome))

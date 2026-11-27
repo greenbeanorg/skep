@@ -499,7 +499,27 @@ const (
 	// CodeAgentVersionMismatch means the agent is another build than
 	// skep-api: only one of them was restarted after an upgrade.
 	CodeAgentVersionMismatch = "agent_version_mismatch"
+
+	// Forwarding between nodes (step 8e-1, D37; ADR 0013 B8). Each
+	// carries details node_id, node_name and outcome (not_written or
+	// unknown).
+	//
+	// CodeNodeUnreachable: the node that owns the resource, or that the
+	// request names, cannot be reached or does not accept this node now.
+	CodeNodeUnreachable = "node_unreachable"
+	// CodeNodeBehind: the node that owns the resource has not yet caught
+	// up with the user's latest change; try again shortly.
+	CodeNodeBehind = "node_behind"
+	// CodeNodeClockSkew: the two nodes' clocks are more than 15 s apart.
+	CodeNodeClockSkew = "node_clock_skew"
+	// CodeNodeVersionMismatch: the other node's build does not serve
+	// this request's forwarding version or route (during an upgrade).
+	CodeNodeVersionMismatch = "node_version_mismatch"
 )
+
+// NodeHeader is the response header that names the node that served a
+// forwarded request (step 8e-1, D34).
+const NodeHeader = "Skep-Node"
 
 // Invalid returns an invalid_request Error with the given message.
 func Invalid(message string) *Error {

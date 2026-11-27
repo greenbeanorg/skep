@@ -99,6 +99,9 @@ type Options struct {
 	// leaves the inventory out: creates go to the agent alone, and
 	// GET /cluster/guests answers 503 no_quorum.
 	Guests GuestInventory
+	// Forward is forwarding between nodes (step 8e-1): the peers, the
+	// guest-owner lookup and the client. Nil serves every route here.
+	Forward Forwarding
 	// UI serves every path outside /api: the web interface
 	// (internal/webui). It sets its own security headers. Nil, the
 	// default, answers those paths with the JSON 404. An unknown path
@@ -126,6 +129,11 @@ type handler struct {
 	cluster      ClusterBackend
 	quorum       func() bool
 	guests       GuestInventory
+	// fwd forwards requests to other nodes; nil on the node listener's
+	// handler, which never forwards (D19).
+	fwd Forwarding
+	// self is this node's ID as its agent reports it (8e-1 fix F1).
+	self *selfNode
 }
 
 // AuditReader reads pages of the access audit log.
@@ -159,7 +167,31 @@ type route struct {
 	// quorum or the session is degraded (step 8d-1, D32). A route that
 	// declares nothing is refused for everyone.
 	quorum quorumRule
+	// scope says where the route is served (step 8e-1, D29): here only,
+	// on a guest's owner, or on the node the request names. A route that
+	// declares none is refused for everyone.
+	scope routeScope
+	// fwd says whether this build forwards the route; only forwardable
+	// routes are registered on the node listener (D19).
+	fwd bool
 }
+
+// routeScope is a route's D29 scope.
+type routeScope int
+
+const (
+	// scopeUndeclared is the zero value: the route is refused.
+	scopeUndeclared routeScope = iota
+	// scopeLocal routes are served here and never forwarded: health,
+	// login, logout, session, password, users, roles, audit, cluster.
+	scopeLocal
+	// scopeGuest routes name a guest by the path's ID: routed by the
+	// guest's owner.
+	scopeGuest
+	// scopeNode routes are about this node: served here unless the
+	// request names another node.
+	scopeNode
+)
 
 // quorumRule is a route's declaration for a node without quorum.
 type quorumRule int
@@ -186,71 +218,40 @@ func (rt route) permissions() []string { return append([]string{rt.requires}, rt
 // routes is the whole public API.
 func (h *handler) routes() []route {
 	return append([]route{
-		{http.MethodGet, "/health", requirePublic, nil, h.health, servedWithoutQuorum},
-		{http.MethodPost, "/auth/login", requirePublic, nil, h.login, servedWithoutQuorum},
-		{http.MethodPost, "/auth/logout", requireSession, nil, h.logout, servedWithoutQuorum},
-		{http.MethodGet, "/auth/session", requireSession, nil, h.session, servedWithoutQuorum},
-		{http.MethodPut, "/auth/password", requireSession, nil, h.changePassword, needsQuorum},
+		{http.MethodGet, "/health", requirePublic, nil, h.health, servedWithoutQuorum, scopeLocal, false},
+		{http.MethodPost, "/auth/login", requirePublic, nil, h.login, servedWithoutQuorum, scopeLocal, false},
+		{http.MethodPost, "/auth/logout", requireSession, nil, h.logout, servedWithoutQuorum, scopeLocal, false},
+		{http.MethodGet, "/auth/session", requireSession, nil, h.session, servedWithoutQuorum, scopeLocal, false},
+		{http.MethodPut, "/auth/password", requireSession, nil, h.changePassword, needsQuorum, scopeLocal, false},
 
-		{http.MethodGet, "/system", auth.PermSystemRead, nil, h.system, servedWithoutQuorum},
-		{http.MethodGet, "/nodes/{id}/hardware", auth.PermNodeRead, nil, h.nodeHardware, servedWithoutQuorum},
-		{http.MethodGet, "/tasks", auth.PermTaskRead, nil, h.tasks, servedWithoutQuorum},
-		{http.MethodGet, "/tasks/{id}", auth.PermTaskRead, nil, h.task, servedWithoutQuorum},
-		{http.MethodPost, "/tasks/{id}/cancel", auth.PermTaskCancel, nil, h.cancelTask, servedWithoutQuorum},
+		{http.MethodGet, "/system", auth.PermSystemRead, nil, h.system, servedWithoutQuorum, scopeNode, false},
+		{http.MethodGet, "/nodes/{id}/hardware", auth.PermNodeRead, nil, h.nodeHardware, servedWithoutQuorum, scopeNode, false},
+		{http.MethodGet, "/tasks", auth.PermTaskRead, nil, h.tasks, servedWithoutQuorum, scopeNode, false},
+		{http.MethodGet, "/tasks/{id}", auth.PermTaskRead, nil, h.task, servedWithoutQuorum, scopeNode, true},
+		{http.MethodPost, "/tasks/{id}/cancel", auth.PermTaskCancel, nil, h.cancelTask, servedWithoutQuorum, scopeNode, true},
 
-		{http.MethodGet, "/users", auth.PermUserRead, nil, h.listUsers, servedWithoutQuorum},
-		{http.MethodPost, "/users", auth.PermUserManage, nil, h.createUser, needsQuorum},
-		{http.MethodGet, "/users/{id}", auth.PermUserRead, nil, h.getUser, servedWithoutQuorum},
-		{http.MethodPut, "/users/{id}", auth.PermUserManage, nil, h.updateUser, needsQuorum},
-		{http.MethodDelete, "/users/{id}", auth.PermUserManage, nil, h.deleteUser, needsQuorum},
-		{http.MethodGet, "/roles", auth.PermRoleRead, nil, h.listRoles, servedWithoutQuorum},
-		{http.MethodGet, "/audit", auth.PermAuditRead, nil, h.listAudit, servedWithoutQuorum},
-	}, append(append(append(h.vmRoutes(), h.templateRoutes()...), h.containerRoutes()...), h.clusterRoutes()...)...)
+		{http.MethodGet, "/users", auth.PermUserRead, nil, h.listUsers, servedWithoutQuorum, scopeLocal, false},
+		{http.MethodPost, "/users", auth.PermUserManage, nil, h.createUser, needsQuorum, scopeLocal, false},
+		{http.MethodGet, "/users/{id}", auth.PermUserRead, nil, h.getUser, servedWithoutQuorum, scopeLocal, false},
+		{http.MethodPut, "/users/{id}", auth.PermUserManage, nil, h.updateUser, needsQuorum, scopeLocal, false},
+		{http.MethodDelete, "/users/{id}", auth.PermUserManage, nil, h.deleteUser, needsQuorum, scopeLocal, false},
+		{http.MethodGet, "/roles", auth.PermRoleRead, nil, h.listRoles, servedWithoutQuorum, scopeLocal, false},
+		{http.MethodGet, "/audit", auth.PermAuditRead, nil, h.listAudit, servedWithoutQuorum, scopeLocal, false},
+	}, append(append(append(append(h.vmRoutes(), h.templateRoutes()...), h.containerRoutes()...), h.clusterRoutes()...), testRoutes(h)...)...)
 }
+
+// testRoutes adds routes in tests only (a forwardable route that needs
+// quorum, step 8e-1 D46); nil in every build.
+var testRoutes = func(*handler) []route { return nil }
 
 // NewHandler returns the API as an http.Handler, wrapped in the request ID,
 // access log, panic recovery, and security header middleware.
 func NewHandler(opts Options) http.Handler {
-	log := opts.Logger
+	h := newHandler(opts)
+	h.fwd = opts.Forward
+	log := h.log
 	if log == nil {
 		log = slog.Default()
-	}
-	h := &handler{
-		backend: opts.Backend, auth: opts.Auth, users: opts.Users, audit: opts.Audit, history: opts.AuditLog,
-		checks: opts.Checks, log: log, tls: opts.TLS, proxies: opts.TrustedProxies,
-	}
-	h.quorum, h.guests = opts.Quorum, opts.Guests
-	h.cluster = opts.Cluster
-	if h.cluster == nil {
-		h.cluster = noCluster{}
-	}
-	h.consoleCheck = opts.ConsoleSessionCheck
-	if h.consoleCheck <= 0 {
-		h.consoleCheck = DefaultConsoleSessionCheck
-	}
-	switch vms, ok := opts.Backend.(VMBackend); {
-	case opts.VMs != nil:
-		h.vms = opts.VMs
-	case ok:
-		h.vms = vms
-	default:
-		h.vms = noVMs{}
-	}
-	switch tpl, ok := opts.Backend.(TemplateBackend); {
-	case opts.Templates != nil:
-		h.templates = opts.Templates
-	case ok:
-		h.templates = tpl
-	default:
-		h.templates = noTemplates{}
-	}
-	switch ct, ok := opts.Backend.(ContainerBackend); {
-	case opts.Containers != nil:
-		h.containers = opts.Containers
-	case ok:
-		h.containers = ct
-	default:
-		h.containers = noContainers{}
 	}
 
 	// Routes are grouped by path, and the method is checked by the
@@ -293,6 +294,53 @@ func NewHandler(opts Options) http.Handler {
 	root = httpkit.WithSecurityHeaders(root)
 	root = httpkit.WithRequestID(root)
 	return root
+}
+
+// newHandler builds the handler both listeners share: the backends, the
+// identity, the audit. Neither listener's mux is built here.
+func newHandler(opts Options) *handler {
+	log := opts.Logger
+	if log == nil {
+		log = slog.Default()
+	}
+	h := &handler{
+		backend: opts.Backend, auth: opts.Auth, users: opts.Users, audit: opts.Audit, history: opts.AuditLog,
+		checks: opts.Checks, log: log, tls: opts.TLS, proxies: opts.TrustedProxies, self: &selfNode{},
+	}
+	h.quorum, h.guests = opts.Quorum, opts.Guests
+	h.cluster = opts.Cluster
+	if h.cluster == nil {
+		h.cluster = noCluster{}
+	}
+	h.consoleCheck = opts.ConsoleSessionCheck
+	if h.consoleCheck <= 0 {
+		h.consoleCheck = DefaultConsoleSessionCheck
+	}
+	switch vms, ok := opts.Backend.(VMBackend); {
+	case opts.VMs != nil:
+		h.vms = opts.VMs
+	case ok:
+		h.vms = vms
+	default:
+		h.vms = noVMs{}
+	}
+	switch tpl, ok := opts.Backend.(TemplateBackend); {
+	case opts.Templates != nil:
+		h.templates = opts.Templates
+	case ok:
+		h.templates = tpl
+	default:
+		h.templates = noTemplates{}
+	}
+	switch ct, ok := opts.Backend.(ContainerBackend); {
+	case opts.Containers != nil:
+		h.containers = opts.Containers
+	case ok:
+		h.containers = ct
+	default:
+		h.containers = noContainers{}
+	}
+	return h
 }
 
 // healthMoved answers the usual health-check paths with a 404 that names
@@ -410,6 +458,12 @@ func (h *handler) serve(rt route, w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if !h.quorumGate(w, r, rt) {
+		return
+	}
+	// Forwarding (step 8e-1, D29–D31), after authentication, the origin
+	// check, the permissions and the quorum gate, all of which ran here
+	// as for a local request.
+	if h.routeElsewhere(rt, w, r) {
 		return
 	}
 	rt.handler(w, r)

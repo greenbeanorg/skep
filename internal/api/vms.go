@@ -42,25 +42,25 @@ type VMBackend interface {
 // decisions 9 and 10).
 func (h *handler) vmRoutes() []route {
 	return []route{
-		{http.MethodGet, "/vms", auth.PermVMRead, nil, h.listVMs, servedWithoutQuorum},
-		{http.MethodPost, "/vms", auth.PermVMWrite, nil, h.createVM, needsQuorum},
-		{http.MethodGet, "/vms/{id}", auth.PermVMRead, nil, h.getVM, servedWithoutQuorum},
-		{http.MethodPut, "/vms/{id}", auth.PermVMWrite, nil, h.updateVM, needsQuorum},
-		{http.MethodDelete, "/vms/{id}", auth.PermVMDelete, nil, h.deleteVM, needsQuorum},
-		{http.MethodPost, "/vms/{id}/actions", auth.PermVMPower, nil, h.vmAction, servedWithoutQuorum},
-		{http.MethodGet, "/vms/{id}/console/serial", auth.PermVMConsole, nil, h.vmConsole, needsQuorum},
-		{http.MethodGet, "/vms/{id}/snapshots", auth.PermVMRead, nil, h.listSnapshots, servedWithoutQuorum},
-		{http.MethodPost, "/vms/{id}/snapshots", auth.PermVMSnapshot, nil, h.createSnapshot, needsQuorum},
-		{http.MethodGet, "/vms/{id}/snapshots/{sid}", auth.PermVMRead, nil, h.getSnapshot, servedWithoutQuorum},
-		{http.MethodDelete, "/vms/{id}/snapshots/{sid}", auth.PermVMSnapshot, nil, h.deleteSnapshot, needsQuorum},
-		{http.MethodPost, "/vms/{id}/snapshots/{sid}/rollback", auth.PermVMSnapshot, nil, h.rollbackSnapshot, needsQuorum},
-		{http.MethodPost, "/vms/{id}/clone", auth.PermVMWrite, []string{auth.PermVMSnapshot}, h.cloneVM, needsQuorum},
-		{http.MethodGet, "/storage/pools", auth.PermStorageRead, nil, h.listPools, servedWithoutQuorum},
-		{http.MethodGet, "/storage/datasets", auth.PermStorageRead, nil, h.listDatasets, servedWithoutQuorum},
-		{http.MethodGet, "/storage/media", auth.PermStorageRead, nil, h.listMedia, servedWithoutQuorum},
+		{http.MethodGet, "/vms", auth.PermVMRead, nil, h.listVMs, servedWithoutQuorum, scopeNode, false},
+		{http.MethodPost, "/vms", auth.PermVMWrite, nil, h.createVM, needsQuorum, scopeNode, false},
+		{http.MethodGet, "/vms/{id}", auth.PermVMRead, nil, h.getVM, servedWithoutQuorum, scopeGuest, true},
+		{http.MethodPut, "/vms/{id}", auth.PermVMWrite, nil, h.updateVM, needsQuorum, scopeGuest, false},
+		{http.MethodDelete, "/vms/{id}", auth.PermVMDelete, nil, h.deleteVM, needsQuorum, scopeGuest, false},
+		{http.MethodPost, "/vms/{id}/actions", auth.PermVMPower, nil, h.vmAction, servedWithoutQuorum, scopeGuest, true},
+		{http.MethodGet, "/vms/{id}/console/serial", auth.PermVMConsole, nil, h.vmConsole, needsQuorum, scopeGuest, false},
+		{http.MethodGet, "/vms/{id}/snapshots", auth.PermVMRead, nil, h.listSnapshots, servedWithoutQuorum, scopeGuest, false},
+		{http.MethodPost, "/vms/{id}/snapshots", auth.PermVMSnapshot, nil, h.createSnapshot, needsQuorum, scopeGuest, false},
+		{http.MethodGet, "/vms/{id}/snapshots/{sid}", auth.PermVMRead, nil, h.getSnapshot, servedWithoutQuorum, scopeGuest, false},
+		{http.MethodDelete, "/vms/{id}/snapshots/{sid}", auth.PermVMSnapshot, nil, h.deleteSnapshot, needsQuorum, scopeGuest, false},
+		{http.MethodPost, "/vms/{id}/snapshots/{sid}/rollback", auth.PermVMSnapshot, nil, h.rollbackSnapshot, needsQuorum, scopeGuest, false},
+		{http.MethodPost, "/vms/{id}/clone", auth.PermVMWrite, []string{auth.PermVMSnapshot}, h.cloneVM, needsQuorum, scopeGuest, false},
+		{http.MethodGet, "/storage/pools", auth.PermStorageRead, nil, h.listPools, servedWithoutQuorum, scopeNode, false},
+		{http.MethodGet, "/storage/datasets", auth.PermStorageRead, nil, h.listDatasets, servedWithoutQuorum, scopeNode, false},
+		{http.MethodGet, "/storage/media", auth.PermStorageRead, nil, h.listMedia, servedWithoutQuorum, scopeNode, false},
 		// The metrics name VMs, jails, and pools, so they need what
 		// reading each needs (ADR 0010 decision 15).
-		{http.MethodGet, "/metrics", auth.PermSystemRead, []string{auth.PermVMRead, auth.PermStorageRead, auth.PermContainerRead}, h.metrics, servedWithoutQuorum},
+		{http.MethodGet, "/metrics", auth.PermSystemRead, []string{auth.PermVMRead, auth.PermStorageRead, auth.PermContainerRead}, h.metrics, servedWithoutQuorum, scopeNode, false},
 	}
 }
 

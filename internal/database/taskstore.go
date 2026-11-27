@@ -201,7 +201,7 @@ func (s *TaskStore) Create(ctx context.Context, t tasks.Task, sourceIP string, c
 			ActorID: t.Actor.ID, ActorName: t.Actor.Name, PeerUID: t.PeerUID,
 			Action: t.Type, ResourceType: t.ResourceType, ResourceID: t.ResourceID,
 			TaskID: t.ID, Phase: audit.Requested, Outcome: audit.Success,
-			SourceIP: sourceIP, RequestID: t.RequestID,
+			SourceIP: sourceIP, RequestID: t.RequestID, Details: t.RequestedDetails,
 		}, t.CreatedAt); err != nil {
 			return err
 		}
