@@ -135,11 +135,16 @@ func (rv *Receiver) Check(r *http.Request) (*Accepted, *Refusal) {
 	}
 	// (c) The key, the signature, the origin and the cluster. Nothing in
 	// the payload was used before this point but its version.
+	// The signature is checked with the connection's own key first; only
+	// then is anything in the payload read.
 	pub, _ := leaf.PublicKey.(*ecdsa.PublicKey)
+	if !env.Verify(pub) {
+		return refuse(CodeBadEnvelope, "the envelope's signature was not made with this connection's key")
+	}
 	p := env.Payload
-	if p.OriginKey != base64.StdEncoding.EncodeToString(leaf.RawSubjectPublicKeyInfo) || !env.Verify(pub) ||
-		p.Origin != peer.NodeID || a.ClusterID == "" || p.ClusterID != a.ClusterID {
-		return refuse(CodeBadEnvelope, "the envelope's key, signature, origin or cluster is not this connection's")
+	if p.OriginKey != base64.StdEncoding.EncodeToString(leaf.RawSubjectPublicKeyInfo) || p.Origin != peer.NodeID ||
+		a.ClusterID == "" || p.ClusterID != a.ClusterID {
+		return refuse(CodeBadEnvelope, "the envelope's key, origin or cluster is not this connection's")
 	}
 	verified := func(code, msg string) (*Accepted, *Refusal) {
 		return nil, &Refusal{Code: code, Message: msg, Verified: true, Origin: p.Origin}

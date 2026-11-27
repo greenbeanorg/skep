@@ -175,12 +175,13 @@ func (h *handler) finishForward(rt route, w http.ResponseWriter, r *http.Request
 	_, _ = w.Write(res.Body)
 }
 
-// writeForwardError answers one of the four public codes, or 401 for an
-// origin whose copy of the user is behind (stale_origin).
+// writeForwardError answers one of the four public codes, 400 for an
+// envelope that would be too large, or 401 for an origin whose copy of
+// the user is behind (stale_origin).
 func (h *handler) writeForwardError(w http.ResponseWriter, r *http.Request, e *models.Error) {
 	if e.Code == auth.CodeUnauthenticated {
 		h.fail(w, r, auth.ErrUnauthenticated)
 		return
 	}
-	httpkit.WriteErrorDetails(w, r, http.StatusServiceUnavailable, e.Code, e.Message, e.Details)
+	httpkit.WriteErrorDetails(w, r, forward.Result{Err: e}.HTTPStatus(), e.Code, e.Message, e.Details)
 }

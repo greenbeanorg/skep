@@ -78,8 +78,11 @@ type Result struct {
 // HTTPStatus is the status to answer: the receiver's, or 503 for Err.
 func (r Result) HTTPStatus() int {
 	if r.Err != nil {
-		if r.Err.Code == auth.CodeUnauthenticated {
+		switch r.Err.Code {
+		case auth.CodeUnauthenticated:
 			return http.StatusUnauthorized
+		case models.CodeInvalidRequest:
+			return http.StatusBadRequest
 		}
 		return http.StatusServiceUnavailable
 	}
@@ -165,6 +168,9 @@ func (c *Client) Forward(ctx context.Context, p peerapi.Peer, req Request) Resul
 		res.Attempts++
 		status, header, body, err := c.send(ctx, p, req)
 		switch {
+		case errors.Is(err, ErrTooLarge):
+			res.Err = &models.Error{Code: models.CodeInvalidRequest, Message: "the request's envelope would be larger than 4096 bytes (a long idempotency key or path); nothing was sent"}
+			return res
 		case err != nil:
 			var ns *notSentError
 			if errors.As(err, &ns) && !sentOnce {
@@ -256,6 +262,9 @@ func (c *Client) send(ctx context.Context, p peerapi.Peer, req Request) (int, ht
 		SourceIP: req.SourceIP, Method: req.Method, Path: u.RequestURI(), BodySHA256: BodyHash(req.Body),
 		IssuedAt: now, ExpiresAt: now + Lifetime.Milliseconds(), Nonce: hex.EncodeToString(nonce)}, key)
 	if err != nil {
+		if errors.Is(err, ErrTooLarge) {
+			return 0, nil, nil, err
+		}
 		return 0, nil, nil, &notSentError{err}
 	}
 	hr, err := http.NewRequestWithContext(ctx, req.Method, u.String(), strings.NewReader(string(req.Body)))

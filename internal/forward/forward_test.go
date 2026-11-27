@@ -579,3 +579,14 @@ func TestClockSkew(t *testing.T) {
 		t.Fatalf("unknown: %v", e)
 	}
 }
+
+// D20: a request whose envelope would be larger than 4096 bytes is not
+// forwarded: 400 invalid_request, nothing sent.
+func TestEnvelopeTooLarge(t *testing.T) {
+	sent := atomic.Int32{}
+	cl, star, _ := originRig(t, http.HandlerFunc(func(http.ResponseWriter, *http.Request) { sent.Add(1) }))
+	res := cl.Forward(context.Background(), star, Request{Method: "GET", URI: "/api/v1/vms/x?q=" + strings.Repeat("a", 4000), UserID: userID})
+	if res.HTTPStatus() != 400 || res.Err == nil || res.Err.Code != models.CodeInvalidRequest || res.Attempts != 1 || sent.Load() != 0 {
+		t.Fatalf("%d %+v, sent %d", res.HTTPStatus(), res.Err, sent.Load())
+	}
+}
