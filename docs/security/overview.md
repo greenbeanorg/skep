@@ -447,7 +447,11 @@ procedure in [Joining hosts into a cluster](../administration/cluster.md).
   handshake against the membership as it is then), and a signed,
   short-lived envelope (30 s, a nonce, the method, the path with its
   query, the body's hash) that the receiving `skep-api` verifies before
-  anything else, then the user in its own copy (unknown, behind, disabled
+  anything else, then the shape of every field it passes on to its audit,
+  its log and its agent (IDs as lower-case UUIDs, the request ID and
+  idempotency key by their rules, one address, a known method, a path
+  under `/api/v1/`; otherwise `bad_envelope`, audited with the user ID),
+  then the user in its own copy (unknown, behind, disabled
   or a lower credential epoch is refused) and the user's permission with
   its own role and its own quorum. The agent records the origin node and
   the envelope in its audit entry and verifies neither (ADR 0004,

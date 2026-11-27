@@ -955,7 +955,10 @@ through its own agent. Nothing new talks to an agent from the network.
 self-signed certificate ("skep-api node <node ID>") in
 `/var/db/skep/api/nodekey/` (directory `0700`, `node.key` `0600`, as the
 `skep` account) the first time `skep-cluster` reports a listen address
-for the node; a single host creates none. A key file that cannot be used
+for the node; a single host creates none. A host creates its key, opens
+8445 and registers the pin in its own one-node cluster as soon as it has
+a listen address (`listen`, `join-request`), before it joins, and
+registers again in the cluster it joins. A key file that cannot be used
 is a health warning and is never replaced; a missing or wrong certificate
 is issued again with the same key; it is renewed as the node key is.
 
@@ -964,7 +967,9 @@ key's pin through the socket operation `api-key`; the entry is
 `member.api_key` (section 2 of amendment 8). The leader writes it only
 after every other member answered the peer operation `supports` with
 true, because a build before 8e-1 stops its state machine at this entry
-type. The pin is in every member entry (`api_pin` in `skep-cluster
+type: while any member is down or does not answer `supports`, no API pin
+can be registered or replaced (until the feature level of step 8g
+replaces the guard). The pin is in every member entry (`api_pin` in `skep-cluster
 status`, `GET /api/v1/cluster` and `skepctl cluster show`).
 
 **The peers.** `skep-api` long-polls `peers-read` (every member entry
@@ -989,9 +994,18 @@ audit, cluster), `guest` (the path's ID names a guest; routed by its
 owner) or `node` (served here unless the request names another node with
 `?node=`). Forwarded in 8e-1: `GET` of one VM or jail, their power
 actions, `GET /tasks/{id}` and `POST /tasks/{id}/cancel` (the last two
-only with `?node=`). A `node` parameter on any other route is `400`.
+only with `?node=`). A `node` parameter on any other route is `400`, and
+so is a `node` value that is empty or neither a lower-case UUID nor of
+the node-name shape (`invalid_request`, decided first, the value never
+echoed). A `node` value equal to this node's ID, as the local agent's
+system document reports it (read when first needed, kept once known), is
+served here whatever the peer list says, so a task on a host whose
+`skep-cluster` has not answered since `skep-api` started can still be
+read and waited for; a node name still needs a peers answer.
 
-**The envelope and the checks** are in amendment 8, sections 4 and 5.
+**The envelope and the checks** are in amendment 8, sections 4 and 5:
+after the signature and the origin, cluster and key checks, the receiver
+checks every payload field's shape (`bad_envelope`, audited).
 
 The new socket operations (the local API's table above lists them with
 their paths):
@@ -1018,8 +1032,9 @@ public codes (amendment 8, section 5).
 
 **Audit.** The origin writes `forward.send` for every forwarded request
 that is not a GET; the receiver writes `origin_node` into every access
-audit entry of a forwarded request, and `forward.refused` for a refusal
-made after the signature verified; the receiver's agent stores
+audit entry of a forwarded request, and `forward.refused` (actor
+`system`, with `origin_node`, `code`, `method`, `route` and the
+envelope's `user_id`) for a refusal made after the signature verified; the receiver's agent stores
 `origin_node` and the envelope in the "requested" entry of the task or
 cancellation.
 

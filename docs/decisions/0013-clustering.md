@@ -559,7 +559,10 @@ Each item was proposed for review. Andy's answers and the final review
   listen address and registers the pin itself, once the node is a
   member, with the entry `member.api_key` (through the socket operation
   `api-key`; the node is always the socket's), which replaces an earlier
-  one. `key rotate --api` is step 8e-2.
+  one. A host creates its key, opens 8445 and registers the pin in its
+  own one-node cluster as soon as it has a listen address (`listen`,
+  `join-request`), before it joins, and registers again in the cluster
+  it joins. `key rotate --api` is step 8e-2.
 - **Where `skep-cluster` listens, and when.** Only a clustered node
   listens on the network.
   - `skep-cluster init` without `-address` (the default for a single
@@ -3184,7 +3187,10 @@ every one answered true in this call; otherwise it answers `unavailable`
 naming the first that did not, and nothing is written. **Reason:**
 registration is automatic, and a build before this step stops its state
 machine at this entry type (ADR 0013 B5's backstop). Without the guard,
-the first upgraded node would stop every node not yet upgraded.
+the first upgraded node would stop every node not yet upgraded. **Its
+cost:** while any member is down or does not answer `supports`, no API
+pin can be registered or replaced, and the guard stays until the feature
+level of step 8g replaces it.
 
 ### 3. The usable-peer rule, and it fails closed
 
@@ -3223,7 +3229,18 @@ agent before all have passed: (a) the connection's key is still a usable
 peer's API pin (`not_member`); (b) the envelope's form, version and
 strict decoding (`version`, `bad_envelope`); (c) `origin_key` is the
 connection's key, the signature verifies with it, `origin` is that key's
-node and `cluster_id` this cluster (`bad_envelope`); (d) the target is
+node and `cluster_id` this cluster (`bad_envelope`); then every field's
+shape (`bad_envelope`, audited since the signature verified):
+`cluster_id`, `origin`, `target` and `user_id` a lower-case UUID,
+`request_id` of the request ID rule (`[A-Za-z0-9._-]{1,64}`),
+`idempotency_key` empty or of the agent's rule (`[A-Za-z0-9._:-]{1,128}`),
+`source_ip` empty or one IP address without a zone, `method` `GET`,
+`HEAD`, `POST`, `PUT` or `DELETE`, `path` starting with `/api/v1/` and at
+most 2048 bytes, `body_sha256` 64 and `nonce` 32 lower-case hex digits,
+`issued_at` and `expires_at` above 0 (these values reach the access
+audit, the log and the agent caller; the origin builds no other, and
+answers `400 invalid_request` for a client's malformed `Idempotency-Key`
+before sending); (d) the target is
 this node (`wrong_target`); (e) the method, the path with its query, the
 body's hash and the idempotency key are the request's own
 (`bad_envelope`); then time and replay by the receiver's clock (`clock`,

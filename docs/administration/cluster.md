@@ -566,7 +566,8 @@ From any node's API or `skepctl`, reading one VM or jail and its power
 actions (start, stop, restart) reach the node that owns it; the answer
 carries `Skep-Node`, the ID of the node that served it. The tasks of
 another node are read and cancelled with `?node=NAME` or `?node=NODE_ID`
-(`skepctl` adds it by itself when it waits for a task). Everything else
+(`skepctl` adds it by itself when it waits for a task; a node's own ID
+is served there even while its `skep-cluster` is stopped). Everything else
 is served by the node you talk to; lists are that node's own.
 
 When a forward cannot be made the API answers:

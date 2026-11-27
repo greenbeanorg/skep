@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 
 	"github.com/greenbeanorg/skep/internal/agentproto"
 	"github.com/greenbeanorg/skep/internal/audit"
@@ -56,6 +57,11 @@ func (h *handler) routeElsewhere(rt route, w http.ResponseWriter, r *http.Reques
 		return true
 	}
 	_, named := r.URL.Query()[NodeParam]
+	ref := r.URL.Query().Get(NodeParam)
+	if named && !clusterstate.ValidNodeID(ref) && !clusterstate.ValidName(ref) {
+		httpkit.WriteError(w, r, http.StatusBadRequest, httpkit.CodeInvalidRequest, "the node parameter is neither a node ID nor a node name")
+		return true
+	}
 	if named && !rt.takesNodeParam() {
 		httpkit.WriteError(w, r, http.StatusBadRequest, httpkit.CodeInvalidRequest, "this route takes no node parameter")
 		return true
@@ -69,8 +75,7 @@ func (h *handler) routeElsewhere(rt route, w http.ResponseWriter, r *http.Reques
 		if !named {
 			return false
 		}
-		ref := r.URL.Query().Get(NodeParam)
-		if ref != "" && (ref == a.NodeID || ref == a.NodeName) {
+		if ref == a.NodeID || ref == a.NodeName || (clusterstate.ValidNodeID(ref) && ref == h.selfNodeID(r.Context())) {
 			return false
 		}
 		if !listUsable(a, fresh) {
@@ -107,6 +112,32 @@ func (h *handler) routeElsewhere(rt route, w http.ResponseWriter, r *http.Reques
 	return false
 }
 
+// selfNode keeps this node's ID once its agent has reported it.
+type selfNode struct {
+	mu sync.Mutex
+	id string
+}
+
+// selfNodeID returns this node's ID from the agent's system document (F1):
+// read when first needed, kept once known, read again while unknown. It
+// returns "" when the agent cannot tell.
+func (h *handler) selfNodeID(ctx context.Context) string {
+	h.self.mu.Lock()
+	id := h.self.id
+	h.self.mu.Unlock()
+	if id != "" {
+		return id
+	}
+	sys, err := h.backend.System(agentproto.WithCaller(ctx, agentproto.Caller{ActorID: agentproto.APIActor, ActorName: agentproto.APIActor}))
+	if err != nil || !clusterstate.ValidNodeID(sys.NodeID) {
+		return ""
+	}
+	h.self.mu.Lock()
+	h.self.id = sys.NodeID
+	h.self.mu.Unlock()
+	return sys.NodeID
+}
+
 // routeKind is the guest kind a guest route's path names.
 func routeKind(path string) string {
 	if strings.HasPrefix(path, "/containers/") {
@@ -135,10 +166,15 @@ func (h *handler) forwardTo(rt route, w http.ResponseWriter, r *http.Request, a 
 		httpkit.WriteError(w, r, http.StatusBadRequest, httpkit.CodeInvalidRequest, "the request body is larger than 64 KiB or cannot be read; nothing was sent")
 		return
 	}
+	key := r.Header.Get(agentproto.HeaderIdempotencyKey)
+	if key != "" && !agentproto.ValidIdempotencyKey(key) {
+		httpkit.WriteError(w, r, http.StatusBadRequest, httpkit.CodeInvalidRequest, "invalid idempotency key: use 1 to 128 characters from A-Z a-z 0-9 . _ : -; nothing was sent")
+		return
+	}
 	id, _ := identityFrom(r.Context())
 	res := h.fwd.Forward(r.Context(), p, forward.Request{
 		Method: r.Method, URI: r.URL.RequestURI(), Body: body, ContentType: r.Header.Get("Content-Type"),
-		IdempotencyKey: r.Header.Get(agentproto.HeaderIdempotencyKey), RequestID: httpkit.RequestID(r.Context()),
+		IdempotencyKey: key, RequestID: httpkit.RequestID(r.Context()),
 		SourceIP: sourceIPFrom(r.Context()), UserID: id.User.ID, Epoch: id.User.CredentialEpoch,
 	})
 	h.finishForward(rt, w, r, p, res)

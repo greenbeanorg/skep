@@ -80,6 +80,8 @@ type Refusal struct {
 	Message  string
 	Verified bool
 	Origin   string
+	// UserID is the envelope's user ID, set once its shape was checked.
+	UserID string
 }
 
 // Accepted is a forwarded request that passed every check (D24–D26).
@@ -147,7 +149,14 @@ func (rv *Receiver) Check(r *http.Request) (*Accepted, *Refusal) {
 		return refuse(CodeBadEnvelope, "the envelope's key, origin or cluster is not this connection's")
 	}
 	verified := func(code, msg string) (*Accepted, *Refusal) {
-		return nil, &Refusal{Code: code, Message: msg, Verified: true, Origin: p.Origin}
+		return nil, &Refusal{Code: code, Message: msg, Verified: true, Origin: p.Origin, UserID: p.UserID}
+	}
+	// F2: every field's shape, before anything else uses it.
+	if !p.ValidShape() {
+		if !uuidRE.MatchString(p.UserID) {
+			p.UserID = "" // never a malformed value in the audit
+		}
+		return verified(CodeBadEnvelope, "a field of the envelope does not have its shape")
 	}
 	// (d) The target is this node.
 	if p.Target != a.NodeID {

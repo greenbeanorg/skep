@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -15,6 +16,7 @@ import (
 	"github.com/greenbeanorg/skep/internal/auth"
 	"github.com/greenbeanorg/skep/internal/cluster/peerapi"
 	"github.com/greenbeanorg/skep/internal/forward"
+	"github.com/greenbeanorg/skep/internal/httpkit"
 	"github.com/greenbeanorg/skep/pkg/models"
 )
 
@@ -197,12 +199,61 @@ func TestNodeParameter(t *testing.T) {
 	if rec.Code != 202 || r.f.count() != 2 {
 		t.Fatalf("cancel on star: %d", rec.Code)
 	}
+	// F2: the origin never builds an envelope with a malformed key.
+	rec = r.e.serve(r.h, request{method: http.MethodPost, path: Prefix + "/tasks/" + fwTask + "/cancel?node=star", role: auth.RoleOperator,
+		headers: map[string]string{agentproto.HeaderIdempotencyKey: "k 1"}})
+	if rec.Code != 400 || !strings.Contains(rec.Body.String(), httpkit.CodeInvalidRequest) || r.f.count() != 2 {
+		t.Fatalf("a malformed idempotency key: %d %s", rec.Code, rec.Body)
+	}
 	r.f.fresh = false
 	if c, b := get("/tasks/" + fwTask + "?node=star"); c != 503 || !strings.Contains(b, "no current peer list") {
 		t.Fatalf("stale list: %d %s", c, b)
 	}
 	if c, _ := get("/tasks/" + fwTask + "?node=smith"); c != 200 {
 		t.Fatalf("this node with a stale list: %d", c)
+	}
+}
+
+// 8e-1 fix F1: a node parameter that names this node by its ID is served
+// here from the agent's node ID, whatever the peer list says; F4: a node
+// parameter of neither shape is 400 and never echoed.
+func TestNodeParameterSelfAndShape(t *testing.T) {
+	r := newFwRig(t, shared(t))
+	r.f.ans, r.f.fresh = peerapi.PeersAnswer{}, false // no peers answer since start
+	r.tasks.systemErr = errors.New("the agent is down")
+	get := func(node string) (int, string) {
+		rec := r.e.serve(r.h, request{method: http.MethodGet, path: Prefix + "/tasks/" + fwTask + "?node=" + node, role: auth.RoleViewer})
+		return rec.Code, rec.Body.String()
+	}
+	if c, b := get(fwSelf); c != 503 || !strings.Contains(b, models.CodeNodeUnreachable) {
+		t.Fatalf("the agent down, no peers answer: %d %s", c, b)
+	}
+	r.tasks.systemErr, r.tasks.system = nil, models.System{NodeID: fwSelf}
+	if c, b := get(fwSelf); c != 200 || r.f.count() != 0 {
+		t.Fatalf("this node's ID, no peers answer: %d %s", c, b)
+	}
+	if c, b := get(fwStar); c != 503 || !strings.Contains(b, models.CodeNodeUnreachable) {
+		t.Fatalf("another node's ID, no peers answer: %d %s", c, b)
+	}
+	if c, _ := get("smith"); c != 503 {
+		t.Fatalf("this node's name needs a peers answer: %d", c)
+	}
+	r.tasks.system = models.System{} // kept once known
+	if c, _ := get(fwSelf); c != 200 {
+		t.Fatalf("the kept node ID: %d", c)
+	}
+	for _, bad := range []string{"", "bad_name", "-x", "a%20b", "%3Cb%3E"} {
+		for _, path := range []string{"/tasks/" + fwTask, "/containers/" + fwGuest} {
+			rec := r.e.serve(r.h, request{method: http.MethodGet, path: Prefix + path + "?node=" + bad, role: auth.RoleViewer})
+			b := rec.Body.String()
+			if rec.Code != 400 || !strings.Contains(b, httpkit.CodeInvalidRequest) || !strings.Contains(b, "neither a node ID nor a node name") ||
+				(bad != "" && strings.Contains(b, bad)) || strings.Contains(b, "<b>") || strings.Contains(b, "a b") {
+				t.Errorf("node=%q on %s: %d %s", bad, path, rec.Code, b)
+			}
+		}
+	}
+	if r.f.count() != 0 {
+		t.Fatal("forwarded")
 	}
 }
 
@@ -361,12 +412,20 @@ func TestNodeHandler(t *testing.T) {
 		t.Fatalf("not member: %d", rec.Code)
 	}
 	// After it: audited with the origin node and the code.
-	recv.ref = &forward.Refusal{Code: forward.CodeBehind, Message: "behind", Verified: true, Origin: fwStar}
-	if rec := serve("POST", "/api/v1/containers/"+fwGuest+"/actions", `{}`); rec.Code != 503 || rec.Header().Get(forward.RefusalHeader) != forward.CodeBehind {
+	// F3: with the envelope's user ID. V1: with the origin's request ID
+	// (the X-Request-ID header the origin sends), as the handler's entries
+	// (the envelope's request ID, req-origin above).
+	recv.ref = &forward.Refusal{Code: forward.CodeBehind, Message: "behind", Verified: true, Origin: fwStar, UserID: e.ids[auth.RoleOperator]}
+	if rec := e.serve(h, request{method: "POST", path: "/api/v1/containers/" + fwGuest + "/actions", body: `{}`,
+		headers: map[string]string{"X-Request-ID": "req-refused"}}); rec.Code != 503 || rec.Header().Get(forward.RefusalHeader) != forward.CodeBehind {
 		t.Fatalf("behind: %d", rec.Code)
 	}
-	if e.auditCount(t, "action = ? AND details LIKE ? AND details LIKE ?", ActionForwardRefused, "%\"code\":\"behind\"%", "%"+fwStar+"%") != n+1 {
-		t.Fatal("forward.refused not audited")
+	if e.auditCount(t, "action = ? AND request_id = ? AND details LIKE ? AND details LIKE ? AND details LIKE ?", ActionForwardRefused, "req-refused",
+		"%\"code\":\"behind\"%", "%"+fwStar+"%", "%\"user_id\":\""+e.ids[auth.RoleOperator]+"\"%") != n+1 {
+		t.Fatal("forward.refused not audited with the origin node, the user and the request ID")
+	}
+	if e.auditCount(t, "request_id = ? AND details LIKE ?", "req-origin", "%\"origin_node\":\""+fwStar+"\"%") == 0 {
+		t.Fatal("the handler's entry lacks the origin's request ID")
 	}
 	// The permission check uses this node's role: a viewer's power
 	// action is a 403, audited with the origin node.

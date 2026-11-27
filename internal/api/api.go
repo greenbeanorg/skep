@@ -132,6 +132,8 @@ type handler struct {
 	// fwd forwards requests to other nodes; nil on the node listener's
 	// handler, which never forwards (D19).
 	fwd Forwarding
+	// self is this node's ID as its agent reports it (8e-1 fix F1).
+	self *selfNode
 }
 
 // AuditReader reads pages of the access audit log.
@@ -303,7 +305,7 @@ func newHandler(opts Options) *handler {
 	}
 	h := &handler{
 		backend: opts.Backend, auth: opts.Auth, users: opts.Users, audit: opts.Audit, history: opts.AuditLog,
-		checks: opts.Checks, log: log, tls: opts.TLS, proxies: opts.TrustedProxies,
+		checks: opts.Checks, log: log, tls: opts.TLS, proxies: opts.TrustedProxies, self: &selfNode{},
 	}
 	h.quorum, h.guests = opts.Quorum, opts.Guests
 	h.cluster = opts.Cluster

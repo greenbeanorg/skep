@@ -14,8 +14,13 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"net/netip"
+	"regexp"
 	"strings"
 	"time"
+
+	"github.com/greenbeanorg/skep/internal/agentproto"
+	"github.com/greenbeanorg/skep/internal/httpkit"
 )
 
 // Protocol constants (D20, D21, D38).
@@ -144,6 +149,46 @@ func Parse(h string) (*Envelope, string) {
 		return nil, CodeVersion
 	}
 	return &Envelope{Payload: p, Raw: h, text: parts[1], sig: sig}, ""
+}
+
+// Field shapes of a payload (8e-1 fix F2).
+var (
+	uuidRE  = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
+	hex64RE = regexp.MustCompile(`^[0-9a-f]{64}$`)
+	hex32RE = regexp.MustCompile(`^[0-9a-f]{32}$`)
+)
+
+// maxPath bounds a payload's path with its query.
+const maxPath = 2048
+
+// ValidShape reports whether every field the receiver passes on (its
+// access audit, its log, the agent caller) has its shape: the IDs
+// lower-case UUIDs, the request ID by httpkit's rule, the idempotency key
+// empty or by agentproto's rule, the source IP empty or one address
+// without a zone, a forwarded method, a path under /api/v1/ of at most
+// 2048 bytes, the body hash 64 and the nonce 32 lower-case hex digits,
+// both times above 0.
+func (p Payload) ValidShape() bool {
+	for _, id := range []string{p.ClusterID, p.Origin, p.Target, p.UserID} {
+		if !uuidRE.MatchString(id) {
+			return false
+		}
+	}
+	if !httpkit.ValidRequestID(p.RequestID) || (p.IdempotencyKey != "" && !agentproto.ValidIdempotencyKey(p.IdempotencyKey)) {
+		return false
+	}
+	if p.SourceIP != "" {
+		if a, err := netip.ParseAddr(p.SourceIP); err != nil || a.Zone() != "" {
+			return false
+		}
+	}
+	switch p.Method {
+	case "GET", "HEAD", "POST", "PUT", "DELETE":
+	default:
+		return false
+	}
+	return strings.HasPrefix(p.Path, "/api/v1/") && len(p.Path) <= maxPath && hex64RE.MatchString(p.BodySHA256) &&
+		hex32RE.MatchString(p.Nonce) && p.IssuedAt > 0 && p.ExpiresAt > 0
 }
 
 // Verify reports whether the signature was made with pub over this

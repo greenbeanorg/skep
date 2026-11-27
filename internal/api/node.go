@@ -92,8 +92,11 @@ func (h *handler) serveForwarded(rt route, recv Receiver, w http.ResponseWriter,
 	if ref != nil {
 		if ref.Verified {
 			r = r.WithContext(context.WithValue(r.Context(), originKey{}, ref.Origin))
-			h.writeAudit(r, audit.AccessEntry{ActorName: audit.System, Action: ActionForwardRefused, Outcome: audit.Denied,
-				Details: map[string]any{"code": ref.Code, "method": rt.method, "route": Prefix + rt.path}})
+			d := map[string]any{"code": ref.Code, "method": rt.method, "route": Prefix + rt.path}
+			if ref.UserID != "" {
+				d["user_id"] = ref.UserID
+			}
+			h.writeAudit(r, audit.AccessEntry{ActorName: audit.System, Action: ActionForwardRefused, Outcome: audit.Denied, Details: d})
 		} else {
 			h.log.InfoContext(r.Context(), "node listener: forwarded request refused", "code", ref.Code,
 				"method", r.Method, "route", Prefix+rt.path, "remote", r.RemoteAddr)

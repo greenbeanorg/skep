@@ -24,6 +24,10 @@ const requestIDKey contextKey = iota
 // so arbitrary input never reaches the logs.
 var clientRequestIDRE = regexp.MustCompile(`^[A-Za-z0-9._-]{1,64}$`)
 
+// ValidRequestID reports whether id is of the form a client-supplied
+// request ID must have: 1 to 64 characters from A-Z a-z 0-9 . _ -.
+func ValidRequestID(id string) bool { return clientRequestIDRE.MatchString(id) }
+
 // RequestID returns the ID of the request ctx belongs to, or "".
 func RequestID(ctx context.Context) string {
 	id, _ := ctx.Value(requestIDKey).(string)

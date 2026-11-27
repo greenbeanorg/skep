@@ -108,7 +108,7 @@ func (c Caller) Validate() error {
 			return errors.New("invalid source address")
 		}
 	}
-	if c.IdempotencyKey != "" && !nameRE.MatchString(c.IdempotencyKey) {
+	if c.IdempotencyKey != "" && !ValidIdempotencyKey(c.IdempotencyKey) {
 		return errors.New("invalid idempotency key: use 1 to 128 characters from A-Z a-z 0-9 . _ : -")
 	}
 	if (c.OriginNode == "") != (c.Envelope == "") {
@@ -123,14 +123,9 @@ func (c Caller) Validate() error {
 	return nil
 }
 
-// ForwardDetails returns the audit details of a forwarded request's
-// origin and envelope, or nil.
-func (c Caller) ForwardDetails() map[string]any {
-	if c.OriginNode == "" {
-		return nil
-	}
-	return map[string]any{"origin_node": c.OriginNode, "envelope": c.Envelope}
-}
+// ValidIdempotencyKey reports whether key is of the form an idempotency
+// key must have: 1 to 128 characters from A-Z a-z 0-9 . _ : -.
+func ValidIdempotencyKey(key string) bool { return nameRE.MatchString(key) }
 
 // SetHeaders writes the caller into the headers of an outgoing request.
 func (c Caller) SetHeaders(h http.Header) {

@@ -30,7 +30,7 @@ const (
 	smithID   = "a1a1a1a1-0000-4000-8000-00000000000a" // the origin
 	starID    = "b2b2b2b2-0000-4000-8000-00000000000b" // the receiver
 	langID    = "c3c3c3c3-0000-4000-8000-00000000000c"
-	userID    = "u1u1u1u1"
+	userID    = "d1d1d1d1-0000-4000-8000-00000000000d"
 )
 
 var quiet = slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -294,8 +294,100 @@ func TestReceiverChecksInOrder(t *testing.T) {
 			continue
 		}
 		wantRefusal(t, c.name, a, ref, c.code, c.verified)
-		if c.verified && ref.Origin != smithID {
-			t.Fatalf("%s: origin %q", c.name, ref.Origin)
+		if c.verified && (ref.Origin != smithID || ref.UserID != userID) {
+			t.Fatalf("%s: origin %q, user %q", c.name, ref.Origin, ref.UserID)
+		}
+	}
+}
+
+// 8e-1 fix F2: a field without its shape is bad_envelope, verified (so
+// audited), right after the signature and the origin checks.
+func TestPayloadShape(t *testing.T) {
+	uri := "/api/v1/containers/x"
+	for name, c := range map[string]struct {
+		edit func(p *Payload)
+		user string // the refusal's user ID; "-": refused by (c), unverified
+	}{
+		// cluster_id and origin are compared with this node's values in
+		// (c), which are of the shape: a malformed one is refused there.
+		"cluster_id upper-case":  {func(p *Payload) { p.ClusterID = strings.ToUpper(p.ClusterID) }, "-"},
+		"origin upper-case":      {func(p *Payload) { p.Origin = strings.ToUpper(p.Origin) }, "-"},
+		"target not a UUID":      {func(p *Payload) { p.Target = "star" }, userID},
+		"user_id not a UUID":     {func(p *Payload) { p.UserID = "admin\nforged" }, ""},
+		"request_id with space":  {func(p *Payload) { p.RequestID = "req 1" }, userID},
+		"request_id empty":       {func(p *Payload) { p.RequestID = "" }, userID},
+		"request_id 65 bytes":    {func(p *Payload) { p.RequestID = strings.Repeat("r", 65) }, userID},
+		"idempotency_key":        {func(p *Payload) { p.IdempotencyKey = "k 1" }, userID},
+		"source_ip not an IP":    {func(p *Payload) { p.SourceIP = "not-an-ip" }, userID},
+		"source_ip with a zone":  {func(p *Payload) { p.SourceIP = "fe80::1%em0" }, userID},
+		"method":                 {func(p *Payload) { p.Method = "PATCH" }, userID},
+		"path outside /api/v1/":  {func(p *Payload) { p.Path = "/web/x" }, userID},
+		"path over 2048 bytes":   {func(p *Payload) { p.Path = "/api/v1/" + strings.Repeat("a", 2041) }, userID},
+		"body_sha256 upper-case": {func(p *Payload) { p.BodySHA256 = strings.ToUpper(p.BodySHA256) }, userID},
+		"nonce one character":    {func(p *Payload) { p.Nonce = "a" }, userID},
+		"issued_at 0":            {func(p *Payload) { p.IssuedAt = 0 }, userID},
+		"expires_at 0":           {func(p *Payload) { p.ExpiresAt = 0 }, userID},
+	} {
+		r := newRig(t)
+		p := r.payload("GET", uri, nil)
+		c.edit(&p)
+		if p.ValidShape() {
+			t.Fatalf("%s: ValidShape", name)
+		}
+		h, err := Seal(p, r.smith)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		a, ref := r.recv.Check(r.raw(r.smith, h, "GET", uri, nil))
+		if c.user == "-" {
+			wantRefusal(t, name, a, ref, CodeBadEnvelope, false)
+			continue
+		}
+		wantRefusal(t, name, a, ref, CodeBadEnvelope, true)
+		if ref.Origin != smithID || ref.UserID != c.user {
+			t.Fatalf("%s: origin %q, user %q", name, ref.Origin, ref.UserID)
+		}
+	}
+	r := newRig(t)
+	if p := r.payload("GET", uri, nil); !p.ValidShape() {
+		t.Fatal("the rig's payload")
+	}
+}
+
+// F2: every payload the origin builds has the shape the receiver checks:
+// the requests skep-api forwards (a request ID of httpkit's form, an
+// address without a zone, with and without an idempotency key, each
+// method of the six routes).
+func TestOriginBuildsValidPayload(t *testing.T) {
+	var mu sync.Mutex
+	var got []string
+	cl, star, _ := originRig(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		got = append(got, r.Header.Get(Header))
+		mu.Unlock()
+	}))
+	reqs := []Request{
+		{Method: "GET", URI: "/api/v1/containers/x", RequestID: "0123456789abcdef01234567", SourceIP: "192.0.2.7", UserID: userID, Epoch: 1},
+		{Method: "HEAD", URI: "/api/v1/vms/x", RequestID: "client.id_1-x", SourceIP: "2001:db8::7", UserID: userID},
+		{Method: "POST", URI: "/api/v1/vms/x/actions", Body: []byte(`{"action":"stop"}`), ContentType: "application/json",
+			IdempotencyKey: "a:b.c_d-1", RequestID: strings.Repeat("r", 64), SourceIP: "198.51.100.9", UserID: userID, Epoch: 9},
+		{Method: "POST", URI: "/api/v1/tasks/x/cancel?node=" + starID, RequestID: "r", UserID: userID},
+		{Method: "GET", URI: "/api/v1/tasks/x?node=star", RequestID: "r2", UserID: userID},
+	}
+	for _, q := range reqs {
+		if res := cl.Forward(context.Background(), star, q); res.Err != nil {
+			t.Fatalf("%s %s: %+v", q.Method, q.URI, res.Err)
+		}
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(got) != len(reqs) {
+		t.Fatalf("%d envelopes", len(got))
+	}
+	for i, h := range got {
+		env, code := Parse(h)
+		if code != "" || !env.Payload.ValidShape() {
+			t.Errorf("%s %s: %q %+v", reqs[i].Method, reqs[i].URI, code, env)
 		}
 	}
 }
