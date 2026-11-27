@@ -57,10 +57,10 @@ type Key struct {
 	// PrefixCluster.
 	prefix string
 	key    *ecdsa.PrivateKey
-	pin  string
-	mu   sync.RWMutex
-	leaf *x509.Certificate
-	tls  *tls.Certificate
+	pin    string
+	mu     sync.RWMutex
+	leaf   *x509.Certificate
+	tls    *tls.Certificate
 }
 
 // PinOfCertificate returns the pin of a certificate's public key:
