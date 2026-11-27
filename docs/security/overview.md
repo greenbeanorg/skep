@@ -436,7 +436,32 @@ procedure in [Joining hosts into a cluster](../administration/cluster.md).
 - **A single host opens no cluster port.** Port 8444 opens only on a
   listen address given by `listen`, `join-request` or `init -address`,
   and closes again with `listen -none` (only while the node is alone with
-  nothing pending) or `leave --wipe`.
+  nothing pending) or `leave --wipe`. `skep-api`'s port 8445 follows the
+  same address: it opens only once `skep-cluster` reports one and the API
+  node key exists, and closes with it.
+- **Forwarding between nodes (step 8e-1, ADR 0013 amendment 8).** A
+  request for one guest on another node reaches that node's agent only
+  through that node's `skep-api`, on port 8445: mutual TLS 1.3, the
+  client accepted only when its key is the registered API pin of a member
+  that is a Raft server, keep-alives off (every request is a new
+  handshake against the membership as it is then), and a signed,
+  short-lived envelope (30 s, a nonce, the method, the path with its
+  query, the body's hash) that the receiving `skep-api` verifies before
+  anything else, then the user in its own copy (unknown, behind, disabled
+  or a lower credential epoch is refused) and the user's permission with
+  its own role and its own quorum. The agent records the origin node and
+  the envelope in its audit entry and verifies neither (ADR 0004,
+  amendment of 2026-11-24). The user-facing listener never asks for a
+  client certificate and never reads an envelope; the node listener
+  serves no login, session, user, cluster or audit route and never
+  forwards. The origin sends no cookie, bearer token or `Origin` header.
+  The API node key (`/var/db/skep/api/nodekey/`, `0700`/`0600`, the
+  `skep` account) is never the user listener's and never
+  operator-supplied; only root's `key rotate --api` (step 8e-2) will
+  change a registered pin besides `skep-api` itself. **What a compromised
+  `skep-api` can do grows:** it can ask every other node to act as any
+  user that exists there, enabled and with the permission (it signs the
+  envelope itself), and replace its own node's API pin, no other node's.
 
 **Trust between nodes: pinned keys.** There is no cluster CA. Each node
 generates its own key; the replicated membership stores the SHA-256 of
@@ -1054,13 +1079,10 @@ is why the scripts now only warn.
   the media directory and does not verify checksums.
 - **Root helper.** Whether to split a minimal root helper out of the agent
   is revisited before 1.0.
-- **Signed per-request envelopes** before any request is forwarded
-  between nodes (Milestone 8, step 8e). A request that originates on
-  another node reaches an agent only through that agent's own
-  `skep-api`, which verifies the originating API's signed, short-lived
-  envelope, the user and their role; the agent records the envelope and
-  the originating node in its audit and does not verify it itself
-  (ADR 0004, amendment of 2026-11-24; ADR 0013 B8).
+- **Forwarding beyond step 8e-1.** Updates, deletes, snapshots, clones
+  and consoles of a guest on another node, and `skep-cluster key rotate
+  --api`, come with step 8e-2; until then those routes ask the local agent
+  as before (ADR 0013 amendment 8, section 9).
 - **Per-entry hash chaining** of the audit logs, which would make
   tampering inside the live table detectable too, and **signed segments**,
   which wait for node keys (ADR 0007, decision 5).

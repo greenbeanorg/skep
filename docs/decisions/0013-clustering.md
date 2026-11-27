@@ -46,6 +46,12 @@
   counts, the fifth in-place change to B5, and the two limits of a join's
   guest list. It is at the end of this document; the passages it changes
   are marked "Amended (amendment 7)".
+- **Amendment 8 (2026-11-26)** is **Proposed**, accepted by approving the
+  merge of the step 8e-1 PR: skep-api's node-to-node key and its pin
+  registered by the node itself (`member.api_key`, with a guard), the node
+  listener on 8445, the signed envelope and the first forwarded routes.
+  It is at the end of this document; the passages it changes are marked
+  "Amended (amendment 8)".
 - Date: 2026-11-23 (evaluation draft), 2026-11-24 (rewritten as the design)
 - Depends on: [ADR 0004](0004-privilege-boundary.md) (privilege boundary),
   [ADR 0005](0005-agent-task-engine.md) (task engine),
@@ -548,6 +554,12 @@ Each item was proposed for review. Andy's answers and the final review
   one removed, through the log, as for the node key). `skep-api` cannot
   change its own pin through `skep-cluster`'s socket, and no API
   operation changes any pin.
+  **Amended (amendment 8):** `join-request` and `listen` do not read or
+  carry the API pin. `skep-api` creates its key once its node has a
+  listen address and registers the pin itself, once the node is a
+  member, with the entry `member.api_key` (through the socket operation
+  `api-key`; the node is always the socket's), which replaces an earlier
+  one. `key rotate --api` is step 8e-2.
 - **Where `skep-cluster` listens, and when.** Only a clustered node
   listens on the network.
   - `skep-cluster init` without `-address` (the default for a single
@@ -742,6 +754,12 @@ removal, and stops naming it once it has returned and caught up.
 **Amended (amendment 6):** see amendment 6, section 7: through the guest inventory a compromised `skep-api` or member can reserve names up to the 10000 limit and add or remove entries of its own node only.
 
 **Amended (amendment 7):** root on a member can make the cluster forget another member's guests by removing it (`--forget-guests`), which changes nothing on that member's host (amendment 7, section 8).
+
+**Amended (amendment 8):** a compromised `skep-api` can ask every other
+node to act as any user (it signs the forwarding envelope itself; the
+receiver checks that the user exists, is enabled and has the permission,
+not that the user asked), and can replace its own node's API pin, no
+other node's (amendment 8, section 7).
 
 ### B3. Joining a host that already has guests and users (proposed; answered in Part C)
 
@@ -1109,7 +1127,7 @@ agent over the socket as today. No agent gets a network listener (ADR
 
 | | User-facing listener (today's) | Node-to-node listener (new) |
 |---|---|---|
-| Address and port | `listen_address` in `api.json`, default `127.0.0.1:8443` (ADR 0006 decision 7) | `node_listen_address` in `api.json`, the management address and port **8445**; no default address, and **absent on a host that is not clustered**: written by `skep-cluster listen` or `join-request` (B1), which run as root |
+| Address and port | `listen_address` in `api.json`, default `127.0.0.1:8443` (ADR 0006 decision 7) | `node_listen_address` in `api.json`, the management address and port **8445**; no default address, and **absent on a host that is not clustered**: written by `skep-cluster listen` or `join-request` (B1), which run as root. **Amended (amendment 8):** not built; the listener binds the cluster's listen address as `skep-cluster` reports it, port 8445 |
 | Client certificate | **Never requested** (as today) | **Required**, and accepted only if its key's pin is the node-to-node API key of a node that is a member in the applied membership **and** a server in the Raft configuration (B1's rule; `skep-cluster` gives its API only such members) |
 | Server key | Generated or operator-supplied (ADR 0006) | The node-to-node key, pinned in the membership; never operator-supplied |
 | Serves | The public API and the web interface; **not** the forwarding endpoints (they are not registered on its mux) | **Only** the forwarding endpoints; no web interface, no login, no session |
@@ -1214,6 +1232,10 @@ not own (except through B13, removing a node).
 **Tasks:** a task lives on the node that runs it. Every task already
 stores its `node_id`; the API looks a task up on that node, and a lookup
 by ID alone asks each member.
+**Amended (amendment 8):** the client names the node with the query
+parameter `node` (its ID or name; skepctl sends the task's `node_id`); a
+lookup by ID alone is served by the node the client talks to. Which
+routes are forwarded, and how, is in amendment 8.
 
 **Unreachable owner:** `503 node_unreachable`, naming the node. No quorum
 is needed to forward a read or a stop/start of a guest to a reachable
@@ -1389,7 +1411,7 @@ green, and the lab test listed, on smith (UFS), langrishe (ZFS) and star
 | 8b | Join and trust (B1): `join-request`, `admit` (pending entries, expiry by log entry, withdrawal), `join` with the cluster confirmation, the one-node state moved aside and put back, the two records and their crash points, the listener's member-or-pending rule, the inbound handler with per-RPC identity and the upstream-comparison checklist, non-voter then automatic promotion once caught up and applied by every member, the applied-membership file and the state machine's applied index on the status RPC (amendment 1), remove with its `removing` step, `leave --wipe`, removal of a node that owns guests (B13), clock-offset health (B1), cluster audit (B10) | Three nodes; every identity test from the prototype; pending key limited to join; wrong and expired admissions; removal refused within one apply; removal with guests refused without `--forget-guests` |
 | 8c | Replicated identity: users and roles in the store, the API's read copy, credential epochs, degraded login without quorum or without `skep-cluster` (B9); `skep-api admin` through the cluster; the 0.1 migration of users and roles by `skep-setup upgrade` (B3). **Amended (amendment 4):** users only (roles are not replicated), built in two steps: **8c-1** users in the log, the read copy, credential epochs, degraded login, `skep-api admin` through the cluster and the import of a 0.1 host's users as a command (`skep-api admin import-users`); **8c-2** `skep-setup` and `skep_cluster`, and admit, withdraw and remove in the public API | Login on any node; password change revokes sessions on all; a cut-off node's login rules |
 | 8d | Guest inventory and owner (A7): the owner's API publishes its guests; cluster-wide names; the agent's root-only, expiring drain operation with the reason `join` (B7, moved here from 8f because the join needs it); join with guests, the atomic name check and user replacement (B3); the agent's read of a task by idempotency key; automatic reconciliation by the owner (B8); a new guest entry owned by a `removing` member refused (amendment 1) | langrishe joins with guests; names unique; guests keep running; a failed create leaves no entry |
-| 8e | Forwarding (B8): the node-to-node listener on port 8445 with the pinned node-to-node keys, signed envelope verified in the receiving API and recorded in the agent's audit, re-authorization, `node_unreachable`, `node_clock_skew`, the versioned forwarding protocol and `node_version_mismatch` (B5); one view in the interface | A VM on langrishe managed from smith's interface; replay refused; the user-facing listener requests no client certificate and serves no forwarding path |
+| 8e | Forwarding (B8): the node-to-node listener on port 8445 with the pinned node-to-node keys, signed envelope verified in the receiving API and recorded in the agent's audit, re-authorization, `node_unreachable`, `node_clock_skew`, the versioned forwarding protocol and `node_version_mismatch` (B5); one view in the interface. **Amended (amendment 8):** built as 8e-1 (the key, its pin, the listener, the envelope, reads and power actions of one guest and the two task routes) and 8e-2 (the other guest routes, `?node=` everywhere, creates on another node, `key rotate --api`); no interface change in 8e-1 | A VM on langrishe managed from smith's interface; replay refused; the user-facing listener requests no client certificate and serves no forwarding path |
 | 8f | Drain (B7): the agent's refusal rule with both scopes, the upgrade drain (the root-only operation exists since 8d, here with the reason `upgrade` and the full refusal scopes), maintenance mode persisted in `agent.db`; `skep-setup upgrade` backs up the cluster store (root, `0600`) and drains | Upgrade a lab VM with a running task; kill setup mid-drain, drain expires; stops accepted in maintenance, refused in an upgrade drain |
 | 8g | Recovery (B4), the feature-level operation (B5), backup and restore (B6), and the partition suite with pf | Recovery of one survivor; old-epoch node refused; full restore; the prototype's partition cases with real cuts |
 
@@ -3114,3 +3136,149 @@ The agent's drain clear (`DELETE /internal/v1/drain`) removes a drain of
 any reason; the join clears only a drain it believes is its own, but
 after a lost answer it cannot know. Step 8f, which adds the upgrade
 drain, makes the clear name the reason it clears (backlog).
+
+## Amendment 8 (2026-11-26, Proposed)
+
+Written with the build of step 8e-1, from the fixed decisions D1 to D46
+of that run. **Status: Proposed, accepted by approving the merge of the
+step 8e-1 PR.** The facts it rests on are in
+[0013-evidence/8e1-facts-20261126.md](0013-evidence/8e1-facts-20261126.md).
+The passages it changes are marked "Amended (amendment 8)".
+
+### 1. Andy's eight decisions of 2026-11-26, and what each changes
+
+| # | Decision | Changes |
+|---|---|---|
+| 1 | Step 8e is built as 8e-1 and 8e-2 | B12: 8e-1 is the API node key and pin, the node listener on 8445, the signed envelope and the first forwarded routes; 8e-2 forwards updates, deletes, snapshots, clones and consoles, `?node=` on every route, creates on another node and `skep-cluster key rotate --api` |
+| 2 | The API pin reaches the membership by an entry the node registers itself after it is a member, not by a new join-request or admission format | B1: `join-request` and `listen` do not read or carry the API pin; the join request, the admission and the join call's messages are unchanged |
+| 3 | No new setting: the node listener binds the cluster's listen address, port 8445, as `skep-cluster` reports it | B1, B8: `node_listen_address` in `api.json` is not built; `skep-cluster listen` and `join-request` write nothing new |
+| 4 | A route that names one existing guest by ID is routed to the guest's owner; node-wide routes are served by the node the client talks to unless the request names another node; login, users, cluster and audit routes are never forwarded; lists are not merged | B8: the route table declares a scope per route (`local`, `guest`, `node`) |
+| 5 | Another node is named with the query parameter `node` (a node name or ID); B8's "a task lookup by ID alone asks each member" is not built | B8, Tasks |
+| 6 | The public code for a receiver that is behind is `503 node_behind` | B8 (the epoch comparison) |
+| 7 | The origin applies its own quorum gate as for a local request, and the receiver applies its own again | B8 point 4 |
+| 8 | No change to the web interface | B12's "one view in the interface" moves to a later step |
+
+### 2. `member.api_key` and the guard
+
+A new entry type, `member.api_key` version 1, data `{node_id, api_pin,
+at}`. Applying it is refused when the node is not a member
+(`not_found`), not in state `member`, when the pin is not a pin, or when
+it is the node pin, next pin or API pin of another member, this member's
+own node or next pin, or a pending entry's pin (`invalid`). The pin the
+member already has is a success that changes nothing. Otherwise it sets
+the member's API pin, replacing an earlier one; it is a membership change
+(`membership.json` first, then the hook). It is allowed while a member
+rotates its key and while an admission is pending. No other entry sets an
+API pin. The snapshot is format 7 once a member has one; `membership.json`
+keeps its format numbers and refuses an API pin that occurs twice or
+equals a node pin. The cluster audit records it with the node's ID, name
+and the pin in `api_pin`.
+
+`skep-api` sends it through the socket operation `api-key` (the API
+account only); the node is always the socket's node, and a member passes
+it to the leader as the peer operation `api-key`, where the node is the
+calling key's. **The guard:** before writing, the leader asks every other
+member entry, whatever its state, the new peer operation `supports` for
+`member.api_key` version 1, in parallel, 5 s each, and goes on only when
+every one answered true in this call; otherwise it answers `unavailable`
+naming the first that did not, and nothing is written. **Reason:**
+registration is automatic, and a build before this step stops its state
+machine at this entry type (ADR 0013 B5's backstop). Without the guard,
+the first upgraded node would stop every node not yet upgraded.
+
+### 3. The usable-peer rule, and it fails closed
+
+One rule says which peer may be forwarded to and accepted from: state
+`member`, a non-empty API pin, a server in the latest Raft configuration,
+and not this node (`peerapi.Usable`). `skep-api` keeps the last answer of
+the socket operation `peers-read` (a long poll on the membership index)
+and its time: an answer older than 15 s, a read that failed, or no answer
+yet means no usable peer. Nothing is then forwarded and the node listener
+accepts nobody. A node that is joining, removed, stalled or not current
+(its accepted keys do not come from an up-to-date state machine) answers
+no peers.
+
+**A receiver without a leader still accepts the peers its state machine
+holds** (a committed prefix of the log). This extends amendment 1's
+stated risk (section 6) to forwarding: a member that was down while a
+node was removed still accepts that node's API key until it has caught
+up.
+
+### 4. The envelope and the receiver's order of checks
+
+Every forwarded request carries `Skep-Envelope: v1.<payload>.<signature>`
+(at most 4096 bytes): the payload is the unpadded base64url of a JSON
+object, the signature an ECDSA P-256 SHA-256 signature (ASN.1) by the
+origin's API node key over `skep-forward-v1.` and the payload text. Its
+fields, all required: `v`, `cluster_id`, `origin`, `origin_key` (the
+origin's SubjectPublicKeyInfo), `target`, `user_id`, `epoch`,
+`request_id`, `idempotency_key`, `source_ip`, `method`, `path` (with the
+query string), `body_sha256`, `issued_at` and `expires_at` (30 s later,
+Unix milliseconds, the origin's clock), `nonce`. Besides it the origin
+sends only `Content-Type`, `Idempotency-Key` and `X-Request-ID`; never
+the client's `Cookie`, `Authorization` or `Origin`.
+
+The receiver checks, in this order, and nothing reaches a handler or the
+agent before all have passed: (a) the connection's key is still a usable
+peer's API pin (`not_member`); (b) the envelope's form, version and
+strict decoding (`version`, `bad_envelope`); (c) `origin_key` is the
+connection's key, the signature verifies with it, `origin` is that key's
+node and `cluster_id` this cluster (`bad_envelope`); (d) the target is
+this node (`wrong_target`); (e) the method, the path with its query, the
+body's hash and the idempotency key are the request's own
+(`bad_envelope`); then time and replay by the receiver's clock (`clock`,
+`before_start`, `replay`, `busy`: the cache holds at most 100000 pairs);
+then the user in its own read copy: unknown (`user_unknown`), the
+envelope's epoch higher (`behind`), lower, or equal and disabled
+(`stale_origin`). Then the same path as a local request: the route's
+permissions with this node's role, this node's quorum gate, the handler;
+the agent records the origin node and the envelope in its "requested"
+audit entry. Nothing in the envelope is used before the signature has
+verified but its version and the bounded, strict decoding.
+
+### 5. What the origin answers (D35)
+
+| The receiver's outcome | The origin answers |
+|---|---|
+| Nothing was sent (dial, handshake, or the receiver refused this node's key, seen at the first read in TLS 1.3, facts F8) | one more attempt after 500 ms, then `503 node_unreachable`, outcome `not_written` |
+| Sent, no complete answer | `503 node_unreachable`, outcome `unknown`; never repeated |
+| `behind`, `user_unknown` | repeated with a new envelope every 500 ms for up to 5 s, then `503 node_behind` |
+| `before_start` | repeated the same way, then `503 node_unreachable` ("has just restarted") |
+| `stale_origin` | `401 unauthenticated` |
+| `clock` | `503 node_clock_skew` (also before sending, when the peer's known offset less its uncertainty is above 15 s) |
+| `version`, `no_route` | `503 node_version_mismatch` |
+| any other refusal | `503 node_unreachable`, the code in `details.reason` |
+| A handler's answer | passed through: status, `Content-Type`, `Location`, `Retry-After`, body, plus `Skep-Node` |
+
+### 6. Keep-alives are off
+
+Both sides turn keep-alives off: every forwarded request is a new TLS 1.3
+handshake, checked against the membership as it is then. A connection
+kept open would outlive a removal or an API key replaced in between; a
+handshake per request costs a few milliseconds on the management network.
+
+### 7. B2 extended
+
+**Amended (amendment 8):** a compromised `skep-api` can ask every other
+node to act as any user: it signs the envelope itself, and the receiver
+checks that the user exists in its own copy, is enabled and has the
+permission there, not that the user asked. It can replace its own node's
+API pin (the node of an `api-key` request is always the socket's or the
+calling key's) and no other node's.
+
+### 8. Mixed builds
+
+The guard keeps a member of an earlier build from meeting
+`member.api_key`: registration waits, and the node's health check
+`node_forwarding` says why, until every member is upgraded. A receiver
+refuses an envelope version or a route it does not serve (`version`,
+`no_route`); both reach the user as `503 node_version_mismatch`.
+Differences of fields between builds are not detected (backlog, step
+8g).
+
+### 9. Not built (step 8e-2 or later)
+
+Forwarding of update, delete, snapshot, clone and console routes; `?node=`
+on any route but the two task routes; a create on another node;
+`skep-cluster key rotate --api`; B8's task lookup by ID alone that asks
+every member; the interface's view of forwarding.
