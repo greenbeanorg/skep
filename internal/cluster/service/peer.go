@@ -108,6 +108,12 @@ func (s *Service) HandlePeer(ctx context.Context, op string, from raftnet.Peer, 
 		}
 		return s.handleGuestsWrite(from, body)
 	case raftnet.OpSupports:
+		s.mu.Lock()
+		old := s.noSupports
+		s.mu.Unlock()
+		if old {
+			return nil, &raftnet.PeerError{Code: raftnet.CodeForbidden, Message: `the operation "supports" is not open to a member key`}
+		}
 		return handleSupports(body)
 	case raftnet.OpAPIKey:
 		if s.isRemoved() {

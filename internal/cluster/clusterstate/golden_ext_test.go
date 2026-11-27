@@ -203,3 +203,33 @@ func TestMainAuditVerifiesAndTakesTheNewFields(t *testing.T) {
 		t.Fatal("main's lines were changed")
 	}
 }
+
+// D6, V8 (step 8e-1): main's segment still verifies, and a member.api_key
+// record appended to it verifies with its api_pin field.
+func TestMainAuditTakesAnAPIPin(t *testing.T) {
+	dir := goldenAuditDir(t)
+	l, err := audit.Open(filepath.Dir(dir), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pin := "sha256:" + strings.Repeat("e", 64)
+	if err := l.AuditEntry(cs.AuditEntry{Epoch: 1, Index: 19, Type: cs.TypeMemberAPIKey, Version: 1, OpID: "apikey:a:1", Actor: "node:a",
+		Origin: "a", Outcome: audit.OutcomeApplied, NodeID: "a", Name: "smith", APIPin: pin, At: 5}); err != nil {
+		t.Fatal(err)
+	}
+	if err := l.Close(); err != nil {
+		t.Fatal(err)
+	}
+	rep, err := audit.Verify(dir)
+	if err != nil || rep.Break != nil || rep.Records != 19 {
+		t.Fatalf("with an API pin: %+v %v", rep, err)
+	}
+	b, _ := os.ReadFile(filepath.Join(dir, audit.SegmentName(1)))
+	if !bytes.Contains(b, []byte(`"api_pin":"`+pin+`"`)) {
+		t.Fatal("the record lacks api_pin")
+	}
+	src, _ := os.ReadFile(filepath.Join(goldenDir, audit.SegmentName(1)))
+	if !bytes.HasPrefix(b, src) {
+		t.Fatal("main's lines were changed")
+	}
+}

@@ -134,3 +134,32 @@ func TestNextPinFormat(t *testing.T) {
 		t.Fatalf("%+v %v", f, err)
 	}
 }
+
+// D5 (step 8e-1): an API pin is valid, never twice, never a node pin; the
+// format numbers do not change.
+func TestAPIPinValidation(t *testing.T) {
+	pin := func(c string) string { return "sha256:" + strings.Repeat(c, 64) }
+	m := func(id, p, api string) Member {
+		return Member{ID: id, Name: "n" + id[:1], Pin: p, APIPin: api, State: "member"}
+	}
+	a, b := "aaaaaaaa-0000-4000-8000-00000000000a", "bbbbbbbb-0000-4000-8000-00000000000b"
+	base := File{Format: 1, ClusterID: "cccccccc-0000-4000-8000-00000000000c", Epoch: 1, Index: 3}
+	for _, c := range []struct {
+		name    string
+		members []Member
+		ok      bool
+	}{
+		{"two API pins", []Member{m(a, pin("1"), pin("3")), m(b, pin("2"), pin("4"))}, true},
+		{"none", []Member{m(a, pin("1"), ""), m(b, pin("2"), "")}, true},
+		{"twice", []Member{m(a, pin("1"), pin("3")), m(b, pin("2"), pin("3"))}, false},
+		{"another's node pin", []Member{m(a, pin("1"), pin("2")), m(b, pin("2"), "")}, false},
+		{"a later member's node pin", []Member{m(a, pin("1"), ""), m(b, pin("2"), pin("1"))}, false},
+		{"not a pin", []Member{m(a, pin("1"), "sha256:x")}, false},
+	} {
+		f := base
+		f.Members = c.members
+		if err := f.validate(); (err == nil) != c.ok {
+			t.Errorf("%s: %v", c.name, err)
+		}
+	}
+}

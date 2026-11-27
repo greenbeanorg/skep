@@ -144,6 +144,9 @@ type Service struct {
 	// clockOp is the operation name of the clock request; a test sets an
 	// unknown one to get the answer a build without it gives.
 	clockOp string
+	// noSupports is a test hook: this node answers supports as a build
+	// before step 8e-1 does (an unknown operation).
+	noSupports bool
 	// seen is, per node, the pin its last successful connection to or
 	// from this node used (D1).
 	seen map[string]pinSeen
